@@ -1,0 +1,8 @@
+.env
+*.exe
+*.out
+*.test
+*.log
+tmp/
+.kiro/
+.DS_Store

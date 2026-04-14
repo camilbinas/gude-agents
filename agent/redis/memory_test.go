@@ -1,0 +1,398 @@
+package redis
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/camilbinas/gude-agents/agent"
+	"pgregory.net/rapid"
+)
+
+// skipIfNoRedis skips the test if REDIS_ADDR is not set and returns the address.
+func skipIfNoRedis(t *testing.T) string {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		t.Skip("REDIS_ADDR not set, skipping integration test")
+	}
+	return addr
+}
+
+// genContentBlock generates a random ContentBlock: TextBlock, ToolUseBlock, or ToolResultBlock.
+func genContentBlock(t *rapid.T) agent.ContentBlock {
+	kind := rapid.IntRange(0, 2).Draw(t, "blockKind")
+	switch kind {
+	case 0:
+		return agent.TextBlock{
+			Text: rapid.StringMatching(`[a-zA-Z0-9 ]{0,50}`).Draw(t, "text"),
+		}
+	case 1:
+		jsonOptions := []json.RawMessage{
+			json.RawMessage(`{}`),
+			json.RawMessage(`{"key":"value"}`),
+			json.RawMessage(`{"a":1,"b":true}`),
+		}
+		return agent.ToolUseBlock{
+			ToolUseID: rapid.StringMatching(`tu_[a-zA-Z0-9]{4,12}`).Draw(t, "toolUseID"),
+			Name:      rapid.StringMatching(`[a-z_]{1,20}`).Draw(t, "toolName"),
+			Input:     rapid.SampledFrom(jsonOptions).Draw(t, "input"),
+		}
+	default:
+		return agent.ToolResultBlock{
+			ToolUseID: rapid.StringMatching(`tu_[a-zA-Z0-9]{4,12}`).Draw(t, "toolResultID"),
+			Content:   rapid.StringMatching(`[a-zA-Z0-9 ]{0,50}`).Draw(t, "resultContent"),
+			IsError:   rapid.Bool().Draw(t, "isError"),
+		}
+	}
+}
+
+// genMessages generates a random slice of 0–10 agent.Message, each with 1–5 ContentBlocks.
+func genMessages(t *rapid.T) []agent.Message {
+	numMsgs := rapid.IntRange(0, 10).Draw(t, "numMessages")
+	msgs := make([]agent.Message, numMsgs)
+	roles := []agent.Role{agent.RoleUser, agent.RoleAssistant}
+	for i := 0; i < numMsgs; i++ {
+		numBlocks := rapid.IntRange(1, 5).Draw(t, fmt.Sprintf("numBlocks_%d", i))
+		blocks := make([]agent.ContentBlock, numBlocks)
+		for j := 0; j < numBlocks; j++ {
+			blocks[j] = genContentBlock(t)
+		}
+		msgs[i] = agent.Message{
+			Role:    rapid.SampledFrom(roles).Draw(t, fmt.Sprintf("role_%d", i)),
+			Content: blocks,
+		}
+	}
+	return msgs
+}
+
+// Feature: redis-providers, Property 1: Memory Save/Load Round-Trip
+// **Validates: Requirements 3.1, 3.5, 4.1, 5.1, 5.2, 5.3**
+func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	rapid.Check(t, func(t *rapid.T) {
+		messages := genMessages(t)
+		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
+
+		ctx := context.Background()
+
+		if err := mem.Save(ctx, convID, messages); err != nil {
+			t.Fatalf("Save failed: %v", err)
+		}
+
+		// Clean up the key after the test iteration.
+		defer mem.client.Del(ctx, mem.keyPrefix+convID)
+
+		loaded, err := mem.Load(ctx, convID)
+		if err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+
+		if !reflect.DeepEqual(messages, loaded) {
+			t.Fatalf("round-trip mismatch:\n  saved:  %+v\n  loaded: %+v", messages, loaded)
+		}
+	})
+}
+
+// --- Unit Tests for RedisMemory (Task 2.5) ---
+
+// TestNewRedisMemory_UnreachableAddr verifies that NewRedisMemory returns an error
+// containing "ping" when the Redis address is unreachable.
+// Validates: Requirement 2.3
+func TestNewRedisMemory_UnreachableAddr(t *testing.T) {
+	_, err := NewRedisMemory(RedisOptions{Addr: "localhost:1"})
+	if err == nil {
+		t.Fatal("expected error for unreachable address, got nil")
+	}
+	if !contains(err.Error(), "ping") {
+		t.Fatalf("expected error to contain 'ping', got: %v", err)
+	}
+}
+
+// TestRedisMemory_LoadNonExistent verifies that Load for a non-existent conversation ID
+// returns an empty (non-nil) slice and nil error.
+// Validates: Requirement 4.2
+func TestRedisMemory_LoadNonExistent(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	msgs, err := mem.Load(context.Background(), "nonexistent-conv-id-12345")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if msgs == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected empty slice, got %d messages", len(msgs))
+	}
+}
+
+// TestRedisMemory_DefaultKeyPrefix verifies that a newly created RedisMemory
+// has the default key prefix "gude:memory:".
+// Validates: Requirement 2.7
+func TestRedisMemory_DefaultKeyPrefix(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	if mem.keyPrefix != "gude:memory:" {
+		t.Fatalf("expected default keyPrefix %q, got %q", "gude:memory:", mem.keyPrefix)
+	}
+}
+
+// TestRedisMemory_TTLSet verifies that when WithTTL is configured, saved keys
+// have a TTL set in Redis.
+// Validates: Requirements 2.5, 3.2
+func TestRedisMemory_TTLSet(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	ttl := 10 * time.Minute
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr}, WithTTL(ttl))
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	ctx := context.Background()
+	convID := "test-ttl-set-conv"
+	key := mem.keyPrefix + convID
+
+	// Clean up before and after.
+	mem.client.Del(ctx, key)
+	defer mem.client.Del(ctx, key)
+
+	msgs := []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
+	}
+	if err := mem.Save(ctx, convID, msgs); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	remaining := mem.client.TTL(ctx, key).Val()
+	if remaining <= 0 {
+		t.Fatalf("expected positive TTL, got %v", remaining)
+	}
+	if remaining > ttl {
+		t.Fatalf("TTL %v exceeds configured %v", remaining, ttl)
+	}
+}
+
+// TestRedisMemory_NoExpiration verifies that when no TTL is configured (default),
+// saved keys have no expiration (TTL returns -1 in Redis).
+// Validates: Requirements 2.6, 3.3
+func TestRedisMemory_NoExpiration(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	ctx := context.Background()
+	convID := "test-no-expiration-conv"
+	key := mem.keyPrefix + convID
+
+	// Clean up before and after.
+	mem.client.Del(ctx, key)
+	defer mem.client.Del(ctx, key)
+
+	msgs := []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
+	}
+	if err := mem.Save(ctx, convID, msgs); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	remaining := mem.client.TTL(ctx, key).Val()
+	// Redis returns -1 for keys with no expiration.
+	if remaining != -1*time.Second {
+		t.Fatalf("expected TTL of -1 (no expiration), got %v", remaining)
+	}
+}
+
+// contains checks if s contains substr (helper to avoid importing strings).
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchSubstr(s, substr)
+}
+
+func searchSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRedisMemory_WithMemoryOption verifies that RedisMemory is accepted by agent.WithMemory.
+// Validates: Requirement 2.4
+func TestRedisMemory_WithMemoryOption(t *testing.T) {
+	addr := skipIfNoRedis(t)
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	// This should compile and not panic — proves RedisMemory satisfies the Memory interface
+	// used by WithMemory.
+	opt := agent.WithMemory(mem, "test-conv")
+	if opt == nil {
+		t.Fatal("expected non-nil option from WithMemory")
+	}
+}
+
+// --- Integration Tests for RedisMemory List and Delete (Task 8.4) ---
+
+// TestRedisMemory_ListReturnsSavedConversationIDs verifies that List returns
+// all conversation IDs that have been saved, using a unique key prefix.
+// Validates: Requirement 5.5
+func TestRedisMemory_ListReturnsSavedConversationIDs(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	prefix := "test-list-delete:"
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	ctx := context.Background()
+
+	convIDs := []string{"conv-alpha", "conv-beta", "conv-gamma"}
+	msgs := []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
+	}
+
+	// Save 3 conversations.
+	for _, id := range convIDs {
+		if err := mem.Save(ctx, id, msgs); err != nil {
+			t.Fatalf("Save(%q) failed: %v", id, err)
+		}
+	}
+
+	// Clean up after test.
+	defer func() {
+		for _, id := range convIDs {
+			mem.client.Del(ctx, prefix+id)
+		}
+	}()
+
+	// List and verify all 3 IDs are returned.
+	listed, err := mem.List(ctx)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	if len(listed) != len(convIDs) {
+		t.Fatalf("expected %d IDs, got %d: %v", len(convIDs), len(listed), listed)
+	}
+
+	// Sort both slices for comparison since order is not guaranteed.
+	sortStrings(listed)
+	expected := make([]string, len(convIDs))
+	copy(expected, convIDs)
+	sortStrings(expected)
+
+	if !reflect.DeepEqual(expected, listed) {
+		t.Fatalf("List mismatch:\n  expected: %v\n  got:      %v", expected, listed)
+	}
+}
+
+// TestRedisMemory_DeleteRemovesTargetKey verifies that Delete removes the target
+// conversation while leaving other conversations intact.
+// Validates: Requirement 6.5
+func TestRedisMemory_DeleteRemovesTargetKey(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	prefix := "test-del-target:"
+	mem, err := NewRedisMemory(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
+	if err != nil {
+		t.Fatalf("failed to create RedisMemory: %v", err)
+	}
+	defer mem.Close()
+
+	ctx := context.Background()
+
+	msgs := []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+	}
+
+	// Save 2 conversations.
+	if err := mem.Save(ctx, "keep-me", msgs); err != nil {
+		t.Fatalf("Save(keep-me) failed: %v", err)
+	}
+	if err := mem.Save(ctx, "delete-me", msgs); err != nil {
+		t.Fatalf("Save(delete-me) failed: %v", err)
+	}
+
+	// Clean up after test.
+	defer func() {
+		mem.client.Del(ctx, prefix+"keep-me")
+		mem.client.Del(ctx, prefix+"delete-me")
+	}()
+
+	// Delete one conversation.
+	if err := mem.Delete(ctx, "delete-me"); err != nil {
+		t.Fatalf("Delete(delete-me) failed: %v", err)
+	}
+
+	// Verify deleted conversation is gone from List.
+	listed, err := mem.List(ctx)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	for _, id := range listed {
+		if id == "delete-me" {
+			t.Fatal("deleted conversation still appears in List")
+		}
+	}
+
+	// Verify Load returns empty for deleted conversation.
+	loaded, err := mem.Load(ctx, "delete-me")
+	if err != nil {
+		t.Fatalf("Load(delete-me) failed: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Fatalf("expected empty messages for deleted conversation, got %d", len(loaded))
+	}
+
+	// Verify the other conversation still exists.
+	remaining, err := mem.Load(ctx, "keep-me")
+	if err != nil {
+		t.Fatalf("Load(keep-me) failed: %v", err)
+	}
+	if !reflect.DeepEqual(msgs, remaining) {
+		t.Fatalf("remaining conversation mismatch:\n  expected: %+v\n  got:      %+v", msgs, remaining)
+	}
+}
+
+// sortStrings sorts a string slice in place (simple insertion sort to avoid importing sort).
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+}
