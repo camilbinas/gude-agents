@@ -106,3 +106,13 @@ func WithContextFormatter(f ContextFormatter) Option {
 		return nil
 	}
 }
+
+// WithThinkingCallback sets a callback that receives thinking/reasoning chunks in real-time.
+// The callback is called as the model reasons, before the final answer is streamed.
+// Only fires when the provider has thinking enabled (e.g. WithThinking, WithReasoningEffort).
+func WithThinkingCallback(cb ThinkingCallback) Option {
+	return func(a *Agent) error {
+		a.thinkingCallback = cb
+		return nil
+	}
+}

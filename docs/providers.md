@@ -78,10 +78,32 @@ Sets a custom AWS region. If not specified, falls back to the `AWS_REGION` envir
 #### `WithMaxTokens`
 
 ```go
-func WithMaxTokens(n int32) Option
+func WithMaxTokens(n int64) Option
 ```
 
-Sets the maximum number of tokens the model can generate in a response. Defaults to 8192.
+Sets the maximum number of tokens the model can generate in a response.
+
+#### `WithThinking`
+
+```go
+func WithThinking(effort string) Option
+```
+
+Enables extended thinking at the given effort level. Use the shared constants from the `provider` package:
+
+```go
+import pvdr "github.com/camilbinas/gude-agents/agent/provider"
+
+provider, _ := bedrock.ClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingHigh))
+```
+
+| Constant | Value | Token budget |
+|---|---|---|
+| `pvdr.ThinkingLow` | `"low"` | 2 048 |
+| `pvdr.ThinkingMedium` | `"medium"` | 8 192 |
+| `pvdr.ThinkingHigh` | `"high"` | 16 384 |
+
+Only supported on Claude 4-series models and Nova 2 Lite. Silently ignored for other models. See [Extended Thinking](#extended-thinking) for details.
 
 ### AWS Credentials
 
@@ -240,11 +262,28 @@ Sets the Anthropic API key programmatically. If not set, the SDK reads from the 
 func WithMaxTokens(n int64) Option
 ```
 
-Sets the maximum number of tokens the model can generate in a response. Defaults to 8192.
+Sets the maximum number of tokens the model can generate in a response.
 
-### Convenience Model Functions
+#### `WithThinking`
 
-Each function returns a `(*AnthropicProvider, error)` with no options (the API key comes from the environment):
+```go
+func WithThinking(effort string) Option
+```
+
+Enables extended thinking at the given effort level. Internally maps the effort level to a token budget sent to the Anthropic API. Use the shared constants from the `provider` package:
+
+```go
+import pvdr "github.com/camilbinas/gude-agents/agent/provider"
+
+provider, _ := anthropic.New("claude-sonnet-4-6",
+    anthropic.WithThinking(pvdr.ThinkingHigh),
+    anthropic.WithMaxTokens(16000), // must exceed the thinking budget
+)
+```
+
+See [Extended Thinking](#extended-thinking) for details.
+
+### Convenience Model Functions (the API key comes from the environment):
 
 | Function | Model ID |
 |---|---|
@@ -343,11 +382,25 @@ Sets a custom base URL for OpenAI-compatible endpoints. Use this to point at Azu
 func WithMaxTokens(n int64) Option
 ```
 
-Sets the maximum number of tokens the model can generate in a response. Defaults to 8192.
+Sets the maximum number of tokens the model can generate in a response.
+
+#### `WithThinking`
+
+```go
+func WithThinking(effort string) Option
+```
+
+Sets the reasoning effort for o-series and reasoning-capable models. Mapped to OpenAI's `reasoning_effort` parameter. Use the shared constants from the `provider` package:
+
+```go
+import pvdr "github.com/camilbinas/gude-agents/agent/provider"
+
+provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
+```
+
+See [Extended Thinking](#extended-thinking) for details.
 
 ### Convenience Model Functions
-
-Each function returns a `(*OpenAIProvider, error)` and accepts `...Option`:
 
 **GPT Models**
 
@@ -431,6 +484,64 @@ func main() {
 	fmt.Println(result)
 }
 ```
+
+## Extended Thinking
+
+Extended thinking lets models reason internally before producing a final answer. The reasoning process is separate from the response text and can be streamed in real-time via `WithThinkingCallback`.
+
+### Enabling Thinking
+
+All three providers use the same option:
+
+```go
+import pvdr "github.com/camilbinas/gude-agents/agent/provider"
+
+// Anthropic
+provider, _ := anthropic.New("claude-sonnet-4-6",
+    anthropic.WithThinking(pvdr.ThinkingHigh),
+    anthropic.WithMaxTokens(16000),
+)
+
+// Bedrock (Claude or Nova 2 Lite)
+provider, _ := bedrock.ClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingMedium))
+
+// OpenAI (o-series models)
+provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
+```
+
+### Effort Levels
+
+| Constant | Value | Anthropic/Bedrock Claude | Bedrock Nova 2 | OpenAI |
+|---|---|---|---|---|
+| `pvdr.ThinkingLow` | `"low"` | 2 048 token budget | `low` effort | `low` effort |
+| `pvdr.ThinkingMedium` | `"medium"` | 8 192 token budget | `medium` effort | `medium` effort |
+| `pvdr.ThinkingHigh` | `"high"` | 16 384 token budget | `high` effort | `high` effort |
+
+### Supported Models
+
+| Provider | Supported models |
+|---|---|
+| Anthropic | All Claude 4-series (`claude-haiku-4-5`, `claude-sonnet-4-*`, `claude-opus-4-*`) |
+| Bedrock | Same Claude 4-series via Bedrock + `Nova2Lite` |
+| OpenAI | `o3`, `o3-mini`, `o4-mini` and other o-series reasoning models |
+
+`WithThinking` is silently ignored for models that don't support it.
+
+### Streaming Thinking Output
+
+Use `WithThinkingCallback` on the agent to receive reasoning chunks in real-time:
+
+```go
+a, _ := agent.Default(provider, instructions, nil,
+    agent.WithThinkingCallback(func(chunk string) {
+        fmt.Print(chunk) // stream reasoning to the user
+    }),
+)
+```
+
+The thinking callback fires before the answer streams. OpenAI does not expose reasoning tokens in the stream, so the callback never fires for OpenAI providers.
+
+See `examples/thinking` for a complete working example.
 
 ## Implementing a Custom Provider
 

@@ -139,6 +139,33 @@ type Retriever interface {
 }
 ```
 
+### `WithThinkingCallback`
+
+```go
+func WithThinkingCallback(cb ThinkingCallback) Option
+```
+
+Sets a callback that receives the model's internal reasoning chunks in real-time, streamed before the final answer. Only fires when the provider has thinking enabled via `WithThinking`.
+
+```go
+type ThinkingCallback func(chunk string)
+```
+
+```go
+provider, _ := anthropic.New("claude-sonnet-4-6",
+    anthropic.WithThinking(pvdr.ThinkingHigh),
+    anthropic.WithMaxTokens(16000),
+)
+
+a, _ := agent.Default(provider, instructions, nil,
+    agent.WithThinkingCallback(func(chunk string) {
+        fmt.Print(chunk) // stream reasoning to stdout
+    }),
+)
+```
+
+See [Providers](providers.md#extended-thinking) for which models support thinking.
+
 ### `WithContextFormatter`
 
 ```go

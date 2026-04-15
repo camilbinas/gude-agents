@@ -33,6 +33,7 @@ type Agent struct {
 	tokenBudget      int              // 0 = no budget
 	retriever        Retriever        // nil = no RAG
 	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
+	thinkingCallback ThinkingCallback // nil = discard thinking chunks
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -174,9 +175,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		}
 
 		resp, err := a.provider.ConverseStream(ctx, ConverseParams{
-			Messages:   messages,
-			System:     systemPrompt,
-			ToolConfig: a.toolSpecs,
+			Messages:         messages,
+			System:           systemPrompt,
+			ToolConfig:       a.toolSpecs,
+			ThinkingCallback: a.thinkingCallback,
 		}, streamCB)
 
 		if err != nil {

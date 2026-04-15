@@ -3,25 +3,25 @@ package bedrock
 // Anthropic Claude models (EU cross-region inference).
 // Documented in docs/providers.md — update when adding or removing models.
 func ClaudeHaiku4_5(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-haiku-4-5-20251001-v1:0", opts...)
+	return New("eu.anthropic.claude-haiku-4-5-20251001-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeSonnet4(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-sonnet-4-20250514-v1:0", opts...)
+	return New("eu.anthropic.claude-sonnet-4-20250514-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-sonnet-4-5-20250929-v1:0", opts...)
+	return New("eu.anthropic.claude-sonnet-4-5-20250929-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-sonnet-4-6", opts...)
+	return New("eu.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeOpus4(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-opus-4-6-v1", opts...)
+	return New("eu.anthropic.claude-opus-4-6-v1", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeOpus4_5(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-opus-4-5-20251101-v1:0", opts...)
+	return New("eu.anthropic.claude-opus-4-5-20251101-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeOpus4_6(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-opus-4-6-v1", opts...)
+	return New("eu.anthropic.claude-opus-4-6-v1", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 
 // Amazon Nova models (EU cross-region inference).
@@ -31,11 +31,11 @@ func NovaMicro(opts ...Option) (*BedrockProvider, error) {
 func NovaLite(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.amazon.nova-lite-v1:0", opts...)
 }
-func Nova2Lite(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.amazon.nova-2-lite-v1:0", opts...)
-}
 func NovaPro(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.amazon.nova-pro-v1:0", opts...)
+}
+func Nova2Lite(opts ...Option) (*BedrockProvider, error) {
+	return New("eu.amazon.nova-2-lite-v1:0", append([]Option{withThinkingStyle(thinkingStyleNova2)}, opts...)...)
 }
 
 // Qwen models (on-demand).

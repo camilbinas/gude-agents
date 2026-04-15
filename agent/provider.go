@@ -68,10 +68,11 @@ func (u TokenUsage) Total() int {
 // ConverseParams holds the inputs for a Provider call.
 // Documented in docs/message-types.md — update when changing fields.
 type ConverseParams struct {
-	Messages   []Message
-	System     string
-	ToolConfig []tool.Spec
-	ToolChoice *tool.Choice // nil = provider default (auto)
+	Messages         []Message
+	System           string
+	ToolConfig       []tool.Spec
+	ToolChoice       *tool.Choice     // nil = provider default (auto)
+	ThinkingCallback ThinkingCallback // optional; called with thinking chunks during streaming
 }
 
 // ProviderResponse is the result of an LLM call.
@@ -80,11 +81,17 @@ type ProviderResponse struct {
 	Text      string
 	ToolCalls []tool.Call
 	Usage     TokenUsage
+	Metadata  map[string]any // optional provider-specific extras (e.g. "thinking")
 }
 
 // StreamCallback receives incremental text chunks during streaming.
 // Documented in docs/message-types.md — update when changing signature.
 type StreamCallback func(chunk string)
+
+// ThinkingCallback receives incremental thinking/reasoning chunks during streaming.
+// Called in real-time as the model reasons, before the final answer is produced.
+// Only invoked when the provider has thinking enabled (e.g. WithThinking, WithReasoningEffort).
+type ThinkingCallback func(chunk string)
 
 // Provider abstracts an LLM backend.
 // Documented in docs/providers.md — update when changing interface methods.

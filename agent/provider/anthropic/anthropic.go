@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 
 	"github.com/camilbinas/gude-agents/agent"
+	pvdr "github.com/camilbinas/gude-agents/agent/provider"
 	"github.com/camilbinas/gude-agents/agent/tool"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
@@ -16,17 +17,19 @@ import (
 
 // AnthropicProvider implements agent.Provider using the Anthropic Messages API.
 type AnthropicProvider struct {
-	client    anthropicsdk.Client
-	model     anthropicsdk.Model
-	maxTokens int64
+	client        anthropicsdk.Client
+	model         anthropicsdk.Model
+	maxTokens     int64
+	thinkingLevel string // "low", "medium", "high" — empty = disabled
 }
 
 // Option configures the AnthropicProvider.
 type Option func(*options)
 
 type options struct {
-	apiKey    string
-	maxTokens int64
+	apiKey        string
+	maxTokens     int64
+	thinkingLevel string // "low", "medium", "high" — empty = disabled
 }
 
 // WithAPIKey sets the Anthropic API key. Defaults to ANTHROPIC_API_KEY env var.
@@ -34,14 +37,20 @@ func WithAPIKey(key string) Option {
 	return func(o *options) { o.apiKey = key }
 }
 
-// WithMaxTokens sets the max tokens for responses. Defaults to 4096.
+// WithMaxTokens sets the max tokens for responses.
 func WithMaxTokens(n int64) Option {
 	return func(o *options) { o.maxTokens = n }
 }
 
+// WithThinking enables extended thinking at the given effort level.
+// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
+func WithThinking(effort string) Option {
+	return func(o *options) { o.thinkingLevel = effort }
+}
+
 // New creates a new AnthropicProvider.
 func New(model string, opts ...Option) (*AnthropicProvider, error) {
-	o := &options{maxTokens: 8192}
+	o := &options{maxTokens: pvdr.DefaultMaxTokens}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -52,13 +61,12 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 	}
 
 	return &AnthropicProvider{
-		client:    anthropicsdk.NewClient(clientOpts...),
-		model:     anthropicsdk.Model(model),
-		maxTokens: o.maxTokens,
+		client:        anthropicsdk.NewClient(clientOpts...),
+		model:         anthropicsdk.Model(model),
+		maxTokens:     o.maxTokens,
+		thinkingLevel: o.thinkingLevel,
 	}, nil
 }
-
-// ModelId returns the model ID this provider is configured to use.
 func (p *AnthropicProvider) ModelId() string { return string(p.model) }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +95,8 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 
 	resp := &agent.ProviderResponse{}
 	var currentToolID, currentToolName, currentToolInput string
+	var currentThinking string
+	var inThinkingBlock bool
 
 	for stream.Next() {
 		event := stream.Current()
@@ -94,10 +104,14 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 		switch event.Type {
 		case "content_block_start":
 			ev := event.AsContentBlockStart()
-			if ev.ContentBlock.Type == "tool_use" {
+			switch ev.ContentBlock.Type {
+			case "tool_use":
 				currentToolID = ev.ContentBlock.ID
 				currentToolName = ev.ContentBlock.Name
 				currentToolInput = ""
+			case "thinking":
+				inThinkingBlock = true
+				currentThinking = ""
 			}
 
 		case "content_block_delta":
@@ -110,6 +124,11 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 				}
 			case "input_json_delta":
 				currentToolInput += ev.Delta.PartialJSON
+			case "thinking_delta":
+				currentThinking += ev.Delta.Thinking
+				if cb != nil && params.ThinkingCallback != nil {
+					params.ThinkingCallback(ev.Delta.Thinking)
+				}
 			}
 
 		case "content_block_stop":
@@ -126,6 +145,16 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 				currentToolID = ""
 				currentToolName = ""
 				currentToolInput = ""
+			}
+			if inThinkingBlock {
+				// Stash thinking text so callers can inspect it if needed.
+				if resp.Metadata == nil {
+					resp.Metadata = map[string]any{}
+				}
+				existing, _ := resp.Metadata["thinking"].(string)
+				resp.Metadata["thinking"] = existing + currentThinking
+				inThinkingBlock = false
+				currentThinking = ""
 			}
 
 		case "message_start":
@@ -165,6 +194,9 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 	}
 	if params.ToolChoice != nil {
 		input.ToolChoice = toAnthropicToolChoice(params.ToolChoice)
+	}
+	if p.thinkingLevel != "" {
+		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(pvdr.ThinkingBudgets[p.thinkingLevel])
 	}
 	return input
 }

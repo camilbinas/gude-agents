@@ -104,10 +104,11 @@ Holds the result of a tool execution. Sent back to the LLM as part of a user-rol
 
 ```go
 type ConverseParams struct {
-    Messages   []Message
-    System     string
-    ToolConfig []tool.Spec
-    ToolChoice *tool.Choice
+    Messages         []Message
+    System           string
+    ToolConfig       []tool.Spec
+    ToolChoice       *tool.Choice
+    ThinkingCallback ThinkingCallback
 }
 ```
 
@@ -119,6 +120,7 @@ type ConverseParams struct {
 | `System` | `string` | System prompt text |
 | `ToolConfig` | `[]tool.Spec` | Tool specifications the LLM can choose from |
 | `ToolChoice` | `*tool.Choice` | Controls tool selection behavior; `nil` means provider default (auto) |
+| `ThinkingCallback` | `ThinkingCallback` | Optional callback for streaming thinking chunks; set via `WithThinkingCallback` |
 
 `tool.Spec` and `tool.Choice` are defined in the `tool` sub-package (`github.com/camilbinas/gude-agents/agent/tool`). See [Tool System](tools.md) for details.
 
@@ -129,6 +131,7 @@ type ProviderResponse struct {
     Text      string
     ToolCalls []tool.Call
     Usage     TokenUsage
+    Metadata  map[string]any
 }
 ```
 
@@ -139,6 +142,7 @@ type ProviderResponse struct {
 | `Text` | `string` | The LLM's text response (empty when the model only returns tool calls) |
 | `ToolCalls` | `[]tool.Call` | Tool invocation requests from the LLM |
 | `Usage` | `TokenUsage` | Token consumption for this single provider call |
+| `Metadata` | `map[string]any` | Optional provider-specific extras. Currently used to store the full thinking text under the key `"thinking"` when extended thinking is enabled. |
 
 `tool.Call` is defined as:
 
@@ -173,6 +177,16 @@ type StreamCallback func(chunk string)
 `StreamCallback` receives incremental text chunks during streaming. Passed to `Provider.ConverseStream` and `Agent.InvokeStream` to deliver the LLM's response in real-time.
 
 When output guardrails are configured on the agent, chunks are buffered until all guardrails pass. See [Guardrails](guardrails.md) for details.
+
+## ThinkingCallback
+
+```go
+type ThinkingCallback func(chunk string)
+```
+
+`ThinkingCallback` receives incremental thinking/reasoning chunks during streaming. Called in real-time as the model reasons internally, before the final answer is produced. Only fires when the provider has thinking enabled (via `WithThinking`).
+
+Set on the agent via `WithThinkingCallback`. See [Providers](providers.md#extended-thinking) for which models support thinking.
 
 ## Document
 

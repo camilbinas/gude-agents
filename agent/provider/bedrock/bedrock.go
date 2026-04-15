@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	pvdr "github.com/camilbinas/gude-agents/agent/provider"
 	"github.com/camilbinas/gude-agents/agent/tool"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -20,19 +21,52 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
+// thinkingStyle describes how a model accepts thinking/reasoning configuration.
+type thinkingStyle int
+
+const (
+	thinkingStyleNone   thinkingStyle = iota // model does not support thinking
+	thinkingStyleClaude                      // {"thinking": {"type": "enabled", "budget_tokens": N}}
+	thinkingStyleNova2                       // {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "..."}}
+)
+
 // BedrockProvider implements agent.Provider using the AWS Bedrock runtime.
 type BedrockProvider struct {
-	client    *bedrockruntime.Client
-	model     string
-	maxTokens int32
+	client        *bedrockruntime.Client
+	model         string
+	maxTokens     int32
+	thinkingStyle thinkingStyle // set by model constructors
+	thinkingLevel string        // "low", "medium", "high" — empty = disabled
+}
+
+// thinkingFields builds the AdditionalModelRequestFields for extended thinking.
+// Claude: {"thinking": {"type": "enabled", "budget_tokens": N}}
+// Nova 2: {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "low|medium|high"}}
+func (p *BedrockProvider) thinkingFields() document.Interface {
+	if p.thinkingStyle == thinkingStyleClaude {
+		return document.NewLazyDocument(map[string]any{
+			"thinking": map[string]any{
+				"type":          "enabled",
+				"budget_tokens": pvdr.ThinkingBudgets[p.thinkingLevel],
+			},
+		})
+	}
+	return document.NewLazyDocument(map[string]any{
+		"reasoningConfig": map[string]any{
+			"type":               "enabled",
+			"maxReasoningEffort": p.thinkingLevel,
+		},
+	})
 }
 
 // Option configures the BedrockProvider.
 type Option func(*options)
 
 type options struct {
-	region    string
-	maxTokens int32
+	region        string
+	maxTokens     int32
+	thinkingLevel string
+	thinkingStyle thinkingStyle
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
@@ -40,15 +74,27 @@ func WithRegion(region string) Option {
 	return func(o *options) { o.region = region }
 }
 
-// WithMaxTokens sets the maximum number of tokens in the response. Defaults to 4096.
-func WithMaxTokens(n int32) Option {
-	return func(o *options) { o.maxTokens = n }
+// WithMaxTokens sets the maximum number of tokens in the response.
+func WithMaxTokens(n int64) Option {
+	return func(o *options) { o.maxTokens = int32(n) }
+}
+
+// WithThinking enables extended thinking at the given effort level.
+// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
+// For Claude models this sets a token budget; for Nova 2 it sets maxReasoningEffort directly.
+func WithThinking(effort string) Option {
+	return func(o *options) { o.thinkingLevel = effort }
+}
+
+// withThinkingStyle sets the thinking API shape for the model. Used by model constructors only.
+func withThinkingStyle(s thinkingStyle) Option {
+	return func(o *options) { o.thinkingStyle = s }
 }
 
 // New creates a new BedrockProvider. It loads AWS config from the default
 // credential chain and accepts optional configuration.
 func New(model string, opts ...Option) (*BedrockProvider, error) {
-	o := &options{maxTokens: 8192}
+	o := &options{maxTokens: pvdr.DefaultMaxTokens}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -70,9 +116,11 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 	}
 
 	return &BedrockProvider{
-		client:    bedrockruntime.NewFromConfig(cfg),
-		model:     model,
-		maxTokens: o.maxTokens,
+		client:        bedrockruntime.NewFromConfig(cfg),
+		model:         model,
+		maxTokens:     o.maxTokens,
+		thinkingStyle: o.thinkingStyle,
+		thinkingLevel: o.thinkingLevel,
 	}, nil
 }
 
@@ -102,6 +150,9 @@ func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConversePar
 			tc.ToolChoice = bc
 		}
 		input.ToolConfig = tc
+	}
+	if p.thinkingLevel != "" && p.thinkingStyle != thinkingStyleNone {
+		input.AdditionalModelRequestFields = p.thinkingFields()
 	}
 
 	out, err := p.client.Converse(ctx, input)
@@ -143,6 +194,14 @@ func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResp
 				Name:      aws.ToString(b.Value.Name),
 				Input:     raw,
 			})
+		case *types.ContentBlockMemberReasoningContent:
+			if rt, ok := b.Value.(*types.ReasoningContentBlockMemberReasoningText); ok {
+				if resp.Metadata == nil {
+					resp.Metadata = map[string]any{}
+				}
+				existing, _ := resp.Metadata["thinking"].(string)
+				resp.Metadata["thinking"] = existing + aws.ToString(rt.Value.Text)
+			}
 		}
 	}
 	return resp
@@ -174,6 +233,9 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 		}
 		input.ToolConfig = tc
 	}
+	if p.thinkingLevel != "" && p.thinkingStyle != thinkingStyleNone {
+		input.AdditionalModelRequestFields = p.thinkingFields()
+	}
 
 	out, err := p.client.ConverseStream(ctx, input)
 	if err != nil {
@@ -182,8 +244,8 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 
 	resp := &agent.ProviderResponse{}
 
-	// Track in-flight tool use block being assembled from deltas.
 	var currentToolName, currentToolID, currentToolInput string
+	var currentReasoning string
 
 	stream := out.GetStream()
 	for event := range stream.Events() {
@@ -204,22 +266,37 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 				}
 			case *types.ContentBlockDeltaMemberToolUse:
 				currentToolInput += aws.ToString(delta.Value.Input)
+			case *types.ContentBlockDeltaMemberReasoningContent:
+				if td, ok := delta.Value.(*types.ReasoningContentBlockDeltaMemberText); ok {
+					currentReasoning += td.Value
+					if params.ThinkingCallback != nil {
+						params.ThinkingCallback(td.Value)
+					}
+				}
 			}
 
 		case *types.ConverseStreamOutputMemberContentBlockStop:
 			if currentToolName != "" {
-				input := json.RawMessage(currentToolInput)
-				if len(input) == 0 {
-					input = json.RawMessage(`{}`)
+				raw := json.RawMessage(currentToolInput)
+				if len(raw) == 0 {
+					raw = json.RawMessage(`{}`)
 				}
 				resp.ToolCalls = append(resp.ToolCalls, tool.Call{
 					ToolUseID: currentToolID,
 					Name:      currentToolName,
-					Input:     input,
+					Input:     raw,
 				})
 				currentToolName = ""
 				currentToolID = ""
 				currentToolInput = ""
+			}
+			if currentReasoning != "" {
+				if resp.Metadata == nil {
+					resp.Metadata = map[string]any{}
+				}
+				existing, _ := resp.Metadata["thinking"].(string)
+				resp.Metadata["thinking"] = existing + currentReasoning
+				currentReasoning = ""
 			}
 
 		case *types.ConverseStreamOutputMemberMetadata:

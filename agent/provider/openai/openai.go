@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent"
+	pvdr "github.com/camilbinas/gude-agents/agent/provider"
 	"github.com/camilbinas/gude-agents/agent/tool"
 
 	openaisdk "github.com/openai/openai-go/v3"
@@ -18,18 +19,20 @@ import (
 
 // OpenAIProvider implements agent.Provider using the OpenAI Chat Completions API.
 type OpenAIProvider struct {
-	client    *openaisdk.Client
-	model     string
-	maxTokens int64
+	client        *openaisdk.Client
+	model         string
+	maxTokens     int64
+	thinkingLevel string // "low", "medium", "high" — mapped to OpenAI's reasoning_effort
 }
 
 // Option configures the OpenAIProvider.
 type Option func(*options)
 
 type options struct {
-	apiKey    string
-	baseURL   string
-	maxTokens int64
+	apiKey        string
+	baseURL       string
+	maxTokens     int64
+	thinkingLevel string // "" = not set
 }
 
 // WithAPIKey sets the OpenAI API key. Defaults to OPENAI_API_KEY env var.
@@ -42,14 +45,20 @@ func WithBaseURL(url string) Option {
 	return func(o *options) { o.baseURL = url }
 }
 
-// WithMaxTokens sets the max tokens for responses. Defaults to 4096.
+// WithMaxTokens sets the max tokens for responses.
 func WithMaxTokens(n int64) Option {
 	return func(o *options) { o.maxTokens = n }
 }
 
+// WithThinking sets the reasoning effort for o-series and reasoning-capable models.
+// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
+func WithThinking(effort string) Option {
+	return func(o *options) { o.thinkingLevel = effort }
+}
+
 // New creates a new OpenAIProvider.
 func New(model string, opts ...Option) (*OpenAIProvider, error) {
-	o := &options{maxTokens: 8192}
+	o := &options{maxTokens: pvdr.DefaultMaxTokens}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -64,9 +73,10 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 
 	client := openaisdk.NewClient(clientOpts...)
 	return &OpenAIProvider{
-		client:    &client,
-		model:     model,
-		maxTokens: o.maxTokens,
+		client:        &client,
+		model:         model,
+		maxTokens:     o.maxTokens,
+		thinkingLevel: o.thinkingLevel,
 	}, nil
 }
 
@@ -193,6 +203,9 @@ func (p *OpenAIProvider) buildParams(params agent.ConverseParams) openaisdk.Chat
 	}
 	if params.ToolChoice != nil {
 		input.ToolChoice = toOpenAIToolChoice(params.ToolChoice)
+	}
+	if p.thinkingLevel != "" {
+		input.ReasoningEffort = shared.ReasoningEffort(p.thinkingLevel)
 	}
 	return input
 }
