@@ -5,17 +5,11 @@ package bedrock
 func ClaudeHaiku4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-haiku-4-5-20251001-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
-func ClaudeSonnet4(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-sonnet-4-20250514-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
-}
 func ClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-sonnet-4-5-20250929-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
-}
-func ClaudeOpus4(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-opus-4-6-v1", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func ClaudeOpus4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-4-5-20251101-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)

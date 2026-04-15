@@ -125,10 +125,8 @@ Each function returns a `(*BedrockProvider, error)` and accepts `...Option`:
 | Function | Model ID |
 |---|---|
 | `ClaudeHaiku4_5()` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `ClaudeSonnet4()` | `eu.anthropic.claude-sonnet-4-20250514-v1:0` |
 | `ClaudeSonnet4_5()` | `eu.anthropic.claude-sonnet-4-5-20250929-v1:0` |
 | `ClaudeSonnet4_6()` | `eu.anthropic.claude-sonnet-4-6` |
-| `ClaudeOpus4()` | `eu.anthropic.claude-opus-4-6-v1` |
 | `ClaudeOpus4_5()` | `eu.anthropic.claude-opus-4-5-20251101-v1:0` |
 | `ClaudeOpus4_6()` | `eu.anthropic.claude-opus-4-6-v1` |
 
