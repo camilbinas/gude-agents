@@ -34,6 +34,7 @@ type Agent struct {
 	retriever        Retriever        // nil = no RAG
 	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
 	thinkingCallback ThinkingCallback // nil = discard thinking chunks
+	syncMemory       bool             // if true, call Wait() on memory after each Save
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -249,6 +250,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				// Save to memory so HTTP callers can resume in a different request.
 				if a.memory != nil {
 					_ = a.memory.Save(ctx, convID, messages[ragOffset:])
+					if a.syncMemory {
+						if w, ok := a.memory.(MemoryWaiter); ok {
+							w.Wait()
+						}
+					}
 				}
 				return cumulative, ErrHandoffRequested
 			}
@@ -295,6 +301,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		if a.memory != nil {
 			if err := a.memory.Save(ctx, convID, messages[ragOffset:]); err != nil {
 				return cumulative, fmt.Errorf("memory save: %w", err)
+			}
+			if a.syncMemory {
+				if w, ok := a.memory.(MemoryWaiter); ok {
+					w.Wait()
+				}
 			}
 		}
 

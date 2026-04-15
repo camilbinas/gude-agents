@@ -34,6 +34,7 @@ func main() {
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
 		agent.WithMemory(summarized, "summary-demo"),
+		agent.WithSynchronousMemory(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -58,12 +59,8 @@ func main() {
 		fmt.Printf("Turn %d: %s\n", i+1, result)
 	}
 
-	// Wait for background summarization to finish.
-	// Summarization runs in a goroutine and saves the condensed messages back
-	// to the store. The next Invoke will load the summarized history.
-	summarized.Wait()
-
-	// Turn 9 — the agent loads the summarized history from the store.
+	// With WithSynchronousMemory(), each Invoke blocks until background
+	// summarization finishes before returning — no manual Wait() needed.
 	// This demonstrates that summarization is transparent: the agent still
 	// knows everything about Bob despite the condensed message count.
 	result, _, err := a.Invoke(ctx, "Remind me what city I live in.")

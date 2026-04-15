@@ -116,3 +116,13 @@ func WithThinkingCallback(cb ThinkingCallback) Option {
 		return nil
 	}
 }
+
+// WithSynchronousMemory makes the agent call Wait() on the memory after each Save,
+// blocking until any background work (e.g. summarization) is complete before
+// returning from Invoke. Only has an effect if the memory implements MemoryWaiter.
+func WithSynchronousMemory() Option {
+	return func(a *Agent) error {
+		a.syncMemory = true
+		return nil
+	}
+}
