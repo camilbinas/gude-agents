@@ -232,6 +232,9 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		return
 	}
 	success = true
+	if s.logger != nil {
+		s.logger.Printf("summary: condensed %d messages → %d (conversation %q)", cutoff, len(newMsgs), conversationID)
+	}
 
 	// If the merged result is already above the trigger threshold (fast-paced
 	// conversation that grew during the LLM call), re-trigger immediately.
