@@ -74,11 +74,17 @@ func NewSummary(inner agent.Memory, threshold int, fn SummaryFunc, opts ...Summa
 	return s
 }
 
-// DefaultSummaryFunc returns a SummaryFunc that uses the given Provider to
-// condense messages into a single summary. This is the batteries-included
-// default — pass it to NewSummary so you don't have to write your own.
-// Documented in docs/memory.md — update when changing behavior.
-func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
+// NewSummaryFunc returns a SummaryFunc that uses the given Provider and system prompt
+// to condense messages. Use this to customise what the summariser focuses on without
+// having to deal with message formatting or provider calls directly.
+//
+// Example:
+//
+//	memory.NewSummaryFunc(provider,
+//	    "Summarise this analytics conversation. Preserve table names, "+
+//	    "domain metrics, and specific numbers.",
+//	)
+func NewSummaryFunc(provider agent.Provider, systemPrompt string) SummaryFunc {
 	return func(ctx context.Context, msgs []agent.Message) (agent.Message, error) {
 		var sb strings.Builder
 		for _, m := range msgs {
@@ -93,15 +99,14 @@ func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
 		}
 
 		resp, err := provider.Converse(ctx, agent.ConverseParams{
-			System: "Summarize the following conversation into a single concise paragraph. " +
-				"Preserve all key facts, names, and decisions.",
+			System: systemPrompt,
 			Messages: []agent.Message{{
 				Role:    agent.RoleUser,
 				Content: []agent.ContentBlock{agent.TextBlock{Text: sb.String()}},
 			}},
 		})
 		if err != nil {
-			return agent.Message{}, fmt.Errorf("default summary func: %w", err)
+			return agent.Message{}, fmt.Errorf("summary func: %w", err)
 		}
 
 		return agent.Message{
@@ -109,6 +114,17 @@ func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
 			Content: []agent.ContentBlock{agent.TextBlock{Text: resp.Text}},
 		}, nil
 	}
+}
+
+// DefaultSummaryFunc returns a SummaryFunc that uses the given Provider to
+// condense messages into a single summary. This is the batteries-included
+// default — pass it to NewSummary so you don't have to write your own.
+// Documented in docs/memory.md — update when changing behavior.
+func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
+	return NewSummaryFunc(provider,
+		"Summarize the following conversation into a single concise paragraph. "+
+			"Preserve all key facts, names, and decisions.",
+	)
 }
 
 // Load delegates to the inner store and returns the current state,
