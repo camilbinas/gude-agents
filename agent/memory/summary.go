@@ -55,6 +55,7 @@ type Summary struct {
 	summarizing    map[string]bool // per-conversation summarization lock
 	summarized     map[string]bool // set after summarization completes; cleared when count drops below threshold
 	pendingSummary map[string]*summaryState
+	wg             sync.WaitGroup // tracks all in-flight summarization goroutines
 }
 
 // NewSummary creates a Summary strategy that triggers background summarization
@@ -158,6 +159,7 @@ func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.
 	s.pendingSummary[conversationID] = &summaryState{cutoffIndex: cutoff}
 	s.mu.Unlock()
 
+	s.wg.Add(1)
 	go s.runSummarize(conversationID, cutoff)
 
 	return nil
@@ -165,6 +167,7 @@ func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.
 
 // runSummarize performs background summarization for a conversation.
 func (s *Summary) runSummarize(conversationID string, cutoff int) {
+	defer s.wg.Done()
 	ctx := context.Background()
 	success := false
 	reTriggered := false
@@ -262,6 +265,14 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		// summarizing[conv] stays true — the new goroutine inherits it.
 		s.pendingSummary[conversationID] = &summaryState{cutoffIndex: newCutoff}
 		s.mu.Unlock()
+		s.wg.Add(1)
 		go s.runSummarize(conversationID, newCutoff)
 	}
+}
+
+// Wait blocks until all in-flight background summarization goroutines have
+// finished. Useful in tests and CLI tools where you want to inspect the store
+// immediately after the last Save.
+func (s *Summary) Wait() {
+	s.wg.Wait()
 }

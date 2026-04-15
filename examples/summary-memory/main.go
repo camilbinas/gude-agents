@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
@@ -20,12 +19,12 @@ func main() {
 
 	ctx := context.Background()
 
-	// Threshold of 6 messages — summarization triggers at 80% (~5 messages).
+	// Threshold of 20 messages — summarization triggers at 80% (16 messages).
 	// WithPreserveRecentMessages(2) keeps the last 2 messages out of the
 	// SummaryFunc, so they always appear verbatim after the summary.
 	store := memory.NewStore()
 	summarized := memory.NewSummary(
-		store, 6, memory.DefaultSummaryFunc(provider),
+		store, 20, memory.DefaultSummaryFunc(provider),
 		memory.WithSummaryLogger(log.Default()),
 		memory.WithPreserveRecentMessages(2),
 	)
@@ -43,6 +42,11 @@ func main() {
 	questions := []string{
 		"My name is Bob and I live in Berlin.",
 		"I work as a software engineer at a startup.",
+		"My favourite programming language is Go.",
+		"I have been coding for 10 years.",
+		"I enjoy hiking on weekends.",
+		"My favourite book is The Pragmatic Programmer.",
+		"I prefer working remotely.",
 		"What do you know about me so far?",
 	}
 
@@ -54,12 +58,24 @@ func main() {
 		fmt.Printf("Turn %d: %s\n", i+1, result)
 	}
 
-	// Give the background summarization goroutine time to finish.
-	time.Sleep(3 * time.Second)
+	// Wait for background summarization to finish.
+	// Summarization runs in a goroutine and saves the condensed messages back
+	// to the store. The next Invoke will load the summarized history.
+	summarized.Wait()
 
-	// Inspect the store after summarization.
+	// Turn 9 — the agent loads the summarized history from the store.
+	// This demonstrates that summarization is transparent: the agent still
+	// knows everything about Bob despite the condensed message count.
+	result, _, err := a.Invoke(ctx, "Remind me what city I live in.")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Turn %d: %s\n", len(questions)+1, result)
+
+	// Inspect the store — should show the summarized + recent messages,
+	// not the full original history.
 	msgs, _ := store.Load(ctx, "summary-demo")
-	fmt.Printf("\nMessages in store after summarization: %d\n", len(msgs))
+	fmt.Printf("\nMessages in store after Turn %d: %d\n", len(questions)+1, len(msgs))
 	for i, m := range msgs {
 		for _, b := range m.Content {
 			if tb, ok := b.(agent.TextBlock); ok {
