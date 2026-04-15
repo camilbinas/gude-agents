@@ -144,7 +144,7 @@ func TestRedisMemory_LoadNonExistent(t *testing.T) {
 }
 
 // TestRedisMemory_DefaultKeyPrefix verifies that a newly created RedisMemory
-// has the default key prefix "gude:memory:".
+// has the default key prefix "gude:".
 // Validates: Requirement 2.7
 func TestRedisMemory_DefaultKeyPrefix(t *testing.T) {
 	addr := skipIfNoRedis(t)
@@ -155,8 +155,8 @@ func TestRedisMemory_DefaultKeyPrefix(t *testing.T) {
 	}
 	defer mem.Close()
 
-	if mem.keyPrefix != "gude:memory:" {
-		t.Fatalf("expected default keyPrefix %q, got %q", "gude:memory:", mem.keyPrefix)
+	if mem.keyPrefix != "gude:" {
+		t.Fatalf("expected default keyPrefix %q, got %q", "gude:", mem.keyPrefix)
 	}
 }
 

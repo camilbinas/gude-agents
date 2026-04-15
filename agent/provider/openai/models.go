@@ -1,5 +1,7 @@
 package openai
 
+import rag "github.com/camilbinas/gude-agents/agent/rag/openai"
+
 // GPT models.
 // Documented in docs/providers.md — update when adding or removing models.
 func GPT4o(opts ...Option) (*OpenAIProvider, error)      { return New("gpt-4o", opts...) }
@@ -16,12 +18,12 @@ func O3(opts ...Option) (*OpenAIProvider, error)     { return New("o3", opts...)
 func O3Mini(opts ...Option) (*OpenAIProvider, error) { return New("o3-mini", opts...) }
 func O4Mini(opts ...Option) (*OpenAIProvider, error) { return New("o4-mini", opts...) }
 
-// Embedding models.
-func EmbeddingSmall(opts ...EmbedderOption) (*OpenAIEmbedder, error) {
-	return NewOpenAIEmbedder(append([]EmbedderOption{WithEmbedderModel("text-embedding-3-small")}, opts...)...)
+// Embedding models — forward to agent/rag/openai.
+func EmbeddingSmall(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
+	return rag.EmbeddingSmall(opts...)
 }
-func EmbeddingLarge(opts ...EmbedderOption) (*OpenAIEmbedder, error) {
-	return NewOpenAIEmbedder(append([]EmbedderOption{WithEmbedderModel("text-embedding-3-large")}, opts...)...)
+func EmbeddingLarge(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
+	return rag.EmbeddingLarge(opts...)
 }
 
 // Tier aliases — provider-agnostic shortcuts for common use cases.

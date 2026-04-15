@@ -6,12 +6,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/camilbinas/gude-agents/agent"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
+	"github.com/camilbinas/gude-agents/agent"
 )
 
 // Compile-time assertion that KnowledgeBaseRetriever satisfies agent.Retriever.
@@ -118,18 +117,14 @@ func (r *KnowledgeBaseRetriever) Retrieve(ctx context.Context, query string) ([]
 func mapBedrockResults(results []types.KnowledgeBaseRetrievalResult) []agent.Document {
 	docs := make([]agent.Document, 0, len(results))
 	for _, result := range results {
-		doc := agent.Document{
-			Metadata: make(map[string]string),
-		}
+		doc := agent.Document{Metadata: make(map[string]string)}
 
 		if result.Content != nil && result.Content.Text != nil {
 			doc.Content = *result.Content.Text
 		}
-
 		if result.Score != nil {
 			doc.Metadata["score"] = strconv.FormatFloat(*result.Score, 'f', -1, 64)
 		}
-
 		if result.Location != nil && result.Location.S3Location != nil && result.Location.S3Location.Uri != nil {
 			doc.Metadata["source"] = *result.Location.S3Location.Uri
 		}
@@ -140,7 +135,6 @@ func mapBedrockResults(results []types.KnowledgeBaseRetrievalResult) []agent.Doc
 }
 
 // filterByScore filters documents whose score metadata is below the threshold.
-// Returns []agent.Document{} (not nil) when no documents pass.
 func filterByScore(docs []agent.Document, threshold float64) []agent.Document {
 	if threshold <= 0.0 {
 		return docs

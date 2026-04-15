@@ -1,3 +1,11 @@
+// Package redis provides a Redis Stack (RediSearch) vector store for use with
+// the gude-agents RAG pipeline.
+//
+// Requires Redis Stack — NOT standard community Redis. The vector store uses
+// RediSearch commands (FT.CREATE, FT.SEARCH) that are only available in
+// Redis Stack. Run it locally with:
+//
+//	docker run -p 6379:6379 redis/redis-stack-server:latest
 package redis
 
 import (
@@ -11,33 +19,37 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	baseredis "github.com/camilbinas/gude-agents/agent/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// Compile-time check: RedisVectorStore implements agent.VectorStore.
-var _ agent.VectorStore = (*RedisVectorStore)(nil)
+// Compile-time check: VectorStore implements agent.VectorStore.
+var _ agent.VectorStore = (*VectorStore)(nil)
 
-// RedisVectorStoreOption configures a RedisVectorStore instance.
-type RedisVectorStoreOption func(*RedisVectorStore)
+// Options holds connection configuration for the Redis vector store.
+// It is an alias for agent/redis.Options so callers can use either package.
+type Options = baseredis.Options
+
+// VectorStoreOption configures a VectorStore instance.
+type VectorStoreOption func(*VectorStore)
 
 // WithHNSWM sets the HNSW M parameter. Default: 16.
-func WithHNSWM(m int) RedisVectorStoreOption {
-	return func(s *RedisVectorStore) {
+func WithHNSWM(m int) VectorStoreOption {
+	return func(s *VectorStore) {
 		s.hnswM = m
 	}
 }
 
 // WithHNSWEFConstruction sets the HNSW EF_CONSTRUCTION parameter. Default: 200.
-func WithHNSWEFConstruction(ef int) RedisVectorStoreOption {
-	return func(s *RedisVectorStore) {
+func WithHNSWEFConstruction(ef int) VectorStoreOption {
+	return func(s *VectorStore) {
 		s.hnswEF = ef
 	}
 }
 
-// RedisVectorStore implements agent.VectorStore using Redis Stack (RediSearch).
-// Documented in docs/redis.md — update when changing constructor, options, or HNSW config.
-type RedisVectorStore struct {
+// VectorStore implements agent.VectorStore using Redis Stack (RediSearch).
+type VectorStore struct {
 	client    *goredis.Client
 	indexName string
 	dim       int
@@ -45,12 +57,12 @@ type RedisVectorStore struct {
 	hnswEF    int
 }
 
-// NewRedisVectorStore creates a new RedisVectorStore. Pings Redis, then
-// creates the HNSW index via FT.CREATE if it doesn't already exist.
-func NewRedisVectorStore(opts RedisOptions, indexName string, dim int, vopts ...RedisVectorStoreOption) (*RedisVectorStore, error) {
-	client := newClient(opts)
+// New creates a new VectorStore. Pings Redis, then creates the HNSW index via
+// FT.CREATE if it doesn't already exist.
+func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*VectorStore, error) {
+	client := baseredis.NewClient(opts)
 
-	s := &RedisVectorStore{
+	s := &VectorStore{
 		client:    client,
 		indexName: indexName,
 		dim:       dim,
@@ -100,7 +112,7 @@ func float64sToFloat32Bytes(v []float64) []byte {
 }
 
 // Add stores documents and their embeddings as Redis hashes.
-func (s *RedisVectorStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) error {
+func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) error {
 	if len(docs) != len(embeddings) {
 		return fmt.Errorf("redis vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
@@ -131,7 +143,7 @@ func (s *RedisVectorStore) Add(ctx context.Context, docs []agent.Document, embed
 }
 
 // Search performs KNN similarity search using FT.SEARCH.
-func (s *RedisVectorStore) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
+func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("redis vectorstore: topK must be >= 1, got %d", topK)
 	}
@@ -150,14 +162,12 @@ func (s *RedisVectorStore) Search(ctx context.Context, queryEmbedding []float64,
 		return nil, fmt.Errorf("redis vectorstore: search: %w", err)
 	}
 
-	// Parse FT.SEARCH response: [totalCount, key1, fields1, key2, fields2, ...]
 	results, ok := res.([]interface{})
 	if !ok || len(results) < 1 {
 		return nil, nil
 	}
 
 	var scored []agent.ScoredDocument
-	// Skip first element (total count), then iterate pairs of (key, fields)
 	for i := 1; i+1 < len(results); i += 2 {
 		fields, ok := results[i+1].([]interface{})
 		if !ok {
@@ -201,7 +211,6 @@ func (s *RedisVectorStore) Search(ctx context.Context, queryEmbedding []float64,
 		})
 	}
 
-	// Sort by descending similarity (should already be sorted, but be explicit)
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].Score > scored[j].Score
 	})
@@ -210,6 +219,6 @@ func (s *RedisVectorStore) Search(ctx context.Context, queryEmbedding []float64,
 }
 
 // Close closes the underlying Redis client.
-func (s *RedisVectorStore) Close() error {
+func (s *VectorStore) Close() error {
 	return s.client.Close()
 }

@@ -1,3 +1,15 @@
+// Example: RAG agent backed by a Redis Stack vector store.
+//
+// Requires Redis Stack (NOT standard Redis) — the vector store uses RediSearch
+// commands (FT.CREATE, FT.SEARCH) that are only available in Redis Stack.
+//
+// Run Redis Stack locally:
+//
+//	docker run -p 6379:6379 redis/redis-stack-server:latest
+//
+// Then run this example:
+//
+//	REDIS_ADDR=localhost:6379 go run ./examples/redis-rag
 package main
 
 import (
@@ -10,7 +22,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
-	"github.com/camilbinas/gude-agents/agent/redis"
+	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+	ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
 )
 
 func main() {
@@ -19,15 +32,15 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	embedder, err := bedrock.TitanEmbedV2()
+	embedder, err := ragbedrock.TitanEmbedV2()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	store, err := redis.NewRedisVectorStore(
-		redis.RedisOptions{Addr: redisAddr},
-		"example-docs", // index name
-		1024,           // dimension (Titan Embed V2 outputs 1024)
+	store, err := ragredis.New(
+		ragredis.Options{Addr: redisAddr},
+		"example-docs",
+		1024, // Titan Embed V2 outputs 1024 dimensions
 	)
 	if err != nil {
 		log.Fatalf("redis vectorstore: %v", err)
@@ -36,20 +49,17 @@ func main() {
 
 	ctx := context.Background()
 
-	// Ingest some documents.
 	docs := []string{
 		"Go is a statically typed, compiled language designed at Google. It is syntactically similar to C but with memory safety and garbage collection.",
 		"Redis is an in-memory data structure store used as a database, cache, and message broker. It supports strings, hashes, lists, sets, and sorted sets.",
 		"Kubernetes is an open-source container orchestration platform that automates deployment, scaling, and management of containerized applications.",
 	}
 
-	err = rag.Ingest(ctx, store, embedder, docs, nil)
-	if err != nil {
+	if err = rag.Ingest(ctx, store, embedder, docs, nil); err != nil {
 		log.Fatalf("ingest: %v", err)
 	}
 	fmt.Printf("Ingested %d documents\n", len(docs))
 
-	// Create a retriever-backed agent.
 	provider, err := bedrock.ClaudeSonnet4_6()
 	if err != nil {
 		log.Fatal(err)

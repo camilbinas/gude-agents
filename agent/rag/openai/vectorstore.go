@@ -12,7 +12,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 )
 
-// VectorStoreRetriever implements agent.Retriever using the OpenAI Vector Store Search API.
+// Compile-time assertion that VectorStoreRetriever satisfies agent.Retriever.
 var _ agent.Retriever = (*VectorStoreRetriever)(nil)
 
 // VectorStoreRetriever retrieves documents from an OpenAI Vector Store.
@@ -55,9 +55,7 @@ func WithVectorStoreScoreThreshold(t float64) VectorStoreOption {
 
 // NewVectorStoreRetriever creates a new VectorStoreRetriever for the given vector store ID.
 func NewVectorStoreRetriever(vectorStoreID string, opts ...VectorStoreOption) (*VectorStoreRetriever, error) {
-	o := &vectorStoreOptions{
-		topK: 5,
-	}
+	o := &vectorStoreOptions{topK: 5}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -118,9 +116,7 @@ func (r *VectorStoreRetriever) Retrieve(ctx context.Context, query string) ([]ag
 func mapOpenAIResults(results []openaisdk.VectorStoreSearchResponse) []agent.Document {
 	docs := make([]agent.Document, 0, len(results))
 	for _, result := range results {
-		doc := agent.Document{
-			Metadata: make(map[string]string),
-		}
+		doc := agent.Document{Metadata: make(map[string]string)}
 
 		var sb strings.Builder
 		for _, block := range result.Content {
@@ -129,7 +125,6 @@ func mapOpenAIResults(results []openaisdk.VectorStoreSearchResponse) []agent.Doc
 			}
 		}
 		doc.Content = sb.String()
-
 		doc.Metadata["score"] = strconv.FormatFloat(result.Score, 'f', -1, 64)
 		doc.Metadata["filename"] = result.Filename
 		doc.Metadata["file_id"] = result.FileID
@@ -140,7 +135,6 @@ func mapOpenAIResults(results []openaisdk.VectorStoreSearchResponse) []agent.Doc
 }
 
 // filterByScore filters documents whose score metadata is below the threshold.
-// Returns []agent.Document{} (not nil) when no documents pass.
 func filterByScore(docs []agent.Document, threshold float64) []agent.Document {
 	if threshold <= 0.0 {
 		return docs

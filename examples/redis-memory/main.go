@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/memory/redis"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/redis"
 )
 
 func main() {

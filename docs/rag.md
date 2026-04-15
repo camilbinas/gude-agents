@@ -49,18 +49,19 @@ type Reranker interface {
 
 ### ContextFormatter
 
-Formats retrieved documents into a string for prompt injection. It's a function type, not an interface:
+Formats retrieved documents into a string for injection into the conversation. It's a function type, not an interface:
 
 ```go
 type ContextFormatter func(docs []Document) string
 ```
 
-`DefaultContextFormatter` formats documents as numbered items:
+`DefaultContextFormatter` formats documents as numbered items wrapped in `<retrieved_context>` XML tags:
 
 ```
-Relevant context:
+<retrieved_context>
 [1] First document content
 [2] Second document content
+</retrieved_context>
 ```
 
 ### Document Types
@@ -106,7 +107,7 @@ The retrieval pipeline runs in order: embed query → vector search → score th
 
 ## rag.MemoryStore
 
-`MemoryStore` is a brute-force cosine similarity vector store backed by a Go slice. It's safe for concurrent use via `sync.RWMutex`. Good for prototyping and tests — for production, use `redis.NewRedisVectorStore`.
+`MemoryStore` is a brute-force cosine similarity vector store backed by a Go slice. It's safe for concurrent use via `sync.RWMutex`. Good for prototyping and tests — for production, use `ragredis.New` from `agent/rag/redis`.
 
 ```go
 store := rag.NewMemoryStore()
@@ -167,23 +168,31 @@ Both split text into chunks of at most `chunkSize` runes with `chunkOverlap` run
 
 ### Bedrock — Titan Embed V2
 
+Import: `ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"`
+
 ```go
-embedder, err := bedrock.TitanEmbedV2()
+embedder, err := ragbedrock.TitanEmbedV2()
 ```
 
 Uses the `amazon.titan-embed-text-v2:0` model via the Bedrock InvokeModel API. Produces 1024-dimensional normalized vectors.
 
 | Option | Description |
 |--------|-------------|
-| `WithEmbedderRegion(region string)` | AWS region (defaults to `AWS_REGION` env var, then `us-east-1`) |
+| `WithRegion(region string)` | AWS region (defaults to `AWS_REGION` env var, then `us-east-1`) |
 
 Uses the default AWS credential chain.
 
+Other convenience constructors: `ragbedrock.CohereEmbedEnglishV3()`, `ragbedrock.CohereEmbedMultilingualV3()`, `ragbedrock.CohereEmbedV4()`.
+
+For a custom model ID use `ragbedrock.NewEmbedder(modelID, opts...)`.
+
 ### OpenAI — EmbeddingSmall / EmbeddingLarge
 
+Import: `ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"`
+
 ```go
-small, err := openai.EmbeddingSmall()
-large, err := openai.EmbeddingLarge()
+small, err := ragopenai.EmbeddingSmall()
+large, err := ragopenai.EmbeddingLarge()
 ```
 
 These are convenience constructors for `text-embedding-3-small` and `text-embedding-3-large` respectively.
@@ -194,18 +203,22 @@ These are convenience constructors for `text-embedding-3-small` and `text-embedd
 | `WithEmbedderBaseURL(url string)` | Custom base URL for OpenAI-compatible endpoints |
 | `WithEmbedderModel(model string)` | Override the model name |
 
+For a custom model use `ragopenai.NewEmbedder(opts...)` with `WithEmbedderModel`.
+
 ## Managed Retrievers
 
 Managed retrievers wrap cloud-hosted vector search services directly — no embedder or vector store setup required. Both implement `agent.Retriever` and work with `NewRetrieverTool` and `WithRetriever`.
 
 ### Bedrock Knowledge Base Retriever
 
+Import: `ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"`
+
 Wraps the AWS Bedrock Knowledge Bases `Retrieve` API:
 
 ```go
-retriever, err := bedrock.NewKnowledgeBaseRetriever("kb-xxxx",
-    bedrock.WithKnowledgeBaseTopK(5),
-    bedrock.WithKnowledgeBaseScoreThreshold(0.4),
+retriever, err := ragbedrock.NewKnowledgeBaseRetriever("kb-xxxx",
+    ragbedrock.WithKnowledgeBaseTopK(5),
+    ragbedrock.WithKnowledgeBaseScoreThreshold(0.4),
 )
 ```
 
@@ -222,12 +235,14 @@ Each returned `Document` has:
 
 ### OpenAI Vector Store Retriever
 
+Import: `ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"`
+
 Wraps the OpenAI Vector Store Search API:
 
 ```go
-retriever, err := openai.NewVectorStoreRetriever("vs-xxxx",
-    openai.WithVectorStoreTopK(5),
-    openai.WithVectorStoreScoreThreshold(0.4),
+retriever, err := ragopenai.NewVectorStoreRetriever("vs-xxxx",
+    ragopenai.WithVectorStoreTopK(5),
+    ragopenai.WithVectorStoreScoreThreshold(0.4),
 )
 ```
 
@@ -250,7 +265,7 @@ There are two ways to wire RAG into an agent:
 
 ### Automatic Retrieval — WithRetriever
 
-Attach a retriever to the agent with the `WithRetriever` option. The agent calls `Retrieve` once per invocation (before the first provider call) and injects the formatted documents into the system prompt.
+Attach a retriever to the agent with the `WithRetriever` option. The agent calls `Retrieve` once per invocation (before the first provider call) and injects the formatted documents as a user/assistant message turn in the conversation.
 
 ```go
 retriever := rag.NewRetriever(embedder, store, rag.WithTopK(3))
@@ -263,9 +278,9 @@ a, err := agent.Default(
 )
 ```
 
-The retriever is called exactly once per `Invoke`/`InvokeStream` call, regardless of how many tool iterations occur. Retrieved context is not persisted to memory.
+The retriever is called exactly once per `Invoke`/`InvokeStream` call, regardless of how many tool iterations occur. Retrieved context is injected as a message turn (not into the system prompt) and is not persisted to memory.
 
-Use `WithContextFormatter` to customize how documents are rendered in the system prompt:
+Use `WithContextFormatter` to customize how documents are rendered:
 
 ```go
 agent.WithContextFormatter(func(docs []agent.Document) string {
@@ -313,13 +328,14 @@ import (
     "github.com/camilbinas/gude-agents/agent/prompt"
     "github.com/camilbinas/gude-agents/agent/provider/bedrock"
     "github.com/camilbinas/gude-agents/agent/rag"
+    ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 )
 
 func main() {
     ctx := context.Background()
 
     // 1. Create an embedder.
-    embedder, err := bedrock.TitanEmbedV2()
+    embedder, err := ragbedrock.TitanEmbedV2()
     if err != nil {
         log.Fatal(err)
     }
@@ -382,7 +398,7 @@ func main() {
 ## See Also
 
 - [Agent API Reference](agent-api.md) — `WithRetriever` and `WithContextFormatter` options
-- [Redis Providers](redis.md) — `RedisVectorStore` for production vector search
-- [Providers](providers.md) — Bedrock and OpenAI provider setup (including embedder credentials)
+- [Redis Providers](redis.md) — `VectorStore` (`agent/rag/redis`) for production vector search
+- [Providers](providers.md) — Bedrock and OpenAI provider setup
 - [Tool System](tools.md) — how tools work in the agent loop
 - [Message Types](message-types.md) — `Document` and `ScoredDocument` types

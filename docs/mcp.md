@@ -360,7 +360,7 @@ import (
     "github.com/camilbinas/gude-agents/agent/prompt"
     "github.com/camilbinas/gude-agents/agent/provider/bedrock"
     "github.com/camilbinas/gude-agents/agent/mcp"
-    "github.com/camilbinas/gude-agents/agent/redis"
+    "github.com/camilbinas/gude-agents/agent/memory/redis"
 )
 
 func main() {

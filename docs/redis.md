@@ -1,15 +1,15 @@
 # Redis Providers
 
-The `redis` package provides persistent, Redis-backed implementations of `agent.Memory` and `agent.VectorStore`. Use `RedisMemory` for multi-turn conversation storage that survives restarts, and `RedisVectorStore` for similarity search powered by Redis Stack's HNSW indexing.
+The `agent/memory/redis` package provides a persistent, Redis-backed implementation of `agent.Memory`. Use `RedisMemory` for multi-turn conversation storage that survives restarts.
 
-Both types live in `github.com/camilbinas/gude-agents/agent/redis`.
+For Redis-backed vector search, see `agent/rag/redis` — it provides `VectorStore` (formerly `RedisVectorStore`) for similarity search powered by Redis Stack's HNSW indexing.
 
 ## RedisOptions
 
-All Redis providers share a common connection configuration struct:
+Both packages share a common connection configuration struct from `github.com/camilbinas/gude-agents/agent/redis`:
 
 ```go
-type RedisOptions struct {
+type Options struct {
     Addr      string      // Redis address. Default: "localhost:6379"
     Password  string      // AUTH password. Empty string means no auth.
     DB        int         // Database number. Default: 0
@@ -23,13 +23,15 @@ If `Addr` is empty, it defaults to `"localhost:6379"`. Pass a `*tls.Config` to e
 
 `RedisMemory` implements `agent.Memory` and `memory.MemoryManager`. It stores conversation history as JSON in Redis string keys, with optional TTL and key prefix configuration.
 
+Import: `github.com/camilbinas/gude-agents/agent/memory/redis`
+
 ### NewRedisMemory
 
 ```go
 func NewRedisMemory(opts RedisOptions, mopts ...RedisMemoryOption) (*RedisMemory, error)
 ```
 
-Creates a new `RedisMemory`. Pings Redis on creation to verify connectivity — returns an error if the connection fails. The default key prefix is `"gude:memory:"` and TTL is 0 (no expiration).
+Creates a new `RedisMemory`. Pings Redis on creation to verify connectivity — returns an error if the connection fails. The default key prefix is `"gude:"` and TTL is 0 (no expiration).
 
 ### Options
 
@@ -47,7 +49,7 @@ Sets the TTL for conversation keys. Each `Save` call resets the TTL. Pass `0` to
 func WithKeyPrefix(prefix string) RedisMemoryOption
 ```
 
-Sets the key prefix used for all conversation keys. Default: `"gude:memory:"`. The final Redis key is `prefix + conversationID`.
+Sets the key prefix used for all conversation keys. Default: `"gude:"`. The final Redis key is `prefix + conversationID`.
 
 ### Methods
 
@@ -66,21 +68,25 @@ func (m *RedisMemory) Close() error
 
 Closes the underlying Redis client. Call this when you're done with the memory (typically via `defer`).
 
-## RedisVectorStore
+## VectorStore (Redis RAG)
 
-`RedisVectorStore` implements `agent.VectorStore` using Redis Stack's RediSearch module. It stores document embeddings as Redis hashes and creates an HNSW index for KNN similarity search.
+`VectorStore` implements `agent.VectorStore` using Redis Stack's RediSearch module. It stores document embeddings as Redis hashes and creates an HNSW index for KNN similarity search.
 
-> **Requirement:** `RedisVectorStore` requires [Redis Stack](https://redis.io/docs/stack/) (or the RediSearch module). Standard Redis does not support `FT.CREATE` / `FT.SEARCH` commands.
+> **Note:** `VectorStore` was previously named `RedisVectorStore` and lived in `agent/redis`. It now lives in `agent/rag/redis` as `VectorStore`. The constructor is `ragredis.New` (using the import alias below).
 
-### NewRedisVectorStore
+> **Requirement:** `VectorStore` requires [Redis Stack](https://redis.io/docs/stack/) (or the RediSearch module). Standard Redis does not support `FT.CREATE` / `FT.SEARCH` commands.
+
+Import: `ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"`
+
+### New
 
 ```go
-func NewRedisVectorStore(opts RedisOptions, indexName string, dim int, vopts ...RedisVectorStoreOption) (*RedisVectorStore, error)
+func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*VectorStore, error)
 ```
 
-Creates a new `RedisVectorStore`. Pings Redis, then creates an HNSW index via `FT.CREATE` if it doesn't already exist. Parameters:
+Creates a new `VectorStore`. Pings Redis, then creates an HNSW index via `FT.CREATE` if it doesn't already exist. Parameters:
 
-- `opts` — Redis connection configuration
+- `opts` — Redis connection configuration (`ragredis.Options`, which is an alias for `agent/redis.Options`)
 - `indexName` — name of the RediSearch index. Also used as the hash key prefix (`indexName + ":"`)
 - `dim` — embedding dimension (must match your embedder's output, e.g. 1024 for Titan Embed V2)
 - `vopts` — optional HNSW tuning parameters
@@ -92,7 +98,7 @@ The index is created with COSINE distance metric and FLOAT32 vector type.
 #### WithHNSWM
 
 ```go
-func WithHNSWM(m int) RedisVectorStoreOption
+func WithHNSWM(m int) VectorStoreOption
 ```
 
 Sets the HNSW `M` parameter — the number of bi-directional links per node. Higher values improve recall at the cost of memory. Default: `16`.
@@ -100,7 +106,7 @@ Sets the HNSW `M` parameter — the number of bi-directional links per node. Hig
 #### WithHNSWEFConstruction
 
 ```go
-func WithHNSWEFConstruction(ef int) RedisVectorStoreOption
+func WithHNSWEFConstruction(ef int) VectorStoreOption
 ```
 
 Sets the HNSW `EF_CONSTRUCTION` parameter — the size of the dynamic candidate list during index building. Higher values improve index quality at the cost of build time. Default: `200`.
@@ -113,7 +119,7 @@ Sets the HNSW `EF_CONSTRUCTION` parameter — the size of the dynamic candidate 
 ### Close
 
 ```go
-func (s *RedisVectorStore) Close() error
+func (s *VectorStore) Close() error
 ```
 
 Closes the underlying Redis client.
@@ -135,7 +141,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/redis"
+	redismemory "github.com/camilbinas/gude-agents/agent/memory/redis"
 )
 
 func main() {
@@ -144,10 +150,10 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	mem, err := redis.NewRedisMemory(
-		redis.RedisOptions{Addr: redisAddr},
-		redis.WithTTL(1*time.Hour),
-		redis.WithKeyPrefix("example:memory:"),
+	mem, err := redismemory.NewRedisMemory(
+		redismemory.RedisOptions{Addr: redisAddr},
+		redismemory.WithTTL(1*time.Hour),
+		redismemory.WithKeyPrefix("example:"),
 	)
 	if err != nil {
 		log.Fatalf("redis memory: %v", err)
@@ -201,8 +207,9 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/redis"
 	"github.com/camilbinas/gude-agents/agent/rag"
+	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+	ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
 )
 
 func main() {
@@ -211,13 +218,13 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	embedder, err := bedrock.TitanEmbedV2()
+	embedder, err := ragbedrock.TitanEmbedV2()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	store, err := redis.NewRedisVectorStore(
-		redis.RedisOptions{Addr: redisAddr},
+	store, err := ragredis.New(
+		ragredis.Options{Addr: redisAddr},
 		"example-docs", // index name
 		1024,           // dimension (Titan Embed V2 outputs 1024)
 	)
@@ -228,20 +235,17 @@ func main() {
 
 	ctx := context.Background()
 
-	// Ingest some documents.
 	docs := []string{
 		"Go is a statically typed, compiled language designed at Google.",
 		"Redis is an in-memory data structure store used as a database, cache, and message broker.",
 		"Kubernetes automates deployment, scaling, and management of containerized applications.",
 	}
 
-	err = rag.Ingest(ctx, store, embedder, docs, nil)
-	if err != nil {
+	if err = rag.Ingest(ctx, store, embedder, docs, nil); err != nil {
 		log.Fatalf("ingest: %v", err)
 	}
 	fmt.Printf("Ingested %d documents\n", len(docs))
 
-	// Create a retriever-backed agent.
 	provider, err := bedrock.ClaudeSonnet4_6()
 	if err != nil {
 		log.Fatal(err)
@@ -269,7 +273,7 @@ func main() {
 
 ## See Also
 
-- [Memory System](memory.md) — in-memory store and composable strategies (Window, Token, Filter, Summary)
+- [Memory System](memory.md) — in-memory store and composable strategies (Window, Filter, Summary), plus S3 and DynamoDB drivers
 - [RAG Pipeline](rag.md) — embedders, retrievers, ingest pipeline, and integration patterns
 - [Agent API Reference](agent-api.md) — `WithMemory` and `WithRetriever` options
 - [Providers](providers.md) — Bedrock, Anthropic, and OpenAI provider configuration

@@ -12,8 +12,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	openai "github.com/camilbinas/gude-agents/agent/provider/openai"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -46,14 +44,14 @@ func newTestEmbedder(t *testing.T) agent.Embedder {
 		if region == "" {
 			region = "eu-central-1"
 		}
-		e, err := bedrock.NewBedrockEmbedder(model, bedrock.WithEmbedderRegion(region))
+		e, err := ragbedrock.NewEmbedder(model, ragbedrock.WithRegion(region))
 		if err != nil {
 			t.Fatalf("failed to create bedrock embedder: %v", err)
 		}
 		t.Logf("Using embedder: bedrock (model=%s, region=%s)", model, region)
 		return e
 	case "openai":
-		e, err := openai.NewOpenAIEmbedder()
+		e, err := ragopenai.NewEmbedder()
 		if err != nil {
 			t.Fatalf("failed to create openai embedder: %v", err)
 		}
@@ -81,7 +79,7 @@ func TestIntegration_RAG_BedrockEmbedder(t *testing.T) {
 	if region == "" {
 		region = "eu-central-1"
 	}
-	e, err := bedrock.NewBedrockEmbedder(model, bedrock.WithEmbedderRegion(region))
+	e, err := ragbedrock.NewEmbedder(model, ragbedrock.WithRegion(region))
 	if err != nil {
 		t.Fatalf("constructor error: %v", err)
 	}
@@ -113,7 +111,7 @@ func TestIntegration_RAG_OpenAIEmbedder(t *testing.T) {
 	if os.Getenv("EMBEDDER") != "openai" {
 		t.Skip("skipping openai embedder test (set EMBEDDER=openai)")
 	}
-	e, err := openai.NewOpenAIEmbedder()
+	e, err := ragopenai.NewEmbedder()
 	if err != nil {
 		t.Fatalf("constructor error: %v", err)
 	}
@@ -355,7 +353,7 @@ func TestIntegration_RAG_CohereEmbedEnglishV3(t *testing.T) {
 		region = "eu-central-1"
 	}
 
-	e, err := bedrock.CohereEmbedEnglishV3(bedrock.WithEmbedderRegion(region))
+	e, err := ragbedrock.CohereEmbedEnglishV3(ragbedrock.WithRegion(region))
 	if err != nil {
 		t.Fatalf("constructor error: %v", err)
 	}
@@ -401,7 +399,7 @@ func TestIntegration_RAG_CohereEmbedMultilingualV3(t *testing.T) {
 		region = "eu-central-1"
 	}
 
-	e, err := bedrock.CohereEmbedMultilingualV3(bedrock.WithEmbedderRegion(region))
+	e, err := ragbedrock.CohereEmbedMultilingualV3(ragbedrock.WithRegion(region))
 	if err != nil {
 		t.Fatalf("constructor error: %v", err)
 	}
@@ -449,7 +447,7 @@ func TestIntegration_RAG_CohereEmbedV4(t *testing.T) {
 		region = "eu-central-1"
 	}
 
-	e, err := bedrock.CohereEmbedV4(bedrock.WithEmbedderRegion(region))
+	e, err := ragbedrock.CohereEmbedV4(ragbedrock.WithRegion(region))
 	if err != nil {
 		t.Fatalf("constructor error: %v", err)
 	}

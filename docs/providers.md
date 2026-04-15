@@ -168,14 +168,7 @@ Each function returns a `(*BedrockProvider, error)` and accepts `...Option`:
 | `NemotronSuper120B()` | `nvidia.nemotron-super-3-120b` |
 | `GLM4_7Flash()` | `zai.glm-4.7-flash` |
 
-**Embeddings**
-
-| Function | Model ID |
-|---|---|
-| `TitanEmbedV2()` | `amazon.titan-embed-text-v2:0` |
-| `CohereEmbedEnglishV3()` | `cohere.embed-english-v3` |
-| `CohereEmbedMultilingualV3()` | `cohere.embed-multilingual-v3` |
-| `CohereEmbedV4()` | `eu.cohere.embed-v4:0` |
+> **Embedder functions** (`TitanEmbedV2`, `CohereEmbedEnglishV3`, `CohereEmbedMultilingualV3`, `CohereEmbedV4`) have moved to `github.com/camilbinas/gude-agents/agent/rag/bedrock`. See [RAG Pipeline](rag.md) for usage.
 
 > Note: OpenAI GPT-OSS models on Bedrock support text only — no tool use, tool choice, or token usage reporting. The provider's `Capabilities()` method reflects this automatically.
 
@@ -421,12 +414,7 @@ See [Extended Thinking](#extended-thinking) for details.
 | `O3Mini()` | `o3-mini` |
 | `O4Mini()` | `o4-mini` |
 
-**Embeddings**
-
-| Function | Model ID |
-|---|---|
-| `EmbeddingSmall()` | `text-embedding-3-small` |
-| `EmbeddingLarge()` | `text-embedding-3-large` |
+> **Embedder functions** (`EmbeddingSmall`, `EmbeddingLarge`) have moved to `github.com/camilbinas/gude-agents/agent/rag/openai`. See [RAG Pipeline](rag.md) for usage.
 
 ### Tier Aliases
 
@@ -572,4 +560,4 @@ func (p *MyProvider) Capabilities() agent.Capabilities {
 - [Fallback Provider](fallback-provider.md) — automatic failover across providers
 - [Agent API Reference](agent-api.md) — full list of options and methods
 - [Message Types](message-types.md) — `ConverseParams`, `ProviderResponse`, `StreamCallback`
-- [RAG Pipeline](rag.md) — embedder implementations (`TitanEmbedV2`, `EmbeddingSmall`, `EmbeddingLarge`)
+- [RAG Pipeline](rag.md) — embedder implementations in `agent/rag/bedrock` and `agent/rag/openai`

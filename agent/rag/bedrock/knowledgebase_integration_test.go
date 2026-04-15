@@ -12,8 +12,6 @@ import (
 
 // TestKnowledgeBaseRetrieverToolCompat verifies that KnowledgeBaseRetriever can be
 // passed directly to agent.NewRetrieverTool without a type assertion or cast.
-//
-// Validates: Requirements 7.3, 8.1, 8.3
 func TestKnowledgeBaseRetrieverToolCompat(t *testing.T) {
 	t.Setenv("AWS_REGION", "us-east-1")
 

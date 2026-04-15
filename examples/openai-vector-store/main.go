@@ -24,7 +24,8 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	openai "github.com/camilbinas/gude-agents/agent/provider/openai"
+	"github.com/camilbinas/gude-agents/agent/provider/openai"
+	ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/joho/godotenv"
 )
@@ -39,9 +40,9 @@ func main() {
 
 	// Retriever backed by the OpenAI Vector Store.
 	// Returns up to 5 chunks; drops anything below 0.4 relevance.
-	retriever, err := openai.NewVectorStoreRetriever(vsID,
-		openai.WithVectorStoreTopK(5),
-		openai.WithVectorStoreScoreThreshold(0.4),
+	retriever, err := ragopenai.NewVectorStoreRetriever(vsID,
+		ragopenai.WithVectorStoreTopK(5),
+		ragopenai.WithVectorStoreScoreThreshold(0.4),
 	)
 	if err != nil {
 		log.Fatalf("retriever: %v", err)

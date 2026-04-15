@@ -9,18 +9,11 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// Empty text error
-// ---------------------------------------------------------------------------
-
 func TestOpenAIEmbedder_EmptyTextError(t *testing.T) {
-	// The empty-text check fires before any network call, so we can use
-	// a bare embedder with no valid client configuration.
-	e, err := NewOpenAIEmbedder(WithEmbedderAPIKey("test-key"))
+	e, err := NewEmbedder(WithEmbedderAPIKey("test-key"))
 	if err != nil {
 		t.Fatalf("unexpected constructor error: %v", err)
 	}
-
 	_, err = e.Embed(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty text, got nil")
@@ -31,12 +24,8 @@ func TestOpenAIEmbedder_EmptyTextError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Default model
-// ---------------------------------------------------------------------------
-
 func TestOpenAIEmbedder_DefaultModel(t *testing.T) {
-	e, err := NewOpenAIEmbedder(WithEmbedderAPIKey("test-key"))
+	e, err := NewEmbedder(WithEmbedderAPIKey("test-key"))
 	if err != nil {
 		t.Fatalf("unexpected constructor error: %v", err)
 	}
@@ -45,12 +34,8 @@ func TestOpenAIEmbedder_DefaultModel(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Constructor with options
-// ---------------------------------------------------------------------------
-
 func TestOpenAIEmbedder_ConstructorOptions(t *testing.T) {
-	e, err := NewOpenAIEmbedder(
+	e, err := NewEmbedder(
 		WithEmbedderModel("text-embedding-3-large"),
 		WithEmbedderAPIKey("sk-test-key"),
 		WithEmbedderBaseURL("https://custom.api.example.com"),
@@ -61,18 +46,12 @@ func TestOpenAIEmbedder_ConstructorOptions(t *testing.T) {
 	if e.model != "text-embedding-3-large" {
 		t.Errorf("expected model %q, got %q", "text-embedding-3-large", e.model)
 	}
-	// Client should be non-nil after construction with options.
 	if e.client == nil {
 		t.Fatal("expected non-nil client")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Error prefix wrapping
-// ---------------------------------------------------------------------------
-
 func TestOpenAIEmbedder_ErrorPrefixWrapping(t *testing.T) {
-	// Stand up a test HTTP server that returns a 400 error in OpenAI format.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -87,7 +66,7 @@ func TestOpenAIEmbedder_ErrorPrefixWrapping(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	e, err := NewOpenAIEmbedder(
+	e, err := NewEmbedder(
 		WithEmbedderAPIKey("sk-test-key"),
 		WithEmbedderBaseURL(srv.URL),
 	)

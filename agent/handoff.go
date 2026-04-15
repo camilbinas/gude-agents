@@ -119,7 +119,7 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 
 	// Use base instructions — RAG context was already applied in the original invocation
 	// and is reflected in the conversation history.
-	return a.runLoop(ctx, convID, messages, a.instructions, cb)
+	return a.runLoop(ctx, convID, messages, 0, a.instructions, cb)
 }
 
 // ResumeInvoke is a convenience wrapper over Resume that collects streamed

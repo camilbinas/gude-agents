@@ -1,5 +1,7 @@
 package bedrock
 
+import rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+
 // Anthropic Claude models (EU cross-region inference).
 // Documented in docs/providers.md — update when adding or removing models.
 func ClaudeHaiku4_5(opts ...Option) (*BedrockProvider, error) {
@@ -63,23 +65,22 @@ func NemotronSuper120B(opts ...Option) (*BedrockProvider, error) {
 }
 func GLM4_7Flash(opts ...Option) (*BedrockProvider, error) { return New("zai.glm-4.7-flash", opts...) }
 
-// Amazon Titan Embeddings.
-func TitanEmbedV2(opts ...EmbedderOption) (*BedrockEmbedder, error) {
-	return NewBedrockEmbedder("amazon.titan-embed-text-v2:0", opts...)
+// Amazon Titan and Cohere embedding models.
+// These forward to agent/rag/bedrock — import that package directly for
+// access to EmbedderOption and the Embedder type.
+func TitanEmbedV2(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
+	return rag.TitanEmbedV2(opts...)
+}
+func CohereEmbedEnglishV3(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
+	return rag.CohereEmbedEnglishV3(opts...)
+}
+func CohereEmbedMultilingualV3(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
+	return rag.CohereEmbedMultilingualV3(opts...)
 }
 
-// Cohere Embed v3 models.
-func CohereEmbedEnglishV3(opts ...EmbedderOption) (*BedrockEmbedder, error) {
-	return NewBedrockEmbedder("cohere.embed-english-v3", opts...)
-}
-func CohereEmbedMultilingualV3(opts ...EmbedderOption) (*BedrockEmbedder, error) {
-	return NewBedrockEmbedder("cohere.embed-multilingual-v3", opts...)
-}
-
-// Cohere Embed v4 — multimodal (text + images). Requires cross-region inference.
-// Use the EU geo profile (eu.cohere.embed-v4:0) from eu-central-1.
-func CohereEmbedV4(opts ...EmbedderOption) (*BedrockEmbedder, error) {
-	return NewBedrockEmbedder("eu.cohere.embed-v4:0", opts...)
+// CohereEmbedV4 creates an Embedder for Cohere Embed v4 (multimodal, EU cross-region).
+func CohereEmbedV4(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
+	return rag.CohereEmbedV4(opts...)
 }
 
 // Tier aliases — provider-agnostic shortcuts for common use cases.

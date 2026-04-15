@@ -36,7 +36,7 @@ func TestDefaultContextFormatter_SingleDoc(t *testing.T) {
 	// Requirement 8.2: formats with 1-based index
 	docs := []Document{{Content: "hello world"}}
 	result := DefaultContextFormatter(docs)
-	expected := "Relevant context:\n[1] hello world"
+	expected := "<retrieved_context>\n[1] hello world\n</retrieved_context>"
 	if result != expected {
 		t.Fatalf("expected %q, got %q", expected, result)
 	}
@@ -50,7 +50,7 @@ func TestDefaultContextFormatter_MultipleDocs(t *testing.T) {
 		{Content: "third doc"},
 	}
 	result := DefaultContextFormatter(docs)
-	expected := "Relevant context:\n[1] first doc\n[2] second doc\n[3] third doc"
+	expected := "<retrieved_context>\n[1] first doc\n[2] second doc\n[3] third doc\n</retrieved_context>"
 	if result != expected {
 		t.Fatalf("expected %q, got %q", expected, result)
 	}
@@ -188,7 +188,7 @@ func TestAgent_RetrieverCalledOnce(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 10: Retrieved documents appear in the system prompt sent to the provider
+// Feature: rag, Property 10: Retrieved documents appear in the messages sent to the provider
 // **Validates: Requirements 7.4**
 func TestAgent_RetrievedDocsInSystemPrompt(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -212,13 +212,23 @@ func TestAgent_RetrievedDocsInSystemPrompt(t *testing.T) {
 		if len(provider.captured) == 0 {
 			t.Fatal("expected at least one provider call")
 		}
-		systemPrompt := provider.captured[0].System
 
-		// Assert provider receives system prompt containing formatted document content.
+		// RAG context is injected as a message turn, not into the system prompt.
+		// Collect all message text to check for doc content.
+		var allMessageText strings.Builder
+		for _, msg := range provider.captured[0].Messages {
+			for _, block := range msg.Content {
+				if tb, ok := block.(TextBlock); ok {
+					allMessageText.WriteString(tb.Text)
+				}
+			}
+		}
+		messageText := allMessageText.String()
+
 		for i, doc := range docs {
-			if !strings.Contains(systemPrompt, doc.Content) {
-				t.Fatalf("system prompt missing content of doc[%d]\ncontent: %q\nsystem prompt: %q",
-					i, doc.Content, systemPrompt)
+			if !strings.Contains(messageText, doc.Content) {
+				t.Fatalf("messages missing content of doc[%d]\ncontent: %q\nmessages: %q",
+					i, doc.Content, messageText)
 			}
 		}
 	})
@@ -360,18 +370,28 @@ func TestAgent_CustomContextFormatter(t *testing.T) {
 	if len(provider.captured) == 0 {
 		t.Fatal("expected at least one provider call")
 	}
-	systemPrompt := provider.captured[0].System
+
+	// RAG context is injected as a message turn, not into the system prompt.
+	var allMessageText strings.Builder
+	for _, msg := range provider.captured[0].Messages {
+		for _, block := range msg.Content {
+			if tb, ok := block.(TextBlock); ok {
+				allMessageText.WriteString(tb.Text)
+			}
+		}
+	}
+	messageText := allMessageText.String()
 
 	// Verify custom formatter output is present.
-	if !strings.Contains(systemPrompt, "CUSTOM:doc one") {
-		t.Fatalf("expected system prompt to contain custom-formatted doc one, got %q", systemPrompt)
+	if !strings.Contains(messageText, "CUSTOM:doc one") {
+		t.Fatalf("expected messages to contain custom-formatted doc one, got %q", messageText)
 	}
-	if !strings.Contains(systemPrompt, "CUSTOM:doc two") {
-		t.Fatalf("expected system prompt to contain custom-formatted doc two, got %q", systemPrompt)
+	if !strings.Contains(messageText, "CUSTOM:doc two") {
+		t.Fatalf("expected messages to contain custom-formatted doc two, got %q", messageText)
 	}
 	// Verify default formatter output is NOT present.
-	if strings.Contains(systemPrompt, "Relevant context:") {
-		t.Fatalf("expected custom formatter to replace default, but found 'Relevant context:' in %q", systemPrompt)
+	if strings.Contains(messageText, "Relevant context:") {
+		t.Fatalf("expected custom formatter to replace default, but found 'Relevant context:' in %q", messageText)
 	}
 }
 
@@ -401,12 +421,20 @@ func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
 		t.Fatalf("Invoke failed: %v", err)
 	}
 
-	// Verify the provider DID receive the augmented system prompt.
+	// Verify the provider DID receive the RAG context in the messages.
 	if len(provider.captured) == 0 {
 		t.Fatal("expected at least one provider call")
 	}
-	if !strings.Contains(provider.captured[0].System, "secret RAG context") {
-		t.Fatalf("expected provider to receive RAG context in system prompt, got %q", provider.captured[0].System)
+	var allMessageText strings.Builder
+	for _, msg := range provider.captured[0].Messages {
+		for _, block := range msg.Content {
+			if tb, ok := block.(TextBlock); ok {
+				allMessageText.WriteString(tb.Text)
+			}
+		}
+	}
+	if !strings.Contains(allMessageText.String(), "secret RAG context") {
+		t.Fatalf("expected provider to receive RAG context in messages, got messages: %q", allMessageText.String())
 	}
 
 	// Verify memory does NOT contain the RAG context.
@@ -488,10 +516,18 @@ func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 		t.Fatal("expected search tool to be called, but it was not")
 	}
 
-	// Verify both provider calls received the augmented system prompt with RAG context.
+	// Verify both provider calls received the RAG context in messages.
 	for i, params := range provider.captured {
-		if !strings.Contains(params.System, "retrieved context") {
-			t.Fatalf("provider call[%d] missing RAG context in system prompt: %q", i, params.System)
+		var allText strings.Builder
+		for _, msg := range params.Messages {
+			for _, block := range msg.Content {
+				if tb, ok := block.(TextBlock); ok {
+					allText.WriteString(tb.Text)
+				}
+			}
+		}
+		if !strings.Contains(allText.String(), "retrieved context") {
+			t.Fatalf("provider call[%d] missing RAG context in messages: %q", i, allText.String())
 		}
 	}
 

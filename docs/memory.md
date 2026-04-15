@@ -249,9 +249,131 @@ func main() {
 }
 ```
 
+## Persistent Memory Drivers
+
+For production use cases where conversation history must survive process restarts, three persistent drivers are available as separate packages.
+
+### Redis — agent/memory/redis
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/redis`
+
+Stores conversation history as JSON in Redis string keys. Requires a running Redis instance.
+
+```go
+mem, err := redismemory.NewRedisMemory(
+    redismemory.RedisOptions{Addr: "localhost:6379"},
+    redismemory.WithTTL(24*time.Hour),
+    redismemory.WithKeyPrefix("myapp:"),
+)
+```
+
+Options: `WithTTL(d time.Duration)`, `WithKeyPrefix(prefix string)`.
+
+Implements both `agent.Memory` and `memory.MemoryManager` (List, Delete). See [Redis Providers](redis.md) for full documentation.
+
+### S3 — agent/memory/s3
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/s3`
+
+Stores conversation history as JSON objects in any S3-compatible object store. Compatible with AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, and Backblaze B2.
+
+```go
+cfg, _ := awsconfig.LoadDefaultConfig(ctx)
+mem, err := s3memory.New(cfg, "my-bucket",
+    s3memory.WithKeyPrefix("conversations/"),
+)
+```
+
+Options: `WithKeyPrefix(prefix string)`, `WithEndpoint(url string)`, `WithPathStyle(enabled bool)`.
+
+No network calls are made at construction time — connectivity errors surface on the first `Save`/`Load` call. Implements both `agent.Memory` and `memory.MemoryManager`.
+
+### DynamoDB — agent/memory/dynamodb
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/dynamodb`
+
+Stores conversation history as items in an Amazon DynamoDB table. The table must be created by the caller with `conversation_id` (String) as the partition key.
+
+```go
+cfg, _ := awsconfig.LoadDefaultConfig(ctx)
+mem, err := dynamomemory.NewDynamoDBMemory(cfg, "my-conversations-table",
+    dynamomemory.WithTTL(7*24*time.Hour),
+    dynamomemory.WithKeyPrefix("prod:"),
+)
+```
+
+Options: `WithKeyPrefix(prefix string)`, `WithTTL(d time.Duration)`, `WithTTLAttribute(attr string)`, `WithPartitionKey(attr string)`, `WithEndpoint(url string)`.
+
+> **Item size limit:** DynamoDB items are capped at 400 KB. For long-running conversations with large tool results, pair this driver with `memory.NewWindow` or `memory.NewSummary` to bound item size.
+
+> **List performance:** `List` performs a full-table Scan. Avoid calling it in hot paths on large tables.
+
+Implements both `agent.Memory` and `memory.MemoryManager`.
+
+## Persistent Memory Drivers
+
+For production use cases where conversation history must survive process restarts, three persistent drivers are available as separate packages.
+
+### Redis — agent/memory/redis
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/redis`
+
+Stores conversation history as JSON in Redis string keys. Requires a running Redis instance.
+
+```go
+mem, err := redismemory.NewRedisMemory(
+    redismemory.RedisOptions{Addr: "localhost:6379"},
+    redismemory.WithTTL(24*time.Hour),
+    redismemory.WithKeyPrefix("myapp:"),
+)
+```
+
+Options: `WithTTL(d time.Duration)`, `WithKeyPrefix(prefix string)`.
+
+Implements both `agent.Memory` and `memory.MemoryManager` (List, Delete). See [Redis Providers](redis.md) for full documentation.
+
+### S3 — agent/memory/s3
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/s3`
+
+Stores conversation history as JSON objects in any S3-compatible object store. Compatible with AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, and Backblaze B2.
+
+```go
+cfg, _ := awsconfig.LoadDefaultConfig(ctx)
+mem, err := s3memory.New(cfg, "my-bucket",
+    s3memory.WithKeyPrefix("conversations/"),
+)
+```
+
+Options: `WithKeyPrefix(prefix string)`, `WithEndpoint(url string)`, `WithPathStyle(enabled bool)`.
+
+No network calls are made at construction time — connectivity errors surface on the first `Save`/`Load` call. Implements both `agent.Memory` and `memory.MemoryManager`.
+
+### DynamoDB — agent/memory/dynamodb
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/dynamodb`
+
+Stores conversation history as items in an Amazon DynamoDB table. The table must be created by the caller with `conversation_id` (String) as the partition key.
+
+```go
+cfg, _ := awsconfig.LoadDefaultConfig(ctx)
+mem, err := dynamomemory.NewDynamoDBMemory(cfg, "my-conversations-table",
+    dynamomemory.WithTTL(7*24*time.Hour),
+    dynamomemory.WithKeyPrefix("prod:"),
+)
+```
+
+Options: `WithKeyPrefix(prefix string)`, `WithTTL(d time.Duration)`, `WithTTLAttribute(attr string)`, `WithPartitionKey(attr string)`, `WithEndpoint(url string)`.
+
+> **Item size limit:** DynamoDB items are capped at 400 KB. For long-running conversations with large tool results, pair this driver with `memory.NewWindow` or `memory.NewSummary` to bound item size.
+
+> **List performance:** `List` performs a full-table Scan. Avoid calling it in hot paths on large tables.
+
+Implements both `agent.Memory` and `memory.MemoryManager`.
+
 ## See Also
 
 - [Agent API Reference](agent-api.md) — `WithMemory` option and agent loop behavior
-- [Redis Providers](redis.md) — persistent Redis-backed memory for production
+- [Redis Providers](redis.md) — persistent Redis-backed memory (`agent/memory/redis`) and Redis vector store (`agent/rag/redis`)
 - [Message Types](message-types.md) — `Message`, `ContentBlock`, `TextBlock`, `ToolUseBlock`, `ToolResultBlock`
 - [Getting Started](getting-started.md) — installation and first agent

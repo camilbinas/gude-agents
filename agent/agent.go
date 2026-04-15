@@ -129,6 +129,9 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 	// prepended to the user message, keeping untrusted content clearly isolated
 	// from the actual user query. A synthetic assistant acknowledgement is required
 	// because most providers enforce strictly alternating user/assistant turns.
+	// ragOffset tracks how many ephemeral RAG messages were prepended so they
+	// can be stripped before saving to memory.
+	ragOffset := 0
 	if a.retriever != nil {
 		docs, err := a.retriever.Retrieve(ctx, msg)
 		if err != nil {
@@ -144,6 +147,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 					Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: contextStr}}},
 					Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "Understood. I will use this context to answer your question."}}},
 				)
+				ragOffset = 2
 			}
 		}
 	}
@@ -152,11 +156,13 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 		Content: []ContentBlock{TextBlock{Text: msg}},
 	})
 
-	return a.runLoop(ctx, convID, messages, a.instructions, cb)
+	return a.runLoop(ctx, convID, messages, ragOffset, a.instructions, cb)
 }
 
 // runLoop is the core agent iteration loop shared by InvokeStream and Resume.
-func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, systemPrompt string, cb StreamCallback) (TokenUsage, error) {
+// ragOffset is the number of ephemeral RAG context messages prepended to messages
+// that should be stripped before saving to memory.
+func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, ragOffset int, systemPrompt string, cb StreamCallback) (TokenUsage, error) {
 	var cumulative TokenUsage
 
 	for iteration := range a.maxIterations {
@@ -242,7 +248,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				}
 				// Save to memory so HTTP callers can resume in a different request.
 				if a.memory != nil {
-					_ = a.memory.Save(ctx, convID, messages)
+					_ = a.memory.Save(ctx, convID, messages[ragOffset:])
 				}
 				return cumulative, ErrHandoffRequested
 			}
@@ -287,7 +293,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 		// Save conversation history if memory is configured.
 		if a.memory != nil {
-			if err := a.memory.Save(ctx, convID, messages); err != nil {
+			if err := a.memory.Save(ctx, convID, messages[ragOffset:]); err != nil {
 				return cumulative, fmt.Errorf("memory save: %w", err)
 			}
 		}
