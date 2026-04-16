@@ -14,9 +14,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	anthropicprov "github.com/camilbinas/gude-agents/agent/provider/anthropic"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	openai "github.com/camilbinas/gude-agents/agent/provider/openai"
+	"github.com/camilbinas/gude-agents/agent/provider/registry"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -26,68 +24,30 @@ import (
 //   go test -tags=integration -v -timeout=120s ./agent/...
 //
 // Environment variables:
-//   PROVIDER        - "bedrock" (default). Add "openai", "anthropic" when implemented.
-//   BEDROCK_MODEL   - Bedrock model ID (default: eu.anthropic.claude-sonnet-4-20250514-v1:0)
-//   AWS_REGION      - AWS region (default: eu-central-1)
+//   MODEL_PROVIDER  - "bedrock" (default), "openai", "anthropic"
+//   MODEL_TIER      - "cheapest", "standard" (default), "smartest"
 //
-// To test multiple providers, run the suite once per provider:
-//   PROVIDER=bedrock   go test -tags=integration -v -timeout=120s ./agent/...
-//   PROVIDER=openai    go test -tags=integration -v -timeout=120s ./agent/...
-//   PROVIDER=anthropic go test -tags=integration -v -timeout=120s ./agent/...
+// To test multiple providers:
+//   MODEL_PROVIDER=bedrock   go test -tags=integration -v -timeout=120s ./agent/...
+//   MODEL_PROVIDER=openai    go test -tags=integration -v -timeout=120s ./agent/...
+//   MODEL_PROVIDER=anthropic go test -tags=integration -v -timeout=120s ./agent/...
 
 func newTestProvider(t *testing.T) agent.Provider {
 	t.Helper()
-
-	providerName := os.Getenv("PROVIDER")
-	if providerName == "" {
-		providerName = "bedrock"
+	p, err := registry.FromEnv()
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
 	}
+	t.Logf("Using provider: MODEL_PROVIDER=%s MODEL_TIER=%s",
+		envOr("MODEL_PROVIDER", "bedrock"), envOr("MODEL_TIER", "standard"))
+	return &trackingProvider{inner: p}
+}
 
-	switch providerName {
-	case "bedrock":
-		model := os.Getenv("BEDROCK_MODEL")
-		if model == "" {
-			model = "eu.anthropic.claude-sonnet-4-20250514-v1:0"
-		}
-		region := os.Getenv("AWS_REGION")
-		if region == "" {
-			region = "eu-central-1"
-		}
-		p, err := bedrock.New(model, bedrock.WithRegion(region))
-		if err != nil {
-			t.Fatalf("failed to create bedrock provider: %v", err)
-		}
-		t.Logf("Using provider: bedrock (model=%s, region=%s)", model, region)
-		return &trackingProvider{inner: p}
-
-	case "openai":
-		model := os.Getenv("OPENAI_MODEL")
-		if model == "" {
-			model = "gpt-4o"
-		}
-		p, err := openai.New(model)
-		if err != nil {
-			t.Fatalf("failed to create openai provider: %v", err)
-		}
-		t.Logf("Using provider: openai (model=%s)", model)
-		return &trackingProvider{inner: p}
-
-	case "anthropic":
-		model := os.Getenv("ANTHROPIC_MODEL")
-		if model == "" {
-			model = "claude-sonnet-4-20250514"
-		}
-		p, err := anthropicprov.New(model)
-		if err != nil {
-			t.Fatalf("failed to create anthropic provider: %v", err)
-		}
-		t.Logf("Using provider: anthropic (model=%s)", model)
-		return &trackingProvider{inner: p}
-
-	default:
-		t.Fatalf("unknown PROVIDER=%q (supported: bedrock, openai, anthropic)", providerName)
-		return nil
+func envOr(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
 	}
+	return fallback
 }
 
 func TestIntegration_SimpleTextResponse(t *testing.T) {

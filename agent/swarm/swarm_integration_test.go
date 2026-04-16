@@ -4,7 +4,6 @@ package swarm_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,63 +11,19 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	anthropicprov "github.com/camilbinas/gude-agents/agent/provider/anthropic"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	openai "github.com/camilbinas/gude-agents/agent/provider/openai"
+	"github.com/camilbinas/gude-agents/agent/provider/registry"
 	"github.com/camilbinas/gude-agents/agent/swarm"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 func newTestProvider(t *testing.T) agent.Provider {
 	t.Helper()
-
-	providerName := os.Getenv("PROVIDER")
-	if providerName == "" {
-		providerName = "bedrock"
+	registry.RegisterBuiltins()
+	p, err := registry.FromEnv()
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
 	}
-
-	switch providerName {
-	case "bedrock":
-		model := os.Getenv("BEDROCK_MODEL")
-		if model == "" {
-			model = "eu.anthropic.claude-sonnet-4-20250514-v1:0"
-		}
-		region := os.Getenv("AWS_REGION")
-		if region == "" {
-			region = "eu-central-1"
-		}
-		p, err := bedrock.New(model, bedrock.WithRegion(region))
-		if err != nil {
-			t.Fatalf("failed to create bedrock provider: %v", err)
-		}
-		return p
-
-	case "openai":
-		model := os.Getenv("OPENAI_MODEL")
-		if model == "" {
-			model = "gpt-4o"
-		}
-		p, err := openai.New(model)
-		if err != nil {
-			t.Fatalf("failed to create openai provider: %v", err)
-		}
-		return p
-
-	case "anthropic":
-		model := os.Getenv("ANTHROPIC_MODEL")
-		if model == "" {
-			model = "claude-sonnet-4-20250514"
-		}
-		p, err := anthropicprov.New(model)
-		if err != nil {
-			t.Fatalf("failed to create anthropic provider: %v", err)
-		}
-		return p
-
-	default:
-		t.Fatalf("unknown PROVIDER=%q", providerName)
-		return nil
-	}
+	return p
 }
 
 // Swarm integration tests that call real LLM APIs.

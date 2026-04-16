@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/provider/registry"
 )
 
 // testLogger adapts testing.T to the agent.Logger interface.
@@ -71,6 +72,8 @@ func (tp *trackingProvider) ModelId() string {
 
 // TestMain runs all integration tests and prints a token usage summary.
 func TestMain(m *testing.M) {
+	registry.RegisterBuiltins()
+
 	code := m.Run()
 
 	in := totalInputTokens.Load()
