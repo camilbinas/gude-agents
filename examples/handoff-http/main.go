@@ -48,7 +48,7 @@ func main() {
 	a, err := agent.New(provider, prompt.Text(
 		"You are a support agent. Use request_human_input when you need approval.",
 	), []tool.Tool{
-		agent.HandoffTool(),
+		agent.NewHandoffTool("request_human_input", ""),
 		tool.NewRaw("lookup", "Look up data", map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return `{"found": true}`, nil

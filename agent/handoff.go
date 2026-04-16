@@ -49,21 +49,26 @@ func GetHandoffRequest(ic *InvocationContext) (*HandoffRequest, bool) {
 	return hr, ok
 }
 
-// HandoffTool creates a tool that lets an agent pause execution and request
+// NewHandoffTool creates a tool that lets an agent pause execution and request
 // human input. When the LLM calls this tool, InvokeStream returns
 // ErrHandoffRequested and the HandoffRequest is available via GetHandoffRequest.
 //
-// Add this to your agent's tool list like any other tool:
+// The name parameter sets the tool name exposed to the LLM. The description
+// parameter is appended to the base tool description to define when the
+// handoff should occur.
 //
 //	agent.New(provider, instructions, []tool.Tool{
-//	    agent.HandoffTool(),
-//	    // ... other tools
+//	    agent.NewHandoffTool("request_human_input", "Hand off when the user requests a refund over $500."),
 //	})
-func HandoffTool() tool.Tool {
+func NewHandoffTool(name, description string) tool.Tool {
+	base := "Pause execution and ask a human for input, a decision, or approval. " +
+		"Use when you need information you cannot determine on your own."
+	if description != "" {
+		base += " " + description
+	}
 	return tool.NewRaw(
-		"request_human_input",
-		"Pause execution and ask a human for input, a decision, or approval. "+
-			"Use when you need information you cannot determine on your own.",
+		name,
+		base,
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{

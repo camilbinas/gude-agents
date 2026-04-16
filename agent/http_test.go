@@ -193,7 +193,7 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 	)
 
 	store := newTestMemoryStore()
-	a, err := New(provider, prompt.Text("sys"), []tool.Tool{HandoffTool()},
+	a, err := New(provider, prompt.Text("sys"), []tool.Tool{NewHandoffTool("request_human_input", "")},
 		WithSharedMemory(store))
 	if err != nil {
 		t.Fatal(err)
