@@ -6,7 +6,7 @@ Handoffs let an agent pause mid-conversation and transfer control to a human (or
 
 ```go
 a, _ := agent.New(provider, instructions, []tool.Tool{
-    agent.HandoffTool(), // gives the agent the ability to pause
+    agent.NewHandoffTool("request_human_input", "Hand off when you need approval before processing a refund."),
     // ... other tools
 })
 
@@ -30,8 +30,8 @@ if errors.Is(err, agent.ErrHandoffRequested) {
 
 ## How It Works
 
-1. You add `agent.HandoffTool()` to your agent's tool list
-2. The LLM decides it needs human input and calls `request_human_input`
+1. You add `agent.NewHandoffTool(name, description)` to your agent's tool list
+2. The LLM decides it needs human input and calls the tool
 3. `InvokeStream` / `Invoke` returns `agent.ErrHandoffRequested`
 4. You extract the `HandoffRequest` from the `InvocationContext` — it contains the reason, question, and full `[]Message` history
 5. You collect the human's response (stdin, HTTP, Slack, email, whatever)
@@ -40,9 +40,12 @@ if errors.Is(err, agent.ErrHandoffRequested) {
 
 ## API Reference
 
-### `HandoffTool() tool.Tool`
+### `NewHandoffTool(name, description string) tool.Tool`
 
-Creates the `request_human_input` tool. The LLM provides:
+Creates a handoff tool with a custom name and description. The base description is always:
+> "Pause execution and ask a human for input, a decision, or approval. Use when you need information you cannot determine on your own."
+
+The `description` parameter is appended to that base, letting you define exactly when the handoff should occur. The LLM provides:
 - `reason` — why it needs human input
 - `question` — the specific ask
 
