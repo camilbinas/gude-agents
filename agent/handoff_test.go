@@ -22,7 +22,7 @@ func TestHandoffTool_ReturnsErrHandoffRequested(t *testing.T) {
 		},
 	)
 
-	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{HandoffTool()})
+	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{NewHandoffTool("request_human_input", "")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestResume_ContinuesAfterHandoff(t *testing.T) {
 		},
 	)
 
-	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{HandoffTool(), counterTool})
+	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{NewHandoffTool("request_human_input", ""), counterTool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestHandoff_PreservesConversationContext(t *testing.T) {
 		},
 	)
 
-	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{HandoffTool(), lookupTool})
+	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{NewHandoffTool("request_human_input", ""), lookupTool})
 	if err != nil {
 		t.Fatal(err)
 	}

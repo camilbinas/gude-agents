@@ -38,7 +38,7 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 			"2) Then use request_human_input to ask a manager for approval before proceeding. "+
 			"3) After receiving approval, confirm the refund to the user. "+
 			"Be brief.",
-	), []tool.Tool{lookupTool, agent.HandoffTool()},
+	), []tool.Tool{lookupTool, agent.NewHandoffTool("request_human_input", "Use when you need manager approval before processing a refund.")},
 		agent.WithMaxIterations(10),
 	)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 	a, err := agent.New(p, prompt.Text(
 		"You are a support agent. When the user asks to delete their account, "+
 			"use request_human_input to get confirmation from a supervisor. Be brief.",
-	), []tool.Tool{agent.HandoffTool()},
+	), []tool.Tool{agent.NewHandoffTool("request_human_input", "Use when the user asks to delete their account to get supervisor confirmation.")},
 		agent.WithSharedMemory(store),
 		agent.WithMaxIterations(5),
 	)
@@ -171,7 +171,7 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 			"For simple questions, search the FAQ. "+
 			"For complex issues like account deletion, billing disputes, or complaints, "+
 			"use request_human_input to escalate to a human agent. Be brief.",
-	), []tool.Tool{faqTool, agent.HandoffTool()},
+	), []tool.Tool{faqTool, agent.NewHandoffTool("request_human_input", "Use for complex issues like account deletion, billing disputes, or complaints to escalate to a human agent.")},
 		agent.WithMaxIterations(5),
 	)
 	if err != nil {

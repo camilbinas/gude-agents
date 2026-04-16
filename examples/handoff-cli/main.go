@@ -32,7 +32,7 @@ func main() {
 			"before processing it.",
 	), []tool.Tool{
 		lookupOrderTool(),
-		agent.HandoffTool(),
+		agent.NewHandoffTool("request_human_input", ""),
 		processRefundTool(),
 	})
 	if err != nil {
