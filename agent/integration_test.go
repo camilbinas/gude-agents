@@ -58,7 +58,7 @@ func newTestProvider(t *testing.T) agent.Provider {
 			t.Fatalf("failed to create bedrock provider: %v", err)
 		}
 		t.Logf("Using provider: bedrock (model=%s, region=%s)", model, region)
-		return p
+		return &trackingProvider{inner: p}
 
 	case "openai":
 		model := os.Getenv("OPENAI_MODEL")
@@ -70,7 +70,7 @@ func newTestProvider(t *testing.T) agent.Provider {
 			t.Fatalf("failed to create openai provider: %v", err)
 		}
 		t.Logf("Using provider: openai (model=%s)", model)
-		return p
+		return &trackingProvider{inner: p}
 
 	case "anthropic":
 		model := os.Getenv("ANTHROPIC_MODEL")
@@ -82,7 +82,7 @@ func newTestProvider(t *testing.T) agent.Provider {
 			t.Fatalf("failed to create anthropic provider: %v", err)
 		}
 		t.Logf("Using provider: anthropic (model=%s)", model)
-		return p
+		return &trackingProvider{inner: p}
 
 	default:
 		t.Fatalf("unknown PROVIDER=%q (supported: bedrock, openai, anthropic)", providerName)
