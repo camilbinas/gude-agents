@@ -26,7 +26,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/joho/godotenv"
 )
@@ -41,9 +41,9 @@ func main() {
 
 	// Build the retriever — points at your Bedrock Knowledge Base.
 	// Fetches up to 5 results and discards anything below 0.4 relevance.
-	retriever, err := ragbedrock.NewKnowledgeBaseRetriever(kbID,
-		ragbedrock.WithKnowledgeBaseTopK(5),
-		ragbedrock.WithKnowledgeBaseScoreThreshold(0.4),
+	retriever, err := rag.NewKnowledgeBaseRetriever(kbID,
+		rag.WithKnowledgeBaseTopK(5),
+		rag.WithKnowledgeBaseScoreThreshold(0.4),
 	)
 	if err != nil {
 		log.Fatalf("retriever: %v", err)

@@ -13,6 +13,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/rag"
+	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+	ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 

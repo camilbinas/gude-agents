@@ -208,7 +208,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
-	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 	ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
 )
 
@@ -218,7 +217,7 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	embedder, err := ragbedrock.TitanEmbedV2()
+	embedder, err := bedrock.TitanEmbedV2()
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -29,7 +29,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
-	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 	"github.com/joho/godotenv"
 )
 
@@ -78,7 +77,7 @@ func main() {
 	ctx := context.Background()
 
 	// ── Embedder + vector store ───────────────────────────────────────────────
-	embedder, err := ragbedrock.TitanEmbedV2()
+	embedder, err := bedrock.TitanEmbedV2()
 	if err != nil {
 		log.Fatal(err)
 	}

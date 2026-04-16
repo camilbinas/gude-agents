@@ -168,10 +168,10 @@ Both split text into chunks of at most `chunkSize` runes with `chunkOverlap` run
 
 ### Bedrock — Titan Embed V2
 
-Import: `ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"`
+Import: `github.com/camilbinas/gude-agents/agent/provider/bedrock"`
 
 ```go
-embedder, err := ragbedrock.TitanEmbedV2()
+embedder, err := bedrock.TitanEmbedV2()
 ```
 
 Uses the `amazon.titan-embed-text-v2:0` model via the Bedrock InvokeModel API. Produces 1024-dimensional normalized vectors.
@@ -182,7 +182,7 @@ Uses the `amazon.titan-embed-text-v2:0` model via the Bedrock InvokeModel API. P
 
 Uses the default AWS credential chain.
 
-Other convenience constructors: `ragbedrock.CohereEmbedEnglishV3()`, `ragbedrock.CohereEmbedMultilingualV3()`, `ragbedrock.CohereEmbedV4()`.
+Other convenience constructors: `bedrock.CohereEmbedEnglishV3()`, `bedrock.CohereEmbedMultilingualV3()`, `bedrock.CohereEmbedV4()`.
 
 For a custom model ID use `ragbedrock.NewEmbedder(modelID, opts...)`.
 
@@ -211,14 +211,14 @@ Managed retrievers wrap cloud-hosted vector search services directly — no embe
 
 ### Bedrock Knowledge Base Retriever
 
-Import: `ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"`
+Import: `rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"`
 
 Wraps the AWS Bedrock Knowledge Bases `Retrieve` API:
 
 ```go
-retriever, err := ragbedrock.NewKnowledgeBaseRetriever("kb-xxxx",
-    ragbedrock.WithKnowledgeBaseTopK(5),
-    ragbedrock.WithKnowledgeBaseScoreThreshold(0.4),
+retriever, err := rag.NewKnowledgeBaseRetriever("kb-xxxx",
+    rag.WithKnowledgeBaseTopK(5),
+    rag.WithKnowledgeBaseScoreThreshold(0.4),
 )
 ```
 
@@ -328,14 +328,13 @@ import (
     "github.com/camilbinas/gude-agents/agent/prompt"
     "github.com/camilbinas/gude-agents/agent/provider/bedrock"
     "github.com/camilbinas/gude-agents/agent/rag"
-    ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 )
 
 func main() {
     ctx := context.Background()
 
     // 1. Create an embedder.
-    embedder, err := ragbedrock.TitanEmbedV2()
+    embedder, err := bedrock.TitanEmbedV2()
     if err != nil {
         log.Fatal(err)
     }
