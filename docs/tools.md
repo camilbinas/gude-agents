@@ -156,6 +156,38 @@ refundTool := tool.NewConfirm("approve_refund", "Approve the pending refund",
 )
 ```
 
+## tool.NewAsync — Async Side Effects (Fire-and-Forget)
+
+```go
+func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger) Tool
+```
+
+`NewAsync` creates a `Tool` whose handler runs in a background goroutine. The LLM receives the `ack` string immediately without waiting for the handler to complete — a fire-and-forget pattern. Use this for side effects that don't affect the conversation: CRM updates, webhooks, audit logs, notifications, cache warming, etc.
+
+The handler signature is `func(ctx context.Context, input T)` — no return value. The background goroutine gets a detached `context.Background()` so it isn't cancelled when the request finishes. Panics are recovered and reported via the optional `ErrorLogger`.
+
+```go
+type CRMUpdate struct {
+    ContactID string `json:"contact_id" description:"The CRM contact ID" required:"true"`
+    Note      string `json:"note"       description:"Note to add to the contact" required:"true"`
+}
+
+crmTool := tool.NewAsync("update_crm", "Add a note to a CRM contact",
+    "CRM update queued.",
+    func(ctx context.Context, in CRMUpdate) {
+        // This runs in the background — the LLM already got "CRM update queued."
+        crm.AddNote(ctx, in.ContactID, in.Note)
+    },
+    log.Printf, // or nil to silently drop errors
+)
+```
+
+`NewAsyncRaw` is the raw JSON variant:
+
+```go
+func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger) Tool
+```
+
 ## ChoiceMode and Choice
 
 `ChoiceMode` controls how the LLM selects tools during a conversation:
