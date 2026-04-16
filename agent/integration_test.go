@@ -98,6 +98,48 @@ func TestIntegration_Streaming(t *testing.T) {
 	t.Logf("Streamed %d chunks, full response: %s", len(chunks), full)
 }
 
+func TestIntegration_StreamingWithMemory(t *testing.T) {
+	p := newTestProvider(t)
+	store := memory.NewStore()
+
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant. Be very brief."),
+		nil,
+		agent.WithMemory(store, "stream-conv"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Turn 1: stream a response and establish context.
+	var chunks1 []string
+	_, err = a.InvokeStream(ctx, "My favorite number is 42. Remember that.", func(chunk string) {
+		chunks1 = append(chunks1, chunk)
+	})
+	if err != nil {
+		t.Fatalf("Turn 1 InvokeStream error: %v", err)
+	}
+	t.Logf("Turn 1 (%d chunks): %s", len(chunks1), strings.Join(chunks1, ""))
+
+	// Turn 2: stream again and verify memory continuity.
+	var chunks2 []string
+	_, err = a.InvokeStream(ctx, "What is my favorite number?", func(chunk string) {
+		chunks2 = append(chunks2, chunk)
+	})
+	if err != nil {
+		t.Fatalf("Turn 2 InvokeStream error: %v", err)
+	}
+	full := strings.Join(chunks2, "")
+	t.Logf("Turn 2 (%d chunks): %s", len(chunks2), full)
+
+	if !strings.Contains(full, "42") {
+		t.Errorf("expected response to contain '42', got: %s", full)
+	}
+}
+
 func TestIntegration_ToolCalling(t *testing.T) {
 	p := newTestProvider(t)
 
