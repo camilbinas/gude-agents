@@ -21,7 +21,7 @@
 //
 // Run:
 //
-//	go run ./examples/fire-and-forget
+//	go run ./examples/async-tools
 package main
 
 import (
