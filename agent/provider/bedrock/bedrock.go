@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // thinkingStyle describes how a model accepts thinking/reasoning configuration.
@@ -67,6 +70,7 @@ type options struct {
 	maxTokens     int32
 	thinkingLevel string
 	thinkingStyle thinkingStyle
+	apiKey        string
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
@@ -84,6 +88,16 @@ func WithMaxTokens(n int64) Option {
 // For Claude models this sets a token budget; for Nova 2 it sets maxReasoningEffort directly.
 func WithThinking(effort string) Option {
 	return func(o *options) { o.thinkingLevel = effort }
+}
+
+// WithAPIKey sets an Amazon Bedrock API key (bearer token) for authentication.
+// This is an alternative to IAM credentials — useful for quick setup and
+// exploratory use. If not set, the provider falls back to the standard AWS
+// credential chain (env vars, ~/.aws/credentials, IAM roles, etc.).
+// The key is also read automatically from the AWS_BEARER_TOKEN_BEDROCK
+// environment variable when no explicit key is provided.
+func WithAPIKey(key string) Option {
+	return func(o *options) { o.apiKey = key }
 }
 
 // withThinkingStyle sets the thinking API shape for the model. Used by model constructors only.
@@ -107,16 +121,39 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 		region = "us-east-1"
 	}
 
+	// Resolve API key: explicit option takes precedence over env var.
+	apiKey := o.apiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("AWS_BEARER_TOKEN_BEDROCK")
+	}
+
 	var cfgOpts []func(*awsconfig.LoadOptions) error
 	cfgOpts = append(cfgOpts, awsconfig.WithRegion(region))
+
+	// When an API key is provided, use anonymous credentials — the bearer
+	// token in the Authorization header is the sole authentication mechanism.
+	if apiKey != "" {
+		cfgOpts = append(cfgOpts, awsconfig.WithCredentialsProvider(
+			aws.AnonymousCredentials{},
+		))
+	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), cfgOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
 
+	// Build client options — inject the bearer token header when present.
+	var clientOpts []func(*bedrockruntime.Options)
+	if apiKey != "" {
+		token := apiKey // capture for closure
+		clientOpts = append(clientOpts, func(o *bedrockruntime.Options) {
+			o.APIOptions = append(o.APIOptions, addBearerTokenMiddleware(token))
+		})
+	}
+
 	return &BedrockProvider{
-		client:        bedrockruntime.NewFromConfig(cfg),
+		client:        bedrockruntime.NewFromConfig(cfg, clientOpts...),
 		model:         model,
 		maxTokens:     o.maxTokens,
 		thinkingStyle: o.thinkingStyle,
@@ -441,4 +478,38 @@ func (p *BedrockProvider) Capabilities() agent.Capabilities {
 		ToolChoice: true,
 		TokenUsage: true,
 	}
+}
+
+// addBearerTokenMiddleware returns a smithy middleware that injects an
+// Authorization: Bearer <token> header on every outbound request.
+func addBearerTokenMiddleware(token string) func(stack *middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		return stack.Finalize.Add(
+			middleware.FinalizeMiddlewareFunc("BedrockBearerToken",
+				func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+					req, ok := in.Request.(*smithyhttp.Request)
+					if ok {
+						req.Header.Set("Authorization", "Bearer "+token)
+					}
+					return next.HandleFinalize(ctx, in)
+				},
+			),
+			middleware.After,
+		)
+	}
+}
+
+// bearerTransport wraps an http.RoundTripper and injects the Authorization header.
+// Used as a fallback if the smithy middleware approach isn't available.
+var _ http.RoundTripper = (*bearerTransport)(nil)
+
+type bearerTransport struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(r)
 }
