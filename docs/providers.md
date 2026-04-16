@@ -312,7 +312,11 @@ See [Extended Thinking](#extended-thinking) for details.
 | `ClaudeOpus4_5()` | `claude-opus-4-5` |
 | `ClaudeOpus4_6()` | `claude-opus-4-6` |
 
-> Note: The Anthropic convenience functions don't accept options. To customize the API key or max tokens, use `anthropic.New(model, anthropic.WithAPIKey("..."))` directly.
+All convenience functions accept `...Option`, so you can customize them directly:
+
+```go
+anthropic.ClaudeSonnet4_6(anthropic.WithAPIKey("..."), anthropic.WithMaxTokens(8000))
+```
 
 ### Tier Aliases
 
