@@ -8,10 +8,34 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 )
+
+// testClient creates a Bedrock client pointed at a local HTTP test server
+// with dummy credentials, fully isolated from the host environment.
+//
+// The AWS SDK v2 picks up env vars like AWS_BEARER_TOKEN_BEDROCK regardless
+// of what credentials you pass explicitly — the bearer token middleware is
+// separate from the credentials provider. When a bearer token is present,
+// the SDK refuses to send requests over plain HTTP (requires HTTPS), which
+// breaks httptest.NewServer-based tests. Clearing all AWS env vars ensures
+// the client only uses the explicitly provided static credentials.
+func testClient(t *testing.T, endpoint string) *bedrockruntime.Client {
+	t.Helper()
+	for _, key := range []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+		"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE",
+		"AWS_BEARER_TOKEN_BEDROCK",
+	} {
+		t.Setenv(key, "")
+	}
+	return bedrockruntime.New(bedrockruntime.Options{
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider("AKID", "SECRET", "SESSION"),
+		BaseEndpoint: aws.String(endpoint),
+	})
+}
 
 func TestBedrockEmbedder_EmptyTextError(t *testing.T) {
 	e := &Embedder{
@@ -35,21 +59,9 @@ func TestBedrockEmbedder_ErrorPrefixWrapping(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "SESSION")),
-	)
-	if err != nil {
-		t.Fatalf("failed to load aws config: %v", err)
-	}
+	e := &Embedder{client: testClient(t, srv.URL), modelID: "amazon.titan-embed-text-v2:0"}
 
-	client := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
-		o.BaseEndpoint = aws.String(srv.URL)
-	})
-
-	e := &Embedder{client: client, modelID: "amazon.titan-embed-text-v2:0"}
-
-	_, err = e.Embed(context.Background(), "hello world")
+	_, err := e.Embed(context.Background(), "hello world")
 	if err == nil {
 		t.Fatal("expected error from mock server, got nil")
 	}
@@ -80,19 +92,7 @@ func TestBedrockEmbedder_CohereRequestFormat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "SESSION")),
-	)
-	if err != nil {
-		t.Fatalf("failed to load aws config: %v", err)
-	}
-
-	client := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
-		o.BaseEndpoint = aws.String(srv.URL)
-	})
-
-	e := &Embedder{client: client, modelID: "cohere.embed-english-v3"}
+	e := &Embedder{client: testClient(t, srv.URL), modelID: "cohere.embed-english-v3"}
 
 	vec, err := e.Embed(context.Background(), "hello")
 	if err != nil {
@@ -126,19 +126,7 @@ func TestBedrockEmbedder_TitanRequestFormat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "SESSION")),
-	)
-	if err != nil {
-		t.Fatalf("failed to load aws config: %v", err)
-	}
-
-	client := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
-		o.BaseEndpoint = aws.String(srv.URL)
-	})
-
-	e := &Embedder{client: client, modelID: "amazon.titan-embed-text-v2:0"}
+	e := &Embedder{client: testClient(t, srv.URL), modelID: "amazon.titan-embed-text-v2:0"}
 
 	vec, err := e.Embed(context.Background(), "hello")
 	if err != nil {
@@ -165,15 +153,7 @@ func TestBedrockEmbedder_CohereEmptyEmbeddingsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
-		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "SESSION")),
-	)
-	client := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
-		o.BaseEndpoint = aws.String(srv.URL)
-	})
-
-	e := &Embedder{client: client, modelID: "cohere.embed-multilingual-v3"}
+	e := &Embedder{client: testClient(t, srv.URL), modelID: "cohere.embed-multilingual-v3"}
 
 	_, err := e.Embed(context.Background(), "hello")
 	if err == nil {
