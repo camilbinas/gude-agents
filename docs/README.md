@@ -42,6 +42,7 @@ go get github.com/camilbinas/gude-agents
 ## Advanced Topics
 
 - [HTTP & Multi-Tenant Environments](http.md) — `WithSharedMemory`, `WithConversationID`, and serving multiple users
+- [Multi-Agent HTTP Server with Fiber v3](fiber-multi-agent.md) — Streaming multi-agent server with per-user conversations
 - [Handoffs](handoff.md) — Pausing agents for human input and resuming
 - [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern
 - [MCP Integration](mcp.md) — Connect to MCP servers and use their tools
