@@ -1,4 +1,4 @@
-package agent
+package graph
 
 import (
 	"context"
@@ -14,7 +14,7 @@ func noop(_ context.Context, s State) (State, error) { return s, nil }
 
 func setter(key, val string) NodeFunc {
 	return func(_ context.Context, s State) (State, error) {
-		out := copyState(s)
+		out := CopyState(s)
 		out[key] = val
 		return out, nil
 	}
@@ -186,13 +186,6 @@ func TestGraphValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		g.SetEntry("a")
-		// AddEdge sets static route, then AddFork overwrites with fork route —
-		// but the conflict check is in validate, so we set both fields manually
-		// by calling AddEdge then directly manipulating routes to simulate conflict.
-		// Instead, use AddEdge then AddFork (AddFork overwrites). To actually
-		// produce a conflict we need to set both fields. We do this by calling
-		// AddEdge (sets static) and then manually injecting a fork into the same
-		// route entry via the internal map.
 		if err := g.AddEdge("a", "b"); err != nil {
 			t.Fatal(err)
 		}
@@ -285,7 +278,7 @@ func TestGraphExecution(t *testing.T) {
 		mustAddNode(t, g, "branch_a", setter("a", "done_a"))
 		mustAddNode(t, g, "branch_b", setter("b", "done_b"))
 		mustAddNode(t, g, "join", func(_ context.Context, s State) (State, error) {
-			out := copyState(s)
+			out := CopyState(s)
 			out["merged"] = "yes"
 			return out, nil
 		})
@@ -380,7 +373,7 @@ func TestGraphExecution(t *testing.T) {
 	t.Run("7.8 concurrent Run calls do not share state", func(t *testing.T) {
 		g := mustGraph(t)
 		mustAddNode(t, g, "a", func(_ context.Context, s State) (State, error) {
-			out := copyState(s)
+			out := CopyState(s)
 			out["echo"] = s["id"]
 			return out, nil
 		})

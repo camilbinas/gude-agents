@@ -28,7 +28,7 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 	}
 
 	// 2. Load conversation history from memory if configured.
-	convID := resolveConversationID(ctx, a.conversationID)
+	convID := ResolveConversationID(ctx, a.conversationID)
 	var messages []Message
 	if a.memory != nil {
 		history, err := a.memory.Load(ctx, convID)

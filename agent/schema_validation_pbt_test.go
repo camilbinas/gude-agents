@@ -56,7 +56,7 @@ func TestProperty7_ValidInputsNeverRejected(t *testing.T) {
 		}
 		inputBytes, _ := json.Marshal(payload)
 
-		err := validateToolInput(schema, json.RawMessage(inputBytes))
+		err := ValidateToolInput(schema, json.RawMessage(inputBytes))
 		if err != nil {
 			rt.Fatalf("valid payload rejected: %v (fields=%v)", err, fields)
 		}
@@ -89,7 +89,7 @@ func TestProperty7_ValidEnumInputsNeverRejected(t *testing.T) {
 		payload := map[string]any{"choice": enumVals[idx]}
 		inputBytes, _ := json.Marshal(payload)
 
-		err := validateToolInput(schema, json.RawMessage(inputBytes))
+		err := ValidateToolInput(schema, json.RawMessage(inputBytes))
 		if err != nil {
 			rt.Fatalf("valid enum value %v rejected: %v", enumVals[idx], err)
 		}
@@ -114,7 +114,7 @@ func TestProperty8_InvalidInputsAlwaysRejected(t *testing.T) {
 		}
 
 		// Payload deliberately omits the required field.
-		err := validateToolInput(schema, json.RawMessage(`{}`))
+		err := ValidateToolInput(schema, json.RawMessage(`{}`))
 		if err == nil {
 			rt.Fatalf("expected rejection for missing required field %q, got nil", field)
 		}
@@ -148,7 +148,7 @@ func TestProperty8_InvalidEnumAlwaysRejected(t *testing.T) {
 		payload := map[string]any{"color": badVal}
 		inputBytes, _ := json.Marshal(payload)
 
-		err := validateToolInput(schema, json.RawMessage(inputBytes))
+		err := ValidateToolInput(schema, json.RawMessage(inputBytes))
 		if err == nil {
 			rt.Fatalf("expected rejection for out-of-enum value %q, got nil", badVal)
 		}

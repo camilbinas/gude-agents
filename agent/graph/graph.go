@@ -1,10 +1,12 @@
-package agent
+package graph
 
 import (
 	"context"
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/camilbinas/gude-agents/agent"
 )
 
 // State is the shared data container passed between nodes.
@@ -20,7 +22,7 @@ type RouterFunc func(ctx context.Context, state State) (string, error)
 // GraphResult is returned by Graph.Run on success.
 type GraphResult struct {
 	State State
-	Usage TokenUsage
+	Usage agent.TokenUsage
 }
 
 // route is a sealed union: exactly one field is set.
@@ -39,7 +41,7 @@ type Graph struct {
 	routes  map[string]route    // one route per source node
 	joins   map[string][]string // node → required predecessors
 	maxIter int
-	logger  Logger
+	logger  agent.Logger
 }
 
 // GraphOption configures a Graph.
@@ -58,7 +60,7 @@ func WithGraphMaxIterations(n int) GraphOption {
 }
 
 // WithGraphLogger sets an optional logger for graph execution events.
-func WithGraphLogger(l Logger) GraphOption {
+func WithGraphLogger(l agent.Logger) GraphOption {
 	return func(g *Graph) error {
 		g.logger = l
 		return nil
@@ -220,8 +222,8 @@ func (g *Graph) validate() error {
 	return nil
 }
 
-// copyState returns a shallow copy of s.
-func copyState(s State) State {
+// CopyState returns a shallow copy of s.
+func CopyState(s State) State {
 	out := make(State, len(s))
 	for k, v := range s {
 		out[k] = v
@@ -241,7 +243,7 @@ type runExec struct {
 	graph      *Graph
 	state      State
 	mu         sync.Mutex
-	usage      TokenUsage
+	usage      agent.TokenUsage
 	completed  map[string]bool
 	iterations int
 	// isBranch is true for isolated branch execs created inside forkStep.
@@ -271,7 +273,7 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 
 	// Execute node with a copy of current state.
 	e.mu.Lock()
-	stateCopy := copyState(e.state)
+	stateCopy := CopyState(e.state)
 	e.mu.Unlock()
 
 	if e.graph.logger != nil {
@@ -292,7 +294,7 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 
 	// Extract __usage__ key and accumulate, then merge result into shared state.
 	e.mu.Lock()
-	if u, ok := result["__usage__"].(TokenUsage); ok {
+	if u, ok := result["__usage__"].(agent.TokenUsage); ok {
 		e.usage.InputTokens += u.InputTokens
 		e.usage.OutputTokens += u.OutputTokens
 		delete(result, "__usage__")
@@ -314,7 +316,7 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 			}
 		case r.conditional != nil:
 			e.mu.Lock()
-			currentState := copyState(e.state)
+			currentState := CopyState(e.state)
 			e.mu.Unlock()
 			next, err := r.conditional(ctx, currentState)
 			if err != nil {
@@ -338,10 +340,7 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 		}
 	}
 
-	// Check join barrier only when NOT inside a fork branch (i.e. this exec owns
-	// the full completed map). Fork branches use isolated runExecs, so their
-	// completed maps are partial — the join check is done by forkStep on the
-	// parent exec after all branches finish and their completed maps are merged.
+	// Check join barrier only when NOT inside a fork branch.
 	if !e.isBranch {
 		if err := e.checkJoins(ctx, nodeName); err != nil {
 			return err
@@ -392,7 +391,7 @@ func (e *runExec) forkStep(ctx context.Context, targets []string) error {
 
 	// Snapshot current state for all branches.
 	e.mu.Lock()
-	snapshot := copyState(e.state)
+	snapshot := CopyState(e.state)
 	e.mu.Unlock()
 
 	// Sort targets for deterministic merge order.
@@ -425,7 +424,7 @@ func (e *runExec) forkStep(ctx context.Context, targets []string) error {
 
 			branch := &runExec{
 				graph:     e.graph,
-				state:     copyState(snapshot),
+				state:     CopyState(snapshot),
 				completed: completedCopy,
 				isBranch:  true,
 			}
@@ -487,7 +486,7 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 
 	exec := &runExec{
 		graph:     g,
-		state:     copyState(initial),
+		state:     CopyState(initial),
 		completed: make(map[string]bool),
 	}
 

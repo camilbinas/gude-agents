@@ -11,6 +11,51 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
+// mockSwarmProvider is a simple mock that returns canned responses in sequence.
+type mockSwarmProvider struct {
+	responses []*ProviderResponse
+	callIndex int
+}
+
+func (m *mockSwarmProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
+	return m.nextResp(), nil
+}
+
+func (m *mockSwarmProvider) ConverseStream(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	resp := m.nextResp()
+	if cb != nil && resp.Text != "" {
+		cb(resp.Text)
+	}
+	return resp, nil
+}
+
+func (m *mockSwarmProvider) nextResp() *ProviderResponse {
+	if m.callIndex >= len(m.responses) {
+		return &ProviderResponse{Text: "no more responses"}
+	}
+	r := m.responses[m.callIndex]
+	m.callIndex++
+	return r
+}
+
+// inMemoryStore is a simple in-memory Memory implementation for testing.
+type inMemoryStore struct {
+	data map[string][]Message
+}
+
+func newInMemoryStore() *inMemoryStore {
+	return &inMemoryStore{data: make(map[string][]Message)}
+}
+
+func (m *inMemoryStore) Load(_ context.Context, id string) ([]Message, error) {
+	return m.data[id], nil
+}
+
+func (m *inMemoryStore) Save(_ context.Context, id string, msgs []Message) error {
+	m.data[id] = msgs
+	return nil
+}
+
 // TestConcurrentInvocations_DifferentConversations verifies that a single Agent
 // instance can serve multiple concurrent conversations without cross-contamination.
 // This is the core HTTP multi-tenancy requirement.

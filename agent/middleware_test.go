@@ -28,7 +28,7 @@ func TestMiddleware_SingleWrapping(t *testing.T) {
 		return "base-result", nil
 	}
 
-	handler := chainMiddleware(base, mw)
+	handler := ChainMiddleware(base, mw)
 	result, err := handler(context.Background(), "my-tool", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -69,7 +69,7 @@ func TestMiddleware_ChainExecutionOrder(t *testing.T) {
 		return "ok", nil
 	}
 
-	handler := chainMiddleware(base, mwA, mwB)
+	handler := ChainMiddleware(base, mwA, mwB)
 	_, err := handler(context.Background(), "t", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -102,7 +102,7 @@ func TestMiddleware_ShortCircuit(t *testing.T) {
 		return "base", nil
 	}
 
-	handler := chainMiddleware(base, mw)
+	handler := ChainMiddleware(base, mw)
 	result, err := handler(context.Background(), "t", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -121,7 +121,7 @@ func TestMiddleware_NoMiddlewares(t *testing.T) {
 		return "direct", nil
 	}
 
-	handler := chainMiddleware(base)
+	handler := ChainMiddleware(base)
 	result, err := handler(context.Background(), "t", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

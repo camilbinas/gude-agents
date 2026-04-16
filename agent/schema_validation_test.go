@@ -22,7 +22,7 @@ func TestValidateToolInput_MissingRequired(t *testing.T) {
 		},
 		"required": []any{"name"},
 	}
-	err := validateToolInput(schema, json.RawMessage(`{}`))
+	err := ValidateToolInput(schema, json.RawMessage(`{}`))
 	if err == nil {
 		t.Fatal("expected error for missing required field, got nil")
 	}
@@ -38,7 +38,7 @@ func TestValidateToolInput_InvalidEnum(t *testing.T) {
 			},
 		},
 	}
-	err := validateToolInput(schema, json.RawMessage(`{"color":"purple"}`))
+	err := ValidateToolInput(schema, json.RawMessage(`{"color":"purple"}`))
 	if err == nil {
 		t.Fatal("expected error for invalid enum value, got nil")
 	}
@@ -53,7 +53,7 @@ func TestValidateToolInput_ValidPayload(t *testing.T) {
 		},
 		"required": []any{"name"},
 	}
-	err := validateToolInput(schema, json.RawMessage(`{"name":"alice","color":"red"}`))
+	err := ValidateToolInput(schema, json.RawMessage(`{"name":"alice","color":"red"}`))
 	if err != nil {
 		t.Fatalf("expected no error for valid payload, got: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestValidateToolInput_EnumFieldAbsent_OK(t *testing.T) {
 			"color": map[string]any{"type": "string", "enum": []any{"red", "green"}},
 		},
 	}
-	err := validateToolInput(schema, json.RawMessage(`{}`))
+	err := ValidateToolInput(schema, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("expected no error when optional enum field is absent, got: %v", err)
 	}

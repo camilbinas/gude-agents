@@ -1,9 +1,11 @@
-package agent
+package graph
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/camilbinas/gude-agents/agent"
 )
 
 // GraphState is an optional base struct that typed graph states can embed to get
@@ -14,7 +16,7 @@ import (
 // Usage:
 //
 //	type MyState struct {
-//	    agent.GraphState          // embed for automatic token tracking
+//	    graph.GraphState          // embed for automatic token tracking
 //	    Topic   string `json:"topic"`
 //	    Summary string `json:"summary"`
 //	}
@@ -23,23 +25,23 @@ import (
 //	result, usage, err := myAgent.Invoke(ctx, s.Topic)
 //	s.AddUsage(usage)  // accumulates into the graph's token counter
 type GraphState struct {
-	pendingUsage TokenUsage `json:"-"`
+	pendingUsage agent.TokenUsage `json:"-"`
 }
 
 // AddUsage accumulates token usage from an agent call into the graph's counter.
-func (g *GraphState) AddUsage(u TokenUsage) {
+func (g *GraphState) AddUsage(u agent.TokenUsage) {
 	g.pendingUsage.InputTokens += u.InputTokens
 	g.pendingUsage.OutputTokens += u.OutputTokens
 }
 
 // usageCarrier is the interface used internally to extract pending usage from a state.
 type usageCarrier interface {
-	getPendingUsage() TokenUsage
+	getPendingUsage() agent.TokenUsage
 	clearPendingUsage()
 }
 
-func (g *GraphState) getPendingUsage() TokenUsage { return g.pendingUsage }
-func (g *GraphState) clearPendingUsage()          { g.pendingUsage = TokenUsage{} }
+func (g *GraphState) getPendingUsage() agent.TokenUsage { return g.pendingUsage }
+func (g *GraphState) clearPendingUsage()                { g.pendingUsage = agent.TokenUsage{} }
 
 // TypedNodeFunc is the typed equivalent of NodeFunc.
 // It receives and returns a concrete state struct S instead of map[string]any.
@@ -51,7 +53,7 @@ type TypedRouterFunc[S any] func(ctx context.Context, state S) (string, error)
 // TypedGraphResult is returned by TypedGraph.Run on success.
 type TypedGraphResult[S any] struct {
 	State S
-	Usage TokenUsage
+	Usage agent.TokenUsage
 }
 
 // TypedGraph is a generic wrapper around Graph that lets nodes work with a
@@ -62,10 +64,10 @@ type TypedGraphResult[S any] struct {
 // way in, State → JSON → S on the way out. This keeps the execution engine
 // unchanged and adds no reflection beyond what encoding/json already does.
 //
-// Embed agent.GraphState in S to get automatic token usage accumulation:
+// Embed graph.GraphState in S to get automatic token usage accumulation:
 //
 //	type MyState struct {
-//	    agent.GraphState
+//	    graph.GraphState
 //	    Topic   string `json:"topic"`
 //	    Summary string `json:"summary"`
 //	}

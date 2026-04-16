@@ -113,7 +113,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 	}
 
 	// Resolve conversation ID: per-invocation override or agent default.
-	convID := resolveConversationID(ctx, a.conversationID)
+	convID := ResolveConversationID(ctx, a.conversationID)
 
 	// Load conversation history if memory is configured.
 	var messages []Message
@@ -315,9 +315,9 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
 }
 
-// validateToolInput checks that the JSON payload satisfies the tool's declared schema.
+// ValidateToolInput checks that the JSON payload satisfies the tool's declared schema.
 // It verifies all required fields are present and all enum-constrained fields have valid values.
-func validateToolInput(schema map[string]any, input json.RawMessage) error {
+func ValidateToolInput(schema map[string]any, input json.RawMessage) error {
 	var payload map[string]any
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)
@@ -379,7 +379,7 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 		}
 
 		// Validate tool input against the declared schema.
-		if err := validateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
+		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
 			results[i] = ToolResultBlock{
@@ -391,7 +391,7 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 		}
 
 		// Build the handler — wrap with middleware if configured.
-		handler := chainMiddleware(
+		handler := ChainMiddleware(
 			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
 				return t.Handler(ctx, input)
 			},
@@ -448,4 +448,56 @@ func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, TokenUs
 		return "", usage, err
 	}
 	return sb.String(), usage, nil
+}
+
+// ---------------------------------------------------------------------------
+// Accessor methods — used by subpackages (graph, swarm) that need read access
+// to agent internals without touching unexported fields.
+// ---------------------------------------------------------------------------
+
+// Instructions returns the agent's system prompt string.
+func (a *Agent) Instructions() string { return a.instructions }
+
+// MaxIterations returns the configured maximum iterations per invocation.
+func (a *Agent) MaxIterations() int { return a.maxIterations }
+
+// Provider returns the agent's LLM provider.
+func (a *Agent) Provider() Provider { return a.provider }
+
+// ToolSpecs returns the tool specifications registered on this agent.
+func (a *Agent) ToolSpecs() []tool.Spec { return a.toolSpecs }
+
+// OutputGuardrails returns the agent's output guardrails.
+func (a *Agent) OutputGuardrails() []OutputGuardrail { return a.outputGuardrails }
+
+// TokenBudget returns the configured token budget (0 = no budget).
+func (a *Agent) TokenBudget() int { return a.tokenBudget }
+
+// ParallelTools returns whether parallel tool execution is enabled.
+func (a *Agent) ParallelTools() bool { return a.parallelTools }
+
+// Middlewares returns the agent's middleware chain.
+func (a *Agent) Middlewares() []Middleware { return a.middlewares }
+
+// HasTool reports whether a tool with the given name is registered.
+func (a *Agent) HasTool(name string) bool {
+	_, ok := a.tools[name]
+	return ok
+}
+
+// LookupTool returns the tool with the given name and true, or a zero Tool and false.
+func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
+	t, ok := a.tools[name]
+	return t, ok
+}
+
+// RegisterTool adds a tool to the agent. Returns an error if a tool with the
+// same name is already registered.
+func (a *Agent) RegisterTool(t tool.Tool) error {
+	if _, exists := a.tools[t.Spec.Name]; exists {
+		return fmt.Errorf("duplicate tool name: %q", t.Spec.Name)
+	}
+	a.tools[t.Spec.Name] = t
+	a.toolSpecs = append(a.toolSpecs, t.Spec)
+	return nil
 }

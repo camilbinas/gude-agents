@@ -15,9 +15,9 @@ func WithConversationID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, conversationIDKey{}, id)
 }
 
-// resolveConversationID returns the per-invocation override if set,
-// otherwise falls back to the agent's default.
-func resolveConversationID(ctx context.Context, fallback string) string {
+// ResolveConversationID returns the per-invocation override if set,
+// otherwise falls back to the provided default.
+func ResolveConversationID(ctx context.Context, fallback string) string {
 	if id, ok := ctx.Value(conversationIDKey{}).(string); ok && id != "" {
 		return id
 	}

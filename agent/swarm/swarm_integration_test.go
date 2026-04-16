@@ -1,9 +1,10 @@
 //go:build integration
 
-package agent_test
+package swarm_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,13 +12,69 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	anthropicprov "github.com/camilbinas/gude-agents/agent/provider/anthropic"
+	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	openai "github.com/camilbinas/gude-agents/agent/provider/openai"
+	"github.com/camilbinas/gude-agents/agent/swarm"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
+
+func newTestProvider(t *testing.T) agent.Provider {
+	t.Helper()
+
+	providerName := os.Getenv("PROVIDER")
+	if providerName == "" {
+		providerName = "bedrock"
+	}
+
+	switch providerName {
+	case "bedrock":
+		model := os.Getenv("BEDROCK_MODEL")
+		if model == "" {
+			model = "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+		}
+		region := os.Getenv("AWS_REGION")
+		if region == "" {
+			region = "eu-central-1"
+		}
+		p, err := bedrock.New(model, bedrock.WithRegion(region))
+		if err != nil {
+			t.Fatalf("failed to create bedrock provider: %v", err)
+		}
+		return p
+
+	case "openai":
+		model := os.Getenv("OPENAI_MODEL")
+		if model == "" {
+			model = "gpt-4o"
+		}
+		p, err := openai.New(model)
+		if err != nil {
+			t.Fatalf("failed to create openai provider: %v", err)
+		}
+		return p
+
+	case "anthropic":
+		model := os.Getenv("ANTHROPIC_MODEL")
+		if model == "" {
+			model = "claude-sonnet-4-20250514"
+		}
+		p, err := anthropicprov.New(model)
+		if err != nil {
+			t.Fatalf("failed to create anthropic provider: %v", err)
+		}
+		return p
+
+	default:
+		t.Fatalf("unknown PROVIDER=%q", providerName)
+		return nil
+	}
+}
 
 // Swarm integration tests that call real LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=180s -run TestIntegration_Swarm ./agent/...
+//   go test -tags=integration -v -timeout=180s -run TestIntegration_Swarm ./agent/swarm/...
 
 func TestIntegration_Swarm_SingleHandoff(t *testing.T) {
 	p := newTestProvider(t)
@@ -48,10 +105,10 @@ func TestIntegration_Swarm_SingleHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sw, err := agent.NewSwarm([]agent.SwarmMember{
+	sw, err := swarm.New([]swarm.Member{
 		{Name: "triage", Description: "Routes requests to the right specialist", Agent: triage},
 		{Name: "billing", Description: "Handles refunds, invoices, and payments", Agent: billing},
-	}, agent.WithSwarmMaxHandoffs(3), agent.WithSwarmLogger(testLogger(t)))
+	}, swarm.WithMaxHandoffs(3), swarm.WithLogger(testLogger(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,12 +156,12 @@ func TestIntegration_Swarm_MemoryAcrossTurns(t *testing.T) {
 	}
 
 	store := memory.NewStore()
-	sw, err := agent.NewSwarm([]agent.SwarmMember{
+	sw, err := swarm.New([]swarm.Member{
 		{Name: "greeter", Description: "Greets users and handles general questions", Agent: greeter},
 		{Name: "technical", Description: "Handles technical support questions", Agent: technical},
 	},
-		agent.WithSwarmMemory(store, "swarm-conv-1"),
-		agent.WithSwarmLogger(testLogger(t)),
+		swarm.WithMemory(store, "swarm-conv-1"),
+		swarm.WithLogger(testLogger(t)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -159,12 +216,12 @@ func TestIntegration_Swarm_WithPerRequestConversationID(t *testing.T) {
 	}
 
 	store := memory.NewStore()
-	sw, err := agent.NewSwarm([]agent.SwarmMember{
+	sw, err := swarm.New([]swarm.Member{
 		{Name: "alpha", Description: "General assistant", Agent: alpha},
 		{Name: "beta", Description: "Secondary assistant", Agent: beta},
 	},
-		agent.WithSwarmMemory(store, ""),
-		agent.WithSwarmLogger(testLogger(t)),
+		swarm.WithMemory(store, ""),
+		swarm.WithLogger(testLogger(t)),
 	)
 	if err != nil {
 		t.Fatal(err)

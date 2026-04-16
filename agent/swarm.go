@@ -117,15 +117,14 @@ func NewSwarm(members []SwarmMember, opts ...SwarmOption) (*Swarm, error) {
 				continue
 			}
 			toolName := "transfer_to_" + otherName
-			if _, exists := entry.member.Agent.tools[toolName]; exists {
+			if entry.member.Agent.HasTool(toolName) {
 				continue // already registered, skip
 			}
 			handoffTool := s.makeHandoffTool(otherName, otherEntry.member.Description)
 			entry.handoffTools = append(entry.handoffTools, handoffTool)
 
 			// Register the tool on the agent.
-			entry.member.Agent.tools[handoffTool.Spec.Name] = handoffTool
-			entry.member.Agent.toolSpecs = append(entry.member.Agent.toolSpecs, handoffTool.Spec)
+			entry.member.Agent.RegisterTool(handoffTool)
 		}
 	}
 
@@ -175,7 +174,7 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 	result.HandoffHistory = make([]Handoff, 0)
 
 	// Resolve conversation ID: per-invocation override or swarm default.
-	convID := resolveConversationID(ctx, s.conversationID)
+	convID := ResolveConversationID(ctx, s.conversationID)
 
 	// Read the default active agent under lock.
 	s.mu.Lock()
@@ -312,13 +311,13 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 	a := entry.member.Agent
 	var cumulative TokenUsage
 
-	systemPrompt := a.instructions
+	systemPrompt := a.Instructions()
 
-	for iteration := range a.maxIterations {
+	for iteration := range a.MaxIterations() {
 		s.logf("[swarm/%s] iteration %d", entry.member.Name, iteration+1)
 
 		var bufferedChunks []string
-		hasOutputGuardrails := len(a.outputGuardrails) > 0
+		hasOutputGuardrails := len(a.OutputGuardrails()) > 0
 
 		streamCB := func(chunk string) {
 			if hasOutputGuardrails {
@@ -328,10 +327,10 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			}
 		}
 
-		resp, err := a.provider.ConverseStream(ctx, ConverseParams{
+		resp, err := a.Provider().ConverseStream(ctx, ConverseParams{
 			Messages:   messages,
 			System:     systemPrompt,
-			ToolConfig: a.toolSpecs,
+			ToolConfig: a.ToolSpecs(),
 		}, streamCB)
 		if err != nil {
 			return cumulative, "", false, err
@@ -340,7 +339,7 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 		cumulative.InputTokens += resp.Usage.InputTokens
 		cumulative.OutputTokens += resp.Usage.OutputTokens
 
-		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
+		if a.TokenBudget() > 0 && cumulative.Total() > a.TokenBudget() {
 			return cumulative, "", false, ErrTokenBudgetExceeded
 		}
 
@@ -376,7 +375,7 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 
 		// No tool calls — final response.
 		finalText := resp.Text
-		for _, g := range a.outputGuardrails {
+		for _, g := range a.OutputGuardrails() {
 			finalText, err = g(ctx, finalText)
 			if err != nil {
 				return cumulative, "", false, fmt.Errorf("output guardrail: %w", err)
@@ -396,7 +395,7 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 		return cumulative, finalText, false, nil
 	}
 
-	return cumulative, "", false, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
+	return cumulative, "", false, fmt.Errorf("max iterations (%d) exceeded", a.MaxIterations())
 }
 
 // executeToolsWithHandoff runs tool calls and detects if any was a handoff.
@@ -408,7 +407,7 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 	exec := func(i int, tc tool.Call) {
 		s.logf("[swarm/tool] %s", tc.Name)
 
-		t, ok := a.tools[tc.Name]
+		t, ok := a.LookupTool(tc.Name)
 		if !ok {
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -419,7 +418,7 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 		}
 
 		// Validate tool input against the declared schema.
-		if err := validateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
+		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -430,8 +429,8 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 		}
 
 		// Apply both swarm-level and agent-level middleware.
-		allMiddleware := append(s.middlewares, a.middlewares...)
-		handler := chainMiddleware(
+		allMiddleware := append(s.middlewares, a.Middlewares()...)
+		handler := ChainMiddleware(
 			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
 				return t.Handler(ctx, input)
 			},
@@ -465,7 +464,7 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 		}
 	}
 
-	if a.parallelTools {
+	if a.ParallelTools() {
 		var wg sync.WaitGroup
 		for i, tc := range calls {
 			wg.Add(1)

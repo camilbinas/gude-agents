@@ -119,7 +119,7 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 	// the correct conversation even when the agent has a different default.
 	convID := hr.ConversationID
 	if convID == "" {
-		convID = resolveConversationID(ctx, a.conversationID)
+		convID = ResolveConversationID(ctx, a.conversationID)
 	}
 
 	// Use base instructions — RAG context was already applied in the original invocation

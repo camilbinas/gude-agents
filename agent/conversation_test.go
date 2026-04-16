@@ -121,7 +121,7 @@ func TestWithSharedMemory_RequiresContextConversationID(t *testing.T) {
 
 func TestResolveConversationID_EmptyStringIgnored(t *testing.T) {
 	ctx := WithConversationID(context.Background(), "")
-	got := resolveConversationID(ctx, "default")
+	got := ResolveConversationID(ctx, "default")
 	if got != "default" {
 		t.Errorf("expected %q, got %q", "default", got)
 	}

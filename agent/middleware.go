@@ -13,8 +13,8 @@ type ToolHandlerFunc func(ctx context.Context, toolName string, input json.RawMe
 // Documented in docs/middleware.md — update when changing type or ordering semantics.
 type Middleware func(next ToolHandlerFunc) ToolHandlerFunc
 
-// chainMiddleware composes middlewares so that the first in the slice is the outermost wrapper.
-func chainMiddleware(handler ToolHandlerFunc, mws ...Middleware) ToolHandlerFunc {
+// ChainMiddleware composes middlewares so that the first in the slice is the outermost wrapper.
+func ChainMiddleware(handler ToolHandlerFunc, mws ...Middleware) ToolHandlerFunc {
 	for i := len(mws) - 1; i >= 0; i-- {
 		handler = mws[i](handler)
 	}

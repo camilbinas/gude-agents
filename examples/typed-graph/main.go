@@ -3,7 +3,7 @@
 // TypedGraph wraps the untyped Graph with generics so nodes work directly
 // with a concrete state struct — no map[string]any, no type assertions.
 //
-// Embedding agent.GraphState enables automatic token usage accumulation via
+// Embedding graph.GraphState enables automatic token usage accumulation via
 // s.AddUsage(usage) — no manual token fields needed on the state struct.
 //
 // Pipeline:
@@ -22,15 +22,16 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/anthropic"
 	"github.com/joho/godotenv"
 )
 
 // State flows through every node as a plain struct.
-// Embedding agent.GraphState enables automatic token tracking via AddUsage.
+// Embedding graph.GraphState enables automatic token tracking via AddUsage.
 type State struct {
-	agent.GraphState
+	graph.GraphState
 	Topic    string `json:"topic"`
 	Research string `json:"research"`
 	Summary  string `json:"summary"`
@@ -87,9 +88,9 @@ func main() {
 	}
 
 	// Build the typed graph — nodes receive and return State directly.
-	g, err := agent.NewTypedGraph[State](
-		agent.WithGraphMaxIterations(20),
-		agent.WithGraphLogger(log.Default()),
+	g, err := graph.NewTypedGraph[State](
+		graph.WithGraphMaxIterations(20),
+		graph.WithGraphLogger(log.Default()),
 	)
 	if err != nil {
 		log.Fatal(err)

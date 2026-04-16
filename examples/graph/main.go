@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -47,17 +48,17 @@ func main() {
 
 	// --- Build the graph ---
 
-	g, err := agent.NewGraph(
-		agent.WithGraphMaxIterations(20),
-		agent.WithGraphLogger(log.Default()),
+	g, err := graph.NewGraph(
+		graph.WithGraphMaxIterations(20),
+		graph.WithGraphLogger(log.Default()),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: fetch — simulates loading an article into state["article"]
-	if err := g.AddNode("fetch", func(_ context.Context, s agent.State) (agent.State, error) {
-		out := agent.State{
+	if err := g.AddNode("fetch", func(_ context.Context, s graph.State) (graph.State, error) {
+		out := graph.State{
 			"article": "Scientists have discovered a new species of deep-sea fish that " +
 				"produces its own bioluminescent light. The discovery, made 3,000 metres " +
 				"below the Pacific Ocean, could shed light on how life adapts to extreme " +
@@ -69,24 +70,24 @@ func main() {
 	}
 
 	// Node: summarise — wraps the summariser agent
-	if err := g.AddNode("summarise", agent.AgentNode(summariser, "article", "summary")); err != nil {
+	if err := g.AddNode("summarise", graph.AgentNode(summariser, "article", "summary")); err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: sentiment — wraps the sentiment agent
-	if err := g.AddNode("sentiment", agent.AgentNode(sentimentAnalyser, "article", "sentiment")); err != nil {
+	if err := g.AddNode("sentiment", graph.AgentNode(sentimentAnalyser, "article", "sentiment")); err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: report — combines summary + sentiment into a final report
-	if err := g.AddNode("report", func(_ context.Context, s agent.State) (agent.State, error) {
+	if err := g.AddNode("report", func(_ context.Context, s graph.State) (graph.State, error) {
 		summary, _ := s["summary"].(string)
 		sentiment, _ := s["sentiment"].(string)
 		report := fmt.Sprintf("=== Content Report ===\nSentiment : %s\nSummary   : %s",
 			strings.TrimSpace(sentiment),
 			strings.TrimSpace(summary),
 		)
-		return agent.State{"report": report}, nil
+		return graph.State{"report": report}, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func main() {
 
 	// --- Run ---
 
-	result, err := g.Run(context.Background(), agent.State{})
+	result, err := g.Run(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}

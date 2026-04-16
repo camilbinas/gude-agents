@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -107,9 +108,9 @@ func main() {
 
 	// --- Build the typed graph ---
 
-	g, err := agent.NewTypedGraph[BlogState](
-		agent.WithGraphMaxIterations(30),
-		agent.WithGraphLogger(log.Default()),
+	g, err := graph.NewTypedGraph[BlogState](
+		graph.WithGraphMaxIterations(30),
+		graph.WithGraphLogger(log.Default()),
 	)
 	if err != nil {
 		log.Fatal(err)
