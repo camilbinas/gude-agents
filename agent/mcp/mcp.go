@@ -131,11 +131,24 @@ func NewStreamableClient(ctx context.Context, endpoint string, opts ...Option) (
 // Tools discovers all tools from the MCP server and returns them as
 // gude-agents tool.Tool values, ready to pass to agent.New or any preset.
 // Handles pagination automatically if the server returns multiple pages.
-func (c *Client) Tools(ctx context.Context) ([]tool.Tool, error) {
+//
+// Use WithInclude to allow only specific tools, or WithExclude to block specific tools:
+//
+//	client.Tools(ctx, mcp.WithInclude("read_file", "write_file"))
+//	client.Tools(ctx, mcp.WithExclude("delete_file"))
+func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, error) {
+	cfg := &toolsConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	var tools []tool.Tool
 	for t, err := range c.session.Tools(ctx, nil) {
 		if err != nil {
 			return nil, fmt.Errorf("mcp list tools: %w", err)
+		}
+		if !cfg.allow(t.Name) {
+			continue
 		}
 		wrapped, err := c.wrapTool(t)
 		if err != nil {
@@ -144,6 +157,52 @@ func (c *Client) Tools(ctx context.Context) ([]tool.Tool, error) {
 		tools = append(tools, wrapped)
 	}
 	return tools, nil
+}
+
+// ToolsOption configures which tools are returned by Tools().
+type ToolsOption func(*toolsConfig)
+
+type toolsConfig struct {
+	include map[string]struct{}
+	exclude map[string]struct{}
+}
+
+func (c *toolsConfig) allow(name string) bool {
+	if len(c.include) > 0 {
+		_, ok := c.include[name]
+		return ok
+	}
+	if len(c.exclude) > 0 {
+		_, ok := c.exclude[name]
+		return !ok
+	}
+	return true
+}
+
+// WithInclude restricts Tools() to only the named tools.
+// Cannot be combined with WithExclude; include takes precedence.
+func WithInclude(names ...string) ToolsOption {
+	return func(c *toolsConfig) {
+		if c.include == nil {
+			c.include = make(map[string]struct{})
+		}
+		for _, n := range names {
+			c.include[n] = struct{}{}
+		}
+	}
+}
+
+// WithExclude filters out the named tools from Tools().
+// Ignored if WithInclude is also provided.
+func WithExclude(names ...string) ToolsOption {
+	return func(c *toolsConfig) {
+		if c.exclude == nil {
+			c.exclude = make(map[string]struct{})
+		}
+		for _, n := range names {
+			c.exclude[n] = struct{}{}
+		}
+	}
 }
 
 // wrapTool converts a single MCP tool definition into a gude-agents tool.Tool.
