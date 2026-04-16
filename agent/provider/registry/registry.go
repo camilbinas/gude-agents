@@ -26,6 +26,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/provider/anthropic"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/agent/provider/gemini"
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
 )
 
@@ -83,6 +84,11 @@ func RegisterBuiltins() {
 		func() (agent.Provider, error) { return openai.Cheapest() },
 		func() (agent.Provider, error) { return openai.Standard() },
 		func() (agent.Provider, error) { return openai.Smartest() },
+	)
+	Register("gemini",
+		func() (agent.Provider, error) { return gemini.Cheapest() },
+		func() (agent.Provider, error) { return gemini.Standard() },
+		func() (agent.Provider, error) { return gemini.Smartest() },
 	)
 }
 
