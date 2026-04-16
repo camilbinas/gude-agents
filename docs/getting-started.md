@@ -10,7 +10,13 @@ go get github.com/camilbinas/gude-agents
 
 ## Minimal Working Example
 
-The simplest agent creates a provider, builds an agent with `Default`, sends a message with `Invoke`, and prints the result:
+The simplest agent creates a provider, builds an agent with `Default`, sends a message with `Invoke`, and prints the result.
+
+Make sure `AWS_REGION` is set before running (Bedrock defaults to `us-east-1` if unset):
+
+```bash
+export AWS_REGION=eu-central-1
+```
 
 ```go
 package main
@@ -59,11 +65,17 @@ Each provider reads credentials from environment variables by default. Set the v
 
 | Provider | Environment Variable | Description |
 |----------|---------------------|-------------|
-| Bedrock | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Uses the standard AWS credential chain. Configure your region and credentials as you would for any AWS SDK. |
+| Bedrock | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Uses the standard AWS credential chain. Configure your region and credentials as you would for any AWS SDK. Alternatively, set `AWS_BEARER_TOKEN_BEDROCK` to use an API key instead of IAM credentials. |
 | Anthropic | `ANTHROPIC_API_KEY` | Your Anthropic API key. Can also be set programmatically with `anthropic.WithAPIKey(key)`. |
 | OpenAI | `OPENAI_API_KEY` | Your OpenAI API key. Can also be set programmatically with `openai.WithAPIKey(key)`. |
 
-Bedrock relies on the AWS SDK's default credential chain, so any method that works for AWS (environment variables, `~/.aws/credentials`, IAM roles, etc.) will work here. You can override the region with `bedrock.WithRegion("us-west-2")`.
+Bedrock relies on the AWS SDK's default credential chain, so any method that works for AWS (environment variables, `~/.aws/credentials`, IAM roles, etc.) will work here. You can override the region with `bedrock.WithRegion("eu-central-1")`.
+
+> **Important:** `AWS_REGION` must be set when using the Bedrock provider. If unset, it defaults to `us-east-1`, which may not match the region where your models are enabled. Set it via environment variable or explicitly with `bedrock.WithRegion("your-region")`:
+>
+> ```bash
+> export AWS_REGION=eu-central-1
+> ```
 
 ## Invoke vs InvokeStream
 

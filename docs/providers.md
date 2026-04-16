@@ -105,7 +105,35 @@ provider, _ := bedrock.ClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingHigh))
 
 Only supported on Claude 4-series models and Nova 2 Lite. Silently ignored for other models. See [Extended Thinking](#extended-thinking) for details.
 
+#### `WithAPIKey`
+
+```go
+func WithAPIKey(key string) Option
+```
+
+Sets an Amazon Bedrock API key (bearer token) for authentication. This is an alternative to IAM credentials — useful for quick setup and exploratory use. If not set, the provider also checks the `AWS_BEARER_TOKEN_BEDROCK` environment variable. When neither is provided, the provider falls back to the standard AWS credential chain.
+
+```go
+provider, _ := bedrock.Standard(
+    bedrock.WithAPIKey("your-bedrock-api-key"),
+)
+```
+
+Or set it via environment variable:
+
+```bash
+export AWS_BEARER_TOKEN_BEDROCK=your-bedrock-api-key
+```
+
 ### AWS Credentials
+
+Bedrock supports two authentication methods:
+
+**1. API Key (Bearer Token)**
+
+The simplest way to get started. Set the `AWS_BEARER_TOKEN_BEDROCK` environment variable or pass `bedrock.WithAPIKey("...")` directly. When an API key is provided, IAM credentials are not required — the bearer token is the sole authentication mechanism.
+
+**2. IAM Credentials (Default)**
 
 Bedrock uses the standard AWS SDK credential chain. Any method that works for the AWS Go SDK v2 works here:
 
@@ -114,7 +142,7 @@ Bedrock uses the standard AWS SDK credential chain. Any method that works for th
 - IAM roles (EC2, ECS, Lambda)
 - SSO / AWS CLI profiles
 
-No API key option is needed — credentials are resolved automatically.
+If no API key is provided, credentials are resolved automatically through this chain.
 
 ### Convenience Model Functions
 
