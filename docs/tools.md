@@ -104,6 +104,58 @@ weatherTool := tool.NewRaw(
 )
 ```
 
+## tool.NewSimple — No-Input Constructor
+
+```go
+func NewSimple(name, description string, handler func(ctx context.Context) (string, error)) Tool
+```
+
+`NewSimple` creates a `Tool` that takes no input parameters. It uses an empty object schema automatically, so you don't need to pass `map[string]any{"type": "object"}` yourself. The handler receives only a `context.Context`.
+
+```go
+timeTool := tool.NewSimple("current_time", "Returns the current server time",
+    func(ctx context.Context) (string, error) {
+        return time.Now().Format(time.RFC3339), nil
+    },
+)
+```
+
+## tool.NewString — Single String Parameter
+
+```go
+func NewString(name, description, paramName, paramDesc string, handler func(ctx context.Context, value string) (string, error)) Tool
+```
+
+`NewString` creates a `Tool` that takes a single required string parameter. You provide the parameter name and description — the schema is built for you. The handler receives the extracted string directly.
+
+```go
+searchTool := tool.NewString("search", "Search the knowledge base", "query", "The search query",
+    func(ctx context.Context, query string) (string, error) {
+        results := doSearch(query)
+        return results, nil
+    },
+)
+```
+
+## tool.NewConfirm — Boolean Confirmation
+
+```go
+func NewConfirm(name, description string, handler func(ctx context.Context, confirmed bool) (string, error)) Tool
+```
+
+`NewConfirm` creates a `Tool` with a single required `confirm` boolean parameter. Useful for approval flows where the LLM must explicitly confirm an action before it proceeds.
+
+```go
+refundTool := tool.NewConfirm("approve_refund", "Approve the pending refund",
+    func(ctx context.Context, confirmed bool) (string, error) {
+        if !confirmed {
+            return "Refund cancelled.", nil
+        }
+        return processRefund()
+    },
+)
+```
+
 ## ChoiceMode and Choice
 
 `ChoiceMode` controls how the LLM selects tools during a conversation:

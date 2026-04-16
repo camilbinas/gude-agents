@@ -72,9 +72,91 @@ func New[T any](name, description string, handler Handler[T]) Tool {
 	}
 }
 
+// NewSimple creates a Tool that takes no input parameters.
+// It uses an empty object schema and a handler that receives no input.
+// Documented in docs/tools.md — update when changing signature.
+func NewSimple(name, description string, handler func(ctx context.Context) (string, error)) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: map[string]any{"type": "object"},
+		},
+		Handler: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			return handler(ctx)
+		},
+	}
+}
+
+// NewString creates a Tool that takes a single required string parameter.
+// paramName and paramDesc control the JSON property name and its description
+// in the schema. The handler receives the extracted string directly.
+// Documented in docs/tools.md — update when changing signature.
+func NewString(name, description, paramName, paramDesc string, handler func(ctx context.Context, value string) (string, error)) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					paramName: map[string]any{
+						"type":        "string",
+						"description": paramDesc,
+					},
+				},
+				"required": []string{paramName},
+			},
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var params map[string]string
+			if err := json.Unmarshal(raw, &params); err != nil {
+				return "", fmt.Errorf("unmarshal tool input: %w", err)
+			}
+			return handler(ctx, params[paramName])
+		},
+	}
+}
+
+// NewConfirm creates a Tool that takes a single required boolean "confirm"
+// parameter. Useful for approval flows where the LLM must explicitly confirm
+// an action before it proceeds.
+// Documented in docs/tools.md — update when changing signature.
+func NewConfirm(name, description string, handler func(ctx context.Context, confirmed bool) (string, error)) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"confirm": map[string]any{
+						"type":        "boolean",
+						"description": "Set to true to confirm the action, false to cancel.",
+					},
+				},
+				"required": []string{"confirm"},
+			},
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var params struct {
+				Confirm bool `json:"confirm"`
+			}
+			if err := json.Unmarshal(raw, &params); err != nil {
+				return "", fmt.Errorf("unmarshal tool input: %w", err)
+			}
+			return handler(ctx, params.Confirm)
+		},
+	}
+}
+
 // NewRaw creates a Tool with a raw JSON handler (no auto-deserialization).
+// If schema is nil, it defaults to {"type": "object"} (no input parameters).
 // Documented in docs/tools.md — update when changing signature.
 func NewRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool {
+	if schema == nil {
+		schema = map[string]any{"type": "object"}
+	}
 	return Tool{
 		Spec: Spec{
 			Name:        name,
