@@ -19,6 +19,9 @@ func ClaudeOpus4_5(opts ...Option) (*BedrockProvider, error) {
 func ClaudeOpus4_6(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-4-6-v1", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func ClaudeOpus4_7(opts ...Option) (*BedrockProvider, error) {
+	return New("eu.anthropic.claude-opus-4-7", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
 
 // Amazon Nova models (EU cross-region inference).
 func NovaMicro(opts ...Option) (*BedrockProvider, error) {
