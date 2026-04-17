@@ -37,7 +37,10 @@ func main() {
 		log.Fatalf("postgres connect: %v", err)
 	}
 
-	mem, err := postgres.New(pool, postgres.WithTableName("agent_conversations"))
+	mem, err := postgres.New(pool,
+		postgres.WithTableName("agent_conversations"),
+		postgres.WithAutoMigrate(),
+	)
 	if err != nil {
 		log.Fatalf("postgres memory: %v", err)
 	}

@@ -10,13 +10,28 @@
 // The driver uses github.com/jackc/pgx/v5, the standard pure-Go PostgreSQL
 // driver with native PostgreSQL type support.
 //
+// By default, the table must already exist. Use WithAutoMigrate to have the
+// driver create it automatically (useful for development).
+//
+// Expected table schema:
+//
+//	CREATE TABLE conversations (
+//	    conversation_id TEXT PRIMARY KEY,
+//	    messages        JSONB NOT NULL,
+//	    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+//	);
+//
 // Usage:
 //
 //	pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
 //	store, err := postgres.New(pool)
 //
-//	// With options:
-//	store, err := postgres.New(pool, postgres.WithTableName("agent_conversations"))
+//	// Auto-create the table (development):
+//	store, err := postgres.New(pool, postgres.WithAutoMigrate())
+//
+// Run:
+//
+//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./postgres-memory
 package postgres
 
 import (
@@ -43,8 +58,11 @@ type PostgresMemory struct {
 
 // New creates a new PostgresMemory. The pool should be a connected pgxpool.Pool.
 //
-// The conversations table is created automatically if it doesn't exist.
-// Returns an error if the pool is nil or the schema cannot be initialized.
+// By default, the table must already exist with the expected schema. Use
+// WithAutoMigrate to create it automatically.
+//
+// Returns an error if the pool is nil or (with WithAutoMigrate) the schema
+// cannot be initialized.
 func New(pool *pgxpool.Pool, opts ...Option) (*PostgresMemory, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("postgres memory: pool is required")
@@ -57,16 +75,17 @@ func New(pool *pgxpool.Pool, opts ...Option) (*PostgresMemory, error) {
 		o(cfg)
 	}
 
-	// Create the conversations table if it doesn't exist.
-	ddl := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			conversation_id TEXT PRIMARY KEY,
-			messages        JSONB NOT NULL,
-			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`, cfg.tableName)
-	if _, err := pool.Exec(context.Background(), ddl); err != nil {
-		return nil, fmt.Errorf("postgres memory: create table: %w", err)
+	if cfg.autoMigrate {
+		ddl := fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s (
+				conversation_id TEXT PRIMARY KEY,
+				messages        JSONB NOT NULL,
+				updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			)
+		`, cfg.tableName)
+		if _, err := pool.Exec(context.Background(), ddl); err != nil {
+			return nil, fmt.Errorf("postgres memory: create table: %w", err)
+		}
 	}
 
 	return &PostgresMemory{
