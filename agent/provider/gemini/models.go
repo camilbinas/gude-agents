@@ -10,6 +10,9 @@ func Gemini25FlashLite(opts ...Option) (*GeminiProvider, error) {
 func Gemini3Flash(opts ...Option) (*GeminiProvider, error) {
 	return New("gemini-3-flash-preview", opts...)
 }
+func Gemini31FlashLite(opts ...Option) (*GeminiProvider, error) {
+	return New("gemini-3.1-flash-lite-preview", opts...)
+}
 func Gemini31Pro(opts ...Option) (*GeminiProvider, error) {
 	return New("gemini-3.1-pro-preview", opts...)
 }
