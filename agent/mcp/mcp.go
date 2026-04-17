@@ -132,10 +132,10 @@ func NewStreamableClient(ctx context.Context, endpoint string, opts ...Option) (
 // gude-agents tool.Tool values, ready to pass to agent.New or any preset.
 // Handles pagination automatically if the server returns multiple pages.
 //
-// Use WithInclude to allow only specific tools, or WithExclude to block specific tools:
+// Use IncludeTools or ExcludeTools to filter which tools are returned:
 //
-//	client.Tools(ctx, mcp.WithInclude("read_file", "write_file"))
-//	client.Tools(ctx, mcp.WithExclude("delete_file"))
+//	client.Tools(ctx, mcp.IncludeTools("read_file", "write_file"))
+//	client.Tools(ctx, mcp.ExcludeTools("delete_file"))
 func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, error) {
 	cfg := &toolsConfig{}
 	for _, opt := range opts {
@@ -179,9 +179,9 @@ func (c *toolsConfig) allow(name string) bool {
 	return true
 }
 
-// WithInclude restricts Tools() to only the named tools.
-// Cannot be combined with WithExclude; include takes precedence.
-func WithInclude(names ...string) ToolsOption {
+// IncludeTools restricts Tools() to only the named tools.
+// Cannot be combined with ExcludeTools; IncludeTools takes precedence.
+func IncludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) {
 		if c.include == nil {
 			c.include = make(map[string]struct{})
@@ -192,9 +192,9 @@ func WithInclude(names ...string) ToolsOption {
 	}
 }
 
-// WithExclude filters out the named tools from Tools().
-// Ignored if WithInclude is also provided.
-func WithExclude(names ...string) ToolsOption {
+// ExcludeTools filters out the named tools from Tools().
+// Ignored if IncludeTools is also provided.
+func ExcludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) {
 		if c.exclude == nil {
 			c.exclude = make(map[string]struct{})

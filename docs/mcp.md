@@ -103,33 +103,33 @@ Discovers all tools from the MCP server and returns them as `tool.Tool` values. 
 
 Use `WithInclude` or `WithExclude` to filter which tools are returned.
 
-#### WithInclude
+#### IncludeTools
 
 ```go
-func WithInclude(names ...string) ToolsOption
+func IncludeTools(names ...string) ToolsOption
 ```
 
 Restricts `Tools()` to only the named tools. All other tools from the server are ignored.
 
 ```go
 // Only expose read operations to the agent
-tools, err := client.Tools(ctx, mcp.WithInclude("read_file", "list_directory"))
+tools, err := client.Tools(ctx, mcp.IncludeTools("read_file", "list_directory"))
 ```
 
-#### WithExclude
+#### ExcludeTools
 
 ```go
-func WithExclude(names ...string) ToolsOption
+func ExcludeTools(names ...string) ToolsOption
 ```
 
 Filters out the named tools from the result. All other tools are returned.
 
 ```go
 // Expose everything except destructive operations
-tools, err := client.Tools(ctx, mcp.WithExclude("delete_file", "move_file"))
+tools, err := client.Tools(ctx, mcp.ExcludeTools("delete_file", "move_file"))
 ```
 
-> `WithInclude` takes precedence over `WithExclude` if both are provided.
+> `IncludeTools` takes precedence over `ExcludeTools` if both are provided.
 
 ### Close
 
