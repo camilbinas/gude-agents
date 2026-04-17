@@ -1,6 +1,6 @@
 // Run:
 //
-//	go run ./summary-memory
+//	go run ./memory-summary
 
 package main
 

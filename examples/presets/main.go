@@ -23,7 +23,7 @@
 //
 // Run:
 //
-//	go run ./tool-presets
+//	go run ./presets
 
 package main
 

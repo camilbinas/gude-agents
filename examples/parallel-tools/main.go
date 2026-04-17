@@ -21,7 +21,7 @@
 //
 // Run:
 //
-//	go run ./async-tools
+//	go run ./parallel-tools
 
 package main
 

@@ -13,7 +13,7 @@
 //
 // Run:
 //
-//	go run ./mcp-tools
+//	go run ./mcp-basic
 
 package main
 

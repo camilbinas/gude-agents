@@ -12,7 +12,7 @@
 //
 // Run:
 //
-//	KNOWLEDGE_BASE_ID=<your-kb-id> go run ./bedrock-knowledge-base
+//	KNOWLEDGE_BASE_ID=<your-kb-id> go run ./aws-bedrock-rag
 
 package main
 

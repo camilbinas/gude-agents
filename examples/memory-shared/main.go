@@ -11,7 +11,7 @@
 //
 // Run:
 //
-//	go run ./multi-conversation
+//	go run ./memory-shared
 
 package main
 

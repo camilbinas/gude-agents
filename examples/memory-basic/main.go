@@ -1,6 +1,6 @@
 // Run:
 //
-//	go run ./conversational
+//	go run ./memory-basic
 
 package main
 

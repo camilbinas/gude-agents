@@ -3,7 +3,7 @@
 //
 // Run:
 //
-//	go run ./structured-output-basic
+//	go run ./structured-output
 
 package main
 

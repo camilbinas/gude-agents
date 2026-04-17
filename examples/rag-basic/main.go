@@ -1,6 +1,6 @@
 // Run:
 //
-//	go run ./rag-agent
+//	go run ./rag-basic
 
 package main
 
