@@ -255,6 +255,25 @@ These are convenience constructors for `text-embedding-3-small` and `text-embedd
 
 For a custom model use `ragopenai.NewEmbedder(opts...)` with `WithEmbedderModel`.
 
+### Gemini — gemini-embedding-001
+
+Import: `raggemini "github.com/camilbinas/gude-agents/agent/rag/gemini"`
+
+```go
+embedder, err := raggemini.GeminiEmbedding001()
+// or:
+embedder, err := raggemini.GeminiEmbedding002()
+```
+
+Uses `gemini-embedding-001` by default (768 dimensions). `gemini-embedding-002` is the newer multimodal model. Reads the API key from `GEMINI_API_KEY` or `GOOGLE_API_KEY` environment variables.
+
+| Option | Description |
+|--------|-------------|
+| `WithAPIKey(key string)` | Gemini API key (defaults to `GEMINI_API_KEY` → `GOOGLE_API_KEY` env vars) |
+| `WithModel(model string)` | Override the model name (default: `"gemini-embedding-001"`) |
+
+For a custom model use `raggemini.NewEmbedder(raggemini.WithModel("my-model"))`.
+
 ## Managed Retrievers
 
 Managed retrievers wrap cloud-hosted vector search services directly — no embedder or vector store setup required. Both implement `agent.Retriever` and work with `NewRetrieverTool` and `WithRetriever`.

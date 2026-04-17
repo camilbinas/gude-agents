@@ -29,6 +29,7 @@ go get github.com/camilbinas/gude-agents/agent/memory/postgres      # PostgreSQL
 # Optional: RAG embedders and vector stores
 go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock embedders
 go get github.com/camilbinas/gude-agents/agent/rag/openai           # OpenAI embedders
+go get github.com/camilbinas/gude-agents/agent/rag/gemini          # Gemini embedders
 go get github.com/camilbinas/gude-agents/agent/rag/redis            # Redis vector store
 go get github.com/camilbinas/gude-agents/agent/rag/postgres        # PostgreSQL + pgvector
 
