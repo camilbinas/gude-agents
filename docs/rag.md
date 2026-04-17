@@ -105,9 +105,11 @@ retriever := rag.NewRetriever(embedder, store,
 
 The retrieval pipeline runs in order: embed query → vector search → score threshold filter → rerank (if configured).
 
-## rag.MemoryStore
+## Vector Store Implementations
 
-`MemoryStore` is a brute-force cosine similarity vector store backed by a Go slice. It's safe for concurrent use via `sync.RWMutex`. Good for prototyping and tests — for production, use `ragredis.New` from `agent/rag/redis`.
+### rag.MemoryStore
+
+`MemoryStore` is a brute-force cosine similarity vector store backed by a Go slice. It's safe for concurrent use via `sync.RWMutex`. Good for prototyping and tests — for production, use a persistent vector store.
 
 ```go
 store := rag.NewMemoryStore()
@@ -117,6 +119,54 @@ It implements `agent.VectorStore`:
 
 - `Add(ctx, docs, embeddings)` — appends documents and their embeddings. Returns an error if `docs` and `embeddings` have different lengths.
 - `Search(ctx, queryEmbedding, topK)` — returns the top-K documents by cosine similarity. Returns an error if `topK < 1`.
+
+### PostgreSQL + pgvector — agent/rag/postgres
+
+Import: `github.com/camilbinas/gude-agents/agent/rag/postgres`
+
+Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search. Supports HNSW and IVFFlat indexes with cosine, L2, or inner product distance.
+
+```go
+pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
+
+// Use an existing table with default column names:
+store, err := ragpg.New(pool, 1536)
+
+// Auto-create everything (development):
+store, err := ragpg.New(pool, 1536, ragpg.WithAutoMigrate())
+
+// Point at an existing table with custom columns:
+store, err := ragpg.New(pool, 1536,
+    ragpg.WithTableName("users"),
+    ragpg.WithColumns("id", "bio", "", "embedding"),
+)
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithTableName(name string)` | `"documents"` | Table name for document storage |
+| `WithColumns(id, content, meta, embed)` | `"id"`, `"content"`, `"metadata"`, `"embedding"` | Map to custom column names. Pass `""` for meta to skip metadata. |
+| `WithAutoMigrate()` | off | Create extension, table, and index automatically |
+| `WithHNSW(m, efConstruction int)` | m=16, ef=200 | HNSW index parameters (only with `WithAutoMigrate`) |
+| `WithIVFFlat(lists int)` | 100 lists | IVFFlat index (only with `WithAutoMigrate`) |
+| `WithDistanceMetric(metric string)` | `"cosine"` | Distance metric: `"cosine"`, `"l2"`, `"inner_product"` |
+
+By default, the table must already exist. `WithColumns` lets you point the store at any existing table — for example, a `users` table with a `bio` column and an `embedding` column. Pass `""` for the metadata column if the table doesn't have one.
+
+### Redis Stack — agent/rag/redis
+
+Import: `github.com/camilbinas/gude-agents/agent/rag/redis`
+
+Uses Redis Stack (RediSearch) for vector search. Requires Redis Stack — not standard community Redis.
+
+```go
+store, err := ragredis.New(
+    ragredis.Options{Addr: "localhost:6379"},
+    "my-index", 1536,
+)
+```
+
+See [Redis Providers](redis.md) for full documentation.
 
 ## rag.Ingest
 
@@ -397,7 +447,7 @@ func main() {
 ## See Also
 
 - [Agent API Reference](agent-api.md) — `WithRetriever` and `WithContextFormatter` options
-- [Redis Providers](redis.md) — `VectorStore` (`agent/rag/redis`) for production vector search
+- [Redis Providers](redis.md) — `VectorStore` (`agent/rag/redis`) for production vector search with Redis Stack
 - [Providers](providers.md) — Bedrock and OpenAI provider setup
 - [Tool System](tools.md) — how tools work in the agent loop
 - [Message Types](message-types.md) — `Document` and `ScoredDocument` types

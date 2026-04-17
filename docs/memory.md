@@ -383,15 +383,19 @@ Stores conversation history as rows in a PostgreSQL table, with messages stored 
 pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
 mem, err := pgmemory.New(pool)
 
+// Auto-create the table (development):
+mem, err := pgmemory.New(pool, pgmemory.WithAutoMigrate())
+
 // With options:
 mem, err := pgmemory.New(pool,
     pgmemory.WithTableName("agent_conversations"),
+    pgmemory.WithAutoMigrate(),
 )
 ```
 
-Options: `WithTableName(name string)` (default: `"conversations"`).
+Options: `WithTableName(name string)` (default: `"conversations"`), `WithAutoMigrate()` (off by default).
 
-The table is created automatically with a `JSONB` messages column. PostgreSQL's MVCC provides full ACID transactions and handles concurrent access from multiple processes. `List` returns conversations ordered by most recently updated first.
+By default, the table must already exist with the expected schema (see package doc). Use `WithAutoMigrate` for development or when the DB user has CREATE TABLE permissions. PostgreSQL's MVCC provides full ACID transactions and handles concurrent access from multiple processes. `List` returns conversations ordered by most recently updated first.
 
 ### Disk — agent/memory/disk
 

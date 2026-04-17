@@ -16,6 +16,7 @@ require (
 	github.com/camilbinas/gude-agents/agent/provider/openai v0.0.0
 	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.0.0
 	github.com/camilbinas/gude-agents/agent/rag/openai v0.0.0
+	github.com/camilbinas/gude-agents/agent/rag/postgres v0.0.0
 	github.com/camilbinas/gude-agents/agent/rag/redis v0.0.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
@@ -53,6 +54,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
+	github.com/pgvector/pgvector-go v0.3.0 // indirect
 	github.com/redis/go-redis/v9 v9.18.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
@@ -84,5 +86,6 @@ replace (
 	github.com/camilbinas/gude-agents/agent/provider/registry => ../agent/provider/registry
 	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../agent/rag/bedrock
 	github.com/camilbinas/gude-agents/agent/rag/openai => ../agent/rag/openai
+	github.com/camilbinas/gude-agents/agent/rag/postgres => ../agent/rag/postgres
 	github.com/camilbinas/gude-agents/agent/rag/redis => ../agent/rag/redis
 )

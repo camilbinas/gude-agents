@@ -20,4 +20,5 @@ replace (
 	github.com/camilbinas/gude-agents/agent/rag/bedrock => ./agent/rag/bedrock
 	github.com/camilbinas/gude-agents/agent/rag/openai => ./agent/rag/openai
 	github.com/camilbinas/gude-agents/agent/rag/redis => ./agent/rag/redis
+	github.com/camilbinas/gude-agents/agent/rag/postgres => ./agent/rag/postgres
 )
