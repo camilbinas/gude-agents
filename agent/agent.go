@@ -35,6 +35,8 @@ type Agent struct {
 	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
 	thinkingCallback ThinkingCallback // nil = discard thinking chunks
 	syncMemory       bool             // if true, call Wait() on memory after each Save
+	normStrategy     *NormStrategy    // nil = use default (Merge); pointer to distinguish "not set" from "set to Merge"
+	normDisabled     bool             // true = skip normalization entirely
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -181,8 +183,18 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			}
 		}
 
+		// Normalize messages before sending to provider.
+		converseMessages := messages
+		if !a.normDisabled {
+			strategy := NormMerge
+			if a.normStrategy != nil {
+				strategy = *a.normStrategy
+			}
+			converseMessages = NormalizeMessages(messages, strategy)
+		}
+
 		resp, err := a.provider.ConverseStream(ctx, ConverseParams{
-			Messages:         messages,
+			Messages:         converseMessages,
 			System:           systemPrompt,
 			ToolConfig:       a.toolSpecs,
 			ThinkingCallback: a.thinkingCallback,

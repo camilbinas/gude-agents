@@ -43,7 +43,7 @@ func TestIntegration_Summary_DefaultSummaryFunc(t *testing.T) {
 	}
 
 	summary := ""
-	for _, b := range result.Content {
+	for _, b := range result[0].Content {
 		if tb, ok := b.(agent.TextBlock); ok {
 			summary = tb.Text
 		}
@@ -70,10 +70,13 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	store := memory.NewStore()
 
 	// Low threshold so summarization triggers quickly.
-	// threshold=8, 80% = 6.4 → triggers at 7 messages.
-	summaryStore := memory.NewSummary(store, 8, memory.DefaultSummaryFunc(p),
+	// threshold=4 turns (8 messages internally), 80% = 6.4 → triggers at 7 messages.
+	summaryStore, err := memory.NewSummary(store, 4, memory.DefaultSummaryFunc(p),
 		memory.WithSummaryLogger(testLogger(t)),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	a, err := agent.New(p,
 		prompt.Text("You are a helpful assistant. Be very brief — one sentence max."),
@@ -138,9 +141,12 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	p := newTestProvider(t)
 	store := memory.NewStore()
 
-	summaryStore := memory.NewSummary(store, 6, memory.DefaultSummaryFunc(p),
+	summaryStore, err := memory.NewSummary(store, 3, memory.DefaultSummaryFunc(p),
 		memory.WithSummaryLogger(testLogger(t)),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	a, err := agent.New(p,
 		prompt.Text("You are a helpful assistant. Be very brief."),

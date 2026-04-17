@@ -262,9 +262,12 @@ if err != nil {
 Then wrap it with summary memory to keep long conversations manageable:
 
 ```go
-summary := memory.NewSummary(store, 20, memory.DefaultSummaryFunc(sonnet),
-    memory.WithPreserveRecentMessages(3),
+summary, err := memory.NewSummary(store, 10, memory.DefaultSummaryFunc(sonnet),
+    memory.WithPreserveRecentMessages(2),
 )
+if err != nil {
+    log.Fatal(err)
+}
 
 orchestrator, err := agent.Orchestrator(sonnet, instructions, tools,
     agent.WithSharedMemory(summary),

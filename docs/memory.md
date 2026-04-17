@@ -101,20 +101,24 @@ This is useful when you want the model to see conversation text but not raw tool
 ### Summary
 
 ```go
-func NewSummary(inner Memory, threshold int, fn SummaryFunc, opts ...SummaryOption) *Summary
+func NewSummary(inner Memory, threshold int, fn SummaryFunc, opts ...SummaryOption) (*Summary, error)
 ```
 
-Triggers background summarization when the message count reaches 80% of `threshold`. When triggered, a goroutine calls the `SummaryFunc` on messages up to the cutoff point, replaces them with a single summary message, and saves the result back to the inner store.
+Triggers background summarization when the summarizable message count (total minus preserved) reaches the configured trigger percentage (default 80%) of `threshold`. The threshold is specified in **turns** (user+assistant exchanges) — a threshold of 10 means 10 turns (20 messages internally). Preserved messages (set via `WithPreserveRecentMessages`) are excluded from the trigger count.
+
+When triggered, a goroutine calls the `SummaryFunc` on messages up to the cutoff point, replaces them with a summary turn (user summary + assistant acknowledgment), and saves the result back to the inner store.
 
 ```go
-type SummaryFunc func(ctx context.Context, messages []Message) (Message, error)
+type SummaryFunc func(ctx context.Context, messages []Message) ([2]Message, error)
 ```
 
+The `SummaryFunc` returns a `[2]Message` — a user message containing the summary text followed by an assistant acknowledgment. This ensures the summarized conversation always starts with a user message and maintains strict alternation.
+
 Key behaviors:
-- The 80% trigger is calculated as `(threshold * 80) / 100`
+- The trigger compares the summarizable count (`total messages - preserved messages`) against `threshold * 2 * triggerPct / 100`
 - Only one summarization runs at a time (subsequent saves skip if one is already in progress)
 - Summarization runs in a background goroutine — `Save` returns immediately
-- The summary message replaces all messages up to the cutoff; any messages added after the cutoff are preserved
+- The summary turn replaces all messages up to the cutoff; any messages added after the cutoff are preserved
 
 #### DefaultSummaryFunc
 
@@ -122,7 +126,7 @@ Key behaviors:
 func DefaultSummaryFunc(provider Provider) SummaryFunc
 ```
 
-Returns a batteries-included `SummaryFunc` that uses an LLM provider to condense messages into a single concise paragraph. It formats all messages as text, sends them to the provider with a summarization prompt, and returns the result as an assistant message. Pass this to `NewSummary` so you don't have to write your own.
+Returns a batteries-included `SummaryFunc` that uses an LLM provider to condense messages into a concise paragraph. It formats all messages as text, sends them to the provider with a summarization prompt, and returns the result as a user+assistant turn. Pass this to `NewSummary` so you don't have to write your own.
 
 #### WithSummaryLogger
 
@@ -144,18 +148,41 @@ type Logger interface {
 func WithPreserveRecentMessages(n int) SummaryOption
 ```
 
-Keeps the last `n` messages out of the `SummaryFunc`. When summarization triggers, only messages before the last `n` are passed to the summarizer — the tail is always preserved verbatim after the summary in the result. Defaults to 0 (summarize all messages up to the cutoff).
+Keeps the last `n` turns (user+assistant exchanges) out of the `SummaryFunc`. When summarization triggers, only messages before the last `n` turns are passed to the summarizer — the tail is always preserved verbatim after the summary in the result. Defaults to 0 (summarize all messages up to the cutoff).
 
-If `n` is greater than or equal to the number of messages at trigger time, summarization is skipped entirely for that cycle.
+If `n` turns is greater than or equal to the number of messages at trigger time, summarization is skipped entirely for that cycle.
 
 ```go
-s := memory.NewSummary(
-    store, 20,
+s, err := memory.NewSummary(
+    store, 10,
     memory.DefaultSummaryFunc(provider),
-    memory.WithPreserveRecentMessages(5),
+    memory.WithPreserveRecentMessages(2),
 )
-// When triggered with 16 messages: SummaryFunc receives msgs[0:11],
-// result is [summary, msg11, msg12, msg13, msg14, msg15].
+if err != nil {
+    log.Fatal(err)
+}
+// Threshold of 10 turns (20 messages internally), trigger at 16 messages.
+// When triggered with 16 messages: SummaryFunc receives msgs[0:12],
+// result is [summary turn, msg12, msg13, msg14, msg15].
+```
+
+#### WithTriggerThreshold
+
+```go
+func WithTriggerThreshold(pct int) SummaryOption
+```
+
+Sets the percentage of the threshold at which summarization triggers. Defaults to 80. The value must be between 1 and 100; `NewSummary` returns an error otherwise.
+
+```go
+s, err := memory.NewSummary(
+    store, 10,
+    memory.DefaultSummaryFunc(provider),
+    memory.WithTriggerThreshold(60), // trigger at 60% instead of 80%
+)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Composable Middleware Pattern

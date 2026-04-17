@@ -19,15 +19,18 @@ func main() {
 
 	ctx := context.Background()
 
-	// Threshold of 20 messages — summarization triggers at 80% (16 messages).
-	// WithPreserveRecentMessages(2) keeps the last 2 messages out of the
-	// SummaryFunc, so they always appear verbatim after the summary.
+	// Threshold of 10 turns — summarization triggers at 80% (16 messages).
+	// WithPreserveRecentMessages(1) keeps the last turn out of the
+	// SummaryFunc, so it always appears verbatim after the summary.
 	store := memory.NewStore()
-	summarized := memory.NewSummary(
-		store, 20, memory.DefaultSummaryFunc(provider),
+	summarized, err := memory.NewSummary(
+		store, 10, memory.DefaultSummaryFunc(provider),
 		memory.WithSummaryLogger(log.Default()),
-		memory.WithPreserveRecentMessages(2),
+		memory.WithPreserveRecentMessages(1),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	a, err := agent.Default(
 		provider,

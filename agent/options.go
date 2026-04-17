@@ -1,5 +1,7 @@
 package agent
 
+import "fmt"
+
 // Logger is an optional interface for agent logging.
 // Documented in docs/agent-api.md — update when changing interface.
 type Logger interface {
@@ -123,6 +125,26 @@ func WithThinkingCallback(cb ThinkingCallback) Option {
 func WithSynchronousMemory() Option {
 	return func(a *Agent) error {
 		a.syncMemory = true
+		return nil
+	}
+}
+
+// WithMessageNormalizer sets the normalization strategy.
+func WithMessageNormalizer(s NormStrategy) Option {
+	return func(a *Agent) error {
+		if s < NormMerge || s > NormRemove {
+			return fmt.Errorf("invalid normalization strategy: %d", s)
+		}
+		a.normStrategy = &s
+		a.normDisabled = false
+		return nil
+	}
+}
+
+// WithoutMessageNormalizer disables message normalization entirely.
+func WithoutMessageNormalizer() Option {
+	return func(a *Agent) error {
+		a.normDisabled = true
 		return nil
 	}
 }

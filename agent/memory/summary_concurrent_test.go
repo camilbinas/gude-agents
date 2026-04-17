@@ -22,7 +22,7 @@ func TestSummary_IndependentConversationsCanSummarizeConcurrently(t *testing.T) 
 	startCount := 0
 	allowFinish := make(chan struct{})
 
-	fn := func(_ context.Context, msgs []agent.Message) (agent.Message, error) {
+	fn := func(_ context.Context, msgs []agent.Message) ([2]agent.Message, error) {
 		// Figure out which conversation this is by checking the store.
 		// We use the message count as a proxy.
 		convID := "unknown"
@@ -42,13 +42,16 @@ func TestSummary_IndependentConversationsCanSummarizeConcurrently(t *testing.T) 
 		mu.Unlock()
 
 		<-allowFinish
-		return agent.Message{
-			Role:    agent.RoleAssistant,
-			Content: []agent.ContentBlock{agent.TextBlock{Text: "summary of " + convID}},
+		return [2]agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Here is a summary of our previous conversation: summary of " + convID}}},
+			{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "Understood. I will use this context to continue our conversation."}}},
 		}, nil
 	}
 
-	s := NewSummary(store, 10, fn)
+	s, err := NewSummary(store, 5, fn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Save 8 messages to conv-A — triggers summarization.
 	if err := s.Save(ctx, "conv-A", makeMessages(8)); err != nil {
@@ -88,7 +91,7 @@ func TestSummary_SameConversationStillSkipsDuplicate(t *testing.T) {
 	firstStarted := make(chan struct{})
 	allowFinish := make(chan struct{})
 
-	fn := func(_ context.Context, msgs []agent.Message) (agent.Message, error) {
+	fn := func(_ context.Context, msgs []agent.Message) ([2]agent.Message, error) {
 		mu.Lock()
 		callCount++
 		count := callCount
@@ -98,13 +101,16 @@ func TestSummary_SameConversationStillSkipsDuplicate(t *testing.T) {
 			close(firstStarted)
 			<-allowFinish
 		}
-		return agent.Message{
-			Role:    agent.RoleAssistant,
-			Content: []agent.ContentBlock{agent.TextBlock{Text: "summary"}},
+		return [2]agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Here is a summary of our previous conversation: summary"}}},
+			{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "Understood. I will use this context to continue our conversation."}}},
 		}, nil
 	}
 
-	s := NewSummary(store, 10, fn)
+	s, err := NewSummary(store, 5, fn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// First save triggers summarization for conv-X.
 	if err := s.Save(ctx, "conv-X", makeMessages(8)); err != nil {
