@@ -24,6 +24,7 @@ go get github.com/camilbinas/gude-agents/agent/memory/redis         # Redis memo
 go get github.com/camilbinas/gude-agents/agent/memory/dynamodb      # DynamoDB memory
 go get github.com/camilbinas/gude-agents/agent/memory/s3            # S3 memory
 go get github.com/camilbinas/gude-agents/agent/memory/sqlite        # SQLite memory
+go get github.com/camilbinas/gude-agents/agent/memory/postgres      # PostgreSQL memory
 
 # Optional: RAG embedders and vector stores
 go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock embedders

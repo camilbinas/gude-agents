@@ -7,6 +7,7 @@ require pgregory.net/rapid v1.2.0
 replace (
 	github.com/camilbinas/gude-agents/agent/mcp => ./agent/mcp
 	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ./agent/memory/dynamodb
+	github.com/camilbinas/gude-agents/agent/memory/postgres => ./agent/memory/postgres
 	github.com/camilbinas/gude-agents/agent/memory/redis => ./agent/memory/redis
 	github.com/camilbinas/gude-agents/agent/memory/s3 => ./agent/memory/s3
 	github.com/camilbinas/gude-agents/agent/memory/sqlite => ./agent/memory/sqlite
