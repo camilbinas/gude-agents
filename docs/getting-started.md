@@ -210,6 +210,28 @@ a, err := agent.Default(provider, instructions, tools,
 )
 ```
 
+## Running the Examples
+
+The `examples/` directory is a separate Go module with its own `go.mod`. Run examples from inside that directory:
+
+```bash
+cd examples
+go run ./getting-started
+```
+
+Most examples read configuration from `examples/.env` via godotenv. Create one with your credentials:
+
+```bash
+# examples/.env
+AWS_REGION=eu-central-1
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+POSTGRES_URL=postgres://user:pass@localhost:5432/mydb?sslmode=disable
+REDIS_ADDR=localhost:6379
+```
+
+Only the variables relevant to the example you're running need to be set.
+
 ## See Also
 
 - [Agent API Reference](agent-api.md) — full list of options and methods
