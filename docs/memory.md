@@ -1,6 +1,6 @@
 # Memory System
 
-The memory system gives agents multi-turn conversation support. It handles loading previous messages before each LLM call and saving the updated conversation afterward. The `memory` package ships with an in-memory store and four composable strategies that control what gets sent to the model.
+The memory system gives agents multi-turn conversation support. It handles loading previous messages before each LLM call and saving the updated conversation afterward. The `memory` package ships with an in-memory store, five persistent drivers, and four composable strategies that control what gets sent to the model.
 
 ## Memory Interface
 
@@ -278,7 +278,22 @@ func main() {
 
 ## Persistent Memory Drivers
 
-For production use cases where conversation history must survive process restarts, three persistent drivers are available as separate packages.
+For production use cases where conversation history must survive process restarts, persistent drivers are available as separate packages. All implement both `agent.Memory` and `memory.MemoryManager` (List, Delete).
+
+### Provider Comparison
+
+| Feature | In-Memory | Disk | SQLite | Redis | DynamoDB | S3 |
+|---|---|---|---|---|---|---|
+| **Package** | `agent/memory` | `agent/memory/disk` | `agent/memory/sqlite` | `agent/memory/redis` | `agent/memory/dynamodb` | `agent/memory/s3` |
+| **Persistence** | No | File per conversation | Single database file | Redis server | AWS DynamoDB table | S3-compatible bucket |
+| **External service** | None | None | None | Redis | DynamoDB | AWS S3 |
+| **TTL / auto-expiry** | — | — | — | ✓ | ✓ | Via lifecycle rules |
+| **Key prefix** | — | — | — | ✓ | ✓ | ✓ |
+| **Custom endpoint** | — | — | — | — | ✓ | ✓ |
+| **ACID transactions** | — | Atomic rename | ✓ (WAL mode) | — | ✓ (single-item) | — |
+| **Concurrent access** | `sync.RWMutex` | `sync.RWMutex` | SQLite WAL | Redis single-thread | DynamoDB | S3 |
+| **Size limits** | Process memory | Filesystem | ~281 TB (SQLite max) | Redis `maxmemory` | 400 KB per item | 50 TB per object |
+| **Best for** | Tests, short-lived | CLI tools, dev | Local apps, single-node | Multi-process, caching | Serverless, AWS-native | AWS S3, archival |
 
 ### Redis — agent/memory/redis
 
@@ -296,13 +311,13 @@ mem, err := redismemory.NewRedisMemory(
 
 Options: `WithTTL(d time.Duration)`, `WithKeyPrefix(prefix string)`.
 
-Implements both `agent.Memory` and `memory.MemoryManager` (List, Delete). See [Redis Providers](redis.md) for full documentation.
+See [Redis Providers](redis.md) for full documentation.
 
 ### S3 — agent/memory/s3
 
 Import: `github.com/camilbinas/gude-agents/agent/memory/s3`
 
-Stores conversation history as JSON objects in any S3-compatible object store. Compatible with AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, and Backblaze B2.
+Stores conversation history as JSON objects in Amazon S3. Uses the AWS SDK v2 for authentication and API calls.
 
 ```go
 cfg, _ := awsconfig.LoadDefaultConfig(ctx)
@@ -313,7 +328,7 @@ mem, err := s3memory.New(cfg, "my-bucket",
 
 Options: `WithKeyPrefix(prefix string)`, `WithEndpoint(url string)`, `WithPathStyle(enabled bool)`.
 
-No network calls are made at construction time — connectivity errors surface on the first `Save`/`Load` call. Implements both `agent.Memory` and `memory.MemoryManager`.
+No network calls are made at construction time — connectivity errors surface on the first `Save`/`Load` call.
 
 ### DynamoDB — agent/memory/dynamodb
 
@@ -335,68 +350,41 @@ Options: `WithKeyPrefix(prefix string)`, `WithTTL(d time.Duration)`, `WithTTLAtt
 
 > **List performance:** `List` performs a full-table Scan. Avoid calling it in hot paths on large tables.
 
-Implements both `agent.Memory` and `memory.MemoryManager`.
+### SQLite — agent/memory/sqlite
 
-## Persistent Memory Drivers
+Import: `github.com/camilbinas/gude-agents/agent/memory/sqlite`
 
-For production use cases where conversation history must survive process restarts, three persistent drivers are available as separate packages.
-
-### Redis — agent/memory/redis
-
-Import: `github.com/camilbinas/gude-agents/agent/memory/redis`
-
-Stores conversation history as JSON in Redis string keys. Requires a running Redis instance.
+Stores conversation history as rows in a SQLite database, with messages serialized as JSON. Uses [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite), a pure-Go SQLite implementation — no CGo, cross-compiles cleanly.
 
 ```go
-mem, err := redismemory.NewRedisMemory(
-    redismemory.RedisOptions{Addr: "localhost:6379"},
-    redismemory.WithTTL(24*time.Hour),
-    redismemory.WithKeyPrefix("myapp:"),
+mem, err := sqlitememory.New("/tmp/agent-memory.db")
+
+// In-memory (useful for testing):
+mem, err := sqlitememory.New(":memory:")
+
+// With options:
+mem, err := sqlitememory.New("agent.db",
+    sqlitememory.WithTableName("chats"),
+    sqlitememory.WithBusyTimeout(10*time.Second),
 )
 ```
 
-Options: `WithTTL(d time.Duration)`, `WithKeyPrefix(prefix string)`.
+Options: `WithTableName(name string)` (default: `"conversations"`), `WithBusyTimeout(d time.Duration)` (default: 5s).
 
-Implements both `agent.Memory` and `memory.MemoryManager` (List, Delete). See [Redis Providers](redis.md) for full documentation.
+The database and table are created automatically. WAL journal mode is enabled for concurrent read performance. `List` returns conversations ordered by most recently updated first.
 
-### S3 — agent/memory/s3
+### Disk — agent/memory/disk
 
-Import: `github.com/camilbinas/gude-agents/agent/memory/s3`
+Import: `github.com/camilbinas/gude-agents/agent/memory/disk`
 
-Stores conversation history as JSON objects in any S3-compatible object store. Compatible with AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, and Backblaze B2.
-
-```go
-cfg, _ := awsconfig.LoadDefaultConfig(ctx)
-mem, err := s3memory.New(cfg, "my-bucket",
-    s3memory.WithKeyPrefix("conversations/"),
-)
-```
-
-Options: `WithKeyPrefix(prefix string)`, `WithEndpoint(url string)`, `WithPathStyle(enabled bool)`.
-
-No network calls are made at construction time — connectivity errors surface on the first `Save`/`Load` call. Implements both `agent.Memory` and `memory.MemoryManager`.
-
-### DynamoDB — agent/memory/dynamodb
-
-Import: `github.com/camilbinas/gude-agents/agent/memory/dynamodb`
-
-Stores conversation history as items in an Amazon DynamoDB table. The table must be created by the caller with `conversation_id` (String) as the partition key.
+Stores each conversation as a JSON file in a directory on the local filesystem. Uses atomic writes (write to temp file, then rename) for crash safety.
 
 ```go
-cfg, _ := awsconfig.LoadDefaultConfig(ctx)
-mem, err := dynamomemory.NewDynamoDBMemory(cfg, "my-conversations-table",
-    dynamomemory.WithTTL(7*24*time.Hour),
-    dynamomemory.WithKeyPrefix("prod:"),
-)
+mem, err := diskmemory.New("/tmp/agent-memory")
+// Creates files like /tmp/agent-memory/conv-123.json
 ```
 
-Options: `WithKeyPrefix(prefix string)`, `WithTTL(d time.Duration)`, `WithTTLAttribute(attr string)`, `WithPartitionKey(attr string)`, `WithEndpoint(url string)`.
-
-> **Item size limit:** DynamoDB items are capped at 400 KB. For long-running conversations with large tool results, pair this driver with `memory.NewWindow` or `memory.NewSummary` to bound item size.
-
-> **List performance:** `List` performs a full-table Scan. Avoid calling it in hot paths on large tables.
-
-Implements both `agent.Memory` and `memory.MemoryManager`.
+Conversation IDs are sanitized to prevent path traversal.
 
 ## See Also
 
