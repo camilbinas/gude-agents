@@ -34,7 +34,7 @@ type Pool struct {
 }
 
 // PoolOption configures the connection pool.
-type PoolOption func(*poolConfig)
+type PoolOption func(*poolConfig) error
 
 type poolConfig struct {
 	env     []string
@@ -43,18 +43,21 @@ type poolConfig struct {
 
 // WithPoolEnv sets environment variables for all MCP server subprocesses.
 func WithPoolEnv(env ...string) PoolOption {
-	return func(c *poolConfig) {
+	return func(c *poolConfig) error {
 		c.env = append(c.env, env...)
+		return nil
 	}
 }
 
 // WithPoolSize sets the maximum number of concurrent MCP server connections.
-// Defaults to 5 if not set.
+// Defaults to 5 if not set. Returns an error if n is less than 1.
 func WithPoolSize(n int) PoolOption {
-	return func(c *poolConfig) {
-		if n > 0 {
-			c.maxSize = n
+	return func(c *poolConfig) error {
+		if n < 1 {
+			return fmt.Errorf("mcp pool: size must be >= 1, got %d", n)
 		}
+		c.maxSize = n
+		return nil
 	}
 }
 
@@ -67,7 +70,9 @@ func WithPoolSize(n int) PoolOption {
 func NewPool(ctx context.Context, command string, args []string, opts ...PoolOption) (*Pool, error) {
 	cfg := &poolConfig{maxSize: 5}
 	for _, opt := range opts {
-		opt(cfg)
+		if err := opt(cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	p := &Pool{

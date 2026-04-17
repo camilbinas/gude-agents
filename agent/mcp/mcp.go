@@ -139,7 +139,9 @@ func NewStreamableClient(ctx context.Context, endpoint string, opts ...Option) (
 func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, error) {
 	cfg := &toolsConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if err := opt(cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	var tools []tool.Tool
@@ -160,7 +162,7 @@ func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, e
 }
 
 // ToolsOption configures which tools are returned by Tools().
-type ToolsOption func(*toolsConfig)
+type ToolsOption func(*toolsConfig) error
 
 type toolsConfig struct {
 	include map[string]struct{}
@@ -182,26 +184,28 @@ func (c *toolsConfig) allow(name string) bool {
 // IncludeTools restricts Tools() to only the named tools.
 // Cannot be combined with ExcludeTools; IncludeTools takes precedence.
 func IncludeTools(names ...string) ToolsOption {
-	return func(c *toolsConfig) {
+	return func(c *toolsConfig) error {
 		if c.include == nil {
 			c.include = make(map[string]struct{})
 		}
 		for _, n := range names {
 			c.include[n] = struct{}{}
 		}
+		return nil
 	}
 }
 
 // ExcludeTools filters out the named tools from Tools().
 // Ignored if IncludeTools is also provided.
 func ExcludeTools(names ...string) ToolsOption {
-	return func(c *toolsConfig) {
+	return func(c *toolsConfig) error {
 		if c.exclude == nil {
 			c.exclude = make(map[string]struct{})
 		}
 		for _, n := range names {
 			c.exclude[n] = struct{}{}
 		}
+		return nil
 	}
 }
 

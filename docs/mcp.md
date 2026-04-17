@@ -330,7 +330,7 @@ Creates a connection pool. Starts one initial connection to discover tools and v
 func WithPoolSize(n int) PoolOption
 ```
 
-Sets the maximum number of concurrent MCP server connections. Defaults to 5. Each connection is a separate server subprocess.
+Sets the maximum number of concurrent MCP server connections. Defaults to 5. Each connection is a separate server subprocess. Returns an error if n is less than 1.
 
 #### WithPoolEnv
 

@@ -48,30 +48,43 @@ type swarmEntry struct {
 }
 
 // SwarmOption configures the Swarm.
-type SwarmOption func(*Swarm)
+type SwarmOption func(*Swarm) error
 
 // WithSwarmMaxHandoffs sets the maximum number of agent-to-agent handoffs per invocation.
-// Defaults to 10.
+// Defaults to 10. Returns an error if n is less than 1.
 func WithSwarmMaxHandoffs(n int) SwarmOption {
-	return func(s *Swarm) { s.maxHandoffs = n }
+	return func(s *Swarm) error {
+		if n < 1 {
+			return fmt.Errorf("swarm: max handoffs must be >= 1, got %d", n)
+		}
+		s.maxHandoffs = n
+		return nil
+	}
 }
 
 // WithSwarmLogger sets a logger for swarm-level events.
 func WithSwarmLogger(l Logger) SwarmOption {
-	return func(s *Swarm) { s.logger = l }
+	return func(s *Swarm) error {
+		s.logger = l
+		return nil
+	}
 }
 
 // WithSwarmMiddleware adds middleware applied to all tool executions across the swarm.
 func WithSwarmMiddleware(mws ...Middleware) SwarmOption {
-	return func(s *Swarm) { s.middlewares = append(s.middlewares, mws...) }
+	return func(s *Swarm) error {
+		s.middlewares = append(s.middlewares, mws...)
+		return nil
+	}
 }
 
 // WithSwarmMemory enables conversation memory so the swarm persists messages and
 // the active agent across calls. Without this, each Run/Invoke is stateless.
 func WithSwarmMemory(m Memory, conversationID string) SwarmOption {
-	return func(s *Swarm) {
+	return func(s *Swarm) error {
 		s.memory = m
 		s.conversationID = conversationID
+		return nil
 	}
 }
 
@@ -93,7 +106,9 @@ func NewSwarm(members []SwarmMember, opts ...SwarmOption) (*Swarm, error) {
 		maxHandoffs:  10,
 	}
 	for _, opt := range opts {
-		opt(s)
+		if err := opt(s); err != nil {
+			return nil, err
+		}
 	}
 
 	// Validate unique names.
