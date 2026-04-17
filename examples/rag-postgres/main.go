@@ -11,6 +11,7 @@
 // Run:
 //
 //	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./rag-postgres
+
 package main
 
 import (
