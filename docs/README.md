@@ -6,6 +6,14 @@ A Go agent framework for building LLM-powered applications. `gude-agents` provid
 go get github.com/camilbinas/gude-agents
 ```
 
+Then add the provider(s) you need:
+
+```
+go get github.com/camilbinas/gude-agents/agent/provider/bedrock
+```
+
+Each provider and driver is a separate module — you only pull the dependencies you use. See [Getting Started](getting-started.md) for the full list.
+
 ## Supported Providers
 
 | Provider | Models |

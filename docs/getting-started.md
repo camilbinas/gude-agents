@@ -4,9 +4,37 @@ This guide walks you through installing gude-agents, running your first agent, a
 
 ## Installation
 
+The core module provides the agent framework, tools, memory, and prompt system:
+
 ```bash
 go get github.com/camilbinas/gude-agents
 ```
+
+Then add the provider and driver modules you need:
+
+```bash
+# Pick a provider
+go get github.com/camilbinas/gude-agents/agent/provider/bedrock    # AWS Bedrock
+go get github.com/camilbinas/gude-agents/agent/provider/anthropic   # Anthropic
+go get github.com/camilbinas/gude-agents/agent/provider/openai      # OpenAI
+go get github.com/camilbinas/gude-agents/agent/provider/gemini      # Google Gemini
+
+# Optional: memory drivers (in-memory and disk are included in the core)
+go get github.com/camilbinas/gude-agents/agent/memory/redis         # Redis memory
+go get github.com/camilbinas/gude-agents/agent/memory/dynamodb      # DynamoDB memory
+go get github.com/camilbinas/gude-agents/agent/memory/s3            # S3 memory
+go get github.com/camilbinas/gude-agents/agent/memory/sqlite        # SQLite memory
+
+# Optional: RAG embedders and vector stores
+go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock embedders
+go get github.com/camilbinas/gude-agents/agent/rag/openai           # OpenAI embedders
+go get github.com/camilbinas/gude-agents/agent/rag/redis            # Redis vector store
+
+# Optional: MCP tool integration
+go get github.com/camilbinas/gude-agents/agent/mcp
+```
+
+Each module only pulls the dependencies it needs — using Bedrock won't download the OpenAI or Gemini SDKs.
 
 ## Minimal Working Example
 

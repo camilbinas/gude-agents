@@ -29,6 +29,7 @@ One orchestrator agent instance handles all requests. Each request provides a `c
 ```bash
 go get github.com/gofiber/fiber/v3
 go get github.com/camilbinas/gude-agents
+go get github.com/camilbinas/gude-agents/agent/provider/bedrock
 ```
 
 ## Full Example
