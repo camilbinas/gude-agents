@@ -53,6 +53,38 @@ func LLMRouter(a Invoker, validTargets []string) RouterFunc {
 	}
 }
 
+// TypedLLMRouter returns a TypedRouterFunc that uses an Invoker to choose the
+// next node. promptFn extracts the text to send to the LLM from the typed state.
+// validTargets is the list of node names the LLM may choose from.
+//
+// Example:
+//
+//	g.AddConditionalEdge("classify", graph.TypedLLMRouter[MyState](
+//	    routerAgent,
+//	    []string{"code_expert", "devops_expert"},
+//	    func(s MyState) string { return s.Question },
+//	))
+func TypedLLMRouter[S any](a Invoker, validTargets []string, promptFn func(S) string) TypedRouterFunc[S] {
+	return func(ctx context.Context, state S) (string, error) {
+		input := promptFn(state)
+		prompt := buildTypedRouterPrompt(input, validTargets)
+		result, _, err := a.Invoke(ctx, prompt)
+		if err != nil {
+			return "", err
+		}
+		next := strings.TrimSpace(result)
+		if next == "" {
+			return "", nil
+		}
+		for _, t := range validTargets {
+			if t == next {
+				return next, nil
+			}
+		}
+		return "", fmt.Errorf("TypedLLMRouter: model returned unknown node %q", next)
+	}
+}
+
 // buildRouterPrompt formats the current state and valid targets into a routing prompt.
 func buildRouterPrompt(state State, validTargets []string) string {
 	var sb strings.Builder
@@ -62,6 +94,18 @@ func buildRouterPrompt(state State, validTargets []string) string {
 		sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
 	}
 	sb.WriteString("\nValid next nodes: ")
+	sb.WriteString(strings.Join(validTargets, ", "))
+	sb.WriteString("\n\nRespond with ONLY the name of the next node, or an empty string to end execution.")
+	return sb.String()
+}
+
+// buildTypedRouterPrompt formats a user-provided input and valid targets into a routing prompt.
+func buildTypedRouterPrompt(input string, validTargets []string) string {
+	var sb strings.Builder
+	sb.WriteString("Based on the following input, choose the next node to execute.\n\n")
+	sb.WriteString("Input: ")
+	sb.WriteString(input)
+	sb.WriteString("\n\nValid next nodes: ")
 	sb.WriteString(strings.Join(validTargets, ", "))
 	sb.WriteString("\n\nRespond with ONLY the name of the next node, or an empty string to end execution.")
 	return sb.String()
