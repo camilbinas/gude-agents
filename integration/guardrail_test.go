@@ -1,6 +1,4 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
@@ -17,7 +15,7 @@ import (
 // Guardrail integration tests that call real LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=120s -run TestIntegration_Guardrail ./agent/...
+//   go test -v -timeout=120s -run TestIntegration_Guardrail ./...
 
 func TestIntegration_Guardrail_InputTransform(t *testing.T) {
 	p := newTestProvider(t)

@@ -1,6 +1,4 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
@@ -68,6 +66,25 @@ func (tp *trackingProvider) ModelId() string {
 		return mi.ModelId()
 	}
 	return "unknown"
+}
+
+func newTestProvider(t *testing.T) agent.Provider {
+	t.Helper()
+	registry.RegisterBuiltins()
+	p, err := registry.FromEnv()
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	t.Logf("Using provider: MODEL_PROVIDER=%s MODEL_TIER=%s",
+		envOr("MODEL_PROVIDER", "bedrock"), envOr("MODEL_TIER", "standard"))
+	return &trackingProvider{inner: p}
+}
+
+func envOr(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return fallback
 }
 
 // TestMain runs all integration tests and prints a token usage summary.

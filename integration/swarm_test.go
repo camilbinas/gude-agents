@@ -1,6 +1,4 @@
-//go:build integration
-
-package swarm_test
+package integration_test
 
 import (
 	"context"
@@ -11,25 +9,14 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/registry"
 	"github.com/camilbinas/gude-agents/agent/swarm"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-func newTestProvider(t *testing.T) agent.Provider {
-	t.Helper()
-	registry.RegisterBuiltins()
-	p, err := registry.FromEnv()
-	if err != nil {
-		t.Fatalf("failed to create provider: %v", err)
-	}
-	return p
-}
-
 // Swarm integration tests that call real LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=180s -run TestIntegration_Swarm ./agent/swarm/...
+//   go test -v -timeout=180s -run TestIntegration_Swarm ./...
 
 func TestIntegration_Swarm_SingleHandoff(t *testing.T) {
 	p := newTestProvider(t)
@@ -223,9 +210,3 @@ func TestIntegration_Swarm_WithPerRequestConversationID(t *testing.T) {
 		}
 	}
 }
-
-// testLogger adapts testing.T to the agent.Logger interface.
-type tLogger struct{ t *testing.T }
-
-func (l tLogger) Printf(format string, v ...any) { l.t.Logf(format, v...) }
-func testLogger(t *testing.T) tLogger            { return tLogger{t} }

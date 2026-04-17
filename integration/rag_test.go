@@ -1,6 +1,4 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
@@ -21,7 +19,7 @@ import (
 // RAG integration tests that call real embedding and LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=120s -run TestIntegration_RAG ./agent/...
+//   go test -v -timeout=120s -run TestIntegration_RAG ./...
 //
 // Environment variables:
 //   EMBEDDER         - "bedrock" (default) or "openai"

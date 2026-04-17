@@ -1,6 +1,4 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
@@ -16,7 +14,7 @@ import (
 // Multi-agent composition integration tests that call real LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=180s -run TestIntegration_MultiAgent ./agent/...
+//   go test -v -timeout=180s -run TestIntegration_MultiAgent ./...
 
 func TestIntegration_MultiAgent_OrchestratorDelegatesToWorker(t *testing.T) {
 	p := newTestProvider(t)

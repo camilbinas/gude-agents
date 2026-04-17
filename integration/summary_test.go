@@ -1,6 +1,4 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
@@ -16,7 +14,7 @@ import (
 // Summary memory integration tests that call real LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=180s -run TestIntegration_Summary ./agent/...
+//   go test -v -timeout=180s -run TestIntegration_Summary ./...
 
 func TestIntegration_Summary_DefaultSummaryFunc(t *testing.T) {
 	p := newTestProvider(t)
@@ -69,10 +67,16 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	p := newTestProvider(t)
 	store := memory.NewStore()
 
-	// Low threshold so summarization triggers quickly.
-	// threshold=4 turns (8 messages internally), 80% = 6.4 → triggers at 7 messages.
-	summaryStore, err := memory.NewSummary(store, 4, memory.DefaultSummaryFunc(p),
+	// Use a custom summary function that explicitly preserves names.
+	summaryFn := memory.NewSummaryFunc(p,
+		"Summarize this conversation into a concise paragraph. "+
+			"You MUST preserve the user's name, location, occupation, and any other personal details they shared. "+
+			"Start the summary with the user's name.",
+	)
+
+	summaryStore, err := memory.NewSummary(store, 4, summaryFn,
 		memory.WithSummaryLogger(testLogger(t)),
+		memory.WithPreserveRecentMessages(2),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -106,8 +110,8 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 		t.Logf("Turn %d: %s → %s", i+1, msg, result)
 	}
 
-	// Give the background summarization goroutine time to complete.
-	time.Sleep(5 * time.Second)
+	// Wait for background summarization to complete (instead of sleeping).
+	summaryStore.Wait()
 
 	// Check what's in the store now.
 	msgs, err := store.Load(ctx, "summary-conv")
@@ -141,7 +145,13 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	p := newTestProvider(t)
 	store := memory.NewStore()
 
-	summaryStore, err := memory.NewSummary(store, 3, memory.DefaultSummaryFunc(p),
+	summaryFn := memory.NewSummaryFunc(p,
+		"Summarize this conversation into a concise paragraph. "+
+			"You MUST preserve the user's name and any hobbies or interests they mentioned. "+
+			"Start the summary with the user's name.",
+	)
+
+	summaryStore, err := memory.NewSummary(store, 3, summaryFn,
 		memory.WithSummaryLogger(testLogger(t)),
 	)
 	if err != nil {
@@ -191,8 +201,8 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 		}
 	}
 
-	// Give summarization time.
-	time.Sleep(5 * time.Second)
+	// Wait for summarization to complete.
+	summaryStore.Wait()
 
 	// Verify conversations are isolated.
 	aliceMsgs, _ := store.Load(ctx, "conv-alice")

@@ -1,6 +1,4 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
@@ -19,7 +17,7 @@ import (
 // Extended thinking integration tests.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=120s -run TestIntegration_Thinking ./agent/...
+//   go test -v -timeout=120s -run TestIntegration_Thinking ./...
 //
 // These tests require a provider that supports thinking (Claude 4-series on Bedrock).
 // They are skipped when MODEL_PROVIDER is set to a provider without thinking support.

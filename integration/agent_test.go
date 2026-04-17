@@ -1,12 +1,9 @@
-//go:build integration
-
-package agent_test
+package integration_test
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,41 +11,18 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/registry"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // Integration tests that call real LLM APIs.
 //
 // Run with:
-//   go test -tags=integration -v -timeout=120s ./agent/...
+//   go test -v -timeout=120s ./...
 //
 // Environment variables:
-//   MODEL_PROVIDER  - "bedrock" (default), "openai", "anthropic"
-//   MODEL_TIER      - "cheapest", "standard" (default), "smartest"
-//
-// To test multiple providers:
-//   MODEL_PROVIDER=bedrock   go test -tags=integration -v -timeout=120s ./agent/...
-//   MODEL_PROVIDER=openai    go test -tags=integration -v -timeout=120s ./agent/...
-//   MODEL_PROVIDER=anthropic go test -tags=integration -v -timeout=120s ./agent/...
-
-func newTestProvider(t *testing.T) agent.Provider {
-	t.Helper()
-	p, err := registry.FromEnv()
-	if err != nil {
-		t.Fatalf("failed to create provider: %v", err)
-	}
-	t.Logf("Using provider: MODEL_PROVIDER=%s MODEL_TIER=%s",
-		envOr("MODEL_PROVIDER", "bedrock"), envOr("MODEL_TIER", "standard"))
-	return &trackingProvider{inner: p}
-}
-
-func envOr(key, fallback string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	return fallback
-}
+//   MODEL_PROVIDER  - Provider name (default: bedrock)
+//   MODEL_TIER      - Provider tier (default: standard)
+//   AWS_REGION      - AWS region (default: eu-central-1)
 
 func TestIntegration_SimpleTextResponse(t *testing.T) {
 	p := newTestProvider(t)
