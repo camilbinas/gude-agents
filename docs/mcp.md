@@ -91,7 +91,7 @@ client, err := mcp.NewStreamableClient(ctx,
 ### Tools
 
 ```go
-func (c *Client) Tools(ctx context.Context) ([]tool.Tool, error)
+func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, error)
 ```
 
 Discovers all tools from the MCP server and returns them as `tool.Tool` values. Handles pagination automatically if the server returns multiple pages. Each MCP tool is converted to a `tool.Tool` with:
@@ -100,6 +100,36 @@ Discovers all tools from the MCP server and returns them as `tool.Tool` values. 
 - `Spec.Description` — the MCP tool description
 - `Spec.InputSchema` — the MCP tool's JSON Schema, converted to `map[string]any`
 - `Handler` — calls `session.CallTool` on the MCP server, marshalling input and extracting text from the response
+
+Use `WithInclude` or `WithExclude` to filter which tools are returned.
+
+#### IncludeTools
+
+```go
+func IncludeTools(names ...string) ToolsOption
+```
+
+Restricts `Tools()` to only the named tools. All other tools from the server are ignored.
+
+```go
+// Only expose read operations to the agent
+tools, err := client.Tools(ctx, mcp.IncludeTools("read_file", "list_directory"))
+```
+
+#### ExcludeTools
+
+```go
+func ExcludeTools(names ...string) ToolsOption
+```
+
+Filters out the named tools from the result. All other tools are returned.
+
+```go
+// Expose everything except destructive operations
+tools, err := client.Tools(ctx, mcp.ExcludeTools("delete_file", "move_file"))
+```
+
+> `IncludeTools` takes precedence over `ExcludeTools` if both are provided.
 
 ### Close
 
