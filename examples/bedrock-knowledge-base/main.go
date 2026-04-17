@@ -12,7 +12,8 @@
 //
 // Run:
 //
-//	KNOWLEDGE_BASE_ID=<your-kb-id> go run ./examples/bedrock-knowledge-base
+//	KNOWLEDGE_BASE_ID=<your-kb-id> go run ./bedrock-knowledge-base
+
 package main
 
 import (

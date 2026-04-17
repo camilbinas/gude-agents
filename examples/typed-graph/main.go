@@ -13,7 +13,8 @@
 //
 // Run:
 //
-//	go run ./examples/typed-graph
+//	go run ./typed-graph
+
 package main
 
 import (

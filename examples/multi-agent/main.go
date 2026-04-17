@@ -13,6 +13,11 @@
 //   - agent.Orchestrator — parent agent with parallel tool execution enabled
 //   - agent.AgentAsTool  — wraps a child agent as a callable tool
 //   - prompt.RISEN / prompt.COSTAR — structured prompt templates
+//
+// Run:
+//
+//	go run ./multi-agent
+
 package main
 
 import (

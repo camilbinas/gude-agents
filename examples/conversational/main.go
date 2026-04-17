@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./conversational
+
 package main
 
 import (

@@ -14,6 +14,11 @@
 //
 // Normalization is enabled by default (Merge). Use WithMessageNormalizer to
 // pick a different strategy, or WithoutMessageNormalizer to disable it.
+//
+// Run:
+//
+//	go run ./message-normalizer
+
 package main
 
 import (

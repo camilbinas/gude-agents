@@ -1,10 +1,16 @@
+// Run:
+//
+//	REDIS_ADDR=localhost:6379 go run ./redis-memory
+
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -46,15 +52,36 @@ func main() {
 
 	ctx := context.Background()
 
-	result, _, err := a.Invoke(ctx, "My name is Alice. Remember that.")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Turn 1:", result)
+	fmt.Println("Redis memory chat (type 'quit' to exit, 'clear' to reset)")
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("\n> ")
+		if !scanner.Scan() {
+			break
+		}
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+		if input == "quit" {
+			break
+		}
+		if input == "clear" {
+			if err := mem.Delete(ctx, "demo-conversation"); err != nil {
+				fmt.Printf("Error clearing: %v\n", err)
+			} else {
+				fmt.Println("Conversation cleared.")
+			}
+			continue
+		}
 
-	result, _, err = a.Invoke(ctx, "What is my name?")
-	if err != nil {
-		log.Fatal(err)
+		usage, err := a.InvokeStream(ctx, input, func(chunk string) {
+			fmt.Print(chunk)
+		})
+		if err != nil {
+			fmt.Printf("\nError: %v\n", err)
+			continue
+		}
+		fmt.Printf("\n--- tokens: %d in / %d out ---\n", usage.InputTokens, usage.OutputTokens)
 	}
-	fmt.Println("Turn 2:", result)
 }

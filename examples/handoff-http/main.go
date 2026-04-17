@@ -9,6 +9,11 @@
 //
 //	POST /chat          → 200 (normal) or 202 (handoff pending)
 //	POST /chat/resume   → 200 (agent continues with human input)
+//
+// Run:
+//
+//	go run ./handoff-http
+
 package main
 
 import (

@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./rag-agent
+
 package main
 
 import (

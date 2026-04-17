@@ -21,7 +21,8 @@
 //
 // Run:
 //
-//	go run ./examples/async-tools
+//	go run ./async-tools
+
 package main
 
 import (

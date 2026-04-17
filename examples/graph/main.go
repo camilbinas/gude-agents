@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./graph
+
 package main
 
 import (

@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./summary-memory
+
 package main
 
 import (

@@ -11,7 +11,8 @@
 //
 // Run:
 //
-//	go run ./examples/multi-conversation
+//	go run ./multi-conversation
+
 package main
 
 import (

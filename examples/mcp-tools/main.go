@@ -13,7 +13,8 @@
 //
 // Run:
 //
-//	go run ./examples/mcp-tools
+//	go run ./mcp-tools
+
 package main
 
 import (

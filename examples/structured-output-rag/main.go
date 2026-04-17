@@ -14,7 +14,8 @@
 //
 // Run:
 //
-//	go run ./examples/structured-output
+//	go run ./structured-output-rag
+
 package main
 
 import (

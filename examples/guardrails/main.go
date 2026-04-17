@@ -3,6 +3,11 @@
 // Input guardrails run before the user message reaches the LLM.
 // Output guardrails run after the LLM produces its final response.
 // Both can transform content or abort the invocation by returning an error.
+//
+// Run:
+//
+//	go run ./guardrails
+
 package main
 
 import (

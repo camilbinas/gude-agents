@@ -10,7 +10,8 @@
 //
 // Run:
 //
-//	go run ./examples/mcp-http
+//	go run ./mcp-http
+
 package main
 
 import (

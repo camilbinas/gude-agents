@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./swarm
+
 package main
 
 import (

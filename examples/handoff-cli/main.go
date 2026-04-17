@@ -3,6 +3,11 @@
 // The agent processes a refund request but pauses to ask the human
 // for approval before proceeding. The conversation context is fully
 // preserved across the handoff.
+//
+// Run:
+//
+//	go run ./handoff-cli
+
 package main
 
 import (

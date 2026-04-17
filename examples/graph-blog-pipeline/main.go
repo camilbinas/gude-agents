@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./graph-blog-pipeline
+
 package main
 
 import (

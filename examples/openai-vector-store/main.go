@@ -11,7 +11,8 @@
 //
 // Run:
 //
-//	OPENAI_API_KEY=sk-... VECTOR_STORE_ID=vs_... go run ./examples/openai-vector-store
+//	OPENAI_API_KEY=sk-... VECTOR_STORE_ID=vs_... go run ./openai-vector-store
+
 package main
 
 import (

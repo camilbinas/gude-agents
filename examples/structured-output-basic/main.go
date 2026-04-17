@@ -3,7 +3,8 @@
 //
 // Run:
 //
-//	go run ./examples/structured-output-basic
+//	go run ./structured-output-basic
+
 package main
 
 import (

@@ -23,7 +23,8 @@
 //
 // Run:
 //
-//	go run ./examples/tool-presets
+//	go run ./tool-presets
+
 package main
 
 import (

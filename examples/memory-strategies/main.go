@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./memory-strategies
+
 package main
 
 import (

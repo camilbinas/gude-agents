@@ -19,7 +19,8 @@
 //
 // Run:
 //
-//	go run ./examples/disk-memory
+//	go run ./disk-memory
+
 package main
 
 import (
@@ -61,7 +62,7 @@ func main() {
 	ctx := context.Background()
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Println("Chat agent with disk memory. Type 'quit' to exit.")
+	fmt.Println("Chat agent with disk memory. Type 'quit' to exit, 'clear' to reset.")
 	fmt.Println("Conversations are saved to ./tmp/conversations/")
 	fmt.Println()
 
@@ -76,6 +77,14 @@ func main() {
 		}
 		if strings.EqualFold(input, "quit") {
 			break
+		}
+		if strings.EqualFold(input, "clear") {
+			if err := store.Delete(ctx, "default-session"); err != nil {
+				fmt.Printf("Error clearing: %v\n", err)
+			} else {
+				fmt.Println("Conversation cleared.")
+			}
+			continue
 		}
 
 		fmt.Print("Agent: ")

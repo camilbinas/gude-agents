@@ -15,7 +15,8 @@
 //
 // Run:
 //
-// go run ./examples/multi-provider
+// go run ./multi-provider
+
 package main
 
 import (

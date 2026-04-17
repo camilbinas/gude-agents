@@ -10,6 +10,11 @@
 //   - fallback.New        — chains providers, tries each in order on error
 //   - fakeProvider        — a minimal Provider stub useful for testing
 //   - transparent fallback — the agent has no knowledge of the switch
+//
+// Run:
+//
+//	go run ./fallback-provider
+
 package main
 
 import (

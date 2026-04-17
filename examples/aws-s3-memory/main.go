@@ -3,9 +3,6 @@
 // Each invocation saves the conversation history as a JSON object in an S3
 // bucket so the agent can resume where it left off across process restarts.
 //
-// Works with AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, Backblaze B2,
-// and other S3-compatible providers.
-//
 // Prerequisites:
 //  1. An S3 bucket.
 //
@@ -16,14 +13,17 @@
 //
 // Run:
 //
-//	AWS_BUCKET=my-bucket go run ./examples/aws-s3-memory
+//	AWS_BUCKET=my-bucket go run ./aws-s3-memory
+
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/camilbinas/gude-agents/agent"
@@ -67,24 +67,36 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Turn 1 — introduce a fact.
-	result, _, err := a.Invoke(ctx, "My name is Alice. Remember that.")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Turn 1:", result)
+	fmt.Println("S3 memory chat (type 'quit' to exit, 'clear' to reset)")
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("\n> ")
+		if !scanner.Scan() {
+			break
+		}
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+		if input == "quit" {
+			break
+		}
+		if input == "clear" {
+			if err := mem.Delete(ctx, "demo-conversation"); err != nil {
+				fmt.Printf("Error clearing: %v\n", err)
+			} else {
+				fmt.Println("Conversation cleared.")
+			}
+			continue
+		}
 
-	// Turn 2 — verify the agent recalls it.
-	result, _, err = a.Invoke(ctx, "What is my name?")
-	if err != nil {
-		log.Fatal(err)
+		usage, err := a.InvokeStream(ctx, input, func(chunk string) {
+			fmt.Print(chunk)
+		})
+		if err != nil {
+			fmt.Printf("\nError: %v\n", err)
+			continue
+		}
+		fmt.Printf("\n--- tokens: %d in / %d out ---\n", usage.InputTokens, usage.OutputTokens)
 	}
-	fmt.Println("Turn 2:", result)
-
-	// Show all conversation IDs stored under the configured prefix.
-	ids, err := mem.List(ctx)
-	if err != nil {
-		log.Fatalf("list conversations: %v", err)
-	}
-	fmt.Printf("Stored conversations: %v\n", ids)
 }

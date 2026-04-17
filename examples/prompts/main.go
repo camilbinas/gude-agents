@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./prompts
+
 package main
 
 import (

@@ -11,7 +11,8 @@
 //
 // Run:
 //
-//	go run ./examples/thinking
+//	go run ./thinking
+
 package main
 
 import (

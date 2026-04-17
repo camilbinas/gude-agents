@@ -1,3 +1,7 @@
+// Run:
+//
+//	go run ./simple
+
 package main
 
 import (
