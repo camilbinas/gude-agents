@@ -10,6 +10,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -19,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	baseredis "github.com/camilbinas/gude-agents/agent/redis"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -27,9 +27,27 @@ import (
 // Compile-time check: VectorStore implements agent.VectorStore.
 var _ agent.VectorStore = (*VectorStore)(nil)
 
-// Options holds connection configuration for the Redis vector store.
-// It is an alias for agent/redis.Options so callers can use either package.
-type Options = baseredis.Options
+// Options holds Redis connection configuration.
+type Options struct {
+	Addr      string // Default: "127.0.0.1:6379"
+	Password  string
+	DB        int         // Default: 0
+	TLSConfig *tls.Config // Optional
+}
+
+// newClient creates a go-redis client from Options, applying defaults.
+func newClient(opts Options) *goredis.Client {
+	addr := opts.Addr
+	if addr == "" {
+		addr = "127.0.0.1:6379"
+	}
+	return goredis.NewClient(&goredis.Options{
+		Addr:      addr,
+		Password:  opts.Password,
+		DB:        opts.DB,
+		TLSConfig: opts.TLSConfig,
+	})
+}
 
 // VectorStoreOption configures a VectorStore instance.
 type VectorStoreOption func(*VectorStore)
@@ -60,7 +78,7 @@ type VectorStore struct {
 // New creates a new VectorStore. Pings Redis, then creates the HNSW index via
 // FT.CREATE if it doesn't already exist.
 func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*VectorStore, error) {
-	client := baseredis.NewClient(opts)
+	client := newClient(opts)
 
 	s := &VectorStore{
 		client:    client,
