@@ -9,7 +9,7 @@
 //
 // Then run this example:
 //
-//	REDIS_ADDR=localhost:6379 go run ./redis-rag
+//	REDIS_ADDR=localhost:6379 go run ./rag-redis
 
 package main
 
