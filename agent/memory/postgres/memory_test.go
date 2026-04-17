@@ -41,7 +41,7 @@ func newTestMemory(t *testing.T) *PostgresMemory {
 	pool := skipIfNoPostgres(t)
 	table := uniqueTable(t)
 
-	m, err := New(pool, WithTableName(table))
+	m, err := New(pool, WithTableName(table), WithAutoMigrate())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestNew_CustomTableName(t *testing.T) {
 	pool := skipIfNoPostgres(t)
 	table := fmt.Sprintf("custom_%d", os.Getpid())
 
-	m, err := New(pool, WithTableName(table))
+	m, err := New(pool, WithTableName(table), WithAutoMigrate())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
