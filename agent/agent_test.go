@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -286,12 +287,23 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		&ProviderResponse{Text: "parallel done"},
 	)
 
+	const toolSleep = 100 * time.Millisecond
+
+	// Barrier: every tool adds to the WaitGroup before proceeding.
+	// If tools run sequentially, the first tool will block forever
+	// waiting for the others to arrive at the barrier.
+	var barrier sync.WaitGroup
+	barrier.Add(3)
+
 	var mu sync.Mutex
 	executed := map[string]bool{}
 
 	makeTool := func(name string) tool.Tool {
 		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
 			func(_ context.Context, _ json.RawMessage) (string, error) {
+				barrier.Done()
+				barrier.Wait() // blocks until all 3 tools are running
+				time.Sleep(toolSleep)
 				mu.Lock()
 				executed[name] = true
 				mu.Unlock()
@@ -307,7 +319,9 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	start := time.Now()
 	result, _, err := a.Invoke(context.Background(), "go parallel")
+	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,6 +334,13 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		if !executed[name] {
 			t.Errorf("tool %q was not executed", name)
 		}
+	}
+
+	// If tools ran in parallel, total time should be ~1x toolSleep.
+	// If sequential, it would be ~3x toolSleep (300ms) — or deadlock on the barrier.
+	// Use 2x as the threshold to catch sequential execution.
+	if elapsed >= 2*toolSleep {
+		t.Errorf("tools appear to have run sequentially: elapsed %v, expected < %v", elapsed, 2*toolSleep)
 	}
 }
 
