@@ -82,6 +82,11 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 }
 func (p *AnthropicProvider) ModelID() string { return string(p.model) }
 
+// Client returns the underlying Anthropic SDK client.
+// Use this for direct SDK access when you need provider-specific features
+// not exposed through the agent.Provider interface.
+func (p *AnthropicProvider) Client() *anthropicsdk.Client { return &p.client }
+
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)
 // ---------------------------------------------------------------------------

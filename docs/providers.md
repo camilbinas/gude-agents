@@ -622,6 +622,50 @@ The thinking callback fires before the answer streams. OpenAI does not expose re
 
 See `examples/thinking` for a complete working example.
 
+## Direct SDK Access
+
+Every built-in provider exposes a `Client()` method that returns the underlying SDK client. Use this when you need provider-specific features not available through the `agent.Provider` interface — for example, Bedrock guardrail configs, Anthropic metadata, or OpenAI response formats.
+
+```go
+// Bedrock — returns *bedrockruntime.Client
+provider, _ := bedrock.ClaudeSonnet4_6()
+bedrockClient := provider.Client()
+
+// Anthropic — returns *anthropicsdk.Client
+provider, _ := anthropic.ClaudeSonnet4_6()
+anthropicClient := provider.Client()
+
+// OpenAI — returns *openaisdk.Client
+provider, _ := openai.GPT4_1()
+openaiClient := provider.Client()
+
+// Gemini — returns *genai.Client
+provider, _ := gemini.Gemini25Flash()
+geminiClient := provider.Client()
+```
+
+This lets you share a single set of credentials and configuration between the agent loop and direct SDK calls:
+
+```go
+provider, _ := bedrock.ClaudeSonnet4_6()
+
+// Normal agent usage for most calls
+a, _ := agent.Default(provider, instructions, tools)
+result, _, _ := a.Invoke(ctx, "normal question")
+
+// Drop to raw SDK for provider-specific features
+resp, err := provider.Client().Converse(ctx, &bedrockruntime.ConverseInput{
+    ModelId:         aws.String("eu.anthropic.claude-sonnet-4-6"),
+    Messages:        myMessages,
+    GuardrailConfig: &types.GuardrailConfiguration{
+        GuardrailIdentifier: aws.String("my-guardrail"),
+        GuardrailVersion:    aws.String("1"),
+    },
+})
+```
+
+Note: direct SDK calls bypass the agent loop entirely — no memory, tools, guardrails, middleware, or tracing. Use this as an escape hatch, not the default path.
+
 ## Implementing a Custom Provider
 
 To create your own provider, implement the `Provider` interface:

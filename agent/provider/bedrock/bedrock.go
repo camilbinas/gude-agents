@@ -155,6 +155,11 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 // Model returns the model ID this provider is configured to use.
 func (p *BedrockProvider) ModelID() string { return p.model }
 
+// Client returns the underlying AWS Bedrock runtime client.
+// Use this for direct SDK access when you need provider-specific features
+// not exposed through the agent.Provider interface.
+func (p *BedrockProvider) Client() *bedrockruntime.Client { return p.client }
+
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)
 // ---------------------------------------------------------------------------

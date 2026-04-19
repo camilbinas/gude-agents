@@ -97,6 +97,11 @@ func New(model string, opts ...Option) (*GeminiProvider, error) {
 // ModelID returns the model ID this provider is configured to use.
 func (p *GeminiProvider) ModelID() string { return p.model }
 
+// Client returns the underlying Google GenAI client.
+// Use this for direct SDK access when you need provider-specific features
+// not exposed through the agent.Provider interface.
+func (p *GeminiProvider) Client() *genai.Client { return p.client }
+
 // Capabilities implements agent.CapabilityReporter, advertising what the
 // underlying Gemini model supports.
 func (p *GeminiProvider) Capabilities() agent.Capabilities {

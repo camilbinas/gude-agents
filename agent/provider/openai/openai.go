@@ -94,6 +94,11 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 // ModelID returns the model ID this provider is configured to use.
 func (p *OpenAIProvider) ModelID() string { return p.model }
 
+// Client returns the underlying OpenAI SDK client.
+// Use this for direct SDK access when you need provider-specific features
+// not exposed through the agent.Provider interface.
+func (p *OpenAIProvider) Client() *openaisdk.Client { return p.client }
+
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)
 // ---------------------------------------------------------------------------
