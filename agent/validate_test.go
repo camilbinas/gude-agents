@@ -212,3 +212,154 @@ func TestExecuteTools_SchemaValidation_ValidPayload(t *testing.T) {
 		t.Error("handler should be called for valid payload")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Strict type validation tests (new recursive validator)
+// ---------------------------------------------------------------------------
+
+func TestValidateToolInput_TypeMismatch_StringForInt(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"count": map[string]any{"type": "integer"},
+		},
+		"required": []any{"count"},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"count": "not_a_number"}`))
+	if err == nil {
+		t.Fatal("expected error for string where integer expected, got nil")
+	}
+}
+
+func TestValidateToolInput_TypeMismatch_IntForString(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+		"required": []any{"name"},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"name": 42}`))
+	if err == nil {
+		t.Fatal("expected error for integer where string expected, got nil")
+	}
+}
+
+func TestValidateToolInput_TypeMismatch_StringForBoolean(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"active": map[string]any{"type": "boolean"},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"active": "true"}`))
+	if err == nil {
+		t.Fatal("expected error for string where boolean expected, got nil")
+	}
+}
+
+func TestValidateToolInput_ValidInteger(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"count": map[string]any{"type": "integer"},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"count": 42}`))
+	if err != nil {
+		t.Fatalf("expected no error for valid integer, got: %v", err)
+	}
+}
+
+func TestValidateToolInput_FractionalNumberForInteger(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"count": map[string]any{"type": "integer"},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"count": 3.14}`))
+	if err == nil {
+		t.Fatal("expected error for fractional number where integer expected, got nil")
+	}
+}
+
+func TestValidateToolInput_NestedObject(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"address": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"city": map[string]any{"type": "string"},
+				},
+				"required": []any{"city"},
+			},
+		},
+		"required": []any{"address"},
+	}
+
+	// Missing nested required field.
+	err := ValidateToolInput(schema, json.RawMessage(`{"address": {}}`))
+	if err == nil {
+		t.Fatal("expected error for missing nested required field, got nil")
+	}
+
+	// Wrong type in nested field.
+	err = ValidateToolInput(schema, json.RawMessage(`{"address": {"city": 123}}`))
+	if err == nil {
+		t.Fatal("expected error for wrong type in nested field, got nil")
+	}
+
+	// Valid nested object.
+	err = ValidateToolInput(schema, json.RawMessage(`{"address": {"city": "Berlin"}}`))
+	if err != nil {
+		t.Fatalf("expected no error for valid nested object, got: %v", err)
+	}
+}
+
+func TestValidateToolInput_ArrayItemType(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"tags": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "string"},
+			},
+		},
+	}
+
+	// Array with wrong item type.
+	err := ValidateToolInput(schema, json.RawMessage(`{"tags": [1, 2, 3]}`))
+	if err == nil {
+		t.Fatal("expected error for integer items where string expected, got nil")
+	}
+
+	// Valid array.
+	err = ValidateToolInput(schema, json.RawMessage(`{"tags": ["go", "agent"]}`))
+	if err != nil {
+		t.Fatalf("expected no error for valid string array, got: %v", err)
+	}
+}
+
+func TestValidateToolInput_EnumOnNestedField(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"units": map[string]any{
+				"type": "string",
+				"enum": []any{"celsius", "fahrenheit"},
+			},
+		},
+	}
+
+	err := ValidateToolInput(schema, json.RawMessage(`{"units": "kelvin"}`))
+	if err == nil {
+		t.Fatal("expected error for invalid enum value, got nil")
+	}
+
+	err = ValidateToolInput(schema, json.RawMessage(`{"units": "celsius"}`))
+	if err != nil {
+		t.Fatalf("expected no error for valid enum value, got: %v", err)
+	}
+}

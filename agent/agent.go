@@ -532,51 +532,6 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 	return nil, lastErr
 }
 
-// ValidateToolInput checks that the JSON payload satisfies the tool's declared schema.
-// It verifies all required fields are present and all enum-constrained fields have valid values.
-func ValidateToolInput(schema map[string]any, input json.RawMessage) error {
-	var payload map[string]any
-	if err := json.Unmarshal(input, &payload); err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-
-	// Check required fields.
-	if required, ok := schema["required"].([]any); ok {
-		for _, r := range required {
-			field, _ := r.(string)
-			if _, present := payload[field]; !present {
-				return fmt.Errorf("missing required field %q", field)
-			}
-		}
-	}
-
-	// Check enum constraints.
-	if props, ok := schema["properties"].(map[string]any); ok {
-		for fieldName, propRaw := range props {
-			prop, _ := propRaw.(map[string]any)
-			enumVals, hasEnum := prop["enum"].([]any)
-			if !hasEnum {
-				continue
-			}
-			val, present := payload[fieldName]
-			if !present {
-				continue
-			}
-			valid := false
-			for _, ev := range enumVals {
-				if fmt.Sprintf("%v", ev) == fmt.Sprintf("%v", val) {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				return fmt.Errorf("field %q value %v not in enum %v", fieldName, val, enumVals)
-			}
-		}
-	}
-	return nil
-}
-
 // executeTools runs tool calls either sequentially or in parallel,
 // returning ToolResultBlocks in the same order as the input calls.
 func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResultBlock {
