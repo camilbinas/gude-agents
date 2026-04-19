@@ -6,7 +6,6 @@ package openai
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -56,6 +55,18 @@ func WithThinking(effort string) Option {
 	return func(o *options) { o.thinkingLevel = effort }
 }
 
+// Must is a helper that wraps a (*OpenAIProvider, error) call and panics on error.
+// Use it to collapse provider creation and agent creation into a single error check
+// in examples, scripts, and CLI tools where a provider failure is fatal.
+//
+//	a, err := agent.Default(openai.Must(openai.Standard()), instructions, tools)
+func Must(p *OpenAIProvider, err error) *OpenAIProvider {
+	if err != nil {
+		panic("openai: " + err.Error())
+	}
+	return p
+}
+
 // New creates a new OpenAIProvider.
 func New(model string, opts ...Option) (*OpenAIProvider, error) {
 	o := &options{maxTokens: pvdr.DefaultMaxTokens}
@@ -91,7 +102,7 @@ func (p *OpenAIProvider) Converse(ctx context.Context, params agent.ConversePara
 	input := p.buildParams(params)
 	completion, err := p.client.Chat.Completions.New(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("openai converse: %w", err)
+		return nil, &agent.ProviderError{Cause: err}
 	}
 	resp := parseCompletion(completion)
 	resp.Usage.InputTokens = int(completion.Usage.PromptTokens)
@@ -163,7 +174,7 @@ func (p *OpenAIProvider) ConverseStream(ctx context.Context, params agent.Conver
 	}
 
 	if err := stream.Err(); err != nil {
-		return nil, fmt.Errorf("openai stream: %w", err)
+		return nil, &agent.ProviderError{Cause: err}
 	}
 
 	// Collect accumulated tool calls in index order.

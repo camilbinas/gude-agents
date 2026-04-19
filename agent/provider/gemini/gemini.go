@@ -6,7 +6,6 @@ package gemini
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -51,6 +50,18 @@ func WithThinking(effort string) Option {
 	return func(o *options) { o.thinkingLevel = effort }
 }
 
+// Must is a helper that wraps a (*GeminiProvider, error) call and panics on error.
+// Use it to collapse provider creation and agent creation into a single error check
+// in examples, scripts, and CLI tools where a provider failure is fatal.
+//
+//	a, err := agent.Default(gemini.Must(gemini.Standard()), instructions, tools)
+func Must(p *GeminiProvider, err error) *GeminiProvider {
+	if err != nil {
+		panic("gemini: " + err.Error())
+	}
+	return p
+}
+
 // New creates a new GeminiProvider.
 func New(model string, opts ...Option) (*GeminiProvider, error) {
 	o := &options{maxTokens: int32(pvdr.DefaultMaxTokens)}
@@ -72,7 +83,7 @@ func New(model string, opts ...Option) (*GeminiProvider, error) {
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create genai client: %w", err)
+		return nil, &agent.ProviderCreationError{Provider: "gemini", Cause: err}
 	}
 
 	return &GeminiProvider{

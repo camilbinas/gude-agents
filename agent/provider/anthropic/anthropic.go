@@ -48,6 +48,18 @@ func WithThinking(effort string) Option {
 	return func(o *options) { o.thinkingLevel = effort }
 }
 
+// Must is a helper that wraps a (*AnthropicProvider, error) call and panics on error.
+// Use it to collapse provider creation and agent creation into a single error check
+// in examples, scripts, and CLI tools where a provider failure is fatal.
+//
+//	a, err := agent.Default(anthropic.Must(anthropic.Standard()), instructions, tools)
+func Must(p *AnthropicProvider, err error) *AnthropicProvider {
+	if err != nil {
+		panic("anthropic: " + err.Error())
+	}
+	return p
+}
+
 // New creates a new AnthropicProvider.
 func New(model string, opts ...Option) (*AnthropicProvider, error) {
 	o := &options{maxTokens: pvdr.DefaultMaxTokens}

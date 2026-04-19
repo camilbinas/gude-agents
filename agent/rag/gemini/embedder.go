@@ -35,6 +35,17 @@ func WithModel(model string) EmbedderOption {
 	return func(o *embedderOptions) { o.model = model }
 }
 
+// MustEmbedder is a helper that wraps a (*Embedder, error) call and panics on error.
+// Use it to collapse embedder creation into a single line in examples and scripts.
+//
+//	embedder := raggemini.MustEmbedder(raggemini.GeminiEmbedding001())
+func MustEmbedder(e *Embedder, err error) *Embedder {
+	if err != nil {
+		panic("gemini embedder: " + err.Error())
+	}
+	return e
+}
+
 // NewEmbedder creates a new Gemini Embedder.
 func NewEmbedder(opts ...EmbedderOption) (*Embedder, error) {
 	o := &embedderOptions{

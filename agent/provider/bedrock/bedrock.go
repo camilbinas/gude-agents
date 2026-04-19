@@ -6,7 +6,6 @@ package bedrock
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -105,6 +104,18 @@ func withThinkingStyle(s thinkingStyle) Option {
 	return func(o *options) { o.thinkingStyle = s }
 }
 
+// Must is a helper that wraps a (*BedrockProvider, error) call and panics on error.
+// Use it to collapse provider creation and agent creation into a single error check
+// in examples, scripts, and CLI tools where a provider failure is fatal.
+//
+//	a, err := agent.Default(bedrock.Must(bedrock.Standard()), instructions, tools)
+func Must(p *BedrockProvider, err error) *BedrockProvider {
+	if err != nil {
+		panic("bedrock: " + err.Error())
+	}
+	return p
+}
+
 // New creates a new BedrockProvider. It loads AWS config from the default
 // credential chain and accepts optional configuration.
 func New(model string, opts ...Option) (*BedrockProvider, error) {
@@ -140,7 +151,7 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), cfgOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return nil, &agent.ProviderCreationError{Provider: "bedrock", Cause: err}
 	}
 
 	// Build client options — inject the bearer token header when present.
@@ -194,7 +205,7 @@ func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConversePar
 
 	out, err := p.client.Converse(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock converse: %w", err)
+		return nil, &agent.ProviderError{Cause: err}
 	}
 
 	resp := parseConverseOutput(out)
@@ -276,7 +287,7 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 
 	out, err := p.client.ConverseStream(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock converse stream: %w", err)
+		return nil, &agent.ProviderError{Cause: err}
 	}
 
 	resp := &agent.ProviderResponse{}
@@ -348,7 +359,7 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 	}
 	stream.Close()
 	if err := stream.Err(); err != nil {
-		return nil, fmt.Errorf("bedrock stream error: %w", err)
+		return nil, &agent.ProviderError{Cause: err}
 	}
 
 	return resp, nil

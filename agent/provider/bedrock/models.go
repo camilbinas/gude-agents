@@ -74,6 +74,12 @@ func GLM4_7Flash(opts ...Option) (*BedrockProvider, error) { return New("zai.glm
 func TitanEmbedV2(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.TitanEmbedV2(opts...)
 }
+
+// MustEmbedder is a helper that wraps a (*rag.Embedder, error) call and panics on error.
+// Forwards to agent/rag/bedrock.MustEmbedder.
+func MustEmbedder(e *rag.Embedder, err error) *rag.Embedder {
+	return rag.MustEmbedder(e, err)
+}
 func CohereEmbedEnglishV3(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.CohereEmbedEnglishV3(opts...)
 }

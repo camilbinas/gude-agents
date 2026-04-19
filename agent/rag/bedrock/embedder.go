@@ -35,6 +35,17 @@ func WithRegion(region string) EmbedderOption {
 	return func(o *embedderOptions) { o.region = region }
 }
 
+// MustEmbedder is a helper that wraps a (*Embedder, error) call and panics on error.
+// Use it to collapse embedder creation into a single line in examples and scripts.
+//
+//	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
+func MustEmbedder(e *Embedder, err error) *Embedder {
+	if err != nil {
+		panic("bedrock embedder: " + err.Error())
+	}
+	return e
+}
+
 // NewEmbedder creates a new Embedder. It loads AWS config from the default
 // credential chain and accepts optional configuration.
 func NewEmbedder(modelID string, opts ...EmbedderOption) (*Embedder, error) {
