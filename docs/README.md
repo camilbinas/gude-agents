@@ -21,6 +21,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 | **Amazon Bedrock** | Claude, Nova, Qwen, MiniMax, GPT-OSS, Nemotron, GLM |
 | **Anthropic** | Claude |
 | **OpenAI** | GPT, O-series |
+| **Google Gemini** | Gemini 2.5, 3, 3.1 |
 
 ## Getting Started
 
@@ -34,7 +35,11 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Providers
 
-- [LLM Providers (Bedrock, Anthropic, OpenAI)](providers.md) — Configuration, model functions, and interfaces
+- [LLM Providers Overview](providers.md) — Interfaces, extended thinking, direct SDK access, custom providers
+  - [Bedrock](providers/bedrock.md) — AWS Bedrock: Claude, Nova, Qwen, guardrails
+  - [Anthropic](providers/anthropic.md) — Anthropic Messages API: Claude models
+  - [OpenAI](providers/openai.md) — OpenAI Chat Completions: GPT, O-series
+  - [Gemini](providers/gemini.md) — Google Gemini: model constructors
 - [Fallback Provider](fallback-provider.md) — Automatic failover across providers
 
 ## Components

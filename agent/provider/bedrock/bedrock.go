@@ -34,22 +34,26 @@ const (
 
 // BedrockProvider implements agent.Provider using the AWS Bedrock runtime.
 type BedrockProvider struct {
-	client        *bedrockruntime.Client
-	model         string
-	maxTokens     int32
-	thinkingStyle thinkingStyle // set by model constructors
-	thinkingLevel string        // "low", "medium", "high" — empty = disabled
+	client           *bedrockruntime.Client
+	model            string
+	maxTokens        int32
+	thinkingStyle    thinkingStyle // set by model constructors
+	thinkingLevel    string        // "low", "medium", "high" — empty = disabled
+	guardrailID      string        // empty = no guardrail
+	guardrailVersion string
 }
 
 // Option configures the BedrockProvider.
 type Option func(*options)
 
 type options struct {
-	region        string
-	maxTokens     int32
-	thinkingLevel string
-	thinkingStyle thinkingStyle
-	apiKey        string
+	region           string
+	maxTokens        int32
+	thinkingLevel    string
+	thinkingStyle    thinkingStyle
+	apiKey           string
+	guardrailID      string
+	guardrailVersion string
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
@@ -77,6 +81,17 @@ func WithThinking(effort string) Option {
 // environment variable when no explicit key is provided.
 func WithAPIKey(key string) Option {
 	return func(o *options) { o.apiKey = key }
+}
+
+// WithGuardrail enables an Amazon Bedrock Guardrail on every Converse and
+// ConverseStream call. The guardrail is a managed resource created in the
+// AWS console or via the Bedrock API — this option references it by ID.
+// Use "DRAFT" as the version to test with the latest unpublished draft.
+func WithGuardrail(id, version string) Option {
+	return func(o *options) {
+		o.guardrailID = id
+		o.guardrailVersion = version
+	}
 }
 
 // withThinkingStyle sets the thinking API shape for the model. Used by model constructors only.
@@ -144,11 +159,13 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 	}
 
 	return &BedrockProvider{
-		client:        bedrockruntime.NewFromConfig(cfg, clientOpts...),
-		model:         model,
-		maxTokens:     o.maxTokens,
-		thinkingStyle: o.thinkingStyle,
-		thinkingLevel: o.thinkingLevel,
+		client:           bedrockruntime.NewFromConfig(cfg, clientOpts...),
+		model:            model,
+		maxTokens:        o.maxTokens,
+		thinkingStyle:    o.thinkingStyle,
+		thinkingLevel:    o.thinkingLevel,
+		guardrailID:      o.guardrailID,
+		guardrailVersion: o.guardrailVersion,
 	}, nil
 }
 
@@ -184,6 +201,13 @@ func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConversePar
 		input.ToolConfig = tc
 	}
 	input.AdditionalModelRequestFields = p.buildAdditionalFields(params.InferenceConfig)
+
+	if p.guardrailID != "" {
+		input.GuardrailConfig = &types.GuardrailConfiguration{
+			GuardrailIdentifier: aws.String(p.guardrailID),
+			GuardrailVersion:    aws.String(p.guardrailVersion),
+		}
+	}
 
 	out, err := p.client.Converse(ctx, input)
 	if err != nil {
@@ -263,6 +287,13 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 		input.ToolConfig = tc
 	}
 	input.AdditionalModelRequestFields = p.buildAdditionalFields(params.InferenceConfig)
+
+	if p.guardrailID != "" {
+		input.GuardrailConfig = &types.GuardrailStreamConfiguration{
+			GuardrailIdentifier: aws.String(p.guardrailID),
+			GuardrailVersion:    aws.String(p.guardrailVersion),
+		}
+	}
 
 	out, err := p.client.ConverseStream(ctx, input)
 	if err != nil {
