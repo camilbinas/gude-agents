@@ -1,0 +1,524 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/camilbinas/gude-agents/agent/tool"
+)
+
+// InvokeStream runs the agent loop, streaming the final text answer via cb.
+// It returns cumulative TokenUsage and nil on success, or an error on failure.
+// If the agent calls the handoff tool, it returns ErrHandoffRequested — use
+// GetHandoffRequest to retrieve the request and Agent.Resume to continue.
+// Documented in docs/agent-api.md — update when changing signature, loop steps, or error conditions.
+func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) (TokenUsage, error) {
+	var cumulative TokenUsage
+
+	// Create a new InvocationContext if one isn't already attached.
+	if GetInvocationContext(ctx) == nil {
+		ic := NewInvocationContext()
+		ctx = WithInvocationContext(ctx, ic)
+	}
+
+	// Resolve conversation ID: per-invocation override or agent default.
+	convID := ResolveConversationID(ctx, a.conversationID)
+
+	// Start the invoke span if tracing is enabled.
+	var finishInvoke func(error, TokenUsage, string)
+	if a.tracingHook != nil {
+		var modelID string
+		if mi, ok := a.provider.(ModelIdentifier); ok {
+			modelID = mi.ModelId()
+		}
+		ctx, finishInvoke = a.tracingHook.OnInvokeStart(ctx, InvokeSpanParams{
+			MaxIterations:  a.maxIterations,
+			ModelID:        modelID,
+			ConversationID: convID,
+			UserMessage:    userMessage,
+			SystemPrompt:   a.instructions,
+		})
+	}
+
+	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb)
+	cumulative = usage
+
+	if finishInvoke != nil {
+		finishInvoke(err, cumulative, "")
+	}
+
+	return cumulative, err
+}
+
+// Invoke is a convenience wrapper over InvokeStream that collects all
+// streamed chunks into a single string and returns it along with cumulative TokenUsage.
+// Documented in docs/agent-api.md — update when changing signature or return values.
+func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error) {
+	var sb strings.Builder
+	usage, err := a.InvokeStream(ctx, userMessage, func(chunk string) {
+		sb.WriteString(chunk)
+	})
+	if err != nil {
+		return "", usage, err
+	}
+	return sb.String(), usage, nil
+}
+
+// invokeStreamInner contains the core InvokeStream logic, separated so that
+// the tracing finish function in InvokeStream can capture the final error and usage.
+func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convID string, cb StreamCallback) (TokenUsage, error) {
+	var cumulative TokenUsage
+
+	// Apply input guardrails.
+	msg := userMessage
+	for _, g := range a.inputGuardrails {
+		guardrailCtx := ctx
+		var finishGuardrail func(error, string)
+		if a.tracingHook != nil {
+			guardrailCtx, finishGuardrail = a.tracingHook.OnGuardrailStart(ctx, "input", msg)
+		}
+
+		var err error
+		msg, err = g(guardrailCtx, msg)
+
+		if finishGuardrail != nil {
+			finishGuardrail(err, msg)
+		}
+		if err != nil {
+			return cumulative, &GuardrailError{Direction: "input", Cause: err}
+		}
+	}
+
+	// Load conversation history if memory is configured.
+	var messages []Message
+	if a.memory != nil {
+		memCtx := ctx
+		var finishMemLoad func(error)
+		if a.tracingHook != nil {
+			memCtx, finishMemLoad = a.tracingHook.OnMemoryStart(ctx, "load", convID)
+		}
+
+		history, err := a.memory.Load(memCtx, convID)
+
+		if finishMemLoad != nil {
+			finishMemLoad(err)
+		}
+		if err != nil {
+			return cumulative, fmt.Errorf("memory load: %w", err)
+		}
+		messages = history
+	}
+
+	// Append the user message, optionally preceded by a RAG context exchange.
+	// Retrieved context is injected as a separate user/assistant turn rather than
+	// prepended to the user message, keeping untrusted content clearly isolated
+	// from the actual user query. A synthetic assistant acknowledgement is required
+	// because most providers enforce strictly alternating user/assistant turns.
+	// ragOffset tracks how many ephemeral RAG messages were prepended so they
+	// can be stripped before saving to memory.
+	ragOffset := 0
+	if a.retriever != nil {
+		retCtx := ctx
+		var finishRetriever func(error, int)
+		if a.tracingHook != nil {
+			retCtx, finishRetriever = a.tracingHook.OnRetrieverStart(ctx, msg)
+		}
+
+		docs, err := a.retriever.Retrieve(retCtx, msg)
+
+		if finishRetriever != nil {
+			finishRetriever(err, len(docs))
+		}
+		if err != nil {
+			return cumulative, fmt.Errorf("retriever: %w", err)
+		}
+		if len(docs) > 0 {
+			formatter := a.contextFormatter
+			if formatter == nil {
+				formatter = DefaultContextFormatter
+			}
+			if contextStr := formatter(docs); contextStr != "" {
+				messages = append(messages,
+					Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: contextStr}}},
+					Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "Understood. I will use this context to answer your question."}}},
+				)
+				ragOffset = 2
+			}
+		}
+	}
+	messages = append(messages, Message{
+		Role:    RoleUser,
+		Content: []ContentBlock{TextBlock{Text: msg}},
+	})
+
+	return a.runLoop(ctx, convID, messages, ragOffset, a.instructions, cb)
+}
+
+// runLoop is the core agent iteration loop shared by InvokeStream and Resume.
+// ragOffset is the number of ephemeral RAG context messages prepended to messages
+// that should be stripped before saving to memory.
+func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, ragOffset int, systemPrompt string, cb StreamCallback) (TokenUsage, error) {
+	var cumulative TokenUsage
+
+	for iteration := range a.maxIterations {
+		a.logf("[agent] iteration %d", iteration+1)
+
+		iterCtx := ctx
+		var finishIteration func(toolCount int, isFinal bool)
+		if a.tracingHook != nil {
+			iterCtx, finishIteration = a.tracingHook.OnIterationStart(ctx, iteration+1)
+		}
+
+		hasOutputGuardrails := len(a.outputGuardrails) > 0
+		var bufferedChunks []string
+
+		streamCB := func(chunk string) {
+			if hasOutputGuardrails {
+				bufferedChunks = append(bufferedChunks, chunk)
+			} else if cb != nil {
+				cb(chunk)
+			}
+		}
+
+		// Normalize messages before sending to provider.
+		converseMessages := messages
+		if !a.normDisabled {
+			strategy := NormMerge
+			if a.normStrategy != nil {
+				strategy = *a.normStrategy
+			}
+			converseMessages = NormalizeMessages(messages, strategy)
+		}
+
+		providerCtx := iterCtx
+		var finishProvider func(err error, usage TokenUsage, toolCallCount int, responseText string)
+		if a.tracingHook != nil {
+			providerCtx, finishProvider = a.tracingHook.OnProviderCallStart(iterCtx, ProviderCallParams{
+				System:       systemPrompt,
+				MessageCount: len(converseMessages),
+			})
+		}
+
+		a.toolsMu.RLock()
+		currentToolSpecs := make([]tool.Spec, len(a.toolSpecs))
+		copy(currentToolSpecs, a.toolSpecs)
+		a.toolsMu.RUnlock()
+
+		resp, err := a.callProviderWithRetry(providerCtx, ConverseParams{
+			Messages:         converseMessages,
+			System:           systemPrompt,
+			ToolConfig:       currentToolSpecs,
+			ThinkingCallback: a.thinkingCallback,
+		}, streamCB)
+
+		if err != nil {
+			if finishProvider != nil {
+				finishProvider(err, TokenUsage{}, 0, "")
+			}
+			if finishIteration != nil {
+				finishIteration(0, false)
+			}
+			var pe *ProviderError
+			if errors.As(err, &pe) {
+				return cumulative, err
+			}
+			return cumulative, &ProviderError{Cause: err}
+		}
+
+		if finishProvider != nil {
+			finishProvider(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
+		}
+
+		cumulative.InputTokens += resp.Usage.InputTokens
+		cumulative.OutputTokens += resp.Usage.OutputTokens
+
+		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
+			if finishIteration != nil {
+				finishIteration(0, false)
+			}
+			return cumulative, ErrTokenBudgetExceeded
+		}
+
+		if len(resp.ToolCalls) > 0 {
+			assistantContent := make([]ContentBlock, 0, len(resp.ToolCalls))
+			if resp.Text != "" {
+				assistantContent = append(assistantContent, TextBlock{Text: resp.Text})
+			}
+			for _, tc := range resp.ToolCalls {
+				assistantContent = append(assistantContent, ToolUseBlock{
+					ToolUseID: tc.ToolUseID,
+					Name:      tc.Name,
+					Input:     tc.Input,
+				})
+			}
+			messages = append(messages, Message{
+				Role:    RoleAssistant,
+				Content: assistantContent,
+			})
+
+			results := a.executeTools(iterCtx, resp.ToolCalls)
+
+			if finishIteration != nil {
+				finishIteration(len(resp.ToolCalls), false)
+			}
+
+			if isHandoffResult(results) {
+				for i, r := range results {
+					if r.Content == handoffSentinelHuman {
+						results[i].Content = "Paused — waiting for human input."
+					}
+				}
+				resultBlocks := make([]ContentBlock, len(results))
+				for i, r := range results {
+					resultBlocks[i] = r
+				}
+				messages = append(messages, Message{
+					Role:    RoleUser,
+					Content: resultBlocks,
+				})
+
+				if ic := GetInvocationContext(ctx); ic != nil {
+					if hr, ok := GetHandoffRequest(ic); ok {
+						hr.Messages = messages
+						hr.ConversationID = convID
+					}
+				}
+				if a.memory != nil {
+					_ = a.memory.Save(ctx, convID, messages[ragOffset:])
+					if a.syncMemory {
+						if w, ok := a.memory.(MemoryWaiter); ok {
+							w.Wait()
+						}
+					}
+				}
+				return cumulative, ErrHandoffRequested
+			}
+
+			resultBlocks := make([]ContentBlock, len(results))
+			for i, r := range results {
+				resultBlocks[i] = r
+			}
+			messages = append(messages, Message{
+				Role:    RoleUser,
+				Content: resultBlocks,
+			})
+			continue
+		}
+
+		// Apply output guardrails before streaming to the caller.
+		finalText := resp.Text
+		for _, g := range a.outputGuardrails {
+			guardrailCtx := iterCtx
+			var finishGuardrail func(error, string)
+			if a.tracingHook != nil {
+				guardrailCtx, finishGuardrail = a.tracingHook.OnGuardrailStart(iterCtx, "output", finalText)
+			}
+
+			var gErr error
+			finalText, gErr = g(guardrailCtx, finalText)
+
+			if finishGuardrail != nil {
+				finishGuardrail(gErr, finalText)
+			}
+			if gErr != nil {
+				if finishIteration != nil {
+					finishIteration(0, true)
+				}
+				return cumulative, &GuardrailError{Direction: "output", Cause: gErr}
+			}
+		}
+
+		if hasOutputGuardrails && cb != nil {
+			if finalText == resp.Text {
+				for _, chunk := range bufferedChunks {
+					cb(chunk)
+				}
+			} else {
+				cb(finalText)
+			}
+		}
+
+		messages = append(messages, Message{
+			Role:    RoleAssistant,
+			Content: []ContentBlock{TextBlock{Text: resp.Text}},
+		})
+
+		if finishIteration != nil {
+			finishIteration(0, true)
+		}
+
+		if a.memory != nil {
+			memCtx := ctx
+			var finishMemSave func(error)
+			if a.tracingHook != nil {
+				memCtx, finishMemSave = a.tracingHook.OnMemoryStart(ctx, "save", convID)
+			}
+
+			err := a.memory.Save(memCtx, convID, messages[ragOffset:])
+
+			if finishMemSave != nil {
+				finishMemSave(err)
+			}
+			if err != nil {
+				return cumulative, fmt.Errorf("memory save: %w", err)
+			}
+			if a.syncMemory {
+				if w, ok := a.memory.(MemoryWaiter); ok {
+					w.Wait()
+				}
+			}
+		}
+
+		return cumulative, nil
+	}
+
+	if a.tracingHook != nil {
+		a.tracingHook.OnMaxIterationsExceeded(ctx, a.maxIterations)
+	}
+
+	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
+}
+
+// callProviderWithRetry calls ConverseStream with optional timeout and retry.
+// If providerTimeout is set, each attempt gets its own deadline.
+// If retryMax > 0, transient errors are retried with exponential backoff.
+func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	maxAttempts := 1 + a.retryMax
+	var lastErr error
+
+	for attempt := range maxAttempts {
+		callCtx := ctx
+		var cancel context.CancelFunc
+		if a.providerTimeout > 0 {
+			callCtx, cancel = context.WithTimeout(ctx, a.providerTimeout)
+		}
+
+		resp, err := a.provider.ConverseStream(callCtx, params, cb)
+
+		if cancel != nil {
+			cancel()
+		}
+
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+
+		if ctx.Err() != nil {
+			return nil, lastErr
+		}
+
+		if attempt >= maxAttempts-1 {
+			break
+		}
+
+		delay := a.retryBaseDelay << uint(attempt)
+		a.logf("[agent] provider call failed (attempt %d/%d), retrying in %s: %v", attempt+1, maxAttempts, delay, err)
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	return nil, lastErr
+}
+
+// executeTools runs tool calls either sequentially or in parallel,
+// returning ToolResultBlocks in the same order as the input calls.
+func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResultBlock {
+	results := make([]ToolResultBlock, len(calls))
+
+	exec := func(i int, tc tool.Call) {
+		a.logf("[tool] %s", tc.Name)
+
+		a.toolsMu.RLock()
+		t, ok := a.tools[tc.Name]
+		a.toolsMu.RUnlock()
+		if !ok {
+			results[i] = ToolResultBlock{
+				ToolUseID: tc.ToolUseID,
+				Content:   fmt.Sprintf("unknown tool: %s", tc.Name),
+				IsError:   true,
+			}
+			return
+		}
+
+		toolCtx := ctx
+		var finishTool func(error, string)
+		if a.tracingHook != nil {
+			toolCtx, finishTool = a.tracingHook.OnToolStart(ctx, tc.Name, tc.Input)
+		}
+
+		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
+			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+			a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
+			if finishTool != nil {
+				finishTool(err, "")
+			}
+			results[i] = ToolResultBlock{
+				ToolUseID: tc.ToolUseID,
+				Content:   toolErr.Error(),
+				IsError:   true,
+			}
+			return
+		}
+
+		handler := ChainMiddleware(
+			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+				return t.Handler(ctx, input)
+			},
+			a.middlewares...,
+		)
+
+		out, err := handler(toolCtx, tc.Name, tc.Input)
+		if err != nil {
+			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+			a.logf("[tool] %s error: %v", tc.Name, toolErr)
+			if finishTool != nil {
+				finishTool(err, "")
+			}
+			results[i] = ToolResultBlock{
+				ToolUseID: tc.ToolUseID,
+				Content:   toolErr.Error(),
+				IsError:   true,
+			}
+			return
+		}
+
+		if finishTool != nil {
+			finishTool(nil, out)
+		}
+
+		a.logf("[tool] %s done", tc.Name)
+		results[i] = ToolResultBlock{
+			ToolUseID: tc.ToolUseID,
+			Content:   out,
+		}
+	}
+
+	if a.parallelTools {
+		var wg sync.WaitGroup
+		for i, tc := range calls {
+			wg.Add(1)
+			go func(i int, tc tool.Call) {
+				defer wg.Done()
+				exec(i, tc)
+			}(i, tc)
+		}
+		wg.Wait()
+	} else {
+		for i, tc := range calls {
+			exec(i, tc)
+		}
+	}
+
+	return results
+}
