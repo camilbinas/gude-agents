@@ -1,6 +1,9 @@
 package agent
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Logger is an optional interface for agent logging.
 // Documented in docs/agent-api.md — update when changing interface.
@@ -146,6 +149,40 @@ func WithMessageNormalizer(s NormStrategy) Option {
 func WithoutMessageNormalizer() Option {
 	return func(a *Agent) error {
 		a.normDisabled = true
+		return nil
+	}
+}
+
+// WithTimeout sets a per-call timeout for provider calls. Each call to
+// ConverseStream gets a context with this deadline. If the provider doesn't
+// respond in time, the call is cancelled and returns a context.DeadlineExceeded
+// error wrapped in a ProviderError.
+// A value of 0 means no timeout (default).
+func WithTimeout(d time.Duration) Option {
+	return func(a *Agent) error {
+		if d < 0 {
+			return fmt.Errorf("timeout must be non-negative, got %s", d)
+		}
+		a.providerTimeout = d
+		return nil
+	}
+}
+
+// WithRetry enables automatic retry with exponential backoff for transient
+// provider errors. When a provider call fails, the agent retries up to
+// maxRetries times with delays of baseDelay, 2*baseDelay, 4*baseDelay, etc.
+// Only errors that are not context cancellation or deadline exceeded are retried.
+// A maxRetries of 0 means no retry (default).
+func WithRetry(maxRetries int, baseDelay time.Duration) Option {
+	return func(a *Agent) error {
+		if maxRetries < 0 {
+			return fmt.Errorf("maxRetries must be non-negative, got %d", maxRetries)
+		}
+		if baseDelay < 0 {
+			return fmt.Errorf("baseDelay must be non-negative, got %s", baseDelay)
+		}
+		a.retryMax = maxRetries
+		a.retryBaseDelay = baseDelay
 		return nil
 	}
 }

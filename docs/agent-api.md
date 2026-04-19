@@ -125,6 +125,45 @@ func WithTokenBudget(maxTokens int) Option
 
 Sets a maximum cumulative token budget per invocation. After each provider call, the agent checks whether total tokens (input + output) exceed the budget. If so, the invocation is aborted with `ErrTokenBudgetExceeded`. A value of 0 means no budget (default).
 
+### `WithTimeout`
+
+```go
+func WithTimeout(d time.Duration) Option
+```
+
+Sets a per-call timeout for provider calls. Each call to `ConverseStream` gets a context with this deadline. If the provider doesn't respond in time, the call is cancelled and returns a `context.DeadlineExceeded` error wrapped in a `ProviderError`. A value of 0 means no timeout (default).
+
+Use this to prevent hung provider connections from blocking goroutines indefinitely in HTTP servers:
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithTimeout(120 * time.Second),
+)
+```
+
+### `WithRetry`
+
+```go
+func WithRetry(maxRetries int, baseDelay time.Duration) Option
+```
+
+Enables automatic retry with exponential backoff for transient provider errors. When a provider call fails, the agent retries up to `maxRetries` times with delays of `baseDelay`, `2*baseDelay`, `4*baseDelay`, etc. Context cancellation from the caller stops retries immediately. A `maxRetries` of 0 means no retry (default).
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithRetry(3, 500 * time.Millisecond),
+)
+```
+
+`WithTimeout` and `WithRetry` compose naturally — each retry attempt gets its own fresh timeout:
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithTimeout(30 * time.Second),   // each attempt times out after 30s
+    agent.WithRetry(2, 1 * time.Second),   // up to 2 retries with 1s/2s backoff
+)
+```
+
 ### `WithRetriever`
 
 ```go

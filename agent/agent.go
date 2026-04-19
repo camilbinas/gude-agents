@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -40,6 +41,9 @@ type Agent struct {
 	normDisabled     bool             // true = skip normalization entirely
 	tracingHook      TracingHook      // nil = no tracing
 	loggerSet        bool             // true if WithLogger was explicitly called
+	providerTimeout  time.Duration    // 0 = no timeout (default)
+	retryMax         int              // 0 = no retry (default)
+	retryBaseDelay   time.Duration    // base delay for exponential backoff
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -277,7 +281,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			})
 		}
 
-		resp, err := a.provider.ConverseStream(providerCtx, ConverseParams{
+		resp, err := a.callProviderWithRetry(providerCtx, ConverseParams{
 			Messages:         converseMessages,
 			System:           systemPrompt,
 			ToolConfig:       a.toolSpecs,
@@ -469,6 +473,57 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 	}
 
 	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
+}
+
+// callProviderWithRetry calls ConverseStream with optional timeout and retry.
+// If providerTimeout is set, each attempt gets its own deadline.
+// If retryMax > 0, transient errors are retried with exponential backoff.
+func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	maxAttempts := 1 + a.retryMax
+	var lastErr error
+
+	for attempt := range maxAttempts {
+		// Apply per-call timeout if configured.
+		callCtx := ctx
+		var cancel context.CancelFunc
+		if a.providerTimeout > 0 {
+			callCtx, cancel = context.WithTimeout(ctx, a.providerTimeout)
+		}
+
+		resp, err := a.provider.ConverseStream(callCtx, params, cb)
+
+		if cancel != nil {
+			cancel()
+		}
+
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on context cancellation from the caller (not our timeout).
+		if ctx.Err() != nil {
+			return nil, lastErr
+		}
+
+		// Don't retry on the last attempt.
+		if attempt >= maxAttempts-1 {
+			break
+		}
+
+		// Exponential backoff: baseDelay * 2^attempt.
+		delay := a.retryBaseDelay << uint(attempt)
+		a.logf("[agent] provider call failed (attempt %d/%d), retrying in %s: %v", attempt+1, maxAttempts, delay, err)
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	return nil, lastErr
 }
 
 // ValidateToolInput checks that the JSON payload satisfies the tool's declared schema.
