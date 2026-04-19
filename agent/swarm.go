@@ -39,6 +39,7 @@ type Swarm struct {
 	middlewares    []Middleware
 	memory         Memory
 	conversationID string
+	tracingHook    SwarmTracingHook // nil = no tracing
 }
 
 // swarmEntry holds a member plus the handoff tools injected into it.
@@ -196,6 +197,18 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 	currentAgent := s.activeAgent
 	s.mu.Unlock()
 
+	// Start swarm.run span if tracing is enabled.
+	var finishSwarmRun func(error, SwarmResult)
+	if s.tracingHook != nil {
+		ctx, finishSwarmRun = s.tracingHook.OnSwarmRunStart(ctx, SwarmRunSpanParams{
+			InitialAgent:   currentAgent,
+			MemberCount:    len(s.members),
+			MaxHandoffs:    s.maxHandoffs,
+			ConversationID: convID,
+			UserMessage:    userMessage,
+		})
+	}
+
 	// Load conversation history and active agent from memory.
 	var messages []Message
 	if s.memory != nil {
@@ -237,12 +250,24 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		ic := NewInvocationContext()
 		agentCtx := WithInvocationContext(ctx, ic)
 
+		// Start agent span if tracing is enabled.
+		var finishAgent func(error)
+		if s.tracingHook != nil {
+			agentCtx, finishAgent = s.tracingHook.OnSwarmAgentStart(agentCtx, currentAgent)
+		}
+
 		// Run the agent's inner loop manually so we can intercept handoffs.
 		usage, finalText, handedOff, err := s.runAgent(agentCtx, entry, messages, cb)
 		result.Usage.InputTokens += usage.InputTokens
 		result.Usage.OutputTokens += usage.OutputTokens
 
 		if err != nil {
+			if finishAgent != nil {
+				finishAgent(err)
+			}
+			if finishSwarmRun != nil {
+				finishSwarmRun(err, result)
+			}
 			return result, fmt.Errorf("agent %q: %w", currentAgent, err)
 		}
 
@@ -251,7 +276,19 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			targetRaw, _ := ic.Get(swarmActiveKey{})
 			targetName, _ := targetRaw.(string)
 			if targetName == "" {
-				return result, fmt.Errorf("agent %q triggered handoff but no target set", currentAgent)
+				handoffErr := fmt.Errorf("agent %q triggered handoff but no target set", currentAgent)
+				if finishAgent != nil {
+					finishAgent(handoffErr)
+				}
+				if finishSwarmRun != nil {
+					finishSwarmRun(handoffErr, result)
+				}
+				return result, handoffErr
+			}
+
+			// Finish agent span before handoff.
+			if finishAgent != nil {
+				finishAgent(nil)
 			}
 
 			s.logf("[swarm] handoff: %s → %s", currentAgent, targetName)
@@ -259,6 +296,11 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				From: currentAgent,
 				To:   targetName,
 			})
+
+			// Record handoff event in trace.
+			if s.tracingHook != nil {
+				s.tracingHook.OnSwarmHandoff(ctx, currentAgent, targetName)
+			}
 
 			// Detect ping-pong: if the target already appeared in recent handoff history,
 			// tell it to handle the request directly instead of bouncing again.
@@ -295,6 +337,11 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		result.FinalAgent = currentAgent
 		result.Response = finalText
 
+		// Finish agent span.
+		if finishAgent != nil {
+			finishAgent(nil)
+		}
+
 		// Append assistant response to messages for memory.
 		messages = append(messages, Message{
 			Role:    RoleAssistant,
@@ -315,21 +362,38 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		s.activeAgent = currentAgent
 		s.mu.Unlock()
 
+		// Finish swarm.run span.
+		if finishSwarmRun != nil {
+			finishSwarmRun(nil, result)
+		}
+
 		return result, nil
 	}
 
-	return result, fmt.Errorf("max handoffs (%d) exceeded", s.maxHandoffs)
+	maxErr := fmt.Errorf("max handoffs (%d) exceeded", s.maxHandoffs)
+	if finishSwarmRun != nil {
+		finishSwarmRun(maxErr, result)
+	}
+	return result, maxErr
 }
 
 // runAgent executes a single agent's loop, returning whether a handoff was triggered.
 func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Message, cb StreamCallback) (TokenUsage, string, bool, error) {
 	a := entry.member.Agent
+	th := a.TracingHook() // may be nil
 	var cumulative TokenUsage
 
 	systemPrompt := a.Instructions()
 
 	for iteration := range a.MaxIterations() {
 		s.logf("[swarm/%s] iteration %d", entry.member.Name, iteration+1)
+
+		// Start iteration span.
+		iterCtx := ctx
+		var finishIteration func(toolCount int, isFinal bool)
+		if th != nil {
+			iterCtx, finishIteration = th.OnIterationStart(ctx, iteration+1)
+		}
 
 		var bufferedChunks []string
 		hasOutputGuardrails := len(a.OutputGuardrails()) > 0
@@ -342,19 +406,43 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			}
 		}
 
-		resp, err := a.Provider().ConverseStream(ctx, ConverseParams{
+		// Start provider call span.
+		providerCtx := iterCtx
+		var finishProvider func(err error, usage TokenUsage, toolCallCount int, responseText string)
+		if th != nil {
+			providerCtx, finishProvider = th.OnProviderCallStart(iterCtx, ProviderCallParams{
+				System:       systemPrompt,
+				MessageCount: len(messages),
+			})
+		}
+
+		resp, err := a.Provider().ConverseStream(providerCtx, ConverseParams{
 			Messages:   messages,
 			System:     systemPrompt,
 			ToolConfig: a.ToolSpecs(),
 		}, streamCB)
 		if err != nil {
+			if finishProvider != nil {
+				finishProvider(err, TokenUsage{}, 0, "")
+			}
+			if finishIteration != nil {
+				finishIteration(0, false)
+			}
 			return cumulative, "", false, err
+		}
+
+		// Finish provider call span.
+		if finishProvider != nil {
+			finishProvider(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
 		}
 
 		cumulative.InputTokens += resp.Usage.InputTokens
 		cumulative.OutputTokens += resp.Usage.OutputTokens
 
 		if a.TokenBudget() > 0 && cumulative.Total() > a.TokenBudget() {
+			if finishIteration != nil {
+				finishIteration(0, false)
+			}
 			return cumulative, "", false, ErrTokenBudgetExceeded
 		}
 
@@ -374,7 +462,12 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
 
 			// Execute tools and check for handoff.
-			results, handedOff := s.executeToolsWithHandoff(ctx, a, resp.ToolCalls)
+			results, handedOff := s.executeToolsWithHandoff(iterCtx, a, resp.ToolCalls)
+
+			// Finish iteration span.
+			if finishIteration != nil {
+				finishIteration(len(resp.ToolCalls), false)
+			}
 
 			resultBlocks := make([]ContentBlock, len(results))
 			for i, r := range results {
@@ -393,6 +486,9 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 		for _, g := range a.OutputGuardrails() {
 			finalText, err = g(ctx, finalText)
 			if err != nil {
+				if finishIteration != nil {
+					finishIteration(0, true)
+				}
 				return cumulative, "", false, fmt.Errorf("output guardrail: %w", err)
 			}
 		}
@@ -407,6 +503,11 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			}
 		}
 
+		// Finish iteration span — final iteration.
+		if finishIteration != nil {
+			finishIteration(0, true)
+		}
+
 		return cumulative, finalText, false, nil
 	}
 
@@ -418,6 +519,7 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 	results := make([]ToolResultBlock, len(calls))
 	handedOff := false
 	var mu sync.Mutex
+	th := a.TracingHook() // may be nil
 
 	exec := func(i int, tc tool.Call) {
 		s.logf("[swarm/tool] %s", tc.Name)
@@ -432,9 +534,19 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 			return
 		}
 
+		// Start tool span.
+		toolCtx := ctx
+		var finishTool func(error, string)
+		if th != nil {
+			toolCtx, finishTool = th.OnToolStart(ctx, tc.Name, tc.Input)
+		}
+
 		// Validate tool input against the declared schema.
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+			if finishTool != nil {
+				finishTool(err, "")
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   toolErr.Error(),
@@ -452,8 +564,11 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 			allMiddleware...,
 		)
 
-		out, err := handler(ctx, tc.Name, tc.Input)
+		out, err := handler(toolCtx, tc.Name, tc.Input)
 		if err != nil {
+			if finishTool != nil {
+				finishTool(err, "")
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   err.Error(),
@@ -463,6 +578,9 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 		}
 
 		if out == handoffSentinel {
+			if finishTool != nil {
+				finishTool(nil, "handoff")
+			}
 			mu.Lock()
 			handedOff = true
 			mu.Unlock()
@@ -473,6 +591,9 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 			return
 		}
 
+		if finishTool != nil {
+			finishTool(nil, out)
+		}
 		results[i] = ToolResultBlock{
 			ToolUseID: tc.ToolUseID,
 			Content:   out,

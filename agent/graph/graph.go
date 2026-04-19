@@ -36,12 +36,13 @@ type route struct {
 // Fields are written only during construction; after that they are read-only,
 // making concurrent Run calls safe.
 type Graph struct {
-	nodes   map[string]NodeFunc
-	entry   string
-	routes  map[string]route    // one route per source node
-	joins   map[string][]string // node → required predecessors
-	maxIter int
-	logger  agent.Logger
+	nodes       map[string]NodeFunc
+	entry       string
+	routes      map[string]route    // one route per source node
+	joins       map[string][]string // node → required predecessors
+	maxIter     int
+	logger      agent.Logger
+	tracingHook GraphTracingHook // nil = no tracing
 }
 
 // GraphOption configures a Graph.
@@ -280,7 +281,18 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 		e.graph.logger.Printf("[graph] node %q starting (iteration %d)", nodeName, iterCount)
 	}
 
+	// Start node tracing span if hook is set.
+	var finishNode func(err error)
+	if e.graph.tracingHook != nil {
+		ctx, finishNode = e.graph.tracingHook.OnNodeStart(ctx, nodeName)
+	}
+
 	result, err := fn(ctx, stateCopy)
+
+	if finishNode != nil {
+		finishNode(err)
+	}
+
 	if err != nil {
 		if e.graph.logger != nil {
 			e.graph.logger.Printf("[graph] node %q failed: %v", nodeName, err)
@@ -484,13 +496,25 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 		return GraphResult{}, err
 	}
 
+	// Start graph tracing span if hook is set.
+	var finishTrace func(err error, iterations int)
+	if g.tracingHook != nil {
+		ctx, finishTrace = g.tracingHook.OnGraphRunStart(ctx)
+	}
+
 	exec := &runExec{
 		graph:     g,
 		state:     CopyState(initial),
 		completed: make(map[string]bool),
 	}
 
-	if err := exec.step(ctx, g.entry); err != nil {
+	err := exec.step(ctx, g.entry)
+
+	if finishTrace != nil {
+		finishTrace(err, exec.iterations)
+	}
+
+	if err != nil {
 		return GraphResult{}, err
 	}
 

@@ -78,6 +78,7 @@ func WithOutputGuardrail(g ...OutputGuardrail) Option {
 func WithLogger(l Logger) Option {
 	return func(a *Agent) error {
 		a.logger = l
+		a.loggerSet = true
 		return nil
 	}
 }

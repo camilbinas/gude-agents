@@ -37,6 +37,8 @@ type Agent struct {
 	syncMemory       bool             // if true, call Wait() on memory after each Save
 	normStrategy     *NormStrategy    // nil = use default (Merge); pointer to distinguish "not set" from "set to Merge"
 	normDisabled     bool             // true = skip normalization entirely
+	tracingHook      TracingHook      // nil = no tracing
+	loggerSet        bool             // true if WithLogger was explicitly called
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -104,23 +106,76 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 		ctx = WithInvocationContext(ctx, ic)
 	}
 
+	// Resolve conversation ID: per-invocation override or agent default.
+	convID := ResolveConversationID(ctx, a.conversationID)
+
+	// Start the invoke span if tracing is enabled.
+	var finishInvoke func(error, TokenUsage, string)
+	if a.tracingHook != nil {
+		var modelID string
+		if mi, ok := a.provider.(ModelIdentifier); ok {
+			modelID = mi.ModelId()
+		}
+		ctx, finishInvoke = a.tracingHook.OnInvokeStart(ctx, InvokeSpanParams{
+			MaxIterations:  a.maxIterations,
+			ModelID:        modelID,
+			ConversationID: convID,
+			UserMessage:    userMessage,
+			SystemPrompt:   a.instructions,
+		})
+	}
+
+	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb)
+	cumulative = usage
+
+	if finishInvoke != nil {
+		finishInvoke(err, cumulative, "")
+	}
+
+	return cumulative, err
+}
+
+// invokeStreamInner contains the core InvokeStream logic, separated so that
+// the tracing finish function in InvokeStream can capture the final error and usage.
+func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convID string, cb StreamCallback) (TokenUsage, error) {
+	var cumulative TokenUsage
+
 	// Apply input guardrails.
 	msg := userMessage
 	for _, g := range a.inputGuardrails {
+		// Trace each input guardrail.
+		guardrailCtx := ctx
+		var finishGuardrail func(error, string)
+		if a.tracingHook != nil {
+			guardrailCtx, finishGuardrail = a.tracingHook.OnGuardrailStart(ctx, "input", msg)
+		}
+
 		var err error
-		msg, err = g(ctx, msg)
+		msg, err = g(guardrailCtx, msg)
+
+		if finishGuardrail != nil {
+			finishGuardrail(err, msg)
+		}
 		if err != nil {
 			return cumulative, &GuardrailError{Direction: "input", Cause: err}
 		}
 	}
 
-	// Resolve conversation ID: per-invocation override or agent default.
-	convID := ResolveConversationID(ctx, a.conversationID)
-
 	// Load conversation history if memory is configured.
 	var messages []Message
 	if a.memory != nil {
-		history, err := a.memory.Load(ctx, convID)
+		// Trace memory load.
+		memCtx := ctx
+		var finishMemLoad func(error)
+		if a.tracingHook != nil {
+			memCtx, finishMemLoad = a.tracingHook.OnMemoryStart(ctx, "load", convID)
+		}
+
+		history, err := a.memory.Load(memCtx, convID)
+
+		if finishMemLoad != nil {
+			finishMemLoad(err)
+		}
 		if err != nil {
 			return cumulative, fmt.Errorf("memory load: %w", err)
 		}
@@ -136,7 +191,18 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 	// can be stripped before saving to memory.
 	ragOffset := 0
 	if a.retriever != nil {
-		docs, err := a.retriever.Retrieve(ctx, msg)
+		// Trace retriever call.
+		retCtx := ctx
+		var finishRetriever func(error, int)
+		if a.tracingHook != nil {
+			retCtx, finishRetriever = a.tracingHook.OnRetrieverStart(ctx, msg)
+		}
+
+		docs, err := a.retriever.Retrieve(retCtx, msg)
+
+		if finishRetriever != nil {
+			finishRetriever(err, len(docs))
+		}
 		if err != nil {
 			return cumulative, fmt.Errorf("retriever: %w", err)
 		}
@@ -171,6 +237,13 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 	for iteration := range a.maxIterations {
 		a.logf("[agent] iteration %d", iteration+1)
 
+		// Start iteration span.
+		iterCtx := ctx
+		var finishIteration func(toolCount int, isFinal bool)
+		if a.tracingHook != nil {
+			iterCtx, finishIteration = a.tracingHook.OnIterationStart(ctx, iteration+1)
+		}
+
 		// Stream text to the caller in real-time.
 		hasOutputGuardrails := len(a.outputGuardrails) > 0
 		var bufferedChunks []string
@@ -193,7 +266,17 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			converseMessages = NormalizeMessages(messages, strategy)
 		}
 
-		resp, err := a.provider.ConverseStream(ctx, ConverseParams{
+		// Start provider call span.
+		providerCtx := iterCtx
+		var finishProvider func(err error, usage TokenUsage, toolCallCount int, responseText string)
+		if a.tracingHook != nil {
+			providerCtx, finishProvider = a.tracingHook.OnProviderCallStart(iterCtx, ProviderCallParams{
+				System:       systemPrompt,
+				MessageCount: len(converseMessages),
+			})
+		}
+
+		resp, err := a.provider.ConverseStream(providerCtx, ConverseParams{
 			Messages:         converseMessages,
 			System:           systemPrompt,
 			ToolConfig:       a.toolSpecs,
@@ -201,7 +284,18 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		}, streamCB)
 
 		if err != nil {
+			if finishProvider != nil {
+				finishProvider(err, TokenUsage{}, 0, "")
+			}
+			if finishIteration != nil {
+				finishIteration(0, false)
+			}
 			return cumulative, &ProviderError{Cause: err}
+		}
+
+		// Finish provider call span with usage and tool call count.
+		if finishProvider != nil {
+			finishProvider(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
 		}
 
 		// Accumulate token usage.
@@ -210,6 +304,9 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 		// Check budget after each provider call.
 		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
+			if finishIteration != nil {
+				finishIteration(0, false)
+			}
 			return cumulative, ErrTokenBudgetExceeded
 		}
 
@@ -231,7 +328,12 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				Content: assistantContent,
 			})
 
-			results := a.executeTools(ctx, resp.ToolCalls)
+			results := a.executeTools(iterCtx, resp.ToolCalls)
+
+			// Finish iteration span with tool count.
+			if finishIteration != nil {
+				finishIteration(len(resp.ToolCalls), false)
+			}
 
 			// Check for human handoff before appending results.
 			if isHandoffResult(results) {
@@ -285,9 +387,23 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		// Apply output guardrails before streaming to the caller.
 		finalText := resp.Text
 		for _, g := range a.outputGuardrails {
+			// Trace each output guardrail.
+			guardrailCtx := iterCtx
+			var finishGuardrail func(error, string)
+			if a.tracingHook != nil {
+				guardrailCtx, finishGuardrail = a.tracingHook.OnGuardrailStart(iterCtx, "output", finalText)
+			}
+
 			var gErr error
-			finalText, gErr = g(ctx, finalText)
+			finalText, gErr = g(guardrailCtx, finalText)
+
+			if finishGuardrail != nil {
+				finishGuardrail(gErr, finalText)
+			}
 			if gErr != nil {
+				if finishIteration != nil {
+					finishIteration(0, true)
+				}
 				return cumulative, &GuardrailError{Direction: "output", Cause: gErr}
 			}
 		}
@@ -309,9 +425,26 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			Content: []ContentBlock{TextBlock{Text: resp.Text}},
 		})
 
+		// Finish iteration span — this is the final iteration (no tool calls).
+		if finishIteration != nil {
+			finishIteration(0, true)
+		}
+
 		// Save conversation history if memory is configured.
 		if a.memory != nil {
-			if err := a.memory.Save(ctx, convID, messages[ragOffset:]); err != nil {
+			// Trace memory save.
+			memCtx := ctx
+			var finishMemSave func(error)
+			if a.tracingHook != nil {
+				memCtx, finishMemSave = a.tracingHook.OnMemoryStart(ctx, "save", convID)
+			}
+
+			err := a.memory.Save(memCtx, convID, messages[ragOffset:])
+
+			if finishMemSave != nil {
+				finishMemSave(err)
+			}
+			if err != nil {
 				return cumulative, fmt.Errorf("memory save: %w", err)
 			}
 			if a.syncMemory {
@@ -322,6 +455,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		}
 
 		return cumulative, nil
+	}
+
+	// Max iterations exceeded — record event before returning error.
+	if a.tracingHook != nil {
+		a.tracingHook.OnMaxIterationsExceeded(ctx, a.maxIterations)
 	}
 
 	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
@@ -390,10 +528,20 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			return
 		}
 
+		// Start tool span.
+		toolCtx := ctx
+		var finishTool func(error, string)
+		if a.tracingHook != nil {
+			toolCtx, finishTool = a.tracingHook.OnToolStart(ctx, tc.Name, tc.Input)
+		}
+
 		// Validate tool input against the declared schema.
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
+			if finishTool != nil {
+				finishTool(err, "")
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   toolErr.Error(),
@@ -403,6 +551,7 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 		}
 
 		// Build the handler — wrap with middleware if configured.
+		// Pass the context with the tool span through the middleware chain.
 		handler := ChainMiddleware(
 			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
 				return t.Handler(ctx, input)
@@ -410,16 +559,23 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			a.middlewares...,
 		)
 
-		out, err := handler(ctx, tc.Name, tc.Input)
+		out, err := handler(toolCtx, tc.Name, tc.Input)
 		if err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			a.logf("[tool] %s error: %v", tc.Name, toolErr)
+			if finishTool != nil {
+				finishTool(err, "")
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   toolErr.Error(),
 				IsError:   true,
 			}
 			return
+		}
+
+		if finishTool != nil {
+			finishTool(nil, out)
 		}
 
 		a.logf("[tool] %s done", tc.Name)
