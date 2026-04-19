@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -289,6 +290,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			}
 			if finishIteration != nil {
 				finishIteration(0, false)
+			}
+			// Providers return *ProviderError directly; pass through as-is.
+			var pe *ProviderError
+			if errors.As(err, &pe) {
+				return cumulative, err
 			}
 			return cumulative, &ProviderError{Cause: err}
 		}
