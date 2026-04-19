@@ -420,7 +420,7 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			})
 		}
 
-		resp, err := a.Provider().ConverseStream(providerCtx, ConverseParams{
+		resp, err := a.CallProvider(providerCtx, ConverseParams{
 			Messages:   messages,
 			System:     systemPrompt,
 			ToolConfig: a.ToolSpecs(),

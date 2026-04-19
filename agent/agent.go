@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -142,6 +143,13 @@ func (a *Agent) ParallelTools() bool { return a.parallelTools }
 
 // Middlewares returns the agent's middleware chain.
 func (a *Agent) Middlewares() []Middleware { return a.middlewares }
+
+// CallProvider calls the agent's provider with timeout and retry applied.
+// Used by the swarm to ensure swarm agents benefit from WithTimeout and
+// WithRetry without duplicating the retry logic.
+func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	return a.callProviderWithRetry(ctx, params, cb)
+}
 
 // HasTool reports whether a tool with the given name is registered.
 func (a *Agent) HasTool(name string) bool {
