@@ -62,6 +62,33 @@ func GetInvocationContext(ctx context.Context) *InvocationContext
 
 Retrieves the `InvocationContext` from a Go `context.Context`. Returns `nil` if none is attached.
 
+### Inference Config Context Helpers
+
+The `agent` package also provides context helpers for per-invocation inference parameter overrides. These follow the same pattern as `InvocationContext` but carry an `InferenceConfig` instead.
+
+#### WithInferenceConfig
+
+```go
+func WithInferenceConfig(ctx context.Context, cfg *InferenceConfig) context.Context
+```
+
+Attaches an `InferenceConfig` to a Go `context.Context` for per-invocation override. When the agent runs, it merges per-invocation values over agent-level values field by field — non-nil per-invocation fields take precedence, nil fields fall back to the agent-level value.
+
+```go
+ctx := agent.WithInferenceConfig(context.Background(), &agent.InferenceConfig{
+    Temperature: &temp, // override just temperature for this call
+})
+result, _, err := a.Invoke(ctx, "Be creative!")
+```
+
+#### GetInferenceConfig
+
+```go
+func GetInferenceConfig(ctx context.Context) *InferenceConfig
+```
+
+Retrieves the per-invocation `InferenceConfig` from a Go `context.Context`. Returns `nil` if none is attached.
+
 ## Per-Invocation Scoping
 
 Inside `InvokeStream`, the agent does this before anything else:

@@ -131,7 +131,7 @@ func newMockProviderWithModel(modelID string, responses ...*agent.ProviderRespon
 	}
 }
 
-func (p *mockProviderWithModel) ModelId() string { return p.modelID }
+func (p *mockProviderWithModel) ModelID() string { return p.modelID }
 
 type errorProvider struct{ err error }
 

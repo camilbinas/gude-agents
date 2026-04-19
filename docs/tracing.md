@@ -121,6 +121,11 @@ All attribute key constants are exported from the `tracing` package for use in c
 | `AttrMemoryConversationID` | `memory.conversation_id` | Conversation ID on memory load/save spans |
 | `AttrRetrieverDocumentCount` | `retriever.document_count` | Number of documents returned by the retriever |
 | `AttrGraphIterations` | `graph.iterations` | Total node executions in a graph run |
+| `AttrGenAITemperature` | `gen_ai.request.temperature` | Temperature parameter (when set via inference config) |
+| `AttrGenAITopP` | `gen_ai.request.top_p` | Top-p / nucleus sampling parameter (when set) |
+| `AttrGenAITopK` | `gen_ai.request.top_k` | Top-k parameter (when set) |
+| `AttrGenAIMaxTokens` | `gen_ai.request.max_tokens` | Max tokens parameter (when set) |
+| `AttrGenAIStopSequences` | `gen_ai.request.stop_sequences` | Stop sequences (when set) |
 
 ### Events
 

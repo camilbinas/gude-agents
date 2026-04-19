@@ -124,7 +124,14 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 
 	// Use base instructions — RAG context was already applied in the original invocation
 	// and is reflected in the conversation history.
-	return a.runLoop(ctx, convID, messages, 0, a.instructions, cb)
+	// Resolve inference config for the resumed invocation.
+	perInvocationCfg := GetInferenceConfig(ctx)
+	mergedInferenceCfg := mergeInferenceConfig(a.inferenceConfig, perInvocationCfg)
+	if err := validateInferenceConfig(mergedInferenceCfg); err != nil {
+		return TokenUsage{}, fmt.Errorf("inference config: %w", err)
+	}
+
+	return a.runLoop(ctx, convID, messages, 0, a.instructions, mergedInferenceCfg, cb)
 }
 
 // ResumeInvoke is a convenience wrapper over Resume that collects streamed

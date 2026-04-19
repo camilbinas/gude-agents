@@ -37,11 +37,12 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 			modelID = mi.ModelID()
 		}
 		ctx, finishInvoke = a.tracingHook.OnInvokeStart(ctx, InvokeSpanParams{
-			MaxIterations:  a.maxIterations,
-			ModelID:        modelID,
-			ConversationID: convID,
-			UserMessage:    userMessage,
-			SystemPrompt:   a.instructions,
+			MaxIterations:   a.maxIterations,
+			ModelID:         modelID,
+			ConversationID:  convID,
+			UserMessage:     userMessage,
+			SystemPrompt:    a.instructions,
+			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
 		})
 	}
 
@@ -114,6 +115,13 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		messages = history
 	}
 
+	// Resolve per-invocation inference config: merge with agent-level, validate.
+	perInvocationCfg := GetInferenceConfig(ctx)
+	mergedInferenceCfg := mergeInferenceConfig(a.inferenceConfig, perInvocationCfg)
+	if err := validateInferenceConfig(mergedInferenceCfg); err != nil {
+		return cumulative, fmt.Errorf("inference config: %w", err)
+	}
+
 	// Append the user message, optionally preceded by a RAG context exchange.
 	// Retrieved context is injected as a separate user/assistant turn rather than
 	// prepended to the user message, keeping untrusted content clearly isolated
@@ -156,13 +164,14 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		Content: []ContentBlock{TextBlock{Text: msg}},
 	})
 
-	return a.runLoop(ctx, convID, messages, ragOffset, a.instructions, cb)
+	return a.runLoop(ctx, convID, messages, ragOffset, a.instructions, mergedInferenceCfg, cb)
 }
 
 // runLoop is the core agent iteration loop shared by InvokeStream and Resume.
 // ragOffset is the number of ephemeral RAG context messages prepended to messages
 // that should be stripped before saving to memory.
-func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, ragOffset int, systemPrompt string, cb StreamCallback) (TokenUsage, error) {
+// inferenceConfig is the merged (agent-level + per-invocation) inference config; may be nil.
+func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback) (TokenUsage, error) {
 	var cumulative TokenUsage
 
 	for iteration := range a.maxIterations {
@@ -214,6 +223,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			System:           systemPrompt,
 			ToolConfig:       currentToolSpecs,
 			ThinkingCallback: a.thinkingCallback,
+			InferenceConfig:  inferenceConfig,
 		}, streamCB)
 
 		if err != nil {

@@ -348,6 +348,11 @@ func TestProperty_AttributeNamingConvention(t *testing.T) {
 		AttrMemoryConversationID,
 		AttrRetrieverDocumentCount,
 		AttrGraphIterations,
+		AttrGenAITemperature,
+		AttrGenAITopP,
+		AttrGenAITopK,
+		AttrGenAIMaxTokens,
+		AttrGenAIStopSequences,
 	}
 
 	// Also include event name constants.

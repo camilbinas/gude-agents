@@ -186,3 +186,60 @@ func WithRetry(maxRetries int, baseDelay time.Duration) Option {
 		return nil
 	}
 }
+
+// WithTemperature sets the temperature inference parameter on the agent.
+// Temperature controls randomness of LLM output. Valid range: [0.0, 1.0].
+func WithTemperature(v float64) Option {
+	return func(a *Agent) error {
+		if v < 0.0 || v > 1.0 {
+			return fmt.Errorf("temperature must be between 0.0 and 1.0, got %f", v)
+		}
+		if a.inferenceConfig == nil {
+			a.inferenceConfig = &InferenceConfig{}
+		}
+		a.inferenceConfig.Temperature = &v
+		return nil
+	}
+}
+
+// WithTopP sets the top_p inference parameter on the agent.
+// TopP controls nucleus sampling probability cutoff. Valid range: [0.0, 1.0].
+func WithTopP(v float64) Option {
+	return func(a *Agent) error {
+		if v < 0.0 || v > 1.0 {
+			return fmt.Errorf("top_p must be between 0.0 and 1.0, got %f", v)
+		}
+		if a.inferenceConfig == nil {
+			a.inferenceConfig = &InferenceConfig{}
+		}
+		a.inferenceConfig.TopP = &v
+		return nil
+	}
+}
+
+// WithTopK sets the top_k inference parameter on the agent.
+// TopK limits the number of highest-probability tokens considered. Must be >= 1.
+func WithTopK(v int) Option {
+	return func(a *Agent) error {
+		if v < 1 {
+			return fmt.Errorf("top_k must be >= 1, got %d", v)
+		}
+		if a.inferenceConfig == nil {
+			a.inferenceConfig = &InferenceConfig{}
+		}
+		a.inferenceConfig.TopK = &v
+		return nil
+	}
+}
+
+// WithStopSequences sets the stop sequences inference parameter on the agent.
+// Stop sequences cause the LLM to stop producing further tokens when generated.
+func WithStopSequences(s []string) Option {
+	return func(a *Agent) error {
+		if a.inferenceConfig == nil {
+			a.inferenceConfig = &InferenceConfig{}
+		}
+		a.inferenceConfig.StopSequences = s
+		return nil
+	}
+}

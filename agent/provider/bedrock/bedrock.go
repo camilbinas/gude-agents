@@ -41,26 +41,6 @@ type BedrockProvider struct {
 	thinkingLevel string        // "low", "medium", "high" — empty = disabled
 }
 
-// thinkingFields builds the AdditionalModelRequestFields for extended thinking.
-// Claude: {"thinking": {"type": "enabled", "budget_tokens": N}}
-// Nova 2: {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "low|medium|high"}}
-func (p *BedrockProvider) thinkingFields() document.Interface {
-	if p.thinkingStyle == thinkingStyleClaude {
-		return document.NewLazyDocument(map[string]any{
-			"thinking": map[string]any{
-				"type":          "enabled",
-				"budget_tokens": pvdr.ThinkingBudgets[p.thinkingLevel],
-			},
-		})
-	}
-	return document.NewLazyDocument(map[string]any{
-		"reasoningConfig": map[string]any{
-			"type":               "enabled",
-			"maxReasoningEffort": p.thinkingLevel,
-		},
-	})
-}
-
 // Option configures the BedrockProvider.
 type Option func(*options)
 
@@ -181,12 +161,11 @@ func (p *BedrockProvider) ModelID() string { return p.model }
 
 // Converse sends messages to Bedrock and returns a complete response.
 func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
+	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
 	input := &bedrockruntime.ConverseInput{
-		ModelId:  aws.String(p.model),
-		Messages: toBedrockMessages(params.Messages),
-		InferenceConfig: &types.InferenceConfiguration{
-			MaxTokens: aws.Int32(p.maxTokens),
-		},
+		ModelId:         aws.String(p.model),
+		Messages:        toBedrockMessages(params.Messages),
+		InferenceConfig: infCfg,
 	}
 	if params.System != "" {
 		input.System = []types.SystemContentBlock{
@@ -199,9 +178,7 @@ func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConversePar
 		}
 		input.ToolConfig = tc
 	}
-	if p.thinkingLevel != "" && p.thinkingStyle != thinkingStyleNone {
-		input.AdditionalModelRequestFields = p.thinkingFields()
-	}
+	input.AdditionalModelRequestFields = p.buildAdditionalFields(params.InferenceConfig)
 
 	out, err := p.client.Converse(ctx, input)
 	if err != nil {
@@ -263,12 +240,11 @@ func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResp
 // Text deltas are forwarded to cb. Tool use blocks are collected and
 // returned in the ProviderResponse.
 func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
+	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
 	input := &bedrockruntime.ConverseStreamInput{
-		ModelId:  aws.String(p.model),
-		Messages: toBedrockMessages(params.Messages),
-		InferenceConfig: &types.InferenceConfiguration{
-			MaxTokens: aws.Int32(p.maxTokens),
-		},
+		ModelId:         aws.String(p.model),
+		Messages:        toBedrockMessages(params.Messages),
+		InferenceConfig: infCfg,
 	}
 	if params.System != "" {
 		input.System = []types.SystemContentBlock{
@@ -281,9 +257,7 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 		}
 		input.ToolConfig = tc
 	}
-	if p.thinkingLevel != "" && p.thinkingStyle != thinkingStyleNone {
-		input.AdditionalModelRequestFields = p.thinkingFields()
-	}
+	input.AdditionalModelRequestFields = p.buildAdditionalFields(params.InferenceConfig)
 
 	out, err := p.client.ConverseStream(ctx, input)
 	if err != nil {
@@ -363,6 +337,73 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 	}
 
 	return resp, nil
+}
+
+// ---------------------------------------------------------------------------
+// Inference config helpers
+// ---------------------------------------------------------------------------
+
+// buildInferenceConfiguration builds the Bedrock InferenceConfiguration from
+// the provider's constructor defaults and the optional per-call InferenceConfig.
+// Temperature, TopP, StopSequences, and MaxTokens are mapped here.
+// TopK is handled separately via buildAdditionalFields.
+func (p *BedrockProvider) buildInferenceConfiguration(cfg *agent.InferenceConfig) *types.InferenceConfiguration {
+	ic := &types.InferenceConfiguration{
+		MaxTokens: aws.Int32(p.maxTokens),
+	}
+	if cfg == nil {
+		return ic
+	}
+	if cfg.Temperature != nil {
+		v := float32(*cfg.Temperature)
+		ic.Temperature = &v
+	}
+	if cfg.TopP != nil {
+		v := float32(*cfg.TopP)
+		ic.TopP = &v
+	}
+	if cfg.StopSequences != nil {
+		ic.StopSequences = cfg.StopSequences
+	}
+	if cfg.MaxTokens != nil {
+		ic.MaxTokens = aws.Int32(int32(*cfg.MaxTokens))
+	}
+	return ic
+}
+
+// buildAdditionalFields builds the AdditionalModelRequestFields document,
+// merging thinking configuration (if enabled) with TopK (if provided).
+func (p *BedrockProvider) buildAdditionalFields(cfg *agent.InferenceConfig) document.Interface {
+	hasThinking := p.thinkingLevel != "" && p.thinkingStyle != thinkingStyleNone
+	hasTopK := cfg != nil && cfg.TopK != nil
+
+	if !hasThinking && !hasTopK {
+		return nil
+	}
+
+	fields := map[string]any{}
+
+	// Merge thinking fields if enabled.
+	if hasThinking {
+		if p.thinkingStyle == thinkingStyleClaude {
+			fields["thinking"] = map[string]any{
+				"type":          "enabled",
+				"budget_tokens": pvdr.ThinkingBudgets[p.thinkingLevel],
+			}
+		} else {
+			fields["reasoningConfig"] = map[string]any{
+				"type":               "enabled",
+				"maxReasoningEffort": p.thinkingLevel,
+			}
+		}
+	}
+
+	// Add TopK for Anthropic models via model-specific fields.
+	if hasTopK {
+		fields["top_k"] = *cfg.TopK
+	}
+
+	return document.NewLazyDocument(fields)
 }
 
 // ---------------------------------------------------------------------------

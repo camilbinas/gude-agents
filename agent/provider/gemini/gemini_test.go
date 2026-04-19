@@ -344,3 +344,201 @@ func TestToGeminiParts_EmptyToolUseInput(t *testing.T) {
 		t.Errorf("expected empty args for '{}' input, got %v", part.FunctionCall.Args)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// buildConfig — InferenceConfig mapping (Task 9)
+// ---------------------------------------------------------------------------
+
+func TestBuildConfig_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
+	p := &GeminiProvider{
+		model:     "gemini-2.5-flash",
+		maxTokens: 4096,
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+	}
+	config := buildConfig(p, params)
+
+	if config.MaxOutputTokens != 4096 {
+		t.Errorf("expected MaxOutputTokens 4096, got %d", config.MaxOutputTokens)
+	}
+	if config.Temperature != nil {
+		t.Error("expected Temperature to be nil when InferenceConfig is nil")
+	}
+	if config.TopP != nil {
+		t.Error("expected TopP to be nil when InferenceConfig is nil")
+	}
+	if config.TopK != nil {
+		t.Error("expected TopK to be nil when InferenceConfig is nil")
+	}
+	if config.StopSequences != nil {
+		t.Errorf("expected nil StopSequences, got %v", config.StopSequences)
+	}
+}
+
+func TestBuildConfig_TemperatureMapping(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	temp := 0.7
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
+	}
+	config := buildConfig(p, params)
+
+	if config.Temperature == nil {
+		t.Fatal("expected Temperature to be set")
+	}
+	if *config.Temperature != float32(0.7) {
+		t.Errorf("expected Temperature 0.7, got %v", *config.Temperature)
+	}
+	// MaxOutputTokens should still be the constructor default
+	if config.MaxOutputTokens != 8192 {
+		t.Errorf("expected MaxOutputTokens 8192, got %d", config.MaxOutputTokens)
+	}
+}
+
+func TestBuildConfig_TopPMapping(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	topP := 0.9
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{TopP: &topP},
+	}
+	config := buildConfig(p, params)
+
+	if config.TopP == nil {
+		t.Fatal("expected TopP to be set")
+	}
+	if *config.TopP != float32(0.9) {
+		t.Errorf("expected TopP 0.9, got %v", *config.TopP)
+	}
+}
+
+func TestBuildConfig_TopKMapping(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	topK := 50
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{TopK: &topK},
+	}
+	config := buildConfig(p, params)
+
+	if config.TopK == nil {
+		t.Fatal("expected TopK to be set")
+	}
+	if *config.TopK != float32(50) {
+		t.Errorf("expected TopK 50, got %v", *config.TopK)
+	}
+}
+
+func TestBuildConfig_StopSequencesMapping(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	stops := []string{"STOP", "END"}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{StopSequences: stops},
+	}
+	config := buildConfig(p, params)
+
+	if len(config.StopSequences) != 2 {
+		t.Fatalf("expected 2 stop sequences, got %d", len(config.StopSequences))
+	}
+	if config.StopSequences[0] != "STOP" || config.StopSequences[1] != "END" {
+		t.Errorf("expected [STOP END], got %v", config.StopSequences)
+	}
+}
+
+func TestBuildConfig_MaxTokensOverridesDefault(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	maxTok := 2048
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{MaxTokens: &maxTok},
+	}
+	config := buildConfig(p, params)
+
+	if config.MaxOutputTokens != 2048 {
+		t.Errorf("expected MaxOutputTokens 2048, got %d", config.MaxOutputTokens)
+	}
+}
+
+func TestBuildConfig_AllFieldsSet(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	temp := 0.5
+	topP := 0.8
+	topK := 40
+	maxTok := 1024
+	cfg := &agent.InferenceConfig{
+		Temperature:   &temp,
+		TopP:          &topP,
+		TopK:          &topK,
+		StopSequences: []string{"<|end|>"},
+		MaxTokens:     &maxTok,
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: cfg,
+	}
+	config := buildConfig(p, params)
+
+	if config.Temperature == nil || *config.Temperature != float32(0.5) {
+		t.Errorf("expected Temperature 0.5, got %v", config.Temperature)
+	}
+	if config.TopP == nil || *config.TopP != float32(0.8) {
+		t.Errorf("expected TopP 0.8, got %v", config.TopP)
+	}
+	if config.TopK == nil || *config.TopK != float32(40) {
+		t.Errorf("expected TopK 40, got %v", config.TopK)
+	}
+	if len(config.StopSequences) != 1 || config.StopSequences[0] != "<|end|>" {
+		t.Errorf("expected StopSequences [<|end|>], got %v", config.StopSequences)
+	}
+	if config.MaxOutputTokens != 1024 {
+		t.Errorf("expected MaxOutputTokens 1024, got %d", config.MaxOutputTokens)
+	}
+}
+
+func TestBuildConfig_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 4096}
+	temp := 0.3
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
+	}
+	config := buildConfig(p, params)
+
+	// Temperature should be set
+	if config.Temperature == nil || *config.Temperature != float32(0.3) {
+		t.Errorf("expected Temperature 0.3, got %v", config.Temperature)
+	}
+	// Other fields should remain at defaults
+	if config.TopP != nil {
+		t.Error("expected TopP to be nil")
+	}
+	if config.TopK != nil {
+		t.Error("expected TopK to be nil")
+	}
+	if config.StopSequences != nil {
+		t.Errorf("expected nil StopSequences, got %v", config.StopSequences)
+	}
+	// MaxOutputTokens should be the constructor default
+	if config.MaxOutputTokens != 4096 {
+		t.Errorf("expected MaxOutputTokens 4096, got %d", config.MaxOutputTokens)
+	}
+}

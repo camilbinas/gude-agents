@@ -36,6 +36,15 @@ const (
 	AttrGenAIProviderResponse = "gen_ai.provider.response"
 )
 
+// Inference config attributes (always recorded when set).
+const (
+	AttrGenAITemperature   = "gen_ai.request.temperature"
+	AttrGenAITopP          = "gen_ai.request.top_p"
+	AttrGenAITopK          = "gen_ai.request.top_k"
+	AttrGenAIMaxTokens     = "gen_ai.request.max_tokens"
+	AttrGenAIStopSequences = "gen_ai.request.stop_sequences"
+)
+
 // Event names.
 const (
 	EventMaxIterationsExceeded = "agent.max_iterations_exceeded"

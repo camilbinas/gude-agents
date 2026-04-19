@@ -218,6 +218,24 @@ func (p *OpenAIProvider) buildParams(params agent.ConverseParams) openaisdk.Chat
 	if p.thinkingLevel != "" {
 		input.ReasoningEffort = shared.ReasoningEffort(p.thinkingLevel)
 	}
+	// Apply inference config overrides.
+	// TopK is silently ignored — OpenAI Chat Completions API does not support it.
+	if cfg := params.InferenceConfig; cfg != nil {
+		if cfg.Temperature != nil {
+			input.Temperature = openaisdk.Float(*cfg.Temperature)
+		}
+		if cfg.TopP != nil {
+			input.TopP = openaisdk.Float(*cfg.TopP)
+		}
+		if cfg.StopSequences != nil {
+			input.Stop = openaisdk.ChatCompletionNewParamsStopUnion{
+				OfStringArray: cfg.StopSequences,
+			}
+		}
+		if cfg.MaxTokens != nil {
+			input.MaxCompletionTokens = openaisdk.Int(int64(*cfg.MaxTokens))
+		}
+	}
 	return input
 }
 

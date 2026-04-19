@@ -13,6 +13,7 @@ import (
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 )
 
 // AnthropicProvider implements agent.Provider using the Anthropic Messages API.
@@ -209,6 +210,24 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 	}
 	if p.thinkingLevel != "" {
 		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(pvdr.ThinkingBudgets[p.thinkingLevel])
+	}
+	// Apply inference config overrides.
+	if cfg := params.InferenceConfig; cfg != nil {
+		if cfg.Temperature != nil {
+			input.Temperature = param.NewOpt(*cfg.Temperature)
+		}
+		if cfg.TopP != nil {
+			input.TopP = param.NewOpt(*cfg.TopP)
+		}
+		if cfg.TopK != nil {
+			input.TopK = param.NewOpt(int64(*cfg.TopK))
+		}
+		if cfg.StopSequences != nil {
+			input.StopSequences = cfg.StopSequences
+		}
+		if cfg.MaxTokens != nil {
+			input.MaxTokens = int64(*cfg.MaxTokens)
+		}
 	}
 	return input
 }

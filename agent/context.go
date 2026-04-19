@@ -47,3 +47,18 @@ func GetInvocationContext(ctx context.Context) *InvocationContext {
 	ic, _ := ctx.Value(invCtxKey{}).(*InvocationContext)
 	return ic
 }
+
+// inferenceConfigKey is the context key for per-invocation inference config.
+type inferenceConfigKey struct{}
+
+// WithInferenceConfig attaches an InferenceConfig to a Go context for per-invocation override.
+func WithInferenceConfig(ctx context.Context, cfg *InferenceConfig) context.Context {
+	return context.WithValue(ctx, inferenceConfigKey{}, cfg)
+}
+
+// GetInferenceConfig retrieves the per-invocation InferenceConfig from a Go context.
+// Returns nil if none is attached.
+func GetInferenceConfig(ctx context.Context) *InferenceConfig {
+	cfg, _ := ctx.Value(inferenceConfigKey{}).(*InferenceConfig)
+	return cfg
+}

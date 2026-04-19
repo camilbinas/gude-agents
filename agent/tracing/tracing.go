@@ -99,6 +99,24 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 			span.SetAttributes(attribute.String(AttrGenAISystemPrompt, params.SystemPrompt))
 		}
 	}
+	// Record inference config parameters when set.
+	if cfg := params.InferenceConfig; cfg != nil {
+		if cfg.Temperature != nil {
+			span.SetAttributes(attribute.Float64(AttrGenAITemperature, *cfg.Temperature))
+		}
+		if cfg.TopP != nil {
+			span.SetAttributes(attribute.Float64(AttrGenAITopP, *cfg.TopP))
+		}
+		if cfg.TopK != nil {
+			span.SetAttributes(attribute.Int(AttrGenAITopK, *cfg.TopK))
+		}
+		if cfg.MaxTokens != nil {
+			span.SetAttributes(attribute.Int(AttrGenAIMaxTokens, *cfg.MaxTokens))
+		}
+		if cfg.StopSequences != nil {
+			span.SetAttributes(attribute.StringSlice(AttrGenAIStopSequences, cfg.StopSequences))
+		}
+	}
 	return ctx, func(err error, usage agent.TokenUsage, response string) {
 		if err != nil {
 			span.RecordError(err)

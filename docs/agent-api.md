@@ -164,6 +164,57 @@ a, err := agent.Default(provider, instructions, tools,
 )
 ```
 
+### `WithTemperature`
+
+```go
+func WithTemperature(v float64) Option
+```
+
+Sets the temperature inference parameter on the agent. Temperature controls randomness of LLM output. Valid range: [0.0, 1.0]. Returns an error if the value is outside this range.
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithTemperature(0.7),
+)
+```
+
+### `WithTopP`
+
+```go
+func WithTopP(v float64) Option
+```
+
+Sets the top_p (nucleus sampling) inference parameter on the agent. Controls the cumulative probability cutoff for token selection. Valid range: [0.0, 1.0]. Returns an error if the value is outside this range.
+
+### `WithTopK`
+
+```go
+func WithTopK(v int) Option
+```
+
+Sets the top_k inference parameter on the agent. Limits the number of highest-probability tokens considered during sampling. Must be >= 1. Returns an error if the value is less than 1.
+
+Note: OpenAI does not support top_k — the parameter is silently ignored for OpenAI providers.
+
+### `WithStopSequences`
+
+```go
+func WithStopSequences(s []string) Option
+```
+
+Sets the stop sequences inference parameter on the agent. When the LLM generates any of these strings, it stops producing further tokens.
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithTemperature(0.7),
+    agent.WithTopP(0.9),
+    agent.WithTopK(50),
+    agent.WithStopSequences([]string{"END", "STOP"}),
+)
+```
+
+All four inference parameter options populate an `InferenceConfig` on the agent. When no inference options are set, the agent passes `nil` to the provider, which uses its own defaults. Per-invocation overrides are supported via `WithInferenceConfig` on the context — see [InvocationContext](invocation-context.md).
+
 ### `WithRetriever`
 
 ```go
@@ -226,6 +277,39 @@ func WithConversationID(ctx context.Context, id string) context.Context
 ```
 
 Returns a context that overrides the agent's default conversation ID for this invocation. This allows a single Agent instance to serve multiple concurrent conversations. The agent checks for this context value first, then falls back to the construction-time default.
+
+### `InferenceConfig`
+
+```go
+func (a *Agent) InferenceConfig() *InferenceConfig
+```
+
+Returns the agent's inference config, or `nil` if no inference parameters were set at construction time. Used internally by the swarm to forward inference config to provider calls.
+
+### `WithInferenceConfig`
+
+```go
+func WithInferenceConfig(ctx context.Context, cfg *InferenceConfig) context.Context
+```
+
+Returns a context that attaches a per-invocation `InferenceConfig` override. When the agent runs, it merges per-invocation values over agent-level values field by field — non-nil per-invocation fields take precedence, nil fields fall back to the agent-level value.
+
+```go
+ctx := agent.WithInferenceConfig(context.Background(), &agent.InferenceConfig{
+    Temperature: ptrFloat(0.9), // override just temperature for this call
+})
+result, _, err := a.Invoke(ctx, "Be creative!")
+```
+
+The merged config is validated before the provider is called. If any field is invalid (e.g., temperature > 1.0), the invocation returns an error without calling the provider.
+
+### `GetInferenceConfig`
+
+```go
+func GetInferenceConfig(ctx context.Context) *InferenceConfig
+```
+
+Retrieves the per-invocation `InferenceConfig` from a context. Returns `nil` if none is attached.
 
 ### `Invoke`
 
@@ -300,6 +384,7 @@ defer a.Close()
 Both `Invoke` and `InvokeStream` can return errors for:
 
 - **Input guardrail failure**: a guardrail returned an error before the provider was called
+- **Inference config validation failure**: a per-invocation `InferenceConfig` contains invalid values (e.g., temperature outside [0.0, 1.0])
 - **Memory load failure**: the configured `Memory` failed to load conversation history
 - **Retriever failure**: the configured `Retriever` returned an error
 - **Provider error**: the LLM backend returned an error
@@ -347,19 +432,21 @@ Each call to `Invoke` or `InvokeStream` runs the following loop:
 
 2. **Memory load** — if `WithMemory` is configured, conversation history is loaded and prepended to the message list.
 
-3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved once and injected as a user/assistant message turn in the conversation (not into the system prompt).
+3. **Inference config resolution** — the agent merges any per-invocation `InferenceConfig` (from the context) over agent-level defaults, then validates the merged result. Invalid values abort the invocation before the provider is called.
 
-4. **Agent loop** (up to `maxIterations`):
-   - The provider is called with the current messages, system prompt, and tool specs.
+4. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved once and injected as a user/assistant message turn in the conversation (not into the system prompt).
+
+5. **Agent loop** (up to `maxIterations`):
+   - The provider is called with the current messages, system prompt, tool specs, and merged inference config.
    - Token usage is accumulated. If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
-   - If the provider returns **tool calls**: the agent executes them (sequentially or in parallel depending on `WithParallelToolExecution`), appends the assistant message and tool results to the conversation, and loops back to step 4.
+   - If the provider returns **tool calls**: the agent executes them (sequentially or in parallel depending on `WithParallelToolExecution`), appends the assistant message and tool results to the conversation, and loops back to step 5.
    - If the provider returns a **text response**: the loop exits.
 
-5. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions. Any error aborts the invocation.
+6. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions. Any error aborts the invocation.
 
-6. **Memory save** — if `WithMemory` is configured, the full conversation (including the new exchange) is saved.
+7. **Memory save** — if `WithMemory` is configured, the full conversation (including the new exchange) is saved.
 
-7. **Return** — the text response and cumulative `TokenUsage` are returned.
+8. **Return** — the text response and cumulative `TokenUsage` are returned.
 
 If the loop reaches `maxIterations` without the provider producing a text-only response, an error is returned.
 

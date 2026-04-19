@@ -513,3 +513,201 @@ func TestProperty_OpenAIStreamTokenUsageExtraction(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// buildParams — InferenceConfig mapping (Task 8)
+// **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5**
+// ---------------------------------------------------------------------------
+
+func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{
+		model:     "gpt-4o",
+		maxTokens: 4096,
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+	}
+	result := p.buildParams(params)
+
+	// MaxCompletionTokens should use the constructor default
+	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 4096 {
+		t.Errorf("expected MaxCompletionTokens 4096, got %v", result.MaxCompletionTokens.Value)
+	}
+	// Inference config fields should not be set
+	if result.Temperature.Valid() {
+		t.Error("expected Temperature to not be set when InferenceConfig is nil")
+	}
+	if result.TopP.Valid() {
+		t.Error("expected TopP to not be set when InferenceConfig is nil")
+	}
+	if result.Stop.OfStringArray != nil {
+		t.Errorf("expected nil Stop, got %v", result.Stop.OfStringArray)
+	}
+}
+
+func TestBuildParams_TemperatureMapping_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
+	temp := 0.7
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
+	}
+	result := p.buildParams(params)
+
+	if !result.Temperature.Valid() {
+		t.Fatal("expected Temperature to be set")
+	}
+	if result.Temperature.Value != 0.7 {
+		t.Errorf("expected Temperature 0.7, got %v", result.Temperature.Value)
+	}
+	// MaxCompletionTokens should still be the constructor default
+	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 8192 {
+		t.Errorf("expected MaxCompletionTokens 8192, got %v", result.MaxCompletionTokens.Value)
+	}
+}
+
+func TestBuildParams_TopPMapping_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
+	topP := 0.9
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{TopP: &topP},
+	}
+	result := p.buildParams(params)
+
+	if !result.TopP.Valid() {
+		t.Fatal("expected TopP to be set")
+	}
+	if result.TopP.Value != 0.9 {
+		t.Errorf("expected TopP 0.9, got %v", result.TopP.Value)
+	}
+}
+
+func TestBuildParams_TopKIgnored_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
+	topK := 50
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{TopK: &topK},
+	}
+	result := p.buildParams(params)
+
+	// TopK should be silently ignored — OpenAI doesn't support it.
+	// Verify no error and other fields remain at defaults.
+	if result.Temperature.Valid() {
+		t.Error("expected Temperature to not be set")
+	}
+	if result.TopP.Valid() {
+		t.Error("expected TopP to not be set")
+	}
+	// MaxCompletionTokens should still be the constructor default
+	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 8192 {
+		t.Errorf("expected MaxCompletionTokens 8192, got %v", result.MaxCompletionTokens.Value)
+	}
+}
+
+func TestBuildParams_StopSequencesMapping_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
+	stops := []string{"STOP", "END"}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{StopSequences: stops},
+	}
+	result := p.buildParams(params)
+
+	if len(result.Stop.OfStringArray) != 2 {
+		t.Fatalf("expected 2 stop sequences, got %d", len(result.Stop.OfStringArray))
+	}
+	if result.Stop.OfStringArray[0] != "STOP" || result.Stop.OfStringArray[1] != "END" {
+		t.Errorf("expected [STOP END], got %v", result.Stop.OfStringArray)
+	}
+}
+
+func TestBuildParams_MaxTokensOverridesDefault_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
+	maxTok := 2048
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{MaxTokens: &maxTok},
+	}
+	result := p.buildParams(params)
+
+	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 2048 {
+		t.Errorf("expected MaxCompletionTokens 2048, got %v", result.MaxCompletionTokens.Value)
+	}
+}
+
+func TestBuildParams_AllFieldsSet_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
+	temp := 0.5
+	topP := 0.8
+	topK := 40 // should be ignored
+	maxTok := 1024
+	cfg := &agent.InferenceConfig{
+		Temperature:   &temp,
+		TopP:          &topP,
+		TopK:          &topK,
+		StopSequences: []string{"<|end|>"},
+		MaxTokens:     &maxTok,
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: cfg,
+	}
+	result := p.buildParams(params)
+
+	if !result.Temperature.Valid() || result.Temperature.Value != 0.5 {
+		t.Errorf("expected Temperature 0.5, got %v", result.Temperature.Value)
+	}
+	if !result.TopP.Valid() || result.TopP.Value != 0.8 {
+		t.Errorf("expected TopP 0.8, got %v", result.TopP.Value)
+	}
+	if len(result.Stop.OfStringArray) != 1 || result.Stop.OfStringArray[0] != "<|end|>" {
+		t.Errorf("expected StopSequences [<|end|>], got %v", result.Stop.OfStringArray)
+	}
+	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 1024 {
+		t.Errorf("expected MaxCompletionTokens 1024, got %v", result.MaxCompletionTokens.Value)
+	}
+}
+
+func TestBuildParams_PartialInferenceConfig_OnlyTemperature_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 4096}
+	temp := 0.3
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
+	}
+	result := p.buildParams(params)
+
+	// Temperature should be set
+	if !result.Temperature.Valid() || result.Temperature.Value != 0.3 {
+		t.Errorf("expected Temperature 0.3, got %v", result.Temperature.Value)
+	}
+	// Other fields should remain at defaults
+	if result.TopP.Valid() {
+		t.Error("expected TopP to not be set")
+	}
+	if result.Stop.OfStringArray != nil {
+		t.Errorf("expected nil Stop, got %v", result.Stop.OfStringArray)
+	}
+	// MaxCompletionTokens should be the constructor default
+	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 4096 {
+		t.Errorf("expected MaxCompletionTokens 4096, got %v", result.MaxCompletionTokens.Value)
+	}
+}

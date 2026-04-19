@@ -42,6 +42,7 @@ type Agent struct {
 	providerTimeout  time.Duration    // 0 = no timeout (default)
 	retryMax         int              // 0 = no retry (default)
 	retryBaseDelay   time.Duration    // base delay for exponential backoff
+	inferenceConfig  *InferenceConfig // nil = no agent-level inference params
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -158,6 +159,9 @@ func (a *Agent) HasTool(name string) bool {
 	_, ok := a.tools[name]
 	return ok
 }
+
+// InferenceConfig returns the agent's inference config, or nil if none is set.
+func (a *Agent) InferenceConfig() *InferenceConfig { return a.inferenceConfig }
 
 // LookupTool returns the tool with the given name and true, or a zero Tool and false.
 func (a *Agent) LookupTool(name string) (tool.Tool, bool) {

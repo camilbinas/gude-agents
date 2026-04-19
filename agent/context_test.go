@@ -104,3 +104,48 @@ func TestWithInvocationContext_RoundTrip(t *testing.T) {
 		t.Fatalf("expected (world, true), got (%v, %v)", v, ok)
 	}
 }
+
+func TestGetInferenceConfig_NilWhenNoneAttached(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := GetInferenceConfig(ctx)
+	if cfg != nil {
+		t.Fatalf("expected nil, got %+v", cfg)
+	}
+}
+
+func TestWithInferenceConfig_RoundTrip(t *testing.T) {
+	temp := 0.7
+	topP := 0.9
+	topK := 50
+	maxTok := 1024
+	cfg := &InferenceConfig{
+		Temperature:   &temp,
+		TopP:          &topP,
+		TopK:          &topK,
+		StopSequences: []string{"STOP", "END"},
+		MaxTokens:     &maxTok,
+	}
+
+	ctx := WithInferenceConfig(context.Background(), cfg)
+	got := GetInferenceConfig(ctx)
+
+	if got != cfg {
+		t.Fatal("expected same InferenceConfig pointer")
+	}
+	if *got.Temperature != temp {
+		t.Errorf("Temperature: expected %f, got %f", temp, *got.Temperature)
+	}
+	if *got.TopP != topP {
+		t.Errorf("TopP: expected %f, got %f", topP, *got.TopP)
+	}
+	if *got.TopK != topK {
+		t.Errorf("TopK: expected %d, got %d", topK, *got.TopK)
+	}
+	if *got.MaxTokens != maxTok {
+		t.Errorf("MaxTokens: expected %d, got %d", maxTok, *got.MaxTokens)
+	}
+	if len(got.StopSequences) != 2 || got.StopSequences[0] != "STOP" || got.StopSequences[1] != "END" {
+		t.Errorf("StopSequences: expected [STOP END], got %v", got.StopSequences)
+	}
+}

@@ -447,5 +447,23 @@ func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.Generate
 			ThinkingBudget: ptr(int32(pvdr.ThinkingBudgets[p.thinkingLevel])),
 		}
 	}
+	// Apply inference config overrides.
+	if cfg := params.InferenceConfig; cfg != nil {
+		if cfg.Temperature != nil {
+			config.Temperature = ptr(float32(*cfg.Temperature))
+		}
+		if cfg.TopP != nil {
+			config.TopP = ptr(float32(*cfg.TopP))
+		}
+		if cfg.TopK != nil {
+			config.TopK = ptr(float32(*cfg.TopK))
+		}
+		if cfg.StopSequences != nil {
+			config.StopSequences = cfg.StopSequences
+		}
+		if cfg.MaxTokens != nil {
+			config.MaxOutputTokens = int32(*cfg.MaxTokens)
+		}
+	}
 	return config
 }

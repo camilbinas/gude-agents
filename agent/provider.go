@@ -65,6 +65,16 @@ func (u TokenUsage) Total() int {
 	return u.InputTokens + u.OutputTokens
 }
 
+// InferenceConfig groups LLM inference/sampling parameters.
+// All fields are optional — nil means "use provider default."
+type InferenceConfig struct {
+	Temperature   *float64
+	TopP          *float64
+	TopK          *int
+	StopSequences []string
+	MaxTokens     *int
+}
+
 // ConverseParams holds the inputs for a Provider call.
 // Documented in docs/message-types.md — update when changing fields.
 type ConverseParams struct {
@@ -73,6 +83,7 @@ type ConverseParams struct {
 	ToolConfig       []tool.Spec
 	ToolChoice       *tool.Choice     // nil = provider default (auto)
 	ThinkingCallback ThinkingCallback // optional; called with thinking chunks during streaming
+	InferenceConfig  *InferenceConfig // nil = use provider defaults
 }
 
 // ProviderResponse is the result of an LLM call.

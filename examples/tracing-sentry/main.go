@@ -96,11 +96,16 @@ func main() {
 	)
 
 	// 4. Create the agent with Sentry tracing + middleware.
+	//    Inference parameters (temperature, top_p) are set at the agent level
+	//    and will appear as span attributes on every agent.invoke trace in Sentry:
+	//      gen_ai.request.temperature, gen_ai.request.top_p
 	a, err := agent.Default(
 		provider,
 		prompt.Text("You are a helpful assistant with access to a weather tool. Be concise."),
 		[]tool.Tool{weatherTool},
 		agent.WithParallelToolExecution(),
+		agent.WithTemperature(0.3),
+		agent.WithTopP(0.9),
 		sentrytrace.WithSentry(tracing.WithContentCapture()), // captures prompts/responses — don't use in production
 		agent.WithMiddleware(
 			sentrytrace.BreadcrumbMiddleware(),
@@ -116,6 +121,7 @@ func main() {
 	fmt.Println("Sentry-traced agent ready. Type 'quit' to exit.")
 	fmt.Println("Try: What's the weather in Tokyo?")
 	fmt.Println("Try: What's the weather in error-test?  (triggers error → Sentry Issue)")
+	fmt.Println("Try: creative: write a haiku          (per-invocation temperature override → visible in trace)")
 	fmt.Println()
 
 	for {
@@ -131,8 +137,20 @@ func main() {
 			break
 		}
 
+		// Per-invocation override: prefix "creative:" bumps temperature to 0.95.
+		// The overridden value appears on the agent.invoke span in Sentry as
+		// gen_ai.request.temperature=0.95 instead of the agent-level 0.3.
+		callCtx := ctx
+		if after, ok := strings.CutPrefix(input, "creative:"); ok {
+			input = strings.TrimSpace(after)
+			temp := 0.95
+			callCtx = agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+				Temperature: &temp,
+			})
+		}
+
 		fmt.Print("Agent: ")
-		usage, err := a.InvokeStream(ctx, input, func(chunk string) {
+		usage, err := a.InvokeStream(callCtx, input, func(chunk string) {
 			fmt.Print(chunk)
 		})
 		fmt.Println()

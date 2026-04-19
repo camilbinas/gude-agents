@@ -41,11 +41,12 @@ type TracingHook interface {
 
 // InvokeSpanParams carries data for the root invocation span.
 type InvokeSpanParams struct {
-	MaxIterations  int
-	ModelID        string // empty if provider doesn't implement ModelIdentifier
-	ConversationID string // empty if no memory
-	UserMessage    string // the user's input message
-	SystemPrompt   string // the agent's system instructions
+	MaxIterations   int
+	ModelID         string           // empty if provider doesn't implement ModelIdentifier
+	ConversationID  string           // empty if no memory
+	UserMessage     string           // the user's input message
+	SystemPrompt    string           // the agent's system instructions
+	InferenceConfig *InferenceConfig // merged inference config; nil = provider defaults
 }
 
 // ProviderCallParams carries data for a provider call span.

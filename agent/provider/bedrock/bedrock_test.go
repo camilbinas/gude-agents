@@ -496,6 +496,208 @@ func TestProperty_BedrockTokenUsagePopulation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// buildInferenceConfiguration
+// ---------------------------------------------------------------------------
+
+func TestBuildInferenceConfiguration_NilConfig_UsesConstructorDefaults(t *testing.T) {
+	p := &BedrockProvider{maxTokens: 4096}
+	ic := p.buildInferenceConfiguration(nil)
+	if ic == nil {
+		t.Fatal("expected non-nil InferenceConfiguration")
+	}
+	if aws.ToInt32(ic.MaxTokens) != 4096 {
+		t.Errorf("expected MaxTokens 4096, got %d", aws.ToInt32(ic.MaxTokens))
+	}
+	if ic.Temperature != nil {
+		t.Errorf("expected nil Temperature, got %v", *ic.Temperature)
+	}
+	if ic.TopP != nil {
+		t.Errorf("expected nil TopP, got %v", *ic.TopP)
+	}
+	if ic.StopSequences != nil {
+		t.Errorf("expected nil StopSequences, got %v", ic.StopSequences)
+	}
+}
+
+func TestBuildInferenceConfiguration_TemperatureMapping(t *testing.T) {
+	p := &BedrockProvider{maxTokens: 8192}
+	temp := 0.7
+	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{Temperature: &temp})
+	if ic.Temperature == nil {
+		t.Fatal("expected non-nil Temperature")
+	}
+	if *ic.Temperature != float32(0.7) {
+		t.Errorf("expected Temperature 0.7, got %v", *ic.Temperature)
+	}
+	// MaxTokens should still be the constructor default
+	if aws.ToInt32(ic.MaxTokens) != 8192 {
+		t.Errorf("expected MaxTokens 8192, got %d", aws.ToInt32(ic.MaxTokens))
+	}
+}
+
+func TestBuildInferenceConfiguration_TopPMapping(t *testing.T) {
+	p := &BedrockProvider{maxTokens: 8192}
+	topP := 0.9
+	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{TopP: &topP})
+	if ic.TopP == nil {
+		t.Fatal("expected non-nil TopP")
+	}
+	if *ic.TopP != float32(0.9) {
+		t.Errorf("expected TopP 0.9, got %v", *ic.TopP)
+	}
+}
+
+func TestBuildInferenceConfiguration_StopSequencesMapping(t *testing.T) {
+	p := &BedrockProvider{maxTokens: 8192}
+	stops := []string{"STOP", "END"}
+	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{StopSequences: stops})
+	if len(ic.StopSequences) != 2 {
+		t.Fatalf("expected 2 stop sequences, got %d", len(ic.StopSequences))
+	}
+	if ic.StopSequences[0] != "STOP" || ic.StopSequences[1] != "END" {
+		t.Errorf("expected [STOP END], got %v", ic.StopSequences)
+	}
+}
+
+func TestBuildInferenceConfiguration_MaxTokensOverridesDefault(t *testing.T) {
+	p := &BedrockProvider{maxTokens: 8192}
+	maxTok := 2048
+	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{MaxTokens: &maxTok})
+	if aws.ToInt32(ic.MaxTokens) != 2048 {
+		t.Errorf("expected MaxTokens 2048, got %d", aws.ToInt32(ic.MaxTokens))
+	}
+}
+
+func TestBuildInferenceConfiguration_AllFieldsSet(t *testing.T) {
+	p := &BedrockProvider{maxTokens: 8192}
+	temp := 0.5
+	topP := 0.8
+	maxTok := 1024
+	cfg := &agent.InferenceConfig{
+		Temperature:   &temp,
+		TopP:          &topP,
+		StopSequences: []string{"<|end|>"},
+		MaxTokens:     &maxTok,
+	}
+	ic := p.buildInferenceConfiguration(cfg)
+	if *ic.Temperature != float32(0.5) {
+		t.Errorf("expected Temperature 0.5, got %v", *ic.Temperature)
+	}
+	if *ic.TopP != float32(0.8) {
+		t.Errorf("expected TopP 0.8, got %v", *ic.TopP)
+	}
+	if len(ic.StopSequences) != 1 || ic.StopSequences[0] != "<|end|>" {
+		t.Errorf("expected StopSequences [<|end|>], got %v", ic.StopSequences)
+	}
+	if aws.ToInt32(ic.MaxTokens) != 1024 {
+		t.Errorf("expected MaxTokens 1024, got %d", aws.ToInt32(ic.MaxTokens))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildAdditionalFields
+// ---------------------------------------------------------------------------
+
+func TestBuildAdditionalFields_NilConfig_NoThinking_ReturnsNil(t *testing.T) {
+	p := &BedrockProvider{}
+	result := p.buildAdditionalFields(nil)
+	if result != nil {
+		t.Error("expected nil AdditionalModelRequestFields when no config and no thinking")
+	}
+}
+
+func TestBuildAdditionalFields_TopKOnly(t *testing.T) {
+	p := &BedrockProvider{}
+	topK := 50
+	result := p.buildAdditionalFields(&agent.InferenceConfig{TopK: &topK})
+	if result == nil {
+		t.Fatal("expected non-nil AdditionalModelRequestFields for TopK")
+	}
+	// Marshal the document to verify the top_k field
+	data, err := result.MarshalSmithyDocument()
+	if err != nil {
+		t.Fatalf("failed to marshal document: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("failed to unmarshal document: %v", err)
+	}
+	topKVal, ok := fields["top_k"]
+	if !ok {
+		t.Fatal("expected top_k field in AdditionalModelRequestFields")
+	}
+	// JSON numbers unmarshal as float64
+	if topKVal != float64(50) {
+		t.Errorf("expected top_k=50, got %v", topKVal)
+	}
+}
+
+func TestBuildAdditionalFields_NoTopK_NoThinking_ReturnsNil(t *testing.T) {
+	p := &BedrockProvider{}
+	// Config with no TopK
+	temp := 0.5
+	result := p.buildAdditionalFields(&agent.InferenceConfig{Temperature: &temp})
+	if result != nil {
+		t.Error("expected nil AdditionalModelRequestFields when no TopK and no thinking")
+	}
+}
+
+func TestBuildAdditionalFields_ThinkingAndTopK_Merged(t *testing.T) {
+	p := &BedrockProvider{
+		thinkingStyle: thinkingStyleClaude,
+		thinkingLevel: "medium",
+	}
+	topK := 40
+	result := p.buildAdditionalFields(&agent.InferenceConfig{TopK: &topK})
+	if result == nil {
+		t.Fatal("expected non-nil AdditionalModelRequestFields")
+	}
+	data, err := result.MarshalSmithyDocument()
+	if err != nil {
+		t.Fatalf("failed to marshal document: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("failed to unmarshal document: %v", err)
+	}
+	// Should have both thinking and top_k
+	if _, ok := fields["thinking"]; !ok {
+		t.Error("expected thinking field in merged AdditionalModelRequestFields")
+	}
+	if _, ok := fields["top_k"]; !ok {
+		t.Error("expected top_k field in merged AdditionalModelRequestFields")
+	}
+	if fields["top_k"] != float64(40) {
+		t.Errorf("expected top_k=40, got %v", fields["top_k"])
+	}
+}
+
+func TestBuildAdditionalFields_ThinkingOnly_NoTopK(t *testing.T) {
+	p := &BedrockProvider{
+		thinkingStyle: thinkingStyleClaude,
+		thinkingLevel: "high",
+	}
+	result := p.buildAdditionalFields(nil)
+	if result == nil {
+		t.Fatal("expected non-nil AdditionalModelRequestFields for thinking")
+	}
+	data, err := result.MarshalSmithyDocument()
+	if err != nil {
+		t.Fatalf("failed to marshal document: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("failed to unmarshal document: %v", err)
+	}
+	if _, ok := fields["thinking"]; !ok {
+		t.Error("expected thinking field")
+	}
+	if _, ok := fields["top_k"]; ok {
+		t.Error("expected no top_k field when TopK is not set")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Capabilities
 // ---------------------------------------------------------------------------
 

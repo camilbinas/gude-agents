@@ -421,9 +421,10 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 		}
 
 		resp, err := a.CallProvider(providerCtx, ConverseParams{
-			Messages:   messages,
-			System:     systemPrompt,
-			ToolConfig: a.ToolSpecs(),
+			Messages:        messages,
+			System:          systemPrompt,
+			ToolConfig:      a.ToolSpecs(),
+			InferenceConfig: a.InferenceConfig(),
 		}, streamCB)
 		if err != nil {
 			if finishProvider != nil {

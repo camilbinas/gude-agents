@@ -100,6 +100,32 @@ Holds the result of a tool execution. Sent back to the LLM as part of a user-rol
 | `Content` | `string` | The tool's text output |
 | `IsError` | `bool` | `true` if the tool returned an error |
 
+## InferenceConfig
+
+```go
+type InferenceConfig struct {
+    Temperature   *float64
+    TopP          *float64
+    TopK          *int
+    StopSequences []string
+    MaxTokens     *int
+}
+```
+
+`InferenceConfig` groups LLM inference/sampling parameters. All fields are optional — `nil` means "use provider default." This struct is set on `ConverseParams` by the agent loop and read by each provider to map parameters to the native API.
+
+| Field | Type | Description | Valid Range |
+|---|---|---|---|
+| `Temperature` | `*float64` | Controls randomness of output | [0.0, 1.0] |
+| `TopP` | `*float64` | Nucleus sampling probability cutoff | [0.0, 1.0] |
+| `TopK` | `*int` | Max highest-probability tokens considered | >= 1 |
+| `StopSequences` | `[]string` | Strings that cause the LLM to stop generating | Any |
+| `MaxTokens` | `*int` | Maximum tokens in the response | >= 1 |
+
+Pointer fields distinguish "not set" from "set to zero." When a field is `nil`, the provider uses its own default. When `InferenceConfig` itself is `nil` on `ConverseParams`, all provider defaults apply.
+
+Set at the agent level via `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`. Override per-invocation via `WithInferenceConfig` on the context. See [Agent API Reference](agent-api.md) for details.
+
 ## ConverseParams
 
 ```go
@@ -109,6 +135,7 @@ type ConverseParams struct {
     ToolConfig       []tool.Spec
     ToolChoice       *tool.Choice
     ThinkingCallback ThinkingCallback
+    InferenceConfig  *InferenceConfig
 }
 ```
 
@@ -121,6 +148,7 @@ type ConverseParams struct {
 | `ToolConfig` | `[]tool.Spec` | Tool specifications the LLM can choose from |
 | `ToolChoice` | `*tool.Choice` | Controls tool selection behavior; `nil` means provider default (auto) |
 | `ThinkingCallback` | `ThinkingCallback` | Optional callback for streaming thinking chunks; set via `WithThinkingCallback` |
+| `InferenceConfig` | `*InferenceConfig` | Optional inference parameters; `nil` means use provider defaults |
 
 `tool.Spec` and `tool.Choice` are defined in the `tool` sub-package (`github.com/camilbinas/gude-agents/agent/tool`). See [Tool System](tools.md) for details.
 

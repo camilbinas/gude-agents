@@ -273,3 +273,201 @@ func TestProperty_StreamingNonStreamingTokenConsistency(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// buildParams — InferenceConfig mapping (Task 7)
+// ---------------------------------------------------------------------------
+
+func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
+	p := &AnthropicProvider{
+		model:     "claude-3-5-haiku-20241022",
+		maxTokens: 4096,
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+	}
+	result := p.buildParams(params)
+
+	if result.MaxTokens != 4096 {
+		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
+	}
+	if result.Temperature.Valid() {
+		t.Error("expected Temperature to not be set when InferenceConfig is nil")
+	}
+	if result.TopP.Valid() {
+		t.Error("expected TopP to not be set when InferenceConfig is nil")
+	}
+	if result.TopK.Valid() {
+		t.Error("expected TopK to not be set when InferenceConfig is nil")
+	}
+	if result.StopSequences != nil {
+		t.Errorf("expected nil StopSequences, got %v", result.StopSequences)
+	}
+}
+
+func TestBuildParams_TemperatureMapping(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	temp := 0.7
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
+	}
+	result := p.buildParams(params)
+
+	if !result.Temperature.Valid() {
+		t.Fatal("expected Temperature to be set")
+	}
+	if result.Temperature.Value != 0.7 {
+		t.Errorf("expected Temperature 0.7, got %v", result.Temperature.Value)
+	}
+	// MaxTokens should still be the constructor default
+	if result.MaxTokens != 8192 {
+		t.Errorf("expected MaxTokens 8192, got %d", result.MaxTokens)
+	}
+}
+
+func TestBuildParams_TopPMapping(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	topP := 0.9
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{TopP: &topP},
+	}
+	result := p.buildParams(params)
+
+	if !result.TopP.Valid() {
+		t.Fatal("expected TopP to be set")
+	}
+	if result.TopP.Value != 0.9 {
+		t.Errorf("expected TopP 0.9, got %v", result.TopP.Value)
+	}
+}
+
+func TestBuildParams_TopKMapping(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	topK := 50
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{TopK: &topK},
+	}
+	result := p.buildParams(params)
+
+	if !result.TopK.Valid() {
+		t.Fatal("expected TopK to be set")
+	}
+	if result.TopK.Value != 50 {
+		t.Errorf("expected TopK 50, got %v", result.TopK.Value)
+	}
+}
+
+func TestBuildParams_StopSequencesMapping(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	stops := []string{"STOP", "END"}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{StopSequences: stops},
+	}
+	result := p.buildParams(params)
+
+	if len(result.StopSequences) != 2 {
+		t.Fatalf("expected 2 stop sequences, got %d", len(result.StopSequences))
+	}
+	if result.StopSequences[0] != "STOP" || result.StopSequences[1] != "END" {
+		t.Errorf("expected [STOP END], got %v", result.StopSequences)
+	}
+}
+
+func TestBuildParams_MaxTokensOverridesDefault(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	maxTok := 2048
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{MaxTokens: &maxTok},
+	}
+	result := p.buildParams(params)
+
+	if result.MaxTokens != 2048 {
+		t.Errorf("expected MaxTokens 2048, got %d", result.MaxTokens)
+	}
+}
+
+func TestBuildParams_AllFieldsSet(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	temp := 0.5
+	topP := 0.8
+	topK := 40
+	maxTok := 1024
+	cfg := &agent.InferenceConfig{
+		Temperature:   &temp,
+		TopP:          &topP,
+		TopK:          &topK,
+		StopSequences: []string{"<|end|>"},
+		MaxTokens:     &maxTok,
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: cfg,
+	}
+	result := p.buildParams(params)
+
+	if !result.Temperature.Valid() || result.Temperature.Value != 0.5 {
+		t.Errorf("expected Temperature 0.5, got %v", result.Temperature.Value)
+	}
+	if !result.TopP.Valid() || result.TopP.Value != 0.8 {
+		t.Errorf("expected TopP 0.8, got %v", result.TopP.Value)
+	}
+	if !result.TopK.Valid() || result.TopK.Value != 40 {
+		t.Errorf("expected TopK 40, got %v", result.TopK.Value)
+	}
+	if len(result.StopSequences) != 1 || result.StopSequences[0] != "<|end|>" {
+		t.Errorf("expected StopSequences [<|end|>], got %v", result.StopSequences)
+	}
+	if result.MaxTokens != 1024 {
+		t.Errorf("expected MaxTokens 1024, got %d", result.MaxTokens)
+	}
+}
+
+func TestBuildParams_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 4096}
+	temp := 0.3
+	params := agent.ConverseParams{
+		Messages: []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+		},
+		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
+	}
+	result := p.buildParams(params)
+
+	// Temperature should be set
+	if !result.Temperature.Valid() || result.Temperature.Value != 0.3 {
+		t.Errorf("expected Temperature 0.3, got %v", result.Temperature.Value)
+	}
+	// Other fields should remain at defaults
+	if result.TopP.Valid() {
+		t.Error("expected TopP to not be set")
+	}
+	if result.TopK.Valid() {
+		t.Error("expected TopK to not be set")
+	}
+	if result.StopSequences != nil {
+		t.Errorf("expected nil StopSequences, got %v", result.StopSequences)
+	}
+	// MaxTokens should be the constructor default
+	if result.MaxTokens != 4096 {
+		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
+	}
+}
