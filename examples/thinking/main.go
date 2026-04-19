@@ -34,10 +34,7 @@ func main() {
 
 	ctx := context.Background()
 
-	provider, err := anthropic.New("claude-sonnet-4-6", anthropic.WithThinking(pvdr.ThinkingLow))
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := anthropic.Must(anthropic.New("claude-sonnet-4-6", anthropic.WithThinking(pvdr.ThinkingLow)))
 
 	a, err := agent.Default(
 		provider,

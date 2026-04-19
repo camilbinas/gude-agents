@@ -55,10 +55,7 @@ type ReviewResult struct {
 func main() {
 	godotenv.Load() //nolint
 
-	haiku, err := bedrock.ClaudeHaiku4_5()
-	if err != nil {
-		log.Fatal(err)
-	}
+	haiku := bedrock.Must(bedrock.ClaudeHaiku4_5())
 
 	// --- Agents ---
 

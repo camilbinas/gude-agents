@@ -64,10 +64,7 @@ func main() {
 	}()
 
 	// 2. Create a provider.
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.Standard())
 
 	// 3. Build agents with tracing enabled on each one.
 	triageAgent, err := agent.SwarmAgent(

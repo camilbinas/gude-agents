@@ -45,10 +45,7 @@ func main() {
 
 	ctx := context.Background()
 
-	provider, err := anthropic.ClaudeHaiku4_5()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := anthropic.Must(anthropic.ClaudeHaiku4_5())
 
 	researcher, err := agent.Worker(provider, prompt.Text(
 		"You are a researcher. Given a topic, write 3-4 sentences of key facts. Return only the facts.",

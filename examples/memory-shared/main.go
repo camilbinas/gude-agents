@@ -27,10 +27,7 @@ import (
 )
 
 func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.Standard())
 
 	store := memory.NewStore()
 

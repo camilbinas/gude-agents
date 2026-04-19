@@ -34,16 +34,10 @@ func main() {
 
 	ctx := context.Background()
 
-	provider, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	// A cheap model for classification — it only picks a node name.
-	classifier, err := bedrock.ClaudeHaiku4_5()
-	if err != nil {
-		log.Fatal(err)
-	}
+	classifier := bedrock.Must(bedrock.ClaudeHaiku4_5())
 
 	routerAgent, err := agent.Minimal(classifier, prompt.Text(
 		"You are a question classifier. Based on the question, pick the best expert.\n"+

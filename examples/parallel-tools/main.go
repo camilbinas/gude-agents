@@ -42,10 +42,7 @@ import (
 )
 
 func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.Standard())
 
 	// Synchronous tool — the LLM needs the result to continue.
 	lookupTool := tool.NewString(

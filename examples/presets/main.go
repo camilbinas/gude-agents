@@ -44,10 +44,7 @@ import (
 )
 
 func main() {
-	provider, err := bedrock.ClaudeHaiku4_5()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeHaiku4_5())
 
 	// NewSimple — no input parameters.
 	timeTool := tool.NewSimple("current_time", "Returns the current server time",

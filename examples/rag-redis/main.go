@@ -32,10 +32,7 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	embedder, err := bedrock.TitanEmbedV2()
-	if err != nil {
-		log.Fatal(err)
-	}
+	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
 	store, err := ragredis.New(
 		ragredis.Options{Addr: redisAddr},
@@ -60,10 +57,7 @@ func main() {
 	}
 	fmt.Printf("Ingested %d documents\n", len(docs))
 
-	provider, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
 

@@ -39,16 +39,10 @@ func main() {
 	instructions := prompt.Text("You are a helpful assistant. Be concise.")
 
 	// Bedrock provider with cheapest model
-	cheap, err := bedrock.Cheapest()
-	if err != nil {
-		log.Fatal(err)
-	}
+	cheap := bedrock.Must(bedrock.Cheapest())
 
 	// OpenAI provider with most capable model
-	smart, err := openai.Smartest()
-	if err != nil {
-		log.Fatal(err)
-	}
+	smart := openai.Must(openai.Smartest())
 
 	cheapAgent, err := agent.Default(cheap, instructions, nil)
 	if err != nil {

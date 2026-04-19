@@ -73,10 +73,7 @@ func main() {
 	fmt.Printf("Discovered %d tools via SSE\n\n", len(sseTools))
 
 	// --- Use the tools with an agent ---
-	provider, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	a, err := agent.Default(
 		provider,

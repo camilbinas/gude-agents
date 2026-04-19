@@ -78,10 +78,7 @@ func main() {
 	ctx := context.Background()
 
 	// ── Embedder + vector store ───────────────────────────────────────────────
-	embedder, err := bedrock.TitanEmbedV2()
-	if err != nil {
-		log.Fatal(err)
-	}
+	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
 	store := rag.NewMemoryStore()
 
@@ -111,10 +108,7 @@ func main() {
 	// ── Agent ─────────────────────────────────────────────────────────────────
 	// RAGAgent injects retrieved context into the system prompt automatically
 	// before every call — no tool needed, the model always sees relevant docs.
-	provider, err := bedrock.NovaPro()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.NovaPro())
 
 	a, err := agent.RAGAgent(
 		provider,

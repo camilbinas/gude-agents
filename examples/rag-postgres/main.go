@@ -47,10 +47,7 @@ func main() {
 	}
 
 	// Titan Embed V2 outputs 1024-dimensional vectors.
-	embedder, err := bedrock.TitanEmbedV2()
-	if err != nil {
-		log.Fatal(err)
-	}
+	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
 	store, err := ragpg.New(pool, 1024,
 		ragpg.WithTableName("example_docs"),
@@ -75,10 +72,7 @@ func main() {
 	}
 	fmt.Println("Done.")
 
-	provider, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
 

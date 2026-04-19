@@ -59,10 +59,7 @@ func main() {
 		logged,
 	)
 
-	provider, err := openai.Standard()
-	if err != nil {
-		log.Fatalf("provider: %v", err)
-	}
+	provider := openai.Must(openai.Standard())
 
 	a, err := agent.New(
 		provider,

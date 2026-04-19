@@ -51,10 +51,7 @@ func main() {
 	otel.SetTracerProvider(tp)
 
 	// 2. Create Claude Haiku via Bedrock.
-	haiku, err := bedrock.ClaudeHaiku4_5()
-	if err != nil {
-		log.Fatal(err)
-	}
+	haiku := bedrock.Must(bedrock.ClaudeHaiku4_5())
 
 	// 3. Build agents for each pipeline step.
 

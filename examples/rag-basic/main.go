@@ -16,10 +16,7 @@ import (
 )
 
 func main() {
-	embedder, err := bedrock.TitanEmbedV2()
-	if err != nil {
-		log.Fatal(err)
-	}
+	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
 	// In-memory vector store for the example.
 	store := rag.NewMemoryStore()
@@ -39,10 +36,7 @@ func main() {
 	fmt.Printf("Ingested %d documents\n\n", len(docs))
 
 	// RAGAgent preset enforces the retriever at the call site.
-	provider, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
 

@@ -57,10 +57,7 @@ func main() {
 		retriever,
 	)
 
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatalf("provider: %v", err)
-	}
+	provider := bedrock.Must(bedrock.Standard())
 
 	a, err := agent.New(
 		provider,

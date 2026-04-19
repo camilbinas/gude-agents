@@ -34,10 +34,7 @@ type Recipe struct {
 func main() {
 	ctx := context.Background()
 
-	provider, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	a, err := agent.Default(
 		provider,

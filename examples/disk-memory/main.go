@@ -38,10 +38,7 @@ import (
 )
 
 func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.Standard())
 
 	// Store conversations as JSON files in ./tmp/conversations/
 	store, err := disk.New("./tmp/conversations/")

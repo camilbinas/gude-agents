@@ -39,14 +39,9 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	haiku, err := bedrock.ClaudeHaiku4_5()
-	if err != nil {
-		log.Fatal(err)
-	}
-	sonnet, err := bedrock.ClaudeSonnet4_6()
-	if err != nil {
-		log.Fatal(err)
-	}
+	haiku := bedrock.Must(bedrock.ClaudeHaiku4_5())
+
+	sonnet := bedrock.Must(bedrock.ClaudeSonnet4_6())
 
 	// ── Worker 1: Repo analyst ────────────────────────────────────────────────
 	// Searches the repo list and reports stats. Fast model — just tool + format.

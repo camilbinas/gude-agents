@@ -33,10 +33,7 @@ import (
 )
 
 func main() {
-	provider, err := bedrock.Cheapest()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.Cheapest())
 
 	// ---------------------------------------------------------------
 	// 1. Standalone usage — normalize a message slice directly.

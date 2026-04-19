@@ -63,10 +63,7 @@ func main() {
 	}()
 
 	// 2. Create a provider.
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
+	provider := bedrock.Must(bedrock.Standard())
 
 	// 3. Define tools — "error-test" triggers an error for demo purposes.
 	weatherTool := tool.NewRaw(
