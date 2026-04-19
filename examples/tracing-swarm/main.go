@@ -31,11 +31,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
 	"go.opentelemetry.io/otel"
@@ -91,7 +89,7 @@ func main() {
 			"Use the check_balance tool to look up account info.",
 			"If the question is not about billing, transfer back to triage.",
 		}, " ")),
-		[]tool.Tool{checkBalanceTool()},
+		[]tool.Tool{utils.CheckBalanceTool()},
 		tracing.WithTracing(nil),
 	)
 	if err != nil {
@@ -106,7 +104,7 @@ func main() {
 			"Use the search_docs tool to find relevant documentation.",
 			"If the question is not technical, transfer back to triage.",
 		}, " ")),
-		[]tool.Tool{searchDocsTool()},
+		[]tool.Tool{utils.SearchDocsTool()},
 		tracing.WithTracing(nil),
 	)
 	if err != nil {
@@ -128,62 +126,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 5. Interactive loop — each invocation produces a full trace tree.
-	scanner := bufio.NewScanner(os.Stdin)
+	// 5. Interactive loop.
 	fmt.Println("Traced swarm ready. Type 'quit' to exit.")
 	fmt.Println("Try: What's my account balance for ACC-123?")
 	fmt.Println("Try: How do I fix a config file error?")
 	fmt.Println()
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") {
-			break
-		}
-
-		result, err := sw.Run(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		fmt.Println()
-		if err != nil {
-			log.Printf("Error: %v", err)
-		}
-
-		fmt.Printf("  [agent: %s | tokens: %d in, %d out | handoffs: %d]\n",
-			result.FinalAgent,
-			result.Usage.InputTokens,
-			result.Usage.OutputTokens,
-			len(result.HandoffHistory),
-		)
-
-		treeExp.Flush()
-		fmt.Println()
-	}
-}
-
-// --- Mock tools ---
-
-func checkBalanceTool() tool.Tool {
-	type input struct {
-		AccountID string `json:"account_id" description:"The customer account ID" required:"true"`
-	}
-	return tool.New("check_balance", "Look up account balance and billing info", func(_ context.Context, in input) (string, error) {
-		return fmt.Sprintf(`{"account_id": %q, "balance": "$42.50", "plan": "Pro", "next_billing": "2026-05-01"}`, in.AccountID), nil
-	})
-}
-
-func searchDocsTool() tool.Tool {
-	type input struct {
-		Query string `json:"query" description:"Search query for documentation" required:"true"`
-	}
-	return tool.New("search_docs", "Search technical documentation", func(_ context.Context, in input) (string, error) {
-		return fmt.Sprintf(`{"results": [{"title": "Troubleshooting Guide", "snippet": "For %q: Check your config file at ~/.app/config.yaml and ensure all required fields are set."}]}`, in.Query), nil
-	})
+	utils.SwarmChat(ctx, sw)
 }

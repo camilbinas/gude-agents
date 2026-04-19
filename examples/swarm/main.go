@@ -5,18 +5,16 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -35,7 +33,7 @@ func main() {
 			EndGoal:      "Route every request to the right specialist quickly.",
 			Narrowing:    "Never try to answer questions yourself — always hand off.",
 		},
-		nil, // no domain tools — handoff tools are injected by the swarm
+		nil,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -51,7 +49,7 @@ func main() {
 			EndGoal:      "Resolve billing questions accurately and helpfully.",
 			Narrowing:    "If the question is not about billing, use transfer_to_triage to route it back.",
 		},
-		[]tool.Tool{checkBalanceTool()},
+		[]tool.Tool{utils.CheckBalanceTool()},
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -67,14 +65,14 @@ func main() {
 			EndGoal:      "Resolve technical issues with clear, actionable guidance.",
 			Narrowing:    "If the question is not technical, use transfer_to_triage to route it back.",
 		},
-		[]tool.Tool{searchDocsTool()},
+		[]tool.Tool{utils.SearchDocsTool()},
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// --- Build the swarm with conversation memory ---
-	swarm, err := agent.NewSwarm([]agent.SwarmMember{
+	sw, err := agent.NewSwarm([]agent.SwarmMember{
 		{Name: "triage", Description: "Routes requests to the right specialist", Agent: triageAgent},
 		{Name: "billing", Description: "Handles invoices, payments, refunds, and subscriptions", Agent: billingAgent},
 		{Name: "technical", Description: "Handles bugs, errors, and technical how-to questions", Agent: techAgent},
@@ -87,55 +85,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// --- Interactive loop ---
 	fmt.Println("Customer support swarm ready. Type a message (or 'quit' to exit):")
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("\n> ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if input == "quit" {
-			break
-		}
-
-		result, err := swarm.Run(context.Background(), input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		if err != nil {
-			fmt.Printf("\nError: %v\n", err)
-			continue
-		}
-
-		fmt.Printf("\n\n--- Handled by: %s | Tokens: %d in / %d out | Handoffs: %d ---\n",
-			result.FinalAgent,
-			result.Usage.InputTokens,
-			result.Usage.OutputTokens,
-			len(result.HandoffHistory),
-		)
-	}
-}
-
-// --- Mock tools for the example ---
-
-func checkBalanceTool() tool.Tool {
-	type input struct {
-		AccountID string `json:"account_id" description:"The customer account ID" required:"true"`
-	}
-	return tool.New("check_balance", "Look up account balance and billing info", func(_ context.Context, in input) (string, error) {
-		return fmt.Sprintf(`{"account_id": "%s", "balance": "$42.50", "plan": "Pro", "next_billing": "2026-05-01"}`, in.AccountID), nil
-	})
-}
-
-func searchDocsTool() tool.Tool {
-	type input struct {
-		Query string `json:"query" description:"Search query for documentation" required:"true"`
-	}
-	return tool.New("search_docs", "Search technical documentation", func(_ context.Context, in input) (string, error) {
-		return fmt.Sprintf(`{"results": [{"title": "Troubleshooting Guide", "snippet": "For '%s': Check your config file at ~/.app/config.yaml and ensure all required fields are set."}]}`, in.Query), nil
-	})
+	utils.SwarmChat(context.Background(), sw)
 }

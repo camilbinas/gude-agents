@@ -24,17 +24,15 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory/disk"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
@@ -56,42 +54,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
-
 	fmt.Println("Chat agent with disk memory. Type 'quit' to exit, 'clear' to reset.")
 	fmt.Println("Conversations are saved to ./tmp/conversations/")
 	fmt.Println()
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") {
-			break
-		}
-		if strings.EqualFold(input, "clear") {
-			if err := store.Delete(ctx, "default-session"); err != nil {
-				fmt.Printf("Error clearing: %v\n", err)
-			} else {
-				fmt.Println("Conversation cleared.")
-			}
-			continue
-		}
-
-		fmt.Print("Agent: ")
-		_, err := a.InvokeStream(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		fmt.Println()
-		if err != nil {
-			log.Printf("Error: %v\n", err)
-		}
-		fmt.Println()
-	}
+	utils.Chat(context.Background(), a, utils.ChatOptions{
+		ClearFunc: utils.ClearMemory(store, "default-session"),
+	})
 }

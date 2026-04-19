@@ -26,11 +26,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -39,6 +37,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
@@ -110,36 +109,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
-
 	fmt.Println("Support agent ready. Type 'quit' to exit.")
 	fmt.Println("Try: Look up customer C-42 and log that I spoke with them about billing")
 	fmt.Println()
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") {
-			break
-		}
-
-		fmt.Print("Agent: ")
-		_, err := a.InvokeStream(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		fmt.Println()
-		if err != nil {
-			log.Printf("Error: %v\n", err)
-		}
-		fmt.Println()
-	}
+	utils.Chat(context.Background(), a, utils.ChatOptions{
+		ShowUsage: true,
+	})
 
 	// Give background goroutines a moment to finish logging.
 	fmt.Println("Waiting for background tasks...")

@@ -5,18 +5,17 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory/redis"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
@@ -47,38 +46,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-
 	fmt.Println("Redis memory chat (type 'quit' to exit, 'clear' to reset)")
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("\n> ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if input == "quit" {
-			break
-		}
-		if input == "clear" {
-			if err := mem.Delete(ctx, "demo-conversation"); err != nil {
-				fmt.Printf("Error clearing: %v\n", err)
-			} else {
-				fmt.Println("Conversation cleared.")
-			}
-			continue
-		}
 
-		usage, err := a.InvokeStream(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		if err != nil {
-			fmt.Printf("\nError: %v\n", err)
-			continue
-		}
-		fmt.Printf("\n--- tokens: %d in / %d out ---\n", usage.InputTokens, usage.OutputTokens)
-	}
+	utils.Chat(context.Background(), a, utils.ChatOptions{
+		ClearFunc: utils.ClearMemory(mem, "demo-conversation"),
+	})
 }

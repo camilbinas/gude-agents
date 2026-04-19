@@ -28,11 +28,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -41,6 +39,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
@@ -88,30 +87,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
-
 	fmt.Println("Customer support agent ready. Try asking for a refund. Type 'quit' to exit.")
-	for {
-		fmt.Print("\nYou: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") {
-			break
-		}
 
-		fmt.Print("Agent: ")
-		_, err := a.InvokeStream(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		fmt.Println()
-		if err != nil {
-			log.Printf("Error: %v\n", err)
-		}
-	}
+	utils.Chat(context.Background(), a)
 }
