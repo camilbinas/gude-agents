@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 )
@@ -202,8 +203,12 @@ func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], err
 			}
 			go func() {
 				defer func() {
-					if r := recover(); r != nil && errLogger != nil {
-						errLogger("async tool %q panicked: %v", name, r)
+					if r := recover(); r != nil {
+						if errLogger != nil {
+							errLogger("async tool %q panicked: %v", name, r)
+						} else {
+							log.Printf("[gude-agents] async tool %q panicked: %v", name, r)
+						}
 					}
 				}()
 				handler(context.Background(), input)
@@ -230,8 +235,12 @@ func NewAsyncRaw(name, description, ack string, schema map[string]any, handler f
 		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			go func() {
 				defer func() {
-					if r := recover(); r != nil && errLogger != nil {
-						errLogger("async tool %q panicked: %v", name, r)
+					if r := recover(); r != nil {
+						if errLogger != nil {
+							errLogger("async tool %q panicked: %v", name, r)
+						} else {
+							log.Printf("[gude-agents] async tool %q panicked: %v", name, r)
+						}
 					}
 				}()
 				handler(context.Background(), raw)

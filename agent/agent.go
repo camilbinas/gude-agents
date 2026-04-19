@@ -46,6 +46,9 @@ type Agent struct {
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
 // Documented in docs/agent-api.md — update when changing signature or validation logic.
 func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
+	if provider == nil {
+		return nil, fmt.Errorf("provider is required")
+	}
 	a := &Agent{
 		provider:      provider,
 		tools:         make(map[string]tool.Tool),

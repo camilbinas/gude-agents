@@ -68,7 +68,7 @@ var DefaultContextFormatter ContextFormatter = func(docs []Document) string {
 	return b.String()
 }
 
-// NewRetrieverTool wraps a Retriever as a FrameworkTool so the LLM can
+// NewRetrieverTool wraps a Retriever as a tool.Tool so the LLM can
 // decide when to retrieve. An optional ContextFormatter controls how
 // documents are rendered in the tool result; DefaultContextFormatter is
 // used when none is provided.

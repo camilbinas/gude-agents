@@ -356,9 +356,11 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				return result, fmt.Errorf("swarm memory save: %w", err)
 			}
 			// Store which agent is active so the next call resumes there.
-			_ = s.memory.Save(ctx, "meta:"+convID+":swarm_active", []Message{
+			if err := s.memory.Save(ctx, "meta:"+convID+":swarm_active", []Message{
 				{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: currentAgent}}},
-			})
+			}); err != nil {
+				s.logf("[swarm] failed to save active agent for %s: %v", convID, err)
+			}
 		}
 		s.mu.Lock()
 		s.activeAgent = currentAgent
@@ -558,7 +560,10 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 		}
 
 		// Apply both swarm-level and agent-level middleware.
-		allMiddleware := append(s.middlewares, a.Middlewares()...)
+		// Copy to avoid mutating s.middlewares when append has spare capacity.
+		allMiddleware := make([]Middleware, 0, len(s.middlewares)+len(a.Middlewares()))
+		allMiddleware = append(allMiddleware, s.middlewares...)
+		allMiddleware = append(allMiddleware, a.Middlewares()...)
 		handler := ChainMiddleware(
 			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
 				return t.Handler(ctx, input)
