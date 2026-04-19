@@ -219,7 +219,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		messages = history
 
 		// Restore which agent was last active from the metadata conversation.
-		agentHistory, err := s.memory.Load(ctx, convID+"::swarm_active")
+		// Uses a "meta:" prefix to separate internal metadata from user conversations,
+		// and to allow future metadata keys without collision.
+		agentHistory, err := s.memory.Load(ctx, "meta:"+convID+":swarm_active")
 		if err == nil && len(agentHistory) > 0 {
 			last := agentHistory[len(agentHistory)-1]
 			if len(last.Content) > 0 {
@@ -354,7 +356,7 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				return result, fmt.Errorf("swarm memory save: %w", err)
 			}
 			// Store which agent is active so the next call resumes there.
-			_ = s.memory.Save(ctx, convID+"::swarm_active", []Message{
+			_ = s.memory.Save(ctx, "meta:"+convID+":swarm_active", []Message{
 				{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: currentAgent}}},
 			})
 		}

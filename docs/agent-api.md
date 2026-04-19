@@ -278,6 +278,23 @@ Convenience wrapper over `Resume` that collects streamed chunks into a single st
 
 See [Handoffs](handoff.md) for the full handoff workflow.
 
+### `Close`
+
+```go
+func (a *Agent) Close()
+```
+
+Performs graceful cleanup. If the agent's memory implements `MemoryWaiter` (e.g. the `Summary` strategy with background summarization), `Close` blocks until all background work is complete. Safe to call multiple times. No-op if no cleanup is needed.
+
+Call `Close` before process exit to ensure pending summarizations are flushed:
+
+```go
+a, _ := agent.Default(provider, instructions, tools,
+    agent.WithMemory(summaryMemory, "conv-1"),
+)
+defer a.Close()
+```
+
 #### Error Conditions
 
 Both `Invoke` and `InvokeStream` can return errors for:

@@ -21,6 +21,7 @@ var ErrTokenBudgetExceeded = fmt.Errorf("token budget exceeded")
 // Documented in docs/agent-api.md — update when changing fields, constructor, or loop behavior.
 type Agent struct {
 	provider         Provider
+	toolsMu          sync.RWMutex // protects tools and toolSpecs for safe runtime registration (unlikely but possible)
 	tools            map[string]tool.Tool
 	toolSpecs        []tool.Spec
 	instructions     string
@@ -281,10 +282,15 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			})
 		}
 
+		a.toolsMu.RLock()
+		currentToolSpecs := make([]tool.Spec, len(a.toolSpecs))
+		copy(currentToolSpecs, a.toolSpecs)
+		a.toolsMu.RUnlock()
+
 		resp, err := a.callProviderWithRetry(providerCtx, ConverseParams{
 			Messages:         converseMessages,
 			System:           systemPrompt,
-			ToolConfig:       a.toolSpecs,
+			ToolConfig:       currentToolSpecs,
 			ThinkingCallback: a.thinkingCallback,
 		}, streamCB)
 
@@ -579,7 +585,9 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 	exec := func(i int, tc tool.Call) {
 		a.logf("[tool] %s", tc.Name)
 
+		a.toolsMu.RLock()
 		t, ok := a.tools[tc.Name]
+		a.toolsMu.RUnlock()
 		if !ok {
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -693,8 +701,26 @@ func (a *Agent) MaxIterations() int { return a.maxIterations }
 // Provider returns the agent's LLM provider.
 func (a *Agent) Provider() Provider { return a.provider }
 
-// ToolSpecs returns the tool specifications registered on this agent.
-func (a *Agent) ToolSpecs() []tool.Spec { return a.toolSpecs }
+// ToolSpecs returns a snapshot of the tool specifications registered on this agent.
+func (a *Agent) ToolSpecs() []tool.Spec {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
+	cp := make([]tool.Spec, len(a.toolSpecs))
+	copy(cp, a.toolSpecs)
+	return cp
+}
+
+// Close performs graceful cleanup. If the agent's memory implements MemoryWaiter
+// (e.g. the Summary strategy), Close blocks until all background work is complete.
+// Safe to call multiple times. No-op if no cleanup is needed.
+func (a *Agent) Close() {
+	if a.memory == nil {
+		return
+	}
+	if w, ok := a.memory.(MemoryWaiter); ok {
+		w.Wait()
+	}
+}
 
 // OutputGuardrails returns the agent's output guardrails.
 func (a *Agent) OutputGuardrails() []OutputGuardrail { return a.outputGuardrails }
@@ -710,12 +736,16 @@ func (a *Agent) Middlewares() []Middleware { return a.middlewares }
 
 // HasTool reports whether a tool with the given name is registered.
 func (a *Agent) HasTool(name string) bool {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
 	_, ok := a.tools[name]
 	return ok
 }
 
 // LookupTool returns the tool with the given name and true, or a zero Tool and false.
 func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
 	t, ok := a.tools[name]
 	return t, ok
 }
@@ -723,6 +753,8 @@ func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
 // RegisterTool adds a tool to the agent. Returns an error if a tool with the
 // same name is already registered.
 func (a *Agent) RegisterTool(t tool.Tool) error {
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
 	if _, exists := a.tools[t.Spec.Name]; exists {
 		return fmt.Errorf("duplicate tool name: %q", t.Spec.Name)
 	}
