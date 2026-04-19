@@ -94,8 +94,8 @@ func New(model string, opts ...Option) (*GeminiProvider, error) {
 	}, nil
 }
 
-// ModelId returns the model ID this provider is configured to use.
-func (p *GeminiProvider) ModelId() string { return p.model }
+// ModelID returns the model ID this provider is configured to use.
+func (p *GeminiProvider) ModelID() string { return p.model }
 
 // Capabilities implements agent.CapabilityReporter, advertising what the
 // underlying Gemini model supports.

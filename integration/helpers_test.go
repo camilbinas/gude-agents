@@ -61,9 +61,9 @@ func (tp *trackingProvider) Capabilities() agent.Capabilities {
 	return agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}
 }
 
-func (tp *trackingProvider) ModelId() string {
+func (tp *trackingProvider) ModelID() string {
 	if mi, ok := tp.inner.(agent.ModelIdentifier); ok {
-		return mi.ModelId()
+		return mi.ModelID()
 	}
 	return "unknown"
 }

@@ -79,7 +79,7 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 		thinkingLevel: o.thinkingLevel,
 	}, nil
 }
-func (p *AnthropicProvider) ModelId() string { return string(p.model) }
+func (p *AnthropicProvider) ModelID() string { return string(p.model) }
 
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)

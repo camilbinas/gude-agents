@@ -117,5 +117,5 @@ type CapabilityReporter interface {
 // ModelIdentifier is an optional interface a Provider can implement to
 // expose the underlying model ID.
 type ModelIdentifier interface {
-	ModelId() string
+	ModelID() string
 }

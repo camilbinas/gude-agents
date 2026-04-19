@@ -169,8 +169,8 @@ func TestModelConstructors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if p.ModelId() != tt.wantModel {
-				t.Errorf("expected model %q, got %q", tt.wantModel, p.ModelId())
+			if p.ModelID() != tt.wantModel {
+				t.Errorf("expected model %q, got %q", tt.wantModel, p.ModelID())
 			}
 		})
 	}
@@ -195,8 +195,8 @@ func TestTierAliases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if p.ModelId() != tt.wantModel {
-				t.Errorf("expected model %q, got %q", tt.wantModel, p.ModelId())
+			if p.ModelID() != tt.wantModel {
+				t.Errorf("expected model %q, got %q", tt.wantModel, p.ModelID())
 			}
 		})
 	}

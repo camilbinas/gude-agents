@@ -173,7 +173,7 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 }
 
 // Model returns the model ID this provider is configured to use.
-func (p *BedrockProvider) ModelId() string { return p.model }
+func (p *BedrockProvider) ModelID() string { return p.model }
 
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)

@@ -41,15 +41,15 @@ Providers can optionally implement `ModelIdentifier` to expose the underlying mo
 
 ```go
 type ModelIdentifier interface {
-    ModelId() string
+    ModelID() string
 }
 ```
 
-All three built-in providers implement this interface. Useful for logging, routing, and debugging:
+All four built-in providers implement this interface. Useful for logging, routing, and debugging:
 
 ```go
 if mi, ok := provider.(agent.ModelIdentifier); ok {
-    fmt.Println("Using model:", mi.ModelId())
+    fmt.Println("Using model:", mi.ModelID())
 }
 ```
 

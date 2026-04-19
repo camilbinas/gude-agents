@@ -34,7 +34,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 	if a.tracingHook != nil {
 		var modelID string
 		if mi, ok := a.provider.(ModelIdentifier); ok {
-			modelID = mi.ModelId()
+			modelID = mi.ModelID()
 		}
 		ctx, finishInvoke = a.tracingHook.OnInvokeStart(ctx, InvokeSpanParams{
 			MaxIterations:  a.maxIterations,

@@ -28,8 +28,8 @@ func TestProperty_GeminiConstructorConfigPreservation(t *testing.T) {
 			t.Fatalf("New() failed: %v", err)
 		}
 
-		if p.ModelId() != modelID {
-			t.Fatalf("ModelId() = %q, want %q", p.ModelId(), modelID)
+		if p.ModelID() != modelID {
+			t.Fatalf("ModelID() = %q, want %q", p.ModelID(), modelID)
 		}
 		if int64(p.maxTokens) != maxTokens {
 			t.Fatalf("maxTokens = %d, want %d", p.maxTokens, maxTokens)

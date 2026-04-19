@@ -91,8 +91,8 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 	}, nil
 }
 
-// ModelId returns the model ID this provider is configured to use.
-func (p *OpenAIProvider) ModelId() string { return p.model }
+// ModelID returns the model ID this provider is configured to use.
+func (p *OpenAIProvider) ModelID() string { return p.model }
 
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)

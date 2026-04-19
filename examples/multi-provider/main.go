@@ -83,10 +83,10 @@ func main() {
 
 	for _, task := range tasks {
 		a := cheapAgent
-		modelLabel := cheap.ModelId()
+		modelLabel := cheap.ModelID()
 		if task.complex {
 			a = smartAgent
-			modelLabel = smart.ModelId()
+			modelLabel = smart.ModelID()
 		}
 
 		fmt.Printf("── [%s] → %s ──\n", task.label, modelLabel)
