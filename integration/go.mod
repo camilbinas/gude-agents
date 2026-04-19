@@ -34,6 +34,7 @@ require (
 	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.0.0 // indirect
 	github.com/camilbinas/gude-agents/agent/provider/gemini v0.0.0 // indirect
 	github.com/camilbinas/gude-agents/agent/provider/openai v0.0.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/gemini v0.0.0-00010101000000-000000000000 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
@@ -71,6 +72,7 @@ replace (
 	github.com/camilbinas/gude-agents/agent/provider/openai => ../agent/provider/openai
 	github.com/camilbinas/gude-agents/agent/provider/registry => ../agent/provider/registry
 	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../agent/rag/bedrock
+	github.com/camilbinas/gude-agents/agent/rag/gemini => ../agent/rag/gemini
 	github.com/camilbinas/gude-agents/agent/rag/openai => ../agent/rag/openai
 	github.com/camilbinas/gude-agents/agent/rag/redis => ../agent/rag/redis
 )
