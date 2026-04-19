@@ -264,3 +264,56 @@ func TestInferenceOptions_Compose(t *testing.T) {
 		t.Errorf("StopSequences: expected [END], got %v", cfg.StopSequences)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// WithMaxTokens tests
+// ---------------------------------------------------------------------------
+
+func TestWithMaxTokens_Valid(t *testing.T) {
+	tests := []struct {
+		name string
+		val  int
+	}{
+		{"one", 1},
+		{"typical", 4096},
+		{"large", 100000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Agent{}
+			opt := WithMaxTokens(tt.val)
+			if err := opt(a); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if a.inferenceConfig == nil {
+				t.Fatal("expected inferenceConfig to be initialized")
+			}
+			if a.inferenceConfig.MaxTokens == nil {
+				t.Fatal("expected MaxTokens to be set")
+			}
+			if *a.inferenceConfig.MaxTokens != tt.val {
+				t.Errorf("expected %d, got %d", tt.val, *a.inferenceConfig.MaxTokens)
+			}
+		})
+	}
+}
+
+func TestWithMaxTokens_Invalid(t *testing.T) {
+	tests := []struct {
+		name string
+		val  int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"very_negative", -100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Agent{}
+			opt := WithMaxTokens(tt.val)
+			if err := opt(a); err == nil {
+				t.Errorf("expected error for maxTokens=%d, got nil", tt.val)
+			}
+		})
+	}
+}

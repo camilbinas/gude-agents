@@ -51,8 +51,9 @@ type InvokeSpanParams struct {
 
 // ProviderCallParams carries data for a provider call span.
 type ProviderCallParams struct {
-	System       string // system prompt sent to the provider
-	MessageCount int    // number of messages in the conversation
+	System          string           // system prompt sent to the provider
+	MessageCount    int              // number of messages in the conversation
+	InferenceConfig *InferenceConfig // merged inference config; nil = provider defaults
 }
 
 // SetTracingHook sets the tracing hook. Called by the tracing submodule's Option.

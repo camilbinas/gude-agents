@@ -1522,3 +1522,147 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Inference config attributes on spans
+// ---------------------------------------------------------------------------
+
+func TestInvokeSpan_InferenceConfigAttributes(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(&agent.ProviderResponse{
+		Text:  "hello",
+		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+	})
+
+	a, err := agent.New(prov, prompt.Text("sys"), nil,
+		agent.WithTemperature(0.7),
+		agent.WithTopP(0.9),
+		agent.WithTopK(50),
+		agent.WithStopSequences([]string{"STOP", "END"}),
+		agent.WithMaxTokens(2048),
+		WithTracing(tp),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = a.Invoke(context.Background(), "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+
+	// Check agent.invoke span
+	invokeSpan := findSpan(spans, "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if v := getAttr(*invokeSpan, AttrGenAITemperature); v.AsFloat64() != 0.7 {
+		t.Errorf("invoke: expected temperature=0.7, got %v", v.AsFloat64())
+	}
+	if v := getAttr(*invokeSpan, AttrGenAITopP); v.AsFloat64() != 0.9 {
+		t.Errorf("invoke: expected top_p=0.9, got %v", v.AsFloat64())
+	}
+	if v := getAttr(*invokeSpan, AttrGenAITopK); v.AsInt64() != 50 {
+		t.Errorf("invoke: expected top_k=50, got %v", v.AsInt64())
+	}
+	if v := getAttr(*invokeSpan, AttrGenAIMaxTokens); v.AsInt64() != 2048 {
+		t.Errorf("invoke: expected max_tokens=2048, got %v", v.AsInt64())
+	}
+	stopSeqs := getAttr(*invokeSpan, AttrGenAIStopSequences)
+	if ss := stopSeqs.AsStringSlice(); len(ss) != 2 || ss[0] != "STOP" || ss[1] != "END" {
+		t.Errorf("invoke: expected stop_sequences=[STOP END], got %v", stopSeqs.AsStringSlice())
+	}
+
+	// Check agent.provider.call span
+	provSpan := findSpan(spans, "agent.provider.call")
+	if provSpan == nil {
+		t.Fatal("expected agent.provider.call span")
+	}
+	if v := getAttr(*provSpan, AttrGenAITemperature); v.AsFloat64() != 0.7 {
+		t.Errorf("provider: expected temperature=0.7, got %v", v.AsFloat64())
+	}
+	if v := getAttr(*provSpan, AttrGenAITopP); v.AsFloat64() != 0.9 {
+		t.Errorf("provider: expected top_p=0.9, got %v", v.AsFloat64())
+	}
+	if v := getAttr(*provSpan, AttrGenAITopK); v.AsInt64() != 50 {
+		t.Errorf("provider: expected top_k=50, got %v", v.AsInt64())
+	}
+	if v := getAttr(*provSpan, AttrGenAIMaxTokens); v.AsInt64() != 2048 {
+		t.Errorf("provider: expected max_tokens=2048, got %v", v.AsInt64())
+	}
+}
+
+func TestInvokeSpan_NoInferenceConfigAttributes_WhenNoneSet(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = a.Invoke(context.Background(), "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+	invokeSpan := findSpan(spans, "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+
+	// None of the inference config attributes should be present.
+	for _, key := range []string{AttrGenAITemperature, AttrGenAITopP, AttrGenAITopK, AttrGenAIMaxTokens, AttrGenAIStopSequences} {
+		v := getAttr(*invokeSpan, key)
+		if v.Type() != 0 { // 0 = INVALID (not set)
+			t.Errorf("expected no %s attribute when no inference config set, got %v", key, v)
+		}
+	}
+}
+
+func TestInvokeSpan_PerInvocationOverride_ReflectedInSpan(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(&agent.ProviderResponse{
+		Text:  "hello",
+		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+	})
+
+	// Agent-level: temperature=0.3
+	a, err := agent.New(prov, prompt.Text("sys"), nil,
+		agent.WithTemperature(0.3),
+		WithTracing(tp),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Per-invocation override: temperature=0.95
+	temp := 0.95
+	ctx := agent.WithInferenceConfig(context.Background(), &agent.InferenceConfig{
+		Temperature: &temp,
+	})
+
+	_, _, err = a.Invoke(ctx, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+	invokeSpan := findSpan(spans, "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+
+	// The span should reflect the merged value (per-invocation wins).
+	if v := getAttr(*invokeSpan, AttrGenAITemperature); v.AsFloat64() != 0.95 {
+		t.Errorf("expected temperature=0.95 (per-invocation override), got %v", v.AsFloat64())
+	}
+}

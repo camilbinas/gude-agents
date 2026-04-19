@@ -243,3 +243,19 @@ func WithStopSequences(s []string) Option {
 		return nil
 	}
 }
+
+// WithMaxTokens sets the max tokens inference parameter on the agent.
+// This controls the maximum number of tokens the LLM can generate in a response.
+// Must be >= 1. When set, this overrides the provider-level max tokens for every call.
+func WithMaxTokens(n int) Option {
+	return func(a *Agent) error {
+		if n < 1 {
+			return fmt.Errorf("max_tokens must be >= 1, got %d", n)
+		}
+		if a.inferenceConfig == nil {
+			a.inferenceConfig = &InferenceConfig{}
+		}
+		a.inferenceConfig.MaxTokens = &n
+		return nil
+	}
+}

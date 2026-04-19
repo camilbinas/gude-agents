@@ -511,3 +511,125 @@ func TestIntegration_ToolChoiceAny(t *testing.T) {
 		t.Logf("ToolChoiceAny: LLM called tool %q", resp.ToolCalls[0].Name)
 	}
 }
+
+func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
+	p := newTestProvider(t)
+
+	// Low temperature should produce consistent, deterministic output.
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant. Be very brief. Reply with exactly one word."),
+		nil,
+		agent.WithTemperature(0.0),
+		agent.WithMaxTokens(10),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, usage, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
+	if err != nil {
+		t.Fatalf("Invoke error: %v", err)
+	}
+	if !strings.Contains(result, "Paris") {
+		t.Errorf("expected response to contain 'Paris', got: %s", result)
+	}
+	if usage.InputTokens <= 0 || usage.OutputTokens <= 0 {
+		t.Errorf("expected non-zero token usage, got: %+v", usage)
+	}
+	t.Logf("Response: %s (tokens: %d in, %d out)", result, usage.InputTokens, usage.OutputTokens)
+}
+
+func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
+	p := newTestProvider(t)
+
+	// Agent-level: low temperature.
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant. Be very brief."),
+		nil,
+		agent.WithTemperature(0.0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Per-invocation override: high temperature for creative output.
+	temp := 0.9
+	creativeCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+		Temperature: &temp,
+	})
+
+	result, _, err := a.Invoke(creativeCtx, "Write a one-sentence haiku about clouds.")
+	if err != nil {
+		t.Fatalf("Invoke error: %v", err)
+	}
+	if result == "" {
+		t.Fatal("expected non-empty response")
+	}
+	t.Logf("Creative response (temp=0.9): %s", result)
+}
+
+func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
+	p := newTestProvider(t)
+
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant. When listing items, number them as 1. 2. 3. etc."),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Use stop sequences to cut generation after the first item.
+	stopCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+		StopSequences: []string{"2."},
+	})
+
+	result, _, err := a.Invoke(stopCtx, "List 5 programming languages.")
+	if err != nil {
+		t.Fatalf("Invoke error: %v", err)
+	}
+	// The response should be cut short — it should NOT contain "3." or "4."
+	if strings.Contains(result, "3.") {
+		t.Errorf("expected stop sequence to cut generation before '3.', got: %s", result)
+	}
+	t.Logf("Stopped response: %s", strings.TrimSpace(result))
+}
+
+func TestIntegration_InferenceConfig_InvalidPerInvocationReturnsError(t *testing.T) {
+	p := newTestProvider(t)
+
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant."),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Invalid temperature should fail before calling the provider.
+	badTemp := 5.0
+	badCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+		Temperature: &badTemp,
+	})
+
+	_, _, err = a.Invoke(badCtx, "hello")
+	if err == nil {
+		t.Fatal("expected error for invalid per-invocation temperature, got nil")
+	}
+	if !strings.Contains(err.Error(), "inference config") {
+		t.Errorf("expected error to mention 'inference config', got: %v", err)
+	}
+	t.Logf("Correctly rejected invalid config: %v", err)
+}

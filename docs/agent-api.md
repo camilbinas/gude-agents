@@ -213,6 +213,22 @@ a, err := agent.Default(provider, instructions, tools,
 )
 ```
 
+### `WithMaxTokens`
+
+```go
+func WithMaxTokens(n int) Option
+```
+
+Sets the maximum number of tokens the LLM can generate in a response, at the agent level. Must be >= 1. When set, this overrides the provider-level max tokens for every call. Can be overridden per-invocation via `WithInferenceConfig`.
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithMaxTokens(2048),
+)
+```
+
+Note: this is distinct from the provider-level `WithMaxTokens` option (e.g., `bedrock.WithMaxTokens`). The agent-level option flows through `InferenceConfig` and takes precedence over the provider constructor default when set.
+
 All four inference parameter options populate an `InferenceConfig` on the agent. When no inference options are set, the agent passes `nil` to the provider, which uses its own defaults. Per-invocation overrides are supported via `WithInferenceConfig` on the context — see [InvocationContext](invocation-context.md).
 
 ### `WithRetriever`

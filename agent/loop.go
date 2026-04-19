@@ -208,8 +208,9 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		var finishProvider func(err error, usage TokenUsage, toolCallCount int, responseText string)
 		if a.tracingHook != nil {
 			providerCtx, finishProvider = a.tracingHook.OnProviderCallStart(iterCtx, ProviderCallParams{
-				System:       systemPrompt,
-				MessageCount: len(converseMessages),
+				System:          systemPrompt,
+				MessageCount:    len(converseMessages),
+				InferenceConfig: inferenceConfig,
 			})
 		}
 
