@@ -202,7 +202,7 @@ func RAGAgent(provider Provider, instructions prompt.Instructions, r Retriever, 
 
 Configures: logging enabled, 5 max iterations, retriever attached.
 
-Use `RAGAgent` for retrieval-augmented generation. The `Retriever` is a required parameter, making it impossible to forget. Retrieved documents are automatically prepended to the system prompt before each LLM call.
+Use `RAGAgent` for retrieval-augmented generation. The `Retriever` is a required parameter, making it impossible to forget. Retrieved documents are automatically injected as a user/assistant message turn before each LLM call — keeping untrusted content isolated from the system prompt.
 
 All presets accept additional `...Option` arguments that are applied after the defaults, so you can override any setting:
 

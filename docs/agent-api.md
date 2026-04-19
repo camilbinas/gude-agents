@@ -131,7 +131,7 @@ Sets a maximum cumulative token budget per invocation. After each provider call,
 func WithRetriever(r Retriever) Option
 ```
 
-Attaches a `Retriever` for automatic RAG. Before the agent loop starts, the retriever fetches documents relevant to the user message. Retrieved content is prepended to the system prompt using the configured `ContextFormatter` (or `DefaultContextFormatter`).
+Attaches a `Retriever` for automatic RAG. Before the agent loop starts, the retriever fetches documents relevant to the user message. Retrieved content is injected as a user/assistant message turn in the conversation using the configured `ContextFormatter` (or `DefaultContextFormatter`). The context is not persisted to memory.
 
 ```go
 type Retriever interface {
@@ -291,7 +291,7 @@ Each call to `Invoke` or `InvokeStream` runs the following loop:
 
 2. **Memory load** — if `WithMemory` is configured, conversation history is loaded and prepended to the message list.
 
-3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved once and prepended to the system prompt.
+3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved once and injected as a user/assistant message turn in the conversation (not into the system prompt).
 
 4. **Agent loop** (up to `maxIterations`):
    - The provider is called with the current messages, system prompt, and tool specs.

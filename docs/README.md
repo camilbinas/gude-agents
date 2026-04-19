@@ -49,6 +49,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Advanced Topics
 
+- [Graph Workflows](graph.md) — DAG-based state machines with fork/join, conditional routing, and typed state
 - [HTTP & Multi-Tenant Environments](http.md) — `WithSharedMemory`, `WithConversationID`, and serving multiple users
 - [Multi-Agent HTTP Server with Fiber v3](fiber-multi-agent.md) — Streaming multi-agent server with per-user conversations
 - [Handoffs](handoff.md) — Pausing agents for human input and resuming

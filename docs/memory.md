@@ -128,6 +128,25 @@ func DefaultSummaryFunc(provider Provider) SummaryFunc
 
 Returns a batteries-included `SummaryFunc` that uses an LLM provider to condense messages into a concise paragraph. It formats all messages as text, sends them to the provider with a summarization prompt, and returns the result as a user+assistant turn. Pass this to `NewSummary` so you don't have to write your own.
 
+#### NewSummaryFunc
+
+```go
+func NewSummaryFunc(provider Provider, systemPrompt string) SummaryFunc
+```
+
+Returns a `SummaryFunc` that uses the given provider and a custom system prompt to condense messages. Use this when you want to control what the summarizer focuses on — for example, preserving domain-specific details like table names, metrics, or decisions.
+
+```go
+s, err := memory.NewSummary(store, 10,
+    memory.NewSummaryFunc(provider,
+        "Summarize this analytics conversation. Preserve table names, "+
+        "domain metrics, and specific numbers.",
+    ),
+)
+```
+
+`DefaultSummaryFunc` is built on top of `NewSummaryFunc` with a generic summarization prompt.
+
 #### WithSummaryLogger
 
 ```go

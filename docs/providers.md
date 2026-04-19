@@ -157,6 +157,7 @@ Each function returns a `(*BedrockProvider, error)` and accepts `...Option`:
 | `ClaudeSonnet4_6()` | `eu.anthropic.claude-sonnet-4-6` |
 | `ClaudeOpus4_5()` | `eu.anthropic.claude-opus-4-5-20251101-v1:0` |
 | `ClaudeOpus4_6()` | `eu.anthropic.claude-opus-4-6-v1` |
+| `ClaudeOpus4_7()` | `eu.anthropic.claude-opus-4-7` |
 
 **Amazon Nova (EU cross-region inference)**
 
@@ -201,6 +202,8 @@ Each function returns a `(*BedrockProvider, error)` and accepts `...Option`:
 > Note: OpenAI GPT-OSS models on Bedrock support text only — no tool use, tool choice, or token usage reporting. The provider's `Capabilities()` method reflects this automatically.
 
 ### Tier Aliases
+
+> **These mappings change over time.** `Cheapest`, `Standard`, and `Smartest` point to whichever model currently best fits that tier. When a better model becomes available, the mapping is updated in a new release. Pin a specific model constructor (e.g., `ClaudeSonnet4_6()`) if you need a stable model across upgrades.
 
 Convenience shortcuts that map to the Amazon Nova family:
 
@@ -643,6 +646,57 @@ func (p *MyProvider) Capabilities() agent.Capabilities {
     }
 }
 ```
+
+## Provider Registry
+
+The `registry` package provides environment-driven provider selection. Instead of hardcoding a specific provider, you register factories and select at runtime by name and tier.
+
+Import: `github.com/camilbinas/gude-agents/agent/provider/registry`
+
+### Setup
+
+Call `RegisterBuiltins()` once at startup to register all four built-in providers:
+
+```go
+import "github.com/camilbinas/gude-agents/agent/provider/registry"
+
+func init() {
+    registry.RegisterBuiltins() // registers bedrock, anthropic, openai, gemini
+}
+```
+
+### Creating a Provider by Name and Tier
+
+```go
+provider, err := registry.New("bedrock", registry.Standard)
+```
+
+Available tiers: `registry.Cheapest`, `registry.Standard`, `registry.Smartest`. These map to each provider's tier aliases.
+
+### Environment-Driven Selection
+
+`FromEnv` reads `MODEL_PROVIDER` and `MODEL_TIER` from the environment:
+
+```go
+provider, err := registry.FromEnv()
+// MODEL_PROVIDER=anthropic MODEL_TIER=smartest → anthropic.Smartest()
+```
+
+Defaults to `bedrock` / `standard` when the variables are unset.
+
+### Custom Providers
+
+Register your own provider with factories for each tier:
+
+```go
+registry.Register("my-provider",
+    func() (agent.Provider, error) { return myProvider("cheap") },
+    func() (agent.Provider, error) { return myProvider("standard") },
+    func() (agent.Provider, error) { return myProvider("smart") },
+)
+```
+
+Pass `nil` for any tier your provider doesn't support.
 
 ## See Also
 

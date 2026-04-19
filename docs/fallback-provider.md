@@ -111,10 +111,6 @@ The fallback provider's `Capabilities()` returns the intersection across all pro
 
 
 
-- [LLM Providers](providers.md) — Bedrock, Anthropic, and OpenAI provider docs
-- [Implementing a Custom Provider](providers.md#implementing-a-custom-provider) — the `Provider` interface
-- [Agent API Reference](agent-api.md) — agent constructors and options
-
 ## See Also
 
 - [LLM Providers](providers.md) — Bedrock, Anthropic, and OpenAI provider docs
