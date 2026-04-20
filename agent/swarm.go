@@ -221,6 +221,12 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 	if s.memory != nil {
 		history, err := s.memory.Load(ctx, convID)
 		if err != nil {
+			if finishSwarmRun != nil {
+				finishSwarmRun(err, result)
+			}
+			if finishSwarmMetrics != nil {
+				finishSwarmMetrics(err, result)
+			}
 			return result, fmt.Errorf("swarm memory load: %w", err)
 		}
 		messages = history
@@ -387,6 +393,12 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		// Persist conversation and active agent.
 		if s.memory != nil {
 			if err := s.memory.Save(ctx, convID, messages); err != nil {
+				if finishSwarmRun != nil {
+					finishSwarmRun(err, result)
+				}
+				if finishSwarmMetrics != nil {
+					finishSwarmMetrics(err, result)
+				}
 				return result, fmt.Errorf("swarm memory save: %w", err)
 			}
 			// Store which agent is active so the next call resumes there.
