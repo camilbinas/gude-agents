@@ -47,6 +47,7 @@ type InvokeSpanParams struct {
 	UserMessage     string           // the user's input message
 	SystemPrompt    string           // the agent's system instructions
 	InferenceConfig *InferenceConfig // merged inference config; nil = provider defaults
+	AgentName       string           // empty if WithName was not called
 }
 
 // ProviderCallParams carries data for a provider call span.

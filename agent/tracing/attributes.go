@@ -7,6 +7,7 @@ const (
 	AttrAgentMaxIterations      = "agent.max_iterations"
 	AttrAgentModelID            = "agent.model_id"
 	AttrAgentConversationID     = "agent.conversation_id"
+	AttrAgentName               = "agent.name"
 	AttrAgentTokenUsageInput    = "agent.token_usage.input"
 	AttrAgentTokenUsageOutput   = "agent.token_usage.output"
 	AttrAgentIterationNumber    = "agent.iteration.number"

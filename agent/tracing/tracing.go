@@ -91,6 +91,9 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 	if params.ConversationID != "" {
 		span.SetAttributes(attribute.String(AttrAgentConversationID, params.ConversationID))
 	}
+	if params.AgentName != "" {
+		span.SetAttributes(attribute.String(AttrAgentName, params.AgentName))
+	}
 	if h.captureContent {
 		if params.UserMessage != "" {
 			span.SetAttributes(attribute.String(AttrGenAIPrompt, params.UserMessage))
