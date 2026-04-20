@@ -26,7 +26,7 @@ import (
 )
 
 func main() {
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	a, err := agent.Default(provider, prompt.Text(
 		"You are a customer support agent. When a user asks for a refund, "+

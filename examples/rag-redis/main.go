@@ -57,7 +57,7 @@ func main() {
 	}
 	fmt.Printf("Ingested %d documents\n", len(docs))
 
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
 

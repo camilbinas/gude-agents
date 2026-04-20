@@ -21,7 +21,7 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	haiku := bedrock.Must(bedrock.ClaudeHaiku4_5())
+	haiku := bedrock.Must(bedrock.Cheapest())
 
 	// --- Triage agent: routes to the right specialist ---
 	triageAgent, err := agent.SwarmAgent(

@@ -28,7 +28,7 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	haiku := bedrock.Must(bedrock.ClaudeHaiku4_5())
+	haiku := bedrock.Must(bedrock.Standard())
 
 	// --- Agents for each LLM step ---
 

@@ -43,7 +43,7 @@ import (
 )
 
 func main() {
-	provider := bedrock.Must(bedrock.ClaudeHaiku4_5())
+	provider := bedrock.Must(bedrock.Cheapest())
 
 	// NewSimple — no input parameters.
 	timeTool := tool.NewSimple("current_time", "Returns the current server time",

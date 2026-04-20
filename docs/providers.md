@@ -12,13 +12,13 @@ gude-agents ships with four built-in LLM providers: AWS Bedrock, Anthropic, Open
 ## Quick Start
 
 ```go
-bedrock.ClaudeSonnet4_6()    // AWS Bedrock (uses AWS credential chain)
+bedrock.GlobalClaudeSonnet4_6()    // AWS Bedrock (uses AWS credential chain)
 anthropic.ClaudeSonnet4_6()  // Anthropic API (uses ANTHROPIC_API_KEY)
 openai.GPT4_1()              // OpenAI API (uses OPENAI_API_KEY)
 gemini.Gemini25Flash()       // Gemini API (uses GEMINI_API_KEY)
 ```
 
-Each provider has `Cheapest()`, `Standard()`, `Smartest()` tier aliases. These mappings change over time as better models become available — pin a specific constructor (e.g., `ClaudeSonnet4_6()`) if you need a stable model across upgrades.
+Each provider has `Cheapest()`, `Standard()`, `Smartest()` tier aliases. These mappings change over time as better models become available — pin a specific constructor (e.g., `GlobalClaudeSonnet4_6()`) if you need a stable model across upgrades.
 
 ## Provider Interface
 
@@ -89,7 +89,7 @@ provider, _ := anthropic.New("claude-sonnet-4-6",
 )
 
 // Bedrock (Claude or Nova 2 Lite)
-provider, _ := bedrock.ClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingMedium))
+provider, _ := bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingMedium))
 
 // OpenAI (o-series models)
 provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
@@ -135,7 +135,7 @@ Every built-in provider exposes a `Client()` method that returns the underlying 
 
 ```go
 // Bedrock — returns *bedrockruntime.Client
-provider, _ := bedrock.ClaudeSonnet4_6()
+provider, _ := bedrock.GlobalClaudeSonnet4_6()
 bedrockClient := provider.Client()
 
 // Anthropic — returns *anthropicsdk.Client
@@ -154,7 +154,7 @@ geminiClient := provider.Client()
 This lets you share a single set of credentials and configuration between the agent loop and direct SDK calls:
 
 ```go
-provider, _ := bedrock.ClaudeSonnet4_6()
+provider, _ := bedrock.GlobalClaudeSonnet4_6()
 
 // Normal agent usage for most calls
 a, _ := agent.Default(provider, instructions, tools)
@@ -162,7 +162,7 @@ result, _, _ := a.Invoke(ctx, "normal question")
 
 // Drop to raw SDK for provider-specific features
 resp, err := provider.Client().Converse(ctx, &bedrockruntime.ConverseInput{
-    ModelId:         aws.String("eu.anthropic.claude-sonnet-4-6"),
+    ModelId:         aws.String("global.anthropic.claude-sonnet-4-6"),
     Messages:        myMessages,
     GuardrailConfig: &types.GuardrailConfiguration{
         GuardrailIdentifier: aws.String("my-guardrail"),

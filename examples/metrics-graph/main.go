@@ -1,20 +1,17 @@
-// Example: Traced graph workflow with fork/join, tools, and memory.
+// Example: Prometheus metrics for a graph workflow with fork/join.
 //
-// Builds a content-review pipeline as a graph and traces every node execution.
+// Builds a content-review pipeline as a graph and records Prometheus metrics
+// for every graph run and node execution.
 // The graph forks into parallel enrich + summarise + sentiment, then joins
 // into a final report.
 //
 //	fetch → [enrich, summarise, sentiment] → report
 //
-// The trace tree shows:
-//   - graph.run / graph.node.* spans for the graph workflow
-//   - agent.invoke / agent.iteration / agent.provider.call for each agent
-//   - agent.tool.word_count for the enrich agent's tool call
-//   - agent.memory.load / agent.memory.save for the summarise agent's memory
+// Metrics are exposed at http://localhost:2112/metrics for scraping.
 //
 // Run:
 //
-//	go run ./tracing-graph
+//	go run ./metrics-graph
 
 package main
 
@@ -23,19 +20,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
-
-	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/metrics/prometheus"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
-	"github.com/camilbinas/gude-agents/agent/tracing"
-	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -44,18 +38,15 @@ func main() {
 
 	ctx := context.Background()
 
-	// 1. Set up tracing with the shared tree exporter.
-	exp := utils.NewTreeExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
-	defer tp.Shutdown(ctx)
-	otel.SetTracerProvider(tp)
+	// 1. Set up Prometheus metrics — shared registry via NewHandler.
+	agentOpt, handler := prometheus.NewHandler()
 
 	// 2. Create Claude Haiku via Bedrock.
 	haiku := bedrock.Must(bedrock.Cheapest())
 
 	// 3. Build agents for each pipeline step.
 
-	// Enrich agent — has a word_count tool. Produces agent.tool.word_count spans.
+	// Enrich agent — has a word_count tool.
 	wordCountTool := tool.NewRaw(
 		"word_count",
 		"Count the number of words in a text",
@@ -85,17 +76,21 @@ func main() {
 		"You enrich articles with metadata. Use the word_count tool to count "+
 			"the words in the article, then return a short metadata line like: "+
 			"\"Words: 42, Reading time: ~1 min\". Return only the metadata line.",
-	), []tool.Tool{wordCountTool}, tracing.WithTracing(nil))
+	), []tool.Tool{wordCountTool},
+		agent.WithName("enricher"),
+		agentOpt,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Summarise agent — has memory. Produces agent.memory.load / agent.memory.save spans.
+	// Summarise agent — has memory.
 	store := memory.NewStore()
 	summariser, err := agent.Minimal(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
 	), nil,
-		tracing.WithTracing(nil),
+		agent.WithName("summariser"),
+		prometheus.WithMetrics(),
 		agent.WithMemory(store, "summarise-session"),
 	)
 	if err != nil {
@@ -106,15 +101,18 @@ func main() {
 	sentimentAnalyser, err := agent.Minimal(haiku, prompt.Text(
 		"Analyse the sentiment of the provided article. "+
 			"Return a single word: Positive, Negative, or Neutral.",
-	), nil, tracing.WithTracing(nil))
+	), nil,
+		agent.WithName("sentiment"),
+		prometheus.WithMetrics(),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// 4. Build the graph with tracing.
+	// 4. Build the graph with metrics.
 	g, err := graph.NewGraph(
 		graph.WithGraphMaxIterations(20),
-		tracing.WithGraphTracing(nil),
+		prometheus.WithGraphMetrics(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -174,8 +172,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 5. Run the graph.
-	fmt.Println("Running traced graph pipeline...")
+	// 5. Start Prometheus HTTP endpoint.
+	go func() {
+		http.Handle("/metrics", handler)
+		fmt.Println("Prometheus metrics at http://localhost:2112/metrics")
+		if err := http.ListenAndServe(":2112", nil); err != nil {
+			log.Printf("metrics server: %v", err)
+		}
+	}()
+
+	// 6. Run the graph.
+	fmt.Println("Running metrics graph pipeline...")
 	fmt.Println()
 
 	result, err := g.Run(ctx, graph.State{})
@@ -183,9 +190,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Flush the tree exporter so the trace prints before the results.
-	exp.Flush()
-
 	fmt.Println(result.State["report"])
 	fmt.Printf("\nTokens: %d in / %d out\n", result.Usage.InputTokens, result.Usage.OutputTokens)
+	fmt.Println("\nMetrics available at http://localhost:2112/metrics")
+	fmt.Println("Press Ctrl+C to exit.")
+
+	// Keep alive so metrics endpoint stays up.
+	select {}
 }

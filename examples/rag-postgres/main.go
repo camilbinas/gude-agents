@@ -72,7 +72,7 @@ func main() {
 	}
 	fmt.Println("Done.")
 
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
 

@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	ctx := context.Background()
 

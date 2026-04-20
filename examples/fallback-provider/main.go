@@ -51,7 +51,7 @@ func main() {
 	primary := &fakeProvider{name: "fake-provider"}
 
 	// Bedrock is the backup.
-	backup := bedrock.Must(bedrock.Nova2Lite())
+	backup := bedrock.Must(bedrock.Cheapest())
 
 	// fallback.New tries primary first, then backup.
 	// The agent doesn't know or care which one actually responds.

@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	// RISEN prompt — good for task-focused agents.
 	risenAgent, err := agent.Default(

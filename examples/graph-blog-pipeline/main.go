@@ -55,7 +55,7 @@ type ReviewResult struct {
 func main() {
 	godotenv.Load() //nolint
 
-	haiku := bedrock.Must(bedrock.ClaudeHaiku4_5())
+	haiku := bedrock.Must(bedrock.Cheapest())
 
 	// --- Agents ---
 

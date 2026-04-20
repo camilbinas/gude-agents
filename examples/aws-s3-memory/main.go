@@ -51,7 +51,7 @@ func main() {
 		log.Fatalf("s3 memory: %v", err)
 	}
 
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Cheapest())
 
 	a, err := agent.Default(
 		provider,

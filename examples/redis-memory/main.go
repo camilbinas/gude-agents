@@ -34,7 +34,7 @@ func main() {
 	}
 	defer mem.Close()
 
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	a, err := agent.Default(
 		provider,

@@ -56,7 +56,7 @@ func main() {
 	}
 	fmt.Println()
 
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	a, err := agent.New(
 		provider,

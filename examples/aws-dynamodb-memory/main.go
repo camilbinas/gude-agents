@@ -56,7 +56,7 @@ func main() {
 		log.Fatalf("dynamodb memory: %v", err)
 	}
 
-	provider := bedrock.Must(bedrock.ClaudeSonnet4_6())
+	provider := bedrock.Must(bedrock.Standard())
 
 	a, err := agent.Default(
 		provider,
