@@ -54,6 +54,10 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Advanced Topics
 
+- [OpenTelemetry Tracing](tracing.md) — Distributed tracing with spans for invocations, provider calls, and tools
+- [Prometheus Metrics](metrics.md) — Counters and histograms for agent lifecycle events
+- [OTEL Metrics](metrics-otel.md) — OpenTelemetry metrics exporter for OTLP-compatible backends
+- [CloudWatch Metrics](metrics-cloudwatch.md) — AWS CloudWatch metrics exporter with buffered flush
 - [Graph Workflows](graph.md) — DAG-based state machines with fork/join, conditional routing, and typed state
 - [HTTP & Multi-Tenant Environments](http.md) — `WithSharedMemory`, `WithConversationID`, and serving multiple users
 - [Multi-Agent HTTP Server with Fiber v3](fiber-multi-agent.md) — Streaming multi-agent server with per-user conversations

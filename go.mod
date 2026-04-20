@@ -6,6 +6,9 @@ require pgregory.net/rapid v1.2.0
 
 replace (
 	github.com/camilbinas/gude-agents/agent/mcp => ./agent/mcp
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus => ./agent/metrics/prometheus
+	github.com/camilbinas/gude-agents/agent/metrics/otel => ./agent/metrics/otel
+	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch => ./agent/metrics/cloudwatch
 	github.com/camilbinas/gude-agents/agent/tracing => ./agent/tracing
 	github.com/camilbinas/gude-agents/agent/tracing/sentry => ./agent/tracing/sentry
 	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ./agent/memory/dynamodb

@@ -43,7 +43,14 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 			UserMessage:     userMessage,
 			SystemPrompt:    a.instructions,
 			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
+			AgentName:       a.name,
 		})
+	}
+
+	// Start metrics invoke tracking if metrics hook is enabled.
+	var finishMetricsInvoke func(error, TokenUsage)
+	if a.metricsHook != nil {
+		finishMetricsInvoke = a.metricsHook.OnInvokeStart()
 	}
 
 	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb)
@@ -51,6 +58,10 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 
 	if finishInvoke != nil {
 		finishInvoke(err, cumulative, "")
+	}
+
+	if finishMetricsInvoke != nil {
+		finishMetricsInvoke(err, cumulative)
 	}
 
 	return cumulative, err
@@ -90,6 +101,11 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		if finishGuardrail != nil {
 			finishGuardrail(err, msg)
 		}
+
+		if a.metricsHook != nil {
+			a.metricsHook.OnGuardrailComplete("input", err != nil)
+		}
+
 		if err != nil {
 			return cumulative, &GuardrailError{Direction: "input", Cause: err}
 		}
@@ -183,6 +199,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			iterCtx, finishIteration = a.tracingHook.OnIterationStart(ctx, iteration+1)
 		}
 
+		if a.metricsHook != nil {
+			a.metricsHook.OnIterationStart()
+		}
+
 		hasOutputGuardrails := len(a.outputGuardrails) > 0
 		var bufferedChunks []string
 
@@ -214,6 +234,15 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			})
 		}
 
+		var metricsModelID string
+		if mi, ok := a.provider.(ModelIdentifier); ok {
+			metricsModelID = mi.ModelID()
+		}
+		var finishMetricsProvider func(err error, usage TokenUsage)
+		if a.metricsHook != nil {
+			finishMetricsProvider = a.metricsHook.OnProviderCallStart(metricsModelID)
+		}
+
 		a.toolsMu.RLock()
 		currentToolSpecs := make([]tool.Spec, len(a.toolSpecs))
 		copy(currentToolSpecs, a.toolSpecs)
@@ -231,6 +260,9 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			if finishProvider != nil {
 				finishProvider(err, TokenUsage{}, 0, "")
 			}
+			if finishMetricsProvider != nil {
+				finishMetricsProvider(err, TokenUsage{})
+			}
 			if finishIteration != nil {
 				finishIteration(0, false)
 			}
@@ -243,6 +275,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 		if finishProvider != nil {
 			finishProvider(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
+		}
+
+		if finishMetricsProvider != nil {
+			finishMetricsProvider(nil, resp.Usage)
 		}
 
 		cumulative.InputTokens += resp.Usage.InputTokens
@@ -336,6 +372,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			if finishGuardrail != nil {
 				finishGuardrail(gErr, finalText)
 			}
+
+			if a.metricsHook != nil {
+				a.metricsHook.OnGuardrailComplete("output", gErr != nil)
+			}
+
 			if gErr != nil {
 				if finishIteration != nil {
 					finishIteration(0, true)
@@ -468,11 +509,19 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			toolCtx, finishTool = a.tracingHook.OnToolStart(ctx, tc.Name, tc.Input)
 		}
 
+		var finishMetricsTool func(error)
+		if a.metricsHook != nil {
+			finishMetricsTool = a.metricsHook.OnToolStart(tc.Name)
+		}
+
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
 			if finishTool != nil {
 				finishTool(err, "")
+			}
+			if finishMetricsTool != nil {
+				finishMetricsTool(err)
 			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -496,6 +545,9 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			if finishTool != nil {
 				finishTool(err, "")
 			}
+			if finishMetricsTool != nil {
+				finishMetricsTool(err)
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   toolErr.Error(),
@@ -506,6 +558,10 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 
 		if finishTool != nil {
 			finishTool(nil, out)
+		}
+
+		if finishMetricsTool != nil {
+			finishMetricsTool(nil)
 		}
 
 		a.logf("[tool] %s done", tc.Name)
