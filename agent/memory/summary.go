@@ -271,12 +271,11 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		return
 	}
 
-	// Re-load under the summary mutex to capture any messages that arrived
-	// after the cutoff while the LLM was running, then write atomically.
-	s.mu.Lock()
+	// Re-load to capture any messages that arrived after the cutoff while
+	// the LLM was running. This happens outside the mutex to avoid blocking
+	// Save() calls from other conversations on a slow backend read.
 	latest, loadErr := s.inner.Load(ctx, conversationID)
 	if loadErr != nil {
-		s.mu.Unlock()
 		if s.logger != nil {
 			s.logger.Printf("summary: failed to re-load messages for %s: %v", conversationID, loadErr)
 		}
@@ -302,13 +301,14 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		}
 	}
 
-	// Use the summary pair directly from SummaryFunc.
+	// Build the new message list: summary pair + preserved tail.
 	newMsgs := make([]agent.Message, 0, 2+len(tail))
 	newMsgs = append(newMsgs, summaryPair[0], summaryPair[1])
 	newMsgs = append(newMsgs, tail...)
 
+	// Save the summarized conversation. The mutex is not held during I/O —
+	// the bookkeeping maps are updated in the deferred cleanup.
 	saveErr := s.inner.Save(ctx, conversationID, newMsgs)
-	s.mu.Unlock()
 
 	if saveErr != nil {
 		if s.logger != nil {
