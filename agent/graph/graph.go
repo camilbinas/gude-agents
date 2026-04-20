@@ -43,6 +43,7 @@ type Graph struct {
 	maxIter     int
 	logger      agent.Logger
 	tracingHook GraphTracingHook // nil = no tracing
+	metricsHook GraphMetricsHook // nil = no metrics
 }
 
 // GraphOption configures a Graph.
@@ -287,10 +288,19 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 		ctx, finishNode = e.graph.tracingHook.OnNodeStart(ctx, nodeName)
 	}
 
+	// Start node metrics tracking if metrics hook is set.
+	var finishNodeMetrics func(err error)
+	if e.graph.metricsHook != nil {
+		finishNodeMetrics = e.graph.metricsHook.OnNodeStart(nodeName)
+	}
+
 	result, err := fn(ctx, stateCopy)
 
 	if finishNode != nil {
 		finishNode(err)
+	}
+	if finishNodeMetrics != nil {
+		finishNodeMetrics(err)
 	}
 
 	if err != nil {
@@ -502,6 +512,12 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 		ctx, finishTrace = g.tracingHook.OnGraphRunStart(ctx)
 	}
 
+	// Start graph metrics tracking if metrics hook is set.
+	var finishMetrics func(err error, iterations int)
+	if g.metricsHook != nil {
+		finishMetrics = g.metricsHook.OnGraphRunStart()
+	}
+
 	exec := &runExec{
 		graph:     g,
 		state:     CopyState(initial),
@@ -512,6 +528,9 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 
 	if finishTrace != nil {
 		finishTrace(err, exec.iterations)
+	}
+	if finishMetrics != nil {
+		finishMetrics(err, exec.iterations)
 	}
 
 	if err != nil {

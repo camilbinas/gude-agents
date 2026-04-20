@@ -40,6 +40,7 @@ type Swarm struct {
 	memory         Memory
 	conversationID string
 	tracingHook    SwarmTracingHook // nil = no tracing
+	metricsHook    SwarmMetricsHook // nil = no metrics
 }
 
 // swarmEntry holds a member plus the handoff tools injected into it.
@@ -209,6 +210,12 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		})
 	}
 
+	// Start swarm metrics tracking if metrics hook is enabled.
+	var finishSwarmMetrics func(error, SwarmResult)
+	if s.metricsHook != nil {
+		finishSwarmMetrics = s.metricsHook.OnSwarmRunStart()
+	}
+
 	// Load conversation history and active agent from memory.
 	var messages []Message
 	if s.memory != nil {
@@ -258,6 +265,12 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			agentCtx, finishAgent = s.tracingHook.OnSwarmAgentStart(agentCtx, currentAgent)
 		}
 
+		// Start agent metrics tracking if metrics hook is enabled.
+		var finishAgentMetrics func(error)
+		if s.metricsHook != nil {
+			finishAgentMetrics = s.metricsHook.OnSwarmAgentStart(currentAgent)
+		}
+
 		// Run the agent's inner loop manually so we can intercept handoffs.
 		usage, finalText, handedOff, err := s.runAgent(agentCtx, entry, messages, cb)
 		result.Usage.InputTokens += usage.InputTokens
@@ -267,8 +280,14 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			if finishAgent != nil {
 				finishAgent(err)
 			}
+			if finishAgentMetrics != nil {
+				finishAgentMetrics(err)
+			}
 			if finishSwarmRun != nil {
 				finishSwarmRun(err, result)
+			}
+			if finishSwarmMetrics != nil {
+				finishSwarmMetrics(err, result)
 			}
 			return result, fmt.Errorf("agent %q: %w", currentAgent, err)
 		}
@@ -282,8 +301,14 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				if finishAgent != nil {
 					finishAgent(handoffErr)
 				}
+				if finishAgentMetrics != nil {
+					finishAgentMetrics(handoffErr)
+				}
 				if finishSwarmRun != nil {
 					finishSwarmRun(handoffErr, result)
+				}
+				if finishSwarmMetrics != nil {
+					finishSwarmMetrics(handoffErr, result)
 				}
 				return result, handoffErr
 			}
@@ -291,6 +316,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			// Finish agent span before handoff.
 			if finishAgent != nil {
 				finishAgent(nil)
+			}
+			if finishAgentMetrics != nil {
+				finishAgentMetrics(nil)
 			}
 
 			s.logf("[swarm] handoff: %s → %s", currentAgent, targetName)
@@ -302,6 +330,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			// Record handoff event in trace.
 			if s.tracingHook != nil {
 				s.tracingHook.OnSwarmHandoff(ctx, currentAgent, targetName)
+			}
+			if s.metricsHook != nil {
+				s.metricsHook.OnSwarmHandoff(currentAgent, targetName)
 			}
 
 			// Detect ping-pong: if the target already appeared in recent handoff history,
@@ -343,6 +374,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		if finishAgent != nil {
 			finishAgent(nil)
 		}
+		if finishAgentMetrics != nil {
+			finishAgentMetrics(nil)
+		}
 
 		// Append assistant response to messages for memory.
 		messages = append(messages, Message{
@@ -370,6 +404,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		if finishSwarmRun != nil {
 			finishSwarmRun(nil, result)
 		}
+		if finishSwarmMetrics != nil {
+			finishSwarmMetrics(nil, result)
+		}
 
 		return result, nil
 	}
@@ -377,6 +414,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 	maxErr := fmt.Errorf("max handoffs (%d) exceeded", s.maxHandoffs)
 	if finishSwarmRun != nil {
 		finishSwarmRun(maxErr, result)
+	}
+	if finishSwarmMetrics != nil {
+		finishSwarmMetrics(maxErr, result)
 	}
 	return result, maxErr
 }
