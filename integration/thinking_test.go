@@ -32,7 +32,7 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 
 	// Use Bedrock Claude directly with thinking enabled — the registry tier
 	// functions don't enable thinking by default.
-	p, err := bedrock.ClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow))
+	p, err := bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 		t.Skipf("skipping thinking test for provider %q (not supported)", providerName)
 	}
 
-	p, err := bedrock.ClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow))
+	p, err := bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow))
 	if err != nil {
 		t.Fatal(err)
 	}
