@@ -650,3 +650,263 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Swarm Metrics Unit Tests
+// ---------------------------------------------------------------------------
+
+// TestSwarmMetrics_RunCounterAndDuration verifies swarm run counter and duration
+// are recorded on a successful swarm run.
+func TestSwarmMetrics_RunCounterAndDuration(t *testing.T) {
+	reg := prom.NewRegistry()
+
+	h := &swarmPrometheusHook{
+		registerer: reg,
+	}
+	h.register()
+
+	finish := h.OnSwarmRunStart()
+	finish(nil, agent.SwarmResult{})
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	familyMap := make(map[string]*dto.MetricFamily)
+	for _, f := range families {
+		familyMap[f.GetName()] = f
+	}
+
+	// Verify swarm_run_total{status="success"} == 1.
+	f, ok := familyMap["swarm_run_total"]
+	if !ok {
+		t.Fatal("swarm_run_total not found in registry")
+	}
+	found := false
+	for _, m := range f.GetMetric() {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == "status" && lp.GetValue() == "success" {
+				if v := getCounterValue(m); v != 1 {
+					t.Errorf("swarm_run_total{status=success}: expected 1, got %v", v)
+				}
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("swarm_run_total{status=success} label not found")
+	}
+
+	// Verify swarm_run_duration_seconds has 1 observation.
+	f, ok = familyMap["swarm_run_duration_seconds"]
+	if !ok {
+		t.Fatal("swarm_run_duration_seconds not found in registry")
+	}
+	for _, m := range f.GetMetric() {
+		hist := m.GetHistogram()
+		if hist == nil {
+			t.Fatal("expected histogram for swarm_run_duration_seconds")
+		}
+		if hist.GetSampleCount() != 1 {
+			t.Errorf("swarm_run_duration_seconds: expected 1 observation, got %d", hist.GetSampleCount())
+		}
+	}
+}
+
+// TestSwarmMetrics_AgentTurnCounter verifies swarm agent turn counter is recorded.
+func TestSwarmMetrics_AgentTurnCounter(t *testing.T) {
+	reg := prom.NewRegistry()
+
+	h := &swarmPrometheusHook{
+		registerer: reg,
+	}
+	h.register()
+
+	finish := h.OnSwarmAgentStart("billing")
+	finish(nil)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	familyMap := make(map[string]*dto.MetricFamily)
+	for _, f := range families {
+		familyMap[f.GetName()] = f
+	}
+
+	f, ok := familyMap["swarm_agent_turn_total"]
+	if !ok {
+		t.Fatal("swarm_agent_turn_total not found in registry")
+	}
+
+	found := false
+	for _, m := range f.GetMetric() {
+		labels := make(map[string]string)
+		for _, lp := range m.GetLabel() {
+			labels[lp.GetName()] = lp.GetValue()
+		}
+		if labels["agent_name"] == "billing" && labels["status"] == "success" {
+			if v := getCounterValue(m); v != 1 {
+				t.Errorf("swarm_agent_turn_total{agent_name=billing,status=success}: expected 1, got %v", v)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("swarm_agent_turn_total{agent_name=billing,status=success} not found")
+	}
+}
+
+// TestSwarmMetrics_HandoffCounter verifies swarm handoff counter is recorded.
+func TestSwarmMetrics_HandoffCounter(t *testing.T) {
+	reg := prom.NewRegistry()
+
+	h := &swarmPrometheusHook{
+		registerer: reg,
+	}
+	h.register()
+
+	h.OnSwarmHandoff("triage", "billing")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	familyMap := make(map[string]*dto.MetricFamily)
+	for _, f := range families {
+		familyMap[f.GetName()] = f
+	}
+
+	f, ok := familyMap["swarm_handoff_total"]
+	if !ok {
+		t.Fatal("swarm_handoff_total not found in registry")
+	}
+
+	found := false
+	for _, m := range f.GetMetric() {
+		labels := make(map[string]string)
+		for _, lp := range m.GetLabel() {
+			labels[lp.GetName()] = lp.GetValue()
+		}
+		if labels["from"] == "triage" && labels["to"] == "billing" {
+			if v := getCounterValue(m); v != 1 {
+				t.Errorf("swarm_handoff_total{from=triage,to=billing}: expected 1, got %v", v)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("swarm_handoff_total{from=triage,to=billing} not found")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Graph Metrics Unit Tests
+// ---------------------------------------------------------------------------
+
+// TestGraphMetrics_RunCounterAndDuration verifies graph run counter and duration
+// are recorded on a successful graph run.
+func TestGraphMetrics_RunCounterAndDuration(t *testing.T) {
+	reg := prom.NewRegistry()
+
+	h := &graphPrometheusHook{
+		registerer: reg,
+	}
+	h.register()
+
+	finish := h.OnGraphRunStart()
+	finish(nil, 3)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	familyMap := make(map[string]*dto.MetricFamily)
+	for _, f := range families {
+		familyMap[f.GetName()] = f
+	}
+
+	// Verify graph_run_total{status="success"} == 1.
+	f, ok := familyMap["graph_run_total"]
+	if !ok {
+		t.Fatal("graph_run_total not found in registry")
+	}
+	found := false
+	for _, m := range f.GetMetric() {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == "status" && lp.GetValue() == "success" {
+				if v := getCounterValue(m); v != 1 {
+					t.Errorf("graph_run_total{status=success}: expected 1, got %v", v)
+				}
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("graph_run_total{status=success} label not found")
+	}
+
+	// Verify graph_run_duration_seconds has 1 observation.
+	f, ok = familyMap["graph_run_duration_seconds"]
+	if !ok {
+		t.Fatal("graph_run_duration_seconds not found in registry")
+	}
+	for _, m := range f.GetMetric() {
+		hist := m.GetHistogram()
+		if hist == nil {
+			t.Fatal("expected histogram for graph_run_duration_seconds")
+		}
+		if hist.GetSampleCount() != 1 {
+			t.Errorf("graph_run_duration_seconds: expected 1 observation, got %d", hist.GetSampleCount())
+		}
+	}
+}
+
+// TestGraphMetrics_NodeCounter verifies graph node counter is recorded.
+func TestGraphMetrics_NodeCounter(t *testing.T) {
+	reg := prom.NewRegistry()
+
+	h := &graphPrometheusHook{
+		registerer: reg,
+	}
+	h.register()
+
+	finish := h.OnNodeStart("fetch")
+	finish(nil)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	familyMap := make(map[string]*dto.MetricFamily)
+	for _, f := range families {
+		familyMap[f.GetName()] = f
+	}
+
+	f, ok := familyMap["graph_node_total"]
+	if !ok {
+		t.Fatal("graph_node_total not found in registry")
+	}
+
+	found := false
+	for _, m := range f.GetMetric() {
+		labels := make(map[string]string)
+		for _, lp := range m.GetLabel() {
+			labels[lp.GetName()] = lp.GetValue()
+		}
+		if labels["node_name"] == "fetch" && labels["status"] == "success" {
+			if v := getCounterValue(m); v != 1 {
+				t.Errorf("graph_node_total{node_name=fetch,status=success}: expected 1, got %v", v)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("graph_node_total{node_name=fetch,status=success} not found")
+	}
+}

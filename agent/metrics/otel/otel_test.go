@@ -261,3 +261,178 @@ func TestDurationRecording(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Swarm Metrics Unit Tests
+// ---------------------------------------------------------------------------
+
+// TestSwarmMetrics_RunCounter verifies swarm run counter is recorded via OTEL.
+func TestSwarmMetrics_RunCounter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+
+	h := &swarmOtelHook{}
+	h.meter = mp.Meter(defaultMeterName)
+	if err := h.register(); err != nil {
+		t.Fatalf("register error: %v", err)
+	}
+
+	finish := h.OnSwarmRunStart()
+	finish(nil, agent.SwarmResult{})
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+
+	m := findMetric(rm, "swarm.run.total")
+	if m == nil {
+		t.Fatal("swarm.run.total metric not found")
+	}
+
+	sumData, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("expected Sum[int64] data type, got %T", m.Data)
+	}
+	if len(sumData.DataPoints) == 0 {
+		t.Fatal("expected at least one data point for swarm.run.total")
+	}
+
+	var total int64
+	for _, dp := range sumData.DataPoints {
+		total += dp.Value
+	}
+	if total != 1 {
+		t.Errorf("swarm.run.total: expected 1, got %d", total)
+	}
+}
+
+// TestSwarmMetrics_HandoffCounter verifies swarm handoff counter is recorded via OTEL.
+func TestSwarmMetrics_HandoffCounter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+
+	h := &swarmOtelHook{}
+	h.meter = mp.Meter(defaultMeterName)
+	if err := h.register(); err != nil {
+		t.Fatalf("register error: %v", err)
+	}
+
+	h.OnSwarmHandoff("triage", "billing")
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+
+	m := findMetric(rm, "swarm.handoff.total")
+	if m == nil {
+		t.Fatal("swarm.handoff.total metric not found")
+	}
+
+	sumData, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("expected Sum[int64] data type, got %T", m.Data)
+	}
+	if len(sumData.DataPoints) == 0 {
+		t.Fatal("expected at least one data point for swarm.handoff.total")
+	}
+
+	var total int64
+	for _, dp := range sumData.DataPoints {
+		total += dp.Value
+	}
+	if total != 1 {
+		t.Errorf("swarm.handoff.total: expected 1, got %d", total)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Graph Metrics Unit Tests
+// ---------------------------------------------------------------------------
+
+// TestGraphMetrics_RunCounter verifies graph run counter is recorded via OTEL.
+func TestGraphMetrics_RunCounter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+
+	h := &graphOtelHook{}
+	h.meter = mp.Meter(defaultMeterName)
+	if err := h.register(); err != nil {
+		t.Fatalf("register error: %v", err)
+	}
+
+	finish := h.OnGraphRunStart()
+	finish(nil, 3)
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+
+	m := findMetric(rm, "graph.run.total")
+	if m == nil {
+		t.Fatal("graph.run.total metric not found")
+	}
+
+	sumData, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("expected Sum[int64] data type, got %T", m.Data)
+	}
+	if len(sumData.DataPoints) == 0 {
+		t.Fatal("expected at least one data point for graph.run.total")
+	}
+
+	var total int64
+	for _, dp := range sumData.DataPoints {
+		total += dp.Value
+	}
+	if total != 1 {
+		t.Errorf("graph.run.total: expected 1, got %d", total)
+	}
+}
+
+// TestGraphMetrics_NodeCounter verifies graph node counter is recorded via OTEL.
+func TestGraphMetrics_NodeCounter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+
+	h := &graphOtelHook{}
+	h.meter = mp.Meter(defaultMeterName)
+	if err := h.register(); err != nil {
+		t.Fatalf("register error: %v", err)
+	}
+
+	finish := h.OnNodeStart("fetch")
+	finish(nil)
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+
+	m := findMetric(rm, "graph.node.total")
+	if m == nil {
+		t.Fatal("graph.node.total metric not found")
+	}
+
+	sumData, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("expected Sum[int64] data type, got %T", m.Data)
+	}
+	if len(sumData.DataPoints) == 0 {
+		t.Fatal("expected at least one data point for graph.node.total")
+	}
+
+	var total int64
+	for _, dp := range sumData.DataPoints {
+		total += dp.Value
+	}
+	if total != 1 {
+		t.Errorf("graph.node.total: expected 1, got %d", total)
+	}
+}

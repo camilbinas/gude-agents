@@ -553,3 +553,132 @@ func TestBuffering(t *testing.T) {
 		t.Fatalf("expected empty buffer after successful flush, got %d", afterFlush)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Swarm Metrics Unit Tests
+// ---------------------------------------------------------------------------
+
+// TestSwarmMetrics_RunCounter verifies swarm run counter and duration are buffered.
+func TestSwarmMetrics_RunCounter(t *testing.T) {
+	mock := &mockCWClient{}
+	inner := newTestHook(mock)
+	h := &swarmCloudwatchHook{cloudwatchHook: inner}
+
+	finish := h.OnSwarmRunStart()
+	finish(nil, agent.SwarmResult{})
+
+	h.flush(context.Background())
+
+	data := mock.allData()
+	if len(data) == 0 {
+		t.Fatal("expected data points after flush, got 0")
+	}
+
+	// Verify SwarmRunTotal is present with Status=success.
+	runTotals := datumsByName(data, "SwarmRunTotal")
+	if len(runTotals) == 0 {
+		t.Fatal("SwarmRunTotal not found in buffered data")
+	}
+	if v := dimValue(runTotals[0], "Status"); v != "success" {
+		t.Errorf("SwarmRunTotal Status: expected 'success', got %q", v)
+	}
+
+	// Verify SwarmRunDuration is present.
+	runDurations := datumsByName(data, "SwarmRunDuration")
+	if len(runDurations) == 0 {
+		t.Fatal("SwarmRunDuration not found in buffered data")
+	}
+	if runDurations[0].StatisticValues == nil {
+		t.Fatal("SwarmRunDuration: expected StatisticValues, got nil")
+	}
+}
+
+// TestSwarmMetrics_HandoffCounter verifies swarm handoff counter is buffered with From/To dimensions.
+func TestSwarmMetrics_HandoffCounter(t *testing.T) {
+	mock := &mockCWClient{}
+	inner := newTestHook(mock)
+	h := &swarmCloudwatchHook{cloudwatchHook: inner}
+
+	h.OnSwarmHandoff("triage", "billing")
+
+	h.flush(context.Background())
+
+	data := mock.allData()
+	handoffs := datumsByName(data, "SwarmHandoffTotal")
+	if len(handoffs) == 0 {
+		t.Fatal("SwarmHandoffTotal not found in buffered data")
+	}
+
+	d := handoffs[0]
+	if v := dimValue(d, "From"); v != "triage" {
+		t.Errorf("SwarmHandoffTotal From: expected 'triage', got %q", v)
+	}
+	if v := dimValue(d, "To"); v != "billing" {
+		t.Errorf("SwarmHandoffTotal To: expected 'billing', got %q", v)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Graph Metrics Unit Tests
+// ---------------------------------------------------------------------------
+
+// TestGraphMetrics_RunCounter verifies graph run counter and duration are buffered.
+func TestGraphMetrics_RunCounter(t *testing.T) {
+	mock := &mockCWClient{}
+	inner := newTestHook(mock)
+	h := &graphCloudwatchHook{cloudwatchHook: inner}
+
+	finish := h.OnGraphRunStart()
+	finish(nil, 3)
+
+	h.flush(context.Background())
+
+	data := mock.allData()
+	if len(data) == 0 {
+		t.Fatal("expected data points after flush, got 0")
+	}
+
+	// Verify GraphRunTotal is present with Status=success.
+	runTotals := datumsByName(data, "GraphRunTotal")
+	if len(runTotals) == 0 {
+		t.Fatal("GraphRunTotal not found in buffered data")
+	}
+	if v := dimValue(runTotals[0], "Status"); v != "success" {
+		t.Errorf("GraphRunTotal Status: expected 'success', got %q", v)
+	}
+
+	// Verify GraphRunDuration is present.
+	runDurations := datumsByName(data, "GraphRunDuration")
+	if len(runDurations) == 0 {
+		t.Fatal("GraphRunDuration not found in buffered data")
+	}
+	if runDurations[0].StatisticValues == nil {
+		t.Fatal("GraphRunDuration: expected StatisticValues, got nil")
+	}
+}
+
+// TestGraphMetrics_NodeCounter verifies graph node counter is buffered with NodeName dimension.
+func TestGraphMetrics_NodeCounter(t *testing.T) {
+	mock := &mockCWClient{}
+	inner := newTestHook(mock)
+	h := &graphCloudwatchHook{cloudwatchHook: inner}
+
+	finish := h.OnNodeStart("fetch")
+	finish(nil)
+
+	h.flush(context.Background())
+
+	data := mock.allData()
+	nodeTotals := datumsByName(data, "GraphNodeTotal")
+	if len(nodeTotals) == 0 {
+		t.Fatal("GraphNodeTotal not found in buffered data")
+	}
+
+	d := nodeTotals[0]
+	if v := dimValue(d, "NodeName"); v != "fetch" {
+		t.Errorf("GraphNodeTotal NodeName: expected 'fetch', got %q", v)
+	}
+	if v := dimValue(d, "Status"); v != "success" {
+		t.Errorf("GraphNodeTotal Status: expected 'success', got %q", v)
+	}
+}
