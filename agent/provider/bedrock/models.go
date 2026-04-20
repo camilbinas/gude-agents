@@ -68,17 +68,17 @@ func NemotronSuper120B(opts ...Option) (*BedrockProvider, error) {
 }
 func GLM4_7Flash(opts ...Option) (*BedrockProvider, error) { return New("zai.glm-4.7-flash", opts...) }
 
+// MustEmbedder is a helper that wraps a (*rag.Embedder, error) call and panics on error.
+// Forwards to agent/rag/bedrock.MustEmbedder.
+func MustEmbedder(e *rag.Embedder, err error) *rag.Embedder {
+	return rag.MustEmbedder(e, err)
+}
+
 // Amazon Titan and Cohere embedding models.
 // These forward to agent/rag/bedrock — import that package directly for
 // access to EmbedderOption and the Embedder type.
 func TitanEmbedV2(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.TitanEmbedV2(opts...)
-}
-
-// MustEmbedder is a helper that wraps a (*rag.Embedder, error) call and panics on error.
-// Forwards to agent/rag/bedrock.MustEmbedder.
-func MustEmbedder(e *rag.Embedder, err error) *rag.Embedder {
-	return rag.MustEmbedder(e, err)
 }
 func CohereEmbedEnglishV3(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.CohereEmbedEnglishV3(opts...)
@@ -86,8 +86,6 @@ func CohereEmbedEnglishV3(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 func CohereEmbedMultilingualV3(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.CohereEmbedMultilingualV3(opts...)
 }
-
-// CohereEmbedV4 creates an Embedder for Cohere Embed v4 (multimodal, EU cross-region).
 func CohereEmbedV4(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.CohereEmbedV4(opts...)
 }
