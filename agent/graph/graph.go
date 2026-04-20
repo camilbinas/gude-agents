@@ -342,7 +342,7 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 			e.mu.Unlock()
 			next, err := r.conditional(ctx, currentState)
 			if err != nil {
-				return err
+				return fmt.Errorf("graph: conditional router for %q: %w", nodeName, err)
 			}
 			if next != "" {
 				if _, ok := e.graph.nodes[next]; !ok {
