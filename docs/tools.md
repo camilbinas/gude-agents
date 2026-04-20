@@ -244,7 +244,7 @@ type WeatherInput struct {
 }
 
 func main() {
-    provider, err := bedrock.ClaudeSonnet4_6()
+    provider, err := bedrock.Standard()
     if err != nil {
         log.Fatal(err)
     }

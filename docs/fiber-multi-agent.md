@@ -53,11 +53,11 @@ import (
 
 func main() {
 	// --- Providers ---
-	haiku, err := bedrock.ClaudeHaiku4_5()
+	haiku, err := bedrock.Cheapest()
 	if err != nil {
 		log.Fatal(err)
 	}
-	sonnet, err := bedrock.ClaudeSonnet4_6()
+	sonnet, err := bedrock.Standard()
 	if err != nil {
 		log.Fatal(err)
 	}

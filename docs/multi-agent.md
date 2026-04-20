@@ -105,13 +105,13 @@ type SearchInput struct {
 
 func main() {
     // Use a fast model for the child agent.
-    haiku, err := bedrock.ClaudeHaiku4_5()
+    haiku, err := bedrock.Cheapest()
     if err != nil {
         log.Fatal(err)
     }
 
     // Use a more capable model for the orchestrator.
-    sonnet, err := bedrock.ClaudeSonnet4_6()
+    sonnet, err := bedrock.Standard()
     if err != nil {
         log.Fatal(err)
     }

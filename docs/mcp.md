@@ -185,7 +185,7 @@ func main() {
     fmt.Printf("Discovered %d MCP tools\n", len(mcpTools))
 
     // Create an agent with MCP tools.
-    provider, err := bedrock.ClaudeSonnet4_6()
+    provider, err := bedrock.Standard()
     if err != nil {
         log.Fatal(err)
     }
@@ -412,7 +412,7 @@ func main() {
         log.Fatal(err)
     }
 
-    provider, err := bedrock.ClaudeSonnet4_6()
+    provider, err := bedrock.Standard()
     if err != nil {
         log.Fatal(err)
     }

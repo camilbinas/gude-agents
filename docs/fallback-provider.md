@@ -27,7 +27,7 @@ import (
 )
 
 primary, err := anthropic.ClaudeSonnet4_6()
-backup, err  := bedrock.ClaudeSonnet4_6()
+backup, err  := bedrock.Standard()
 
 provider := fallback.New(primary, backup)
 
@@ -76,7 +76,7 @@ func (alwaysDown) ConverseStream(_ context.Context, _ agent.ConverseParams, _ ag
     return nil, fmt.Errorf("service unavailable")
 }
 
-backup, _ := bedrock.ClaudeSonnet4_6()
+backup, _ := bedrock.Standard()
 provider  := fallback.New(alwaysDown{}, backup)
 // Every call goes to Bedrock.
 ```

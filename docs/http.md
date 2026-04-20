@@ -37,7 +37,7 @@ The agent resolves the conversation ID at invocation time: context override firs
 
 ```go
 func main() {
-    provider, _ := bedrock.ClaudeSonnet4_6()
+    provider, _ := bedrock.Standard()
     store := memory.NewStore()
 
     // One agent instance for the entire server.

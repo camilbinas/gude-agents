@@ -160,7 +160,7 @@ func main() {
 	}
 	defer mem.Close()
 
-	provider, err := bedrock.ClaudeSonnet4_6()
+	provider, err := bedrock.Standard()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func main() {
 	}
 	fmt.Printf("Ingested %d documents\n", len(docs))
 
-	provider, err := bedrock.ClaudeSonnet4_6()
+	provider, err := bedrock.Standard()
 	if err != nil {
 		log.Fatal(err)
 	}

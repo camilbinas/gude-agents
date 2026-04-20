@@ -439,7 +439,7 @@ func main() {
     )
 
     // 5. Create an agent with automatic retrieval.
-    provider, err := bedrock.ClaudeSonnet4_6()
+    provider, err := bedrock.Standard()
     if err != nil {
         log.Fatal(err)
     }

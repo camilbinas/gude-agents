@@ -63,8 +63,8 @@ import (
 )
 
 func main() {
-	// 1. Create a provider — this one uses Claude Sonnet 4.6 on Bedrock.
-	provider, err := bedrock.ClaudeSonnet4_6()
+	// 1. Create a provider.
+	provider, err := bedrock.Standard()
 	if err != nil {
 		log.Fatal(err)
 	}
