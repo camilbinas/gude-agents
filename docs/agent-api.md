@@ -30,6 +30,21 @@ If the provider implements `CapabilityReporter`, the constructor logs warnings w
 
 Each `Option` is a `func(*Agent) error` that configures the agent at construction time.
 
+### `WithName`
+
+```go
+func WithName(name string) Option
+```
+
+Sets an optional name for the agent. The name is used as a dimension/attribute in metrics and tracing hooks, making it possible to distinguish telemetry from different agents in the same process. When set, metrics exporters add an `agent_name` (OTEL/Prometheus) or `AgentName` (CloudWatch) label, and the tracing hook adds an `agent.name` span attribute on the root invoke span.
+
+```go
+a, err := agent.Default(provider, instructions, tools,
+    agent.WithName("order-agent"),
+    otelmetrics.WithMetrics(mp),
+)
+```
+
 ### `WithMaxIterations`
 
 ```go

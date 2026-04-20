@@ -15,6 +15,16 @@ type Logger interface {
 // Documented in docs/agent-api.md — update when adding or changing options.
 type Option func(*Agent) error
 
+// WithName sets an optional name for the agent. The name is used as a
+// dimension/attribute in metrics and tracing hooks, making it possible to
+// distinguish telemetry from different agents in the same process.
+func WithName(name string) Option {
+	return func(a *Agent) error {
+		a.name = name
+		return nil
+	}
+}
+
 // WithMaxIterations sets the maximum number of call-execute-respond iterations.
 func WithMaxIterations(n int) Option {
 	return func(a *Agent) error {

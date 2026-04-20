@@ -38,6 +38,8 @@ type Agent struct {
 	normStrategy     *NormStrategy    // nil = use default (Merge); pointer to distinguish "not set" from "set to Merge"
 	normDisabled     bool             // true = skip normalization entirely
 	tracingHook      TracingHook      // nil = no tracing
+	metricsHook      MetricsHook      // nil = no metrics
+	name             string           // optional agent name for observability
 	loggerSet        bool             // true if WithLogger was explicitly called
 	providerTimeout  time.Duration    // 0 = no timeout (default)
 	retryMax         int              // 0 = no retry (default)
@@ -108,6 +110,9 @@ func (a *Agent) Instructions() string { return a.instructions }
 
 // MaxIterations returns the configured maximum iterations per invocation.
 func (a *Agent) MaxIterations() int { return a.maxIterations }
+
+// Name returns the agent's name, or empty if not set.
+func (a *Agent) Name() string { return a.name }
 
 // Provider returns the agent's LLM provider.
 func (a *Agent) Provider() Provider { return a.provider }
