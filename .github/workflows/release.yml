@@ -21,10 +21,6 @@ name: Release
 on:
   push:
     branches: [master]
-    paths:
-      - 'agent/**'
-      - 'go.mod'
-      - 'go.work'
 
 permissions:
   contents: write
