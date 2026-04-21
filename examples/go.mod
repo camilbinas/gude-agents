@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
-	github.com/camilbinas/gude-agents v0.3.0
+	github.com/camilbinas/gude-agents v0.2.1
 	github.com/camilbinas/gude-agents/agent/mcp v0.3.0
 	github.com/camilbinas/gude-agents/agent/memory/dynamodb v0.3.0
 	github.com/camilbinas/gude-agents/agent/memory/postgres v0.3.0
