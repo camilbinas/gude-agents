@@ -2,10 +2,8 @@ module github.com/camilbinas/gude-agents/agent/metrics/prometheus
 
 go 1.25.0
 
-replace github.com/camilbinas/gude-agents => ../../../
-
 require (
-	github.com/camilbinas/gude-agents v0.0.0-00010101000000-000000000000
+	github.com/camilbinas/gude-agents v0.2.0-00010101000000-000000000000
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	pgregory.net/rapid v1.2.0

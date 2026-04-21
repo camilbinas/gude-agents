@@ -3,11 +3,11 @@ module github.com/camilbinas/gude-agents/agent/provider/registry
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/gemini v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/gemini v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.2.0
 )
 
 require (
@@ -31,8 +31,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.12 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.0.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.0.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.2.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.2.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
@@ -56,18 +56,3 @@ require (
 	google.golang.org/protobuf v1.34.2 // indirect
 )
 
-replace (
-	github.com/camilbinas/gude-agents => ../../../
-	github.com/camilbinas/gude-agents/agent/mcp => ../../mcp
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../../memory/dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../../memory/redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../../memory/s3
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../anthropic
-	github.com/camilbinas/gude-agents/agent/provider/bedrock => ../bedrock
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../openai
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../../rag/bedrock
-	github.com/camilbinas/gude-agents/agent/rag/openai => ../../rag/openai
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../../rag/redis
-)

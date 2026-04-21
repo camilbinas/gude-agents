@@ -7,3 +7,4 @@ tmp/
 .kiro/
 .DS_Store
 **/testdata/rapid/
+go.work.sum

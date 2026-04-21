@@ -1,0 +1,29 @@
+go 1.25.0
+
+use (
+	.
+	./agent/mcp
+	./agent/memory/dynamodb
+	./agent/memory/postgres
+	./agent/memory/redis
+	./agent/memory/s3
+	./agent/memory/sqlite
+	./agent/metrics/cloudwatch
+	./agent/metrics/otel
+	./agent/metrics/prometheus
+	./agent/provider/anthropic
+	./agent/provider/bedrock
+	./agent/provider/fallback
+	./agent/provider/gemini
+	./agent/provider/openai
+	./agent/provider/registry
+	./agent/rag/bedrock
+	./agent/rag/gemini
+	./agent/rag/openai
+	./agent/rag/postgres
+	./agent/rag/redis
+	./agent/tracing
+	./agent/tracing/sentry
+	./examples
+	./integration
+)

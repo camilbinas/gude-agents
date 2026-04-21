@@ -4,25 +4,25 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
-	github.com/camilbinas/gude-agents v0.0.0
-	github.com/camilbinas/gude-agents/agent/mcp v0.0.0
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb v0.0.0
-	github.com/camilbinas/gude-agents/agent/memory/postgres v0.0.0
-	github.com/camilbinas/gude-agents/agent/memory/redis v0.0.0
-	github.com/camilbinas/gude-agents/agent/memory/s3 v0.0.0
-	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.0.0
-	github.com/camilbinas/gude-agents/agent/metrics/otel v0.0.0
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/fallback v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/postgres v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/redis v0.0.0
-	github.com/camilbinas/gude-agents/agent/tracing v0.0.0
-	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
+	github.com/camilbinas/gude-agents/agent/mcp v0.2.0
+	github.com/camilbinas/gude-agents/agent/memory/dynamodb v0.2.0
+	github.com/camilbinas/gude-agents/agent/memory/postgres v0.2.0
+	github.com/camilbinas/gude-agents/agent/memory/redis v0.2.0
+	github.com/camilbinas/gude-agents/agent/memory/s3 v0.2.0
+	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.2.0
+	github.com/camilbinas/gude-agents/agent/metrics/otel v0.2.0
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/fallback v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/postgres v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/redis v0.2.0
+	github.com/camilbinas/gude-agents/agent/tracing v0.2.0
+	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.2.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
@@ -108,27 +108,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace (
-	github.com/camilbinas/gude-agents => ../
-	github.com/camilbinas/gude-agents/agent/mcp => ../agent/mcp
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../agent/memory/dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/postgres => ../agent/memory/postgres
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../agent/memory/redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../agent/memory/s3
-	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch => ../agent/metrics/cloudwatch
-	github.com/camilbinas/gude-agents/agent/metrics/otel => ../agent/metrics/otel
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus => ../agent/metrics/prometheus
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../agent/provider/anthropic
-	github.com/camilbinas/gude-agents/agent/provider/bedrock => ../agent/provider/bedrock
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../agent/provider/fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../agent/provider/gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../agent/provider/openai
-	github.com/camilbinas/gude-agents/agent/provider/registry => ../agent/provider/registry
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../agent/rag/bedrock
-	github.com/camilbinas/gude-agents/agent/rag/gemini => ../agent/rag/gemini
-	github.com/camilbinas/gude-agents/agent/rag/openai => ../agent/rag/openai
-	github.com/camilbinas/gude-agents/agent/rag/postgres => ../agent/rag/postgres
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../agent/rag/redis
-	github.com/camilbinas/gude-agents/agent/tracing => ../agent/tracing
-	github.com/camilbinas/gude-agents/agent/tracing/sentry => ../agent/tracing/sentry
-)

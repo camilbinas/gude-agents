@@ -2,10 +2,8 @@ module github.com/camilbinas/gude-agents/agent/metrics/otel
 
 go 1.25.0
 
-replace github.com/camilbinas/gude-agents => ../../../
-
 require (
-	github.com/camilbinas/gude-agents v0.0.0-00010101000000-000000000000
+	github.com/camilbinas/gude-agents v0.2.0-00010101000000-000000000000
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0
 	go.opentelemetry.io/otel/sdk/metric v1.43.0

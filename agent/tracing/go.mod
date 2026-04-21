@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/tracing
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
 	go.opentelemetry.io/otel v1.35.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.35.0
 	go.opentelemetry.io/otel/sdk v1.35.0
@@ -28,20 +28,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
 	google.golang.org/grpc v1.71.0 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
-)
-
-replace (
-	github.com/camilbinas/gude-agents => ../../
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../memory/dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../memory/redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../memory/s3
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../provider/anthropic
-	github.com/camilbinas/gude-agents/agent/provider/bedrock => ../provider/bedrock
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../provider/fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../provider/gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../provider/openai
-	github.com/camilbinas/gude-agents/agent/provider/registry => ../provider/registry
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../rag/bedrock
-	github.com/camilbinas/gude-agents/agent/rag/openai => ../rag/openai
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../rag/redis
 )

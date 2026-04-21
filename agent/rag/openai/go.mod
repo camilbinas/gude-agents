@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/rag/openai
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
 	github.com/openai/openai-go/v3 v3.31.0
 	github.com/stretchr/testify v1.10.0
 	pgregory.net/rapid v1.2.0
@@ -17,20 +17,4 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-)
-
-replace (
-	github.com/camilbinas/gude-agents => ../../../
-	github.com/camilbinas/gude-agents/agent/mcp => ../../mcp
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../../memory/dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../../memory/redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../../memory/s3
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../../provider/anthropic
-	github.com/camilbinas/gude-agents/agent/provider/bedrock => ../../provider/bedrock
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../../provider/fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../../provider/gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../../provider/openai
-	github.com/camilbinas/gude-agents/agent/provider/registry => ../../provider/registry
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../bedrock
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../redis
 )

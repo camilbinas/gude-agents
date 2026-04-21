@@ -2,7 +2,6 @@ package dynamodb
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -10,55 +9,11 @@ import (
 
 	dbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/testutil"
 	"pgregory.net/rapid"
 )
 
-// genContentBlock generates a random ContentBlock: TextBlock, ToolUseBlock, or ToolResultBlock.
-func genContentBlock(t *rapid.T) agent.ContentBlock {
-	kind := rapid.IntRange(0, 2).Draw(t, "blockKind")
-	switch kind {
-	case 0:
-		return agent.TextBlock{
-			Text: rapid.StringMatching(`[a-zA-Z0-9 ]{0,50}`).Draw(t, "text"),
-		}
-	case 1:
-		jsonOptions := []json.RawMessage{
-			json.RawMessage(`{}`),
-			json.RawMessage(`{"key":"value"}`),
-			json.RawMessage(`{"a":1,"b":true}`),
-		}
-		return agent.ToolUseBlock{
-			ToolUseID: rapid.StringMatching(`tu_[a-zA-Z0-9]{4,12}`).Draw(t, "toolUseID"),
-			Name:      rapid.StringMatching(`[a-z_]{1,20}`).Draw(t, "toolName"),
-			Input:     rapid.SampledFrom(jsonOptions).Draw(t, "input"),
-		}
-	default:
-		return agent.ToolResultBlock{
-			ToolUseID: rapid.StringMatching(`tu_[a-zA-Z0-9]{4,12}`).Draw(t, "toolResultID"),
-			Content:   rapid.StringMatching(`[a-zA-Z0-9 ]{0,50}`).Draw(t, "resultContent"),
-			IsError:   rapid.Bool().Draw(t, "isError"),
-		}
-	}
-}
-
-// genMessages generates a random slice of 0–10 agent.Message, each with 1–5 ContentBlocks.
-func genMessages(t *rapid.T) []agent.Message {
-	numMsgs := rapid.IntRange(0, 10).Draw(t, "numMessages")
-	msgs := make([]agent.Message, numMsgs)
-	roles := []agent.Role{agent.RoleUser, agent.RoleAssistant}
-	for i := range msgs {
-		numBlocks := rapid.IntRange(1, 5).Draw(t, fmt.Sprintf("numBlocks_%d", i))
-		blocks := make([]agent.ContentBlock, numBlocks)
-		for j := range blocks {
-			blocks[j] = genContentBlock(t)
-		}
-		msgs[i] = agent.Message{
-			Role:    rapid.SampledFrom(roles).Draw(t, fmt.Sprintf("role_%d", i)),
-			Content: blocks,
-		}
-	}
-	return msgs
-}
+func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
 // newTestMemory creates a DynamoDBMemory backed by the given mock with default test settings.
 func newTestMemory(mock *mockDynamoDBClient, keyPrefix string) *DynamoDBMemory {

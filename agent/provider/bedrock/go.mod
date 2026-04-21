@@ -7,8 +7,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.4
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4
 	github.com/aws/smithy-go v1.24.2
-	github.com/camilbinas/gude-agents v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.2.0
 	pgregory.net/rapid v1.2.0
 )
 
@@ -25,20 +25,4 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.24.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.12 // indirect
-)
-
-replace (
-	github.com/camilbinas/gude-agents => ../../../
-	github.com/camilbinas/gude-agents/agent/mcp => ../../mcp
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../../memory/dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../../memory/redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../../memory/s3
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../anthropic
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../openai
-	github.com/camilbinas/gude-agents/agent/provider/registry => ../registry
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../../rag/bedrock
-	github.com/camilbinas/gude-agents/agent/rag/openai => ../../rag/openai
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../../rag/redis
 )

@@ -3,12 +3,12 @@ module github.com/camilbinas/gude-agents/integration
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.0.0
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.0.0
-	github.com/camilbinas/gude-agents/agent/provider/registry v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.0.0
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.2.0
+	github.com/camilbinas/gude-agents/agent/provider/registry v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.2.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.2.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 )
@@ -35,10 +35,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.12 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.0.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/gemini v0.0.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.0.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/gemini v0.0.0-00010101000000-000000000000 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.2.0 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/gemini v0.2.0 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.2.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/gemini v0.2.0-00010101000000-000000000000 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -67,22 +67,3 @@ require (
 	google.golang.org/protobuf v1.36.8 // indirect
 )
 
-replace (
-	github.com/camilbinas/gude-agents => ../
-	github.com/camilbinas/gude-agents/agent/mcp => ../agent/mcp
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../agent/memory/dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../agent/memory/redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../agent/memory/s3
-	github.com/camilbinas/gude-agents/agent/memory/sqlite => ../agent/memory/sqlite
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus => ../agent/metrics/prometheus
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../agent/provider/anthropic
-	github.com/camilbinas/gude-agents/agent/provider/bedrock => ../agent/provider/bedrock
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../agent/provider/fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../agent/provider/gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../agent/provider/openai
-	github.com/camilbinas/gude-agents/agent/provider/registry => ../agent/provider/registry
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../agent/rag/bedrock
-	github.com/camilbinas/gude-agents/agent/rag/gemini => ../agent/rag/gemini
-	github.com/camilbinas/gude-agents/agent/rag/openai => ../agent/rag/openai
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../agent/rag/redis
-)

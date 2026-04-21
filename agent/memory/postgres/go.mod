@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/memory/postgres
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.0.0
+	github.com/camilbinas/gude-agents v0.2.0
 	github.com/jackc/pgx/v5 v5.7.5
 	pgregory.net/rapid v1.2.0
 )
@@ -17,20 +17,3 @@ require (
 	golang.org/x/text v0.24.0 // indirect
 )
 
-replace (
-	github.com/camilbinas/gude-agents => ../../../
-	github.com/camilbinas/gude-agents/agent/mcp => ../../mcp
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb => ../dynamodb
-	github.com/camilbinas/gude-agents/agent/memory/redis => ../redis
-	github.com/camilbinas/gude-agents/agent/memory/s3 => ../s3
-	github.com/camilbinas/gude-agents/agent/memory/sqlite => ../sqlite
-	github.com/camilbinas/gude-agents/agent/provider/anthropic => ../../provider/anthropic
-	github.com/camilbinas/gude-agents/agent/provider/bedrock => ../../provider/bedrock
-	github.com/camilbinas/gude-agents/agent/provider/fallback => ../../provider/fallback
-	github.com/camilbinas/gude-agents/agent/provider/gemini => ../../provider/gemini
-	github.com/camilbinas/gude-agents/agent/provider/openai => ../../provider/openai
-	github.com/camilbinas/gude-agents/agent/provider/registry => ../../provider/registry
-	github.com/camilbinas/gude-agents/agent/rag/bedrock => ../../rag/bedrock
-	github.com/camilbinas/gude-agents/agent/rag/openai => ../../rag/openai
-	github.com/camilbinas/gude-agents/agent/rag/redis => ../../rag/redis
-)
