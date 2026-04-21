@@ -1,13 +1,14 @@
 # Automated release workflow for the gude-agents multi-module Go repository.
 #
-# Trigger: push to main with conventional commit messages.
+# Trigger: push to master with conventional commit messages.
 # Behavior:
 #   1. Parses commits since the last root tag to determine the version bump.
-#   2. Updates every submodule's go.mod to require the new root version.
-#   3. Commits the go.mod changes.
-#   4. Creates tags for the root module and every submodule listed in go.work.
-#   5. Pushes tags and the go.mod update commit.
-#   6. Creates a GitHub Release with auto-generated notes.
+#   2. Verifies the code builds (using go.work for local module resolution).
+#   3. Updates every submodule's go.mod to require the new root version.
+#   4. Commits the go.mod changes.
+#   5. Creates tags for the root module and every submodule listed in go.work.
+#   6. Pushes tags and the go.mod update commit.
+#   7. Creates a GitHub Release with auto-generated notes.
 #
 # Conventional commit prefixes:
 #   feat:  → minor bump   (0.2.1 → 0.3.0)
@@ -31,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history for tag detection and commit parsing
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v5
@@ -60,18 +61,15 @@ jobs:
           COMMITS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%s" -- . 2>/dev/null || git log --pretty=format:"%s" -- .)
 
           while IFS= read -r msg; do
-            # Breaking change: major bump.
             if echo "$msg" | grep -qE '^[a-z]+(\(.+\))?!:' || echo "$msg" | grep -q 'BREAKING CHANGE'; then
               BUMP="major"
               break
             fi
-            # feat: minor bump (don't downgrade from major).
             if echo "$msg" | grep -qE '^feat(\(.+\))?:'; then
               if [ "$BUMP" != "major" ]; then
                 BUMP="minor"
               fi
             fi
-            # fix: patch bump (don't downgrade from minor/major).
             if echo "$msg" | grep -qE '^fix(\(.+\))?:'; then
               if [ "$BUMP" = "none" ]; then
                 BUMP="patch"
@@ -85,7 +83,6 @@ jobs:
             exit 0
           fi
 
-          # Compute new version.
           case "$BUMP" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
@@ -98,13 +95,21 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "Bump: $BUMP — $LATEST_TAG → $NEW_VERSION"
 
+      # Build verification uses go.work so local modules resolve against the
+      # working tree. This runs BEFORE go.mod files are updated to the new
+      # (not-yet-tagged) version, avoiding the chicken-and-egg problem.
+      - name: Verify build
+        if: steps.bump.outputs.skip == 'false'
+        run: |
+          go build ./agent/...
+          go vet ./agent/...
+
       - name: Update submodule go.mod files
         if: steps.bump.outputs.skip == 'false'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
         run: |
           ROOT_MODULE="github.com/camilbinas/gude-agents"
-          VERSION_NUM="${NEW_VERSION#v}"
 
           # Parse submodule paths from go.work (skip ".", "examples", "integration").
           SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
@@ -114,7 +119,6 @@ jobs:
           for sub in $SUBMODULES; do
             GOMOD="$sub/go.mod"
             if [ -f "$GOMOD" ]; then
-              # Replace the root module version in the require line.
               sed -i "s|${ROOT_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${ROOT_MODULE} ${NEW_VERSION}|g" "$GOMOD"
               echo "  Updated $GOMOD"
             fi
@@ -123,19 +127,12 @@ jobs:
           # Also update examples/go.mod.
           if [ -f "examples/go.mod" ]; then
             sed -i "s|${ROOT_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${ROOT_MODULE} ${NEW_VERSION}|g" examples/go.mod
-            # Update submodule requires in examples too.
             for sub in $SUBMODULES; do
               SUB_MODULE="${ROOT_MODULE}/${sub}"
               sed -i "s|${SUB_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${SUB_MODULE} ${NEW_VERSION}|g" examples/go.mod
             done
             echo "  Updated examples/go.mod"
           fi
-
-      - name: Verify build
-        if: steps.bump.outputs.skip == 'false'
-        run: |
-          go build ./agent/...
-          go vet ./agent/...
 
       - name: Commit go.mod updates
         if: steps.bump.outputs.skip == 'false'
@@ -145,11 +142,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage all modified go.mod files.
-          git add -A '*.go.mod' '*/go.mod' 'go.mod' || true
-          git add -A . || true
+          git add -A .
 
-          # Only commit if there are changes.
           if git diff --cached --quiet; then
             echo "No go.mod changes to commit."
           else
@@ -161,11 +155,9 @@ jobs:
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
         run: |
-          # Root tag.
           git tag "$NEW_VERSION"
           echo "Tagged: $NEW_VERSION"
 
-          # Submodule tags — parse from go.work.
           SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
 
           for sub in $SUBMODULES; do
@@ -186,9 +178,6 @@ jobs:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
           LATEST_TAG: ${{ steps.bump.outputs.latest_tag }}
         run: |
-          # Count submodule tags for the release notes.
-          TAG_COUNT=$(grep -cE '^\s+\./' go.work | head -1)
-
           gh release create "$NEW_VERSION" \
             --title "$NEW_VERSION" \
             --generate-notes \
