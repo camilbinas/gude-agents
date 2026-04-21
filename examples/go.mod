@@ -4,25 +4,25 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
-	github.com/camilbinas/gude-agents v0.3.0
-	github.com/camilbinas/gude-agents/agent/mcp v0.3.0
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb v0.3.0
-	github.com/camilbinas/gude-agents/agent/memory/postgres v0.3.0
-	github.com/camilbinas/gude-agents/agent/memory/redis v0.3.0
-	github.com/camilbinas/gude-agents/agent/memory/s3 v0.3.0
-	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.3.0
-	github.com/camilbinas/gude-agents/agent/metrics/otel v0.3.0
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.3.0
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.3.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.3.0
-	github.com/camilbinas/gude-agents/agent/provider/fallback v0.3.0
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.3.0
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.3.0
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.3.0
-	github.com/camilbinas/gude-agents/agent/rag/postgres v0.3.0
-	github.com/camilbinas/gude-agents/agent/rag/redis v0.3.0
-	github.com/camilbinas/gude-agents/agent/tracing v0.3.0
-	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.3.0
+	github.com/camilbinas/gude-agents v0.2.1
+	github.com/camilbinas/gude-agents/agent/mcp v0.2.1
+	github.com/camilbinas/gude-agents/agent/memory/dynamodb v0.2.1
+	github.com/camilbinas/gude-agents/agent/memory/postgres v0.2.1
+	github.com/camilbinas/gude-agents/agent/memory/redis v0.2.1
+	github.com/camilbinas/gude-agents/agent/memory/s3 v0.2.1
+	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.2.1
+	github.com/camilbinas/gude-agents/agent/metrics/otel v0.2.1
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.2.1
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.2.1
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.2.1
+	github.com/camilbinas/gude-agents/agent/provider/fallback v0.2.1
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.2.1
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.2.1
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.2.1
+	github.com/camilbinas/gude-agents/agent/rag/postgres v0.2.1
+	github.com/camilbinas/gude-agents/agent/rag/redis v0.2.1
+	github.com/camilbinas/gude-agents/agent/tracing v0.2.1
+	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.2.1
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
@@ -76,7 +76,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
-	github.com/pgvector/pgvector-go v0.3.0 // indirect
+	github.com/pgvector/pgvector-go v0.2.1 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect

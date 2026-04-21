@@ -95,15 +95,14 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "Bump: $BUMP — $LATEST_TAG → $NEW_VERSION"
 
-      # Build verification uses go.work so local modules resolve against the
-      # working tree. This runs BEFORE go.mod files are updated to the new
-      # (not-yet-tagged) version, avoiding the chicken-and-egg problem.
+      # Build and test using go.work so local modules resolve against the
+      # working tree — no published tags needed at this point.
       - name: Verify build and tests
         if: steps.bump.outputs.skip == 'false'
         run: |
-          go build ./agent/...
-          go vet ./agent/...
-          go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
+          GOWORK=$(pwd)/go.work go build ./agent/...
+          GOWORK=$(pwd)/go.work go vet ./agent/...
+          GOWORK=$(pwd)/go.work go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
 
       - name: Update submodule go.mod files
         if: steps.bump.outputs.skip == 'false'
