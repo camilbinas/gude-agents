@@ -53,6 +53,24 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 		finishMetricsInvoke = a.metricsHook.OnInvokeStart()
 	}
 
+	// Start logging invoke tracking if logging hook is enabled.
+	if a.loggingHook != nil {
+		var modelID string
+		if mi, ok := a.provider.(ModelIdentifier); ok {
+			modelID = mi.ModelID()
+		}
+		a.loggingHook.OnInvokeStart(InvokeSpanParams{
+			MaxIterations:   a.maxIterations,
+			ModelID:         modelID,
+			ConversationID:  convID,
+			UserMessage:     userMessage,
+			SystemPrompt:    a.instructions,
+			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
+			AgentName:       a.name,
+		})
+	}
+
+	invokeStart := time.Now()
 	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb)
 	cumulative = usage
 
@@ -62,6 +80,10 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 
 	if finishMetricsInvoke != nil {
 		finishMetricsInvoke(err, cumulative)
+	}
+
+	if a.loggingHook != nil {
+		a.loggingHook.OnInvokeEnd(err, cumulative, time.Since(invokeStart))
 	}
 
 	return cumulative, err
@@ -106,6 +128,10 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			a.metricsHook.OnGuardrailComplete("input", err != nil)
 		}
 
+		if a.loggingHook != nil {
+			a.loggingHook.OnGuardrailComplete("input", err != nil, err)
+		}
+
 		if err != nil {
 			return cumulative, &GuardrailError{Direction: "input", Cause: err}
 		}
@@ -120,10 +146,18 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			memCtx, finishMemLoad = a.tracingHook.OnMemoryStart(ctx, "load", convID)
 		}
 
+		if a.loggingHook != nil {
+			a.loggingHook.OnMemoryStart("load", convID)
+		}
+
+		memLoadStart := time.Now()
 		history, err := a.memory.Load(memCtx, convID)
 
 		if finishMemLoad != nil {
 			finishMemLoad(err)
+		}
+		if a.loggingHook != nil {
+			a.loggingHook.OnMemoryEnd("load", convID, err, time.Since(memLoadStart))
 		}
 		if err != nil {
 			return cumulative, fmt.Errorf("memory load: %w", err)
@@ -153,10 +187,18 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			retCtx, finishRetriever = a.tracingHook.OnRetrieverStart(ctx, msg)
 		}
 
+		if a.loggingHook != nil {
+			a.loggingHook.OnRetrieverStart(msg)
+		}
+
+		retrieverStart := time.Now()
 		docs, err := a.retriever.Retrieve(retCtx, msg)
 
 		if finishRetriever != nil {
 			finishRetriever(err, len(docs))
+		}
+		if a.loggingHook != nil {
+			a.loggingHook.OnRetrieverEnd(err, len(docs), time.Since(retrieverStart))
 		}
 		if err != nil {
 			return cumulative, fmt.Errorf("retriever: %w", err)
@@ -191,8 +233,6 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 	var cumulative TokenUsage
 
 	for iteration := range a.maxIterations {
-		a.logf("[agent] iteration %d", iteration+1)
-
 		iterCtx := ctx
 		var finishIteration func(toolCount int, isFinal bool)
 		if a.tracingHook != nil {
@@ -201,6 +241,12 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 		if a.metricsHook != nil {
 			a.metricsHook.OnIterationStart()
+		}
+
+		if a.loggingHook != nil {
+			a.loggingHook.OnIterationStart(iteration + 1)
+		} else {
+			a.logf("[agent] iteration %d", iteration+1)
 		}
 
 		hasOutputGuardrails := len(a.outputGuardrails) > 0
@@ -243,11 +289,16 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			finishMetricsProvider = a.metricsHook.OnProviderCallStart(metricsModelID)
 		}
 
+		if a.loggingHook != nil {
+			a.loggingHook.OnProviderCallStart(metricsModelID)
+		}
+
 		a.toolsMu.RLock()
 		currentToolSpecs := make([]tool.Spec, len(a.toolSpecs))
 		copy(currentToolSpecs, a.toolSpecs)
 		a.toolsMu.RUnlock()
 
+		providerCallStart := time.Now()
 		resp, err := a.callProviderWithRetry(providerCtx, ConverseParams{
 			Messages:         converseMessages,
 			System:           systemPrompt,
@@ -257,11 +308,15 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		}, streamCB)
 
 		if err != nil {
+			providerCallDuration := time.Since(providerCallStart)
 			if finishProvider != nil {
 				finishProvider(err, TokenUsage{}, 0, "")
 			}
 			if finishMetricsProvider != nil {
 				finishMetricsProvider(err, TokenUsage{})
+			}
+			if a.loggingHook != nil {
+				a.loggingHook.OnProviderCallEnd(err, TokenUsage{}, 0, providerCallDuration)
 			}
 			if finishIteration != nil {
 				finishIteration(0, false)
@@ -279,6 +334,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 		if finishMetricsProvider != nil {
 			finishMetricsProvider(nil, resp.Usage)
+		}
+
+		if a.loggingHook != nil {
+			a.loggingHook.OnProviderCallEnd(nil, resp.Usage, len(resp.ToolCalls), time.Since(providerCallStart))
 		}
 
 		cumulative.InputTokens += resp.Usage.InputTokens
@@ -377,6 +436,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				a.metricsHook.OnGuardrailComplete("output", gErr != nil)
 			}
 
+			if a.loggingHook != nil {
+				a.loggingHook.OnGuardrailComplete("output", gErr != nil, gErr)
+			}
+
 			if gErr != nil {
 				if finishIteration != nil {
 					finishIteration(0, true)
@@ -411,10 +474,18 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				memCtx, finishMemSave = a.tracingHook.OnMemoryStart(ctx, "save", convID)
 			}
 
+			if a.loggingHook != nil {
+				a.loggingHook.OnMemoryStart("save", convID)
+			}
+
+			memSaveStart := time.Now()
 			err := a.memory.Save(memCtx, convID, messages[ragOffset:])
 
 			if finishMemSave != nil {
 				finishMemSave(err)
+			}
+			if a.loggingHook != nil {
+				a.loggingHook.OnMemoryEnd("save", convID, err, time.Since(memSaveStart))
 			}
 			if err != nil {
 				return cumulative, fmt.Errorf("memory save: %w", err)
@@ -431,6 +502,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 	if a.tracingHook != nil {
 		a.tracingHook.OnMaxIterationsExceeded(ctx, a.maxIterations)
+	}
+
+	if a.loggingHook != nil {
+		a.loggingHook.OnMaxIterationsExceeded(a.maxIterations)
 	}
 
 	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
@@ -471,7 +546,11 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 		}
 
 		delay := a.retryBaseDelay << uint(attempt)
-		a.logf("[agent] provider call failed (attempt %d/%d), retrying in %s: %v", attempt+1, maxAttempts, delay, err)
+		if a.loggingHook != nil {
+			a.loggingHook.OnProviderCallEnd(err, TokenUsage{}, 0, 0)
+		} else {
+			a.logf("[agent] provider call failed (attempt %d/%d), retrying in %s: %v", attempt+1, maxAttempts, delay, err)
+		}
 
 		select {
 		case <-time.After(delay):
@@ -489,8 +568,6 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 	results := make([]ToolResultBlock, len(calls))
 
 	exec := func(i int, tc tool.Call) {
-		a.logf("[tool] %s", tc.Name)
-
 		a.toolsMu.RLock()
 		t, ok := a.tools[tc.Name]
 		a.toolsMu.RUnlock()
@@ -514,14 +591,26 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			finishMetricsTool = a.metricsHook.OnToolStart(tc.Name)
 		}
 
+		if a.loggingHook != nil {
+			a.loggingHook.OnToolStart(tc.Name)
+		} else {
+			a.logf("[tool] %s", tc.Name)
+		}
+
+		toolStart := time.Now()
+
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
-			a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
 			if finishTool != nil {
 				finishTool(err, "")
 			}
 			if finishMetricsTool != nil {
 				finishMetricsTool(err)
+			}
+			if a.loggingHook != nil {
+				a.loggingHook.OnToolEnd(tc.Name, err, time.Since(toolStart))
+			} else {
+				a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
 			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -541,12 +630,16 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 		out, err := handler(toolCtx, tc.Name, tc.Input)
 		if err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
-			a.logf("[tool] %s error: %v", tc.Name, toolErr)
 			if finishTool != nil {
 				finishTool(err, "")
 			}
 			if finishMetricsTool != nil {
 				finishMetricsTool(err)
+			}
+			if a.loggingHook != nil {
+				a.loggingHook.OnToolEnd(tc.Name, err, time.Since(toolStart))
+			} else {
+				a.logf("[tool] %s error: %v", tc.Name, toolErr)
 			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -564,7 +657,11 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			finishMetricsTool(nil)
 		}
 
-		a.logf("[tool] %s done", tc.Name)
+		if a.loggingHook != nil {
+			a.loggingHook.OnToolEnd(tc.Name, nil, time.Since(toolStart))
+		} else {
+			a.logf("[tool] %s done", tc.Name)
+		}
 		results[i] = ToolResultBlock{
 			ToolUseID: tc.ToolUseID,
 			Content:   out,

@@ -54,6 +54,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Advanced Topics
 
+- [Structured Logging](logging.md) — `log/slog`-based structured logging for agent lifecycle events
 - [OpenTelemetry Tracing](tracing.md) — Distributed tracing with spans for invocations, provider calls, and tools
 - [Prometheus Metrics](metrics.md) — Counters and histograms for agent lifecycle events
 - [OTEL Metrics](metrics-otel.md) — OpenTelemetry metrics exporter for OTLP-compatible backends

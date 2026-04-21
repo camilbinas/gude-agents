@@ -243,6 +243,7 @@ func main() {
 
 ## See Also
 
+- [Structured Logging](logging.md) — `WithGraphLogging` for structured log output
 - [Tracing](tracing.md) — `WithGraphTracing` for OpenTelemetry instrumentation
 - [Multi-Agent Composition](multi-agent.md) — `AgentAsTool` for simpler parent-child patterns
 - [Agent API Reference](agent-api.md) — agent options and invoke methods

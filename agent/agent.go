@@ -39,6 +39,7 @@ type Agent struct {
 	normDisabled     bool             // true = skip normalization entirely
 	tracingHook      TracingHook      // nil = no tracing
 	metricsHook      MetricsHook      // nil = no metrics
+	loggingHook      LoggingHook      // nil = no structured logging
 	name             string           // optional agent name for observability
 	loggerSet        bool             // true if WithLogger was explicitly called
 	providerTimeout  time.Duration    // 0 = no timeout (default)

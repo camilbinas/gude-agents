@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 )
@@ -44,6 +45,7 @@ type Graph struct {
 	logger      agent.Logger
 	tracingHook GraphTracingHook // nil = no tracing
 	metricsHook GraphMetricsHook // nil = no metrics
+	loggingHook GraphLoggingHook // nil = no structured logging
 }
 
 // GraphOption configures a Graph.
@@ -278,10 +280,6 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 	stateCopy := CopyState(e.state)
 	e.mu.Unlock()
 
-	if e.graph.logger != nil {
-		e.graph.logger.Printf("[graph] node %q starting (iteration %d)", nodeName, iterCount)
-	}
-
 	// Start node tracing span if hook is set.
 	var finishNode func(err error)
 	if e.graph.tracingHook != nil {
@@ -294,6 +292,15 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 		finishNodeMetrics = e.graph.metricsHook.OnNodeStart(nodeName)
 	}
 
+	// Start node logging if logging hook is set.
+	var nodeStart time.Time
+	if e.graph.loggingHook != nil {
+		e.graph.loggingHook.OnNodeStart(nodeName)
+		nodeStart = time.Now()
+	} else if e.graph.logger != nil {
+		e.graph.logger.Printf("[graph] node %q starting (iteration %d)", nodeName, iterCount)
+	}
+
 	result, err := fn(ctx, stateCopy)
 
 	if finishNode != nil {
@@ -302,15 +309,18 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 	if finishNodeMetrics != nil {
 		finishNodeMetrics(err)
 	}
+	if e.graph.loggingHook != nil {
+		e.graph.loggingHook.OnNodeEnd(nodeName, err, time.Since(nodeStart))
+	}
 
 	if err != nil {
-		if e.graph.logger != nil {
+		if e.graph.loggingHook == nil && e.graph.logger != nil {
 			e.graph.logger.Printf("[graph] node %q failed: %v", nodeName, err)
 		}
 		return err
 	}
 
-	if e.graph.logger != nil {
+	if e.graph.loggingHook == nil && e.graph.logger != nil {
 		e.graph.logger.Printf("[graph] node %q completed", nodeName)
 	}
 
@@ -518,6 +528,13 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 		finishMetrics = g.metricsHook.OnGraphRunStart()
 	}
 
+	// Start graph logging if logging hook is set.
+	var graphRunStart time.Time
+	if g.loggingHook != nil {
+		g.loggingHook.OnGraphRunStart()
+		graphRunStart = time.Now()
+	}
+
 	exec := &runExec{
 		graph:     g,
 		state:     CopyState(initial),
@@ -531,6 +548,9 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 	}
 	if finishMetrics != nil {
 		finishMetrics(err, exec.iterations)
+	}
+	if g.loggingHook != nil {
+		g.loggingHook.OnGraphRunEnd(err, exec.iterations, time.Since(graphRunStart))
 	}
 
 	if err != nil {

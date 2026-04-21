@@ -183,7 +183,7 @@ a, err := agent.New(provider, instructions, tools,
 )
 ```
 
-Both hooks are separate fields on the `Agent` struct. The agent loop nil-checks each independently. The metrics hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.
+Both hooks are separate fields on the `Agent` struct (alongside the logging hook). The agent loop nil-checks each independently. The metrics hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.
 
 ## Custom Registerer for Testing
 
@@ -201,12 +201,13 @@ families, _ := reg.Gather()
 
 ## Swarm and Graph Metrics
 
-The core `agent` package also defines `SwarmMetricsHook` and `GraphMetricsHook` interfaces for swarm-level and graph-level metrics (handoff counts, agent turn durations, node execution durations, graph run durations). These are wired into `Swarm.Run` and `Graph.Run` alongside the existing tracing hooks.
+The core `agent` package also defines `SwarmMetricsHook` and `GraphMetricsHook` interfaces for swarm-level and graph-level metrics (handoff counts, agent turn durations, node execution durations, graph run durations). These are wired into `Swarm.Run` and `Graph.Run` alongside the existing tracing and logging hooks.
 
 Metrics exporters can implement these interfaces to add orchestration-level counters and histograms on top of the per-agent metrics that `MetricsHook` already provides.
 
 ## See Also
 
+- [Structured Logging](logging.md) — `log/slog`-based structured logging
 - [OTEL Metrics](metrics-otel.md) — OpenTelemetry metrics exporter
 - [CloudWatch Metrics](metrics-cloudwatch.md) — AWS CloudWatch metrics exporter
 - [OpenTelemetry Tracing](tracing.md) — distributed tracing with spans

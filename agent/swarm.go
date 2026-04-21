@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -41,6 +42,7 @@ type Swarm struct {
 	conversationID string
 	tracingHook    SwarmTracingHook // nil = no tracing
 	metricsHook    SwarmMetricsHook // nil = no metrics
+	loggingHook    SwarmLoggingHook // nil = no structured logging
 }
 
 // swarmEntry holds a member plus the handoff tools injected into it.
@@ -216,6 +218,13 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		finishSwarmMetrics = s.metricsHook.OnSwarmRunStart()
 	}
 
+	// Log swarm run start if logging hook is enabled.
+	var swarmRunStart time.Time
+	if s.loggingHook != nil {
+		swarmRunStart = time.Now()
+		s.loggingHook.OnSwarmRunStart(currentAgent, len(s.members), s.maxHandoffs)
+	}
+
 	// Load conversation history and active agent from memory.
 	var messages []Message
 	if s.memory != nil {
@@ -226,6 +235,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			}
 			if finishSwarmMetrics != nil {
 				finishSwarmMetrics(err, result)
+			}
+			if s.loggingHook != nil {
+				s.loggingHook.OnSwarmRunEnd(err, result, time.Since(swarmRunStart))
 			}
 			return result, fmt.Errorf("swarm memory load: %w", err)
 		}
@@ -259,8 +271,6 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			return result, fmt.Errorf("unknown swarm member: %q", currentAgent)
 		}
 
-		s.logf("[swarm] active agent: %s (handoff %d)", currentAgent, handoff)
-
 		// Create a fresh invocation context for handoff detection.
 		ic := NewInvocationContext()
 		agentCtx := WithInvocationContext(ctx, ic)
@@ -277,6 +287,15 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			finishAgentMetrics = s.metricsHook.OnSwarmAgentStart(currentAgent)
 		}
 
+		// Log agent start if logging hook is enabled.
+		var agentTurnStart time.Time
+		if s.loggingHook != nil {
+			agentTurnStart = time.Now()
+			s.loggingHook.OnSwarmAgentStart(currentAgent)
+		} else {
+			s.logf("[swarm] active agent: %s (handoff %d)", currentAgent, handoff)
+		}
+
 		// Run the agent's inner loop manually so we can intercept handoffs.
 		usage, finalText, handedOff, err := s.runAgent(agentCtx, entry, messages, cb)
 		result.Usage.InputTokens += usage.InputTokens
@@ -289,11 +308,17 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			if finishAgentMetrics != nil {
 				finishAgentMetrics(err)
 			}
+			if s.loggingHook != nil {
+				s.loggingHook.OnSwarmAgentEnd(currentAgent, err, time.Since(agentTurnStart))
+			}
 			if finishSwarmRun != nil {
 				finishSwarmRun(err, result)
 			}
 			if finishSwarmMetrics != nil {
 				finishSwarmMetrics(err, result)
+			}
+			if s.loggingHook != nil {
+				s.loggingHook.OnSwarmRunEnd(err, result, time.Since(swarmRunStart))
 			}
 			return result, fmt.Errorf("agent %q: %w", currentAgent, err)
 		}
@@ -310,11 +335,17 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				if finishAgentMetrics != nil {
 					finishAgentMetrics(handoffErr)
 				}
+				if s.loggingHook != nil {
+					s.loggingHook.OnSwarmAgentEnd(currentAgent, handoffErr, time.Since(agentTurnStart))
+				}
 				if finishSwarmRun != nil {
 					finishSwarmRun(handoffErr, result)
 				}
 				if finishSwarmMetrics != nil {
 					finishSwarmMetrics(handoffErr, result)
+				}
+				if s.loggingHook != nil {
+					s.loggingHook.OnSwarmRunEnd(handoffErr, result, time.Since(swarmRunStart))
 				}
 				return result, handoffErr
 			}
@@ -326,8 +357,15 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			if finishAgentMetrics != nil {
 				finishAgentMetrics(nil)
 			}
+			if s.loggingHook != nil {
+				s.loggingHook.OnSwarmAgentEnd(currentAgent, nil, time.Since(agentTurnStart))
+			}
 
-			s.logf("[swarm] handoff: %s → %s", currentAgent, targetName)
+			if s.loggingHook != nil {
+				s.loggingHook.OnSwarmHandoff(currentAgent, targetName)
+			} else {
+				s.logf("[swarm] handoff: %s → %s", currentAgent, targetName)
+			}
 			result.HandoffHistory = append(result.HandoffHistory, Handoff{
 				From: currentAgent,
 				To:   targetName,
@@ -352,7 +390,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			}
 
 			if loopDetected {
-				s.logf("[swarm] loop detected: %s was already active — injecting handle-it instruction", targetName)
+				if s.loggingHook == nil {
+					s.logf("[swarm] loop detected: %s was already active — injecting handle-it instruction", targetName)
+				}
 				messages = append(messages, Message{
 					Role: RoleUser,
 					Content: []ContentBlock{TextBlock{
@@ -383,6 +423,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		if finishAgentMetrics != nil {
 			finishAgentMetrics(nil)
 		}
+		if s.loggingHook != nil {
+			s.loggingHook.OnSwarmAgentEnd(currentAgent, nil, time.Since(agentTurnStart))
+		}
 
 		// Append assistant response to messages for memory.
 		messages = append(messages, Message{
@@ -398,6 +441,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				}
 				if finishSwarmMetrics != nil {
 					finishSwarmMetrics(err, result)
+				}
+				if s.loggingHook != nil {
+					s.loggingHook.OnSwarmRunEnd(err, result, time.Since(swarmRunStart))
 				}
 				return result, fmt.Errorf("swarm memory save: %w", err)
 			}
@@ -419,6 +465,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		if finishSwarmMetrics != nil {
 			finishSwarmMetrics(nil, result)
 		}
+		if s.loggingHook != nil {
+			s.loggingHook.OnSwarmRunEnd(nil, result, time.Since(swarmRunStart))
+		}
 
 		return result, nil
 	}
@@ -429,6 +478,9 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 	}
 	if finishSwarmMetrics != nil {
 		finishSwarmMetrics(maxErr, result)
+	}
+	if s.loggingHook != nil {
+		s.loggingHook.OnSwarmRunEnd(maxErr, result, time.Since(swarmRunStart))
 	}
 	return result, maxErr
 }

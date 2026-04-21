@@ -369,6 +369,8 @@ sentrytrace.WithSentry(tracing.WithContentCapture())
 
 ## See Also
 
+- [Structured Logging](logging.md) — `log/slog`-based structured logging for the same lifecycle points
+- [Prometheus Metrics](metrics.md) — counters and histograms for agent lifecycle events
 - [Middleware](middleware.md) — wrapping tool execution with cross-cutting behavior
 - [Multi-Agent](multi-agent.md) — composing agents with `AgentAsTool`
 - [Memory](memory.md) — memory backends that produce `agent.memory.*` spans

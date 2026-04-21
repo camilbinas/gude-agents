@@ -22,6 +22,7 @@ use (
 	./agent/rag/openai
 	./agent/rag/postgres
 	./agent/rag/redis
+	./agent/logging/slog
 	./agent/tracing
 	./agent/tracing/sentry
 	./examples
