@@ -20,7 +20,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'agent/**'
       - 'go.mod'
@@ -184,7 +184,7 @@ jobs:
       - name: Push tags and commit
         if: steps.bump.outputs.skip == 'false'
         run: |
-          git push origin main --follow-tags
+          git push origin master --follow-tags
 
       - name: Create GitHub Release
         if: steps.bump.outputs.skip == 'false'
