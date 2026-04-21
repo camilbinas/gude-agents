@@ -28,9 +28,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: lib
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +36,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: lib/go.mod
+          go-version-file: go.mod
 
       - name: Determine version bump
         id: bump
