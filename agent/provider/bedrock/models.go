@@ -1,6 +1,8 @@
 package bedrock
 
-import rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+import (
+	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
+)
 
 // Documented in docs/providers/bedrock.md — update when adding or removing models.
 
