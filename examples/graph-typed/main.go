@@ -13,7 +13,7 @@
 //
 // Run:
 //
-//	go run ./typed-graph
+//	go run ./graph-typed
 
 package main
 
