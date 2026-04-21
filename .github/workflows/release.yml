@@ -98,11 +98,12 @@ jobs:
       # Build verification uses go.work so local modules resolve against the
       # working tree. This runs BEFORE go.mod files are updated to the new
       # (not-yet-tagged) version, avoiding the chicken-and-egg problem.
-      - name: Verify build
+      - name: Verify build and tests
         if: steps.bump.outputs.skip == 'false'
         run: |
           go build ./agent/...
           go vet ./agent/...
+          go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
 
       - name: Update submodule go.mod files
         if: steps.bump.outputs.skip == 'false'
