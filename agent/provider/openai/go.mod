@@ -3,8 +3,8 @@ module github.com/camilbinas/gude-agents/agent/provider/openai
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.7.0
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.7.0
+	github.com/camilbinas/gude-agents v0.8.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.8.0
 	github.com/openai/openai-go/v3 v3.31.0
 	pgregory.net/rapid v1.2.0
 )
