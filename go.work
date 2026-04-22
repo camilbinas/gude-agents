@@ -23,6 +23,7 @@ use (
 	./agent/rag/postgres
 	./agent/rag/redis
 	./agent/logging/slog
+	./agent/logging/debug
 	./agent/tracing
 	./agent/tracing/sentry
 	./examples

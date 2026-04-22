@@ -4,18 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
+// weather conditions for random generation.
+var (
+	conditions = []string{"sunny", "partly cloudy", "cloudy", "rainy", "stormy", "snowy", "foggy", "windy"}
+	condIcons  = []string{"☀️", "⛅", "☁️", "🌧️", "⛈️", "🌨️", "🌫️", "💨"}
+)
+
 // WeatherTool returns a mock weather tool for examples.
+// Returns randomized temperature and conditions for each call.
 func WeatherTool() tool.Tool {
 	type input struct {
 		City string `json:"city" description:"The city to get weather for" required:"true"`
 	}
 	return tool.New("get_weather", "Get the current weather for a city", func(_ context.Context, in input) (string, error) {
-		return fmt.Sprintf(`{"city": %q, "temperature": "22°C", "condition": "sunny"}`, in.City), nil
+		i := rand.IntN(len(conditions))
+		temp := rand.IntN(35) - 5      // -5 to 29°C
+		humidity := 30 + rand.IntN(60) // 30-89%
+		wind := rand.IntN(40)          // 0-39 km/h
+		return fmt.Sprintf(`{"city": %q, "temperature": "%d°C", "condition": "%s %s", "humidity": "%d%%", "wind": "%d km/h"}`,
+			in.City, temp, conditions[i], condIcons[i], humidity, wind), nil
 	})
 }
 

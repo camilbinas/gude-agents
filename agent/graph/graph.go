@@ -550,7 +550,7 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 		finishMetrics(err, exec.iterations)
 	}
 	if g.loggingHook != nil {
-		g.loggingHook.OnGraphRunEnd(err, exec.iterations, time.Since(graphRunStart))
+		g.loggingHook.OnGraphRunEnd(err, exec.iterations, exec.usage, time.Since(graphRunStart))
 	}
 
 	if err != nil {

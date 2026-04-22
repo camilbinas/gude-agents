@@ -10,6 +10,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -34,6 +35,8 @@ func main() {
 			Narrowing:    "Never try to answer questions yourself — always hand off.",
 		},
 		nil,
+		debug.WithDebugLogging(),
+		agent.WithName("triage"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -50,6 +53,8 @@ func main() {
 			Narrowing:    "If the question is not about billing, use transfer_to_triage to route it back.",
 		},
 		[]tool.Tool{utils.CheckBalanceTool()},
+		debug.WithDebugLogging(),
+		agent.WithName("billing"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -66,6 +71,8 @@ func main() {
 			Narrowing:    "If the question is not technical, use transfer_to_triage to route it back.",
 		},
 		[]tool.Tool{utils.SearchDocsTool()},
+		debug.WithDebugLogging(),
+		agent.WithName("technical"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -77,9 +84,9 @@ func main() {
 		{Name: "billing", Description: "Handles invoices, payments, refunds, and subscriptions", Agent: billingAgent},
 		{Name: "technical", Description: "Handles bugs, errors, and technical how-to questions", Agent: techAgent},
 	},
-		agent.WithSwarmLogger(log.Default()),
 		agent.WithSwarmMaxHandoffs(5),
 		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
+		debug.WithSwarmDebugLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

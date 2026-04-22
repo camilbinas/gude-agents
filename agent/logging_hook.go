@@ -36,7 +36,7 @@ type LoggingHook interface {
 	OnMemoryStart(operation string, conversationID string)
 
 	// OnMemoryEnd is called after memory Load or Save with the outcome.
-	OnMemoryEnd(operation string, conversationID string, err error, duration time.Duration)
+	OnMemoryEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration)
 
 	// OnRetrieverStart is called before Retriever.Retrieve.
 	OnRetrieverStart(query string)

@@ -503,6 +503,12 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			iterCtx, finishIteration = th.OnIterationStart(ctx, iteration+1)
 		}
 
+		// Log iteration start on the member agent's hook.
+		lh := a.LoggingHook()
+		if lh != nil {
+			lh.OnIterationStart(iteration + 1)
+		}
+
 		var bufferedChunks []string
 		hasOutputGuardrails := len(a.OutputGuardrails()) > 0
 
@@ -524,6 +530,15 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			})
 		}
 
+		var providerModelID string
+		if mi, ok := a.provider.(ModelIdentifier); ok {
+			providerModelID = mi.ModelID()
+		}
+		if lh != nil {
+			lh.OnProviderCallStart(providerModelID)
+		}
+
+		providerCallStart := time.Now()
 		resp, err := a.CallProvider(providerCtx, ConverseParams{
 			Messages:        messages,
 			System:          systemPrompt,
@@ -531,8 +546,12 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 			InferenceConfig: a.InferenceConfig(),
 		}, streamCB)
 		if err != nil {
+			providerDur := time.Since(providerCallStart)
 			if finishProvider != nil {
 				finishProvider(err, TokenUsage{}, 0, "")
+			}
+			if lh != nil {
+				lh.OnProviderCallEnd(err, TokenUsage{}, 0, providerDur)
 			}
 			if finishIteration != nil {
 				finishIteration(0, false)
@@ -543,6 +562,9 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 		// Finish provider call span.
 		if finishProvider != nil {
 			finishProvider(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
+		}
+		if lh != nil {
+			lh.OnProviderCallEnd(nil, resp.Usage, len(resp.ToolCalls), time.Since(providerCallStart))
 		}
 
 		cumulative.InputTokens += resp.Usage.InputTokens
@@ -650,11 +672,22 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 			toolCtx, finishTool = th.OnToolStart(ctx, tc.Name, tc.Input)
 		}
 
+		// Log tool start on the member agent's hook.
+		lh := a.LoggingHook()
+		if lh != nil {
+			lh.OnToolStart(tc.Name)
+		}
+
+		toolStart := time.Now()
+
 		// Validate tool input against the declared schema.
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			if finishTool != nil {
 				finishTool(err, "")
+			}
+			if lh != nil {
+				lh.OnToolEnd(tc.Name, err, time.Since(toolStart))
 			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -681,6 +714,9 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 			if finishTool != nil {
 				finishTool(err, "")
 			}
+			if lh != nil {
+				lh.OnToolEnd(tc.Name, err, time.Since(toolStart))
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   err.Error(),
@@ -692,6 +728,9 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 		if out == handoffSentinel {
 			if finishTool != nil {
 				finishTool(nil, "handoff")
+			}
+			if lh != nil {
+				lh.OnToolEnd(tc.Name, nil, time.Since(toolStart))
 			}
 			mu.Lock()
 			handedOff = true
@@ -705,6 +744,9 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 
 		if finishTool != nil {
 			finishTool(nil, out)
+		}
+		if lh != nil {
+			lh.OnToolEnd(tc.Name, nil, time.Since(toolStart))
 		}
 		results[i] = ToolResultBlock{
 			ToolUseID: tc.ToolUseID,

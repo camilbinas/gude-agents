@@ -189,7 +189,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "memory.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(h *slogHook) { h.OnMemoryEnd(op, convID, err, dur) },
+			fire:          func(h *slogHook) { h.OnMemoryEnd(op, convID, err, 5, dur) },
 			err:           err,
 		}
 	case 10: // RetrieverStart
@@ -242,7 +242,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "graph.run.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(h *slogHook) { h.OnGraphRunEnd(err, iterations, dur) },
+			fire:          func(h *slogHook) { h.OnGraphRunEnd(err, iterations, agent.TokenUsage{}, dur) },
 			err:           err,
 		}
 	case 15: // SwarmHandoff
@@ -554,8 +554,9 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			op := rapid.SampledFrom([]string{"load", "save"}).Draw(rt, "op")
 			convID := genString(rt, "convID")
 			err := genError(rt, "err")
+			msgCount := rapid.IntRange(0, 100).Draw(rt, "msgCount")
 			dur := genDuration(rt, "dur")
-			h.OnMemoryEnd(op, convID, err, dur)
+			h.OnMemoryEnd(op, convID, err, msgCount, dur)
 			records := ch.getRecords()
 			if len(records) != 1 {
 				rt.Fatalf("expected 1 record, got %d", len(records))
@@ -563,6 +564,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			attrs := recordAttrs(records[0])
 			requireAttr(rt, attrs, "operation", op)
 			requireAttr(rt, attrs, "conversation_id", convID)
+			requireAttrExists(rt, attrs, "message_count")
 			requireAttrExists(rt, attrs, "duration_ms")
 			if err != nil {
 				requireAttrExists(rt, attrs, "error")

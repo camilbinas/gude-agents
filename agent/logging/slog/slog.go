@@ -126,11 +126,12 @@ func (h *slogHook) OnMemoryStart(operation string, conversationID string) {
 	)
 }
 
-func (h *slogHook) OnMemoryEnd(operation string, conversationID string, err error, duration time.Duration) {
+func (h *slogHook) OnMemoryEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
 	level := slog.LevelInfo
 	attrs := []slog.Attr{
 		slog.String("operation", operation),
 		slog.String("conversation_id", conversationID),
+		slog.Int("message_count", messageCount),
 		slog.Float64("duration_ms", float64(duration.Milliseconds())),
 	}
 	if err != nil {
@@ -173,10 +174,12 @@ func (h *slogHook) OnGraphRunStart() {
 	h.log(slog.LevelDebug, "graph.run.start")
 }
 
-func (h *slogHook) OnGraphRunEnd(err error, iterations int, duration time.Duration) {
+func (h *slogHook) OnGraphRunEnd(err error, iterations int, usage agent.TokenUsage, duration time.Duration) {
 	level := slog.LevelInfo
 	attrs := []slog.Attr{
 		slog.Int("iterations", iterations),
+		slog.Int("input_tokens", usage.InputTokens),
+		slog.Int("output_tokens", usage.OutputTokens),
 		slog.Float64("duration_ms", float64(duration.Milliseconds())),
 	}
 	if err != nil {

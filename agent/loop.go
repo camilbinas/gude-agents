@@ -157,7 +157,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			finishMemLoad(err)
 		}
 		if a.loggingHook != nil {
-			a.loggingHook.OnMemoryEnd("load", convID, err, time.Since(memLoadStart))
+			a.loggingHook.OnMemoryEnd("load", convID, err, len(history), time.Since(memLoadStart))
 		}
 		if err != nil {
 			return cumulative, fmt.Errorf("memory load: %w", err)
@@ -485,7 +485,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				finishMemSave(err)
 			}
 			if a.loggingHook != nil {
-				a.loggingHook.OnMemoryEnd("save", convID, err, time.Since(memSaveStart))
+				a.loggingHook.OnMemoryEnd("save", convID, err, len(messages[ragOffset:]), time.Since(memSaveStart))
 			}
 			if err != nil {
 				return cumulative, fmt.Errorf("memory save: %w", err)

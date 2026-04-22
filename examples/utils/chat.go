@@ -82,19 +82,13 @@ func SwarmChat(ctx context.Context, sw *agent.Swarm) {
 			break
 		}
 
-		result, err := sw.Run(ctx, input, func(chunk string) {
+		_, err := sw.Run(ctx, input, func(chunk string) {
 			fmt.Print(chunk)
 		})
 		if err != nil {
 			fmt.Printf("\nError: %v\n", err)
 			continue
 		}
-		fmt.Printf("\n\n--- Handled by: %s | Tokens: %d in / %d out | Handoffs: %d ---\n",
-			result.FinalAgent,
-			result.Usage.InputTokens,
-			result.Usage.OutputTokens,
-			len(result.HandoffHistory),
-		)
 	}
 }
 

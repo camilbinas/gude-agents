@@ -12,6 +12,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -34,7 +35,7 @@ func main() {
 
 	summariser, err := agent.Worker(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
-	), nil)
+	), nil, debug.WithDebugLogging(), agent.WithName("summariser"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func main() {
 	sentimentAnalyser, err := agent.Worker(haiku, prompt.Text(
 		"Analyse the sentiment of the provided article. "+
 			"Return a single word: Positive, Negative, or Neutral.",
-	), nil)
+	), nil, debug.WithDebugLogging(), agent.WithName("sentiment"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func main() {
 
 	g, err := graph.NewGraph(
 		graph.WithGraphMaxIterations(20),
-		graph.WithGraphLogger(log.Default()),
+		debug.WithGraphDebugLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -110,8 +111,4 @@ func main() {
 	}
 
 	fmt.Println(result.State["report"])
-	fmt.Printf("\nTokens used: %d in / %d out\n",
-		result.Usage.InputTokens,
-		result.Usage.OutputTokens,
-	)
 }

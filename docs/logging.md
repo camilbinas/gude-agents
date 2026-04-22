@@ -113,10 +113,11 @@ Each log entry includes relevant key-value attributes:
 | `agent.from` / `agent.to` | SwarmHandoff | Handoff source and target |
 | `duration_ms` | All end events | Operation duration in milliseconds |
 | `error` | End events with error | Error message |
-| `input_tokens` / `output_tokens` | InvokeEnd, ProviderCallEnd | Token usage |
+| `input_tokens` / `output_tokens` | InvokeEnd, ProviderCallEnd, GraphRunEnd | Token usage |
 | `tool_call_count` | ProviderCallEnd | Number of tool calls in provider response |
 | `doc_count` | RetrieverEnd | Number of retrieved documents |
 | `operation` | MemoryStart, MemoryEnd | Memory operation (`load` or `save`) |
+| `message_count` | MemoryEnd | Number of messages loaded or saved |
 | `direction` | GuardrailComplete | Guardrail direction (`input` or `output`) |
 | `blocked` | GuardrailComplete | Whether the guardrail blocked |
 | `initial_agent` / `member_count` / `max_handoffs` | SwarmRunStart | Swarm configuration |

@@ -1,6 +1,10 @@
 package graph
 
-import "time"
+import (
+	"time"
+
+	"github.com/camilbinas/gude-agents/agent"
+)
 
 // GraphLoggingHook is an optional interface for structured logging of graph execution.
 // The logging submodule provides the concrete implementation.
@@ -10,7 +14,7 @@ type GraphLoggingHook interface {
 	OnGraphRunStart()
 
 	// OnGraphRunEnd is called at the end of Graph.Run with the outcome.
-	OnGraphRunEnd(err error, iterations int, duration time.Duration)
+	OnGraphRunEnd(err error, iterations int, usage agent.TokenUsage, duration time.Duration)
 
 	// OnNodeStart is called before each node execution.
 	OnNodeStart(nodeName string)
