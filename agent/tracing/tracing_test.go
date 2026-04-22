@@ -209,16 +209,6 @@ func dummyTool(name, desc string) tool.Tool {
 		})
 }
 
-type testLogger struct {
-	onPrintf func(format string, v ...any)
-}
-
-func (l *testLogger) Printf(format string, v ...any) {
-	if l.onPrintf != nil {
-		l.onPrintf(format, v...)
-	}
-}
-
 // ===========================================================================
 // Task 7: Unit Tests — Option Wiring and Zero-Overhead
 // ===========================================================================
@@ -415,41 +405,6 @@ func TestWithTracing_AutoLoggerSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-}
-
-func TestWithTracing_CustomLoggerNotOverridden(t *testing.T) {
-	_, tp := newTestTracerProvider()
-	defer tp.Shutdown(context.Background())
-
-	var customLogCalled bool
-	customLog := &testLogger{onPrintf: func(format string, v ...any) {
-		customLogCalled = true
-	}}
-
-	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
-		&agent.ProviderResponse{Text: "done"},
-	)
-	echoTool := tool.NewRaw("echo", "echoes", map[string]any{"type": "object"},
-		func(_ context.Context, _ json.RawMessage) (string, error) { return "echoed", nil })
-
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool},
-		agent.WithLogger(customLog),
-		WithTracing(tp),
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	_, _, err = a.Invoke(context.Background(), "hi")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !customLogCalled {
-		t.Error("expected custom logger to be called (not overridden by auto-logger)")
-	}
-	_ = a
 }
 
 // ===========================================================================

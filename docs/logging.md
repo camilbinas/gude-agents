@@ -19,7 +19,7 @@ a, err := agent.New(provider, instructions, tools,
 )
 ```
 
-When no logging hook is set, the agent performs nil checks at each hook call site and skips all logging hook logic. The existing `WithLogger` option continues to work as before.
+When no logging hook is set, the agent performs nil checks at each hook call site and skips all logging hook logic.
 
 ## Option Functions
 
@@ -123,15 +123,9 @@ Each log entry includes relevant key-value attributes:
 | `initial_agent` / `member_count` / `max_handoffs` | SwarmRunStart | Swarm configuration |
 | `final_agent` / `handoff_count` | SwarmRunEnd | Swarm outcome |
 
-## Relationship to WithLogger
+## Relationship to Legacy Logger
 
-The `LoggingHook` replaces the scattered `a.logf()` calls in the agent loop with structured, hook-based logging. When both are configured:
-
-- **LoggingHook set**: Hook methods fire at lifecycle points. The old `logf` calls are skipped.
-- **LoggingHook not set, Logger set**: The existing `logf` calls fire as before (backward compatible).
-- **Neither set**: No logging occurs.
-
-`WithLogger` remains a supported, documented API. The logging hook is the recommended path for new code.
+The `LoggingHook` replaces the old `WithLogger` / `logf` pattern that was removed in v0.3.0. All lifecycle logging now goes through the hook system. When no hook is set, no logging occurs.
 
 ## Graph Logging
 

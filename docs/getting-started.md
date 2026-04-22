@@ -152,7 +152,7 @@ func Default(provider Provider, instructions prompt.Instructions, tools []tool.T
 
 Configures: 5 max iterations, no logging.
 
-Use `Default` for standalone agents — it's the right starting point for most applications. The 5-iteration limit gives the agent enough room to call tools and refine its answer without running away. Add `agent.WithLogger(log.Default())` if you want logging.
+Use `Default` for standalone agents — it's the right starting point for most applications. The 5-iteration limit gives the agent enough room to call tools and refine its answer without running away.
 
 ### Worker
 

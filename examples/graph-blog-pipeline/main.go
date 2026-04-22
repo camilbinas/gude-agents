@@ -111,7 +111,6 @@ func main() {
 
 	g, err := graph.NewTypedGraph[BlogState](
 		graph.WithGraphMaxIterations(30),
-		graph.WithGraphLogger(log.Default()),
 	)
 	if err != nil {
 		log.Fatal(err)

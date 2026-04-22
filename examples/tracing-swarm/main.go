@@ -118,7 +118,6 @@ func main() {
 		{Name: "technical", Description: "Handles bugs, errors, and technical how-to questions", Agent: techAgent},
 	},
 		tracing.WithSwarmTracing(nil),
-		agent.WithSwarmLogger(log.Default()),
 		agent.WithSwarmMaxHandoffs(5),
 		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
 	)

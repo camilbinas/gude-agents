@@ -39,7 +39,6 @@ swarm, err := agent.NewSwarm([]agent.SwarmMember{
     {Name: "technical", Description: "Handles bugs and how-to questions", Agent: tech},
 },
     agent.WithSwarmMaxHandoffs(5),
-    agent.WithSwarmLogger(log.Default()),
 )
 ```
 
@@ -109,7 +108,6 @@ Use an orchestrator when one agent needs to coordinate multiple specialists and 
 | Option | Default | Description |
 |---|---|---|
 | `WithSwarmMaxHandoffs(n)` | 10 | Max agent-to-agent transfers per invocation. Returns an error if n < 1. |
-| `WithSwarmLogger(l)` | nil | Logger for swarm-level events |
 | `WithSwarmMiddleware(mws...)` | none | Middleware applied to all tool executions across the swarm |
 | `WithSwarmMemory(m, id)` | nil | Enables conversation memory — persists messages and active agent across calls |
 

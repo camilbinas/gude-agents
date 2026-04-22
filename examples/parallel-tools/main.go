@@ -103,7 +103,6 @@ func main() {
 		instructions,
 		[]tool.Tool{lookupTool, logCRMTool, emailTool},
 		agent.WithMemory(store, "fire-and-forget-session"),
-		agent.WithLogger(log.Default()),
 	)
 	if err != nil {
 		log.Fatal(err)

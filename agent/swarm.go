@@ -36,7 +36,6 @@ type Swarm struct {
 	initialAgent   string // first member — used when no memory or fresh conversation
 	activeAgent    string // default active agent; overridden per-call via memory or context
 	maxHandoffs    int
-	logger         Logger
 	middlewares    []Middleware
 	memory         Memory
 	conversationID string
@@ -62,14 +61,6 @@ func WithSwarmMaxHandoffs(n int) SwarmOption {
 			return fmt.Errorf("swarm: max handoffs must be >= 1, got %d", n)
 		}
 		s.maxHandoffs = n
-		return nil
-	}
-}
-
-// WithSwarmLogger sets a logger for swarm-level events.
-func WithSwarmLogger(l Logger) SwarmOption {
-	return func(s *Swarm) error {
-		s.logger = l
 		return nil
 	}
 }
@@ -174,13 +165,6 @@ func (s *Swarm) makeHandoffTool(targetName, targetDescription string) tool.Tool 
 			return handoffSentinel, nil
 		},
 	)
-}
-
-// logf logs if a logger is configured.
-func (s *Swarm) logf(format string, v ...any) {
-	if s.logger != nil {
-		s.logger.Printf(format, v...)
-	}
 }
 
 // Run executes the swarm starting from the active agent. When an agent hands off,
@@ -292,8 +276,6 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		if s.loggingHook != nil {
 			agentTurnStart = time.Now()
 			s.loggingHook.OnSwarmAgentStart(currentAgent)
-		} else {
-			s.logf("[swarm] active agent: %s (handoff %d)", currentAgent, handoff)
 		}
 
 		// Run the agent's inner loop manually so we can intercept handoffs.
@@ -363,8 +345,6 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 
 			if s.loggingHook != nil {
 				s.loggingHook.OnSwarmHandoff(currentAgent, targetName)
-			} else {
-				s.logf("[swarm] handoff: %s → %s", currentAgent, targetName)
 			}
 			result.HandoffHistory = append(result.HandoffHistory, Handoff{
 				From: currentAgent,
@@ -390,9 +370,6 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			}
 
 			if loopDetected {
-				if s.loggingHook == nil {
-					s.logf("[swarm] loop detected: %s was already active — injecting handle-it instruction", targetName)
-				}
 				messages = append(messages, Message{
 					Role: RoleUser,
 					Content: []ContentBlock{TextBlock{
@@ -451,7 +428,8 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			if err := s.memory.Save(ctx, "meta:"+convID+":swarm_active", []Message{
 				{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: currentAgent}}},
 			}); err != nil {
-				s.logf("[swarm] failed to save active agent for %s: %v", convID, err)
+				// Non-critical: active agent metadata failed to save.
+				_ = err
 			}
 		}
 		s.mu.Lock()
@@ -494,7 +472,6 @@ func (s *Swarm) runAgent(ctx context.Context, entry *swarmEntry, messages []Mess
 	systemPrompt := a.Instructions()
 
 	for iteration := range a.MaxIterations() {
-		s.logf("[swarm/%s] iteration %d", entry.member.Name, iteration+1)
 
 		// Start iteration span.
 		iterCtx := ctx
@@ -653,7 +630,6 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 	th := a.TracingHook() // may be nil
 
 	exec := func(i int, tc tool.Call) {
-		s.logf("[swarm/tool] %s", tc.Name)
 
 		t, ok := a.LookupTool(tc.Name)
 		if !ok {

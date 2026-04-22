@@ -60,8 +60,6 @@ var _ agent.TracingHook = (*otelHook)(nil)
 
 // WithTracing returns an agent.Option that enables OpenTelemetry tracing.
 // If tp is nil, the global TracerProvider is used.
-// When tracing is enabled and no custom logger has been set via WithLogger,
-// a structured Logger is automatically installed on the agent.
 func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 	return func(a *agent.Agent) error {
 		if tp == nil {
@@ -73,8 +71,6 @@ func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 			opt(h)
 		}
 		a.SetTracingHook(h)
-		// Auto-install structured logger if no custom logger was set.
-		a.SetLoggerIfNotSet(NewLogger(context.Background()))
 		return nil
 	}
 }

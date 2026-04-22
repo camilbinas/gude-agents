@@ -29,7 +29,6 @@ type Agent struct {
 	middlewares      []Middleware
 	inputGuardrails  []InputGuardrail
 	outputGuardrails []OutputGuardrail
-	logger           Logger
 	tokenBudget      int              // 0 = no budget
 	retriever        Retriever        // nil = no RAG
 	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
@@ -41,7 +40,6 @@ type Agent struct {
 	metricsHook      MetricsHook      // nil = no metrics
 	loggingHook      LoggingHook      // nil = no structured logging
 	name             string           // optional agent name for observability
-	loggerSet        bool             // true if WithLogger was explicitly called
 	providerTimeout  time.Duration    // 0 = no timeout (default)
 	retryMax         int              // 0 = no retry (default)
 	retryBaseDelay   time.Duration    // base delay for exponential backoff
@@ -80,25 +78,7 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 		}
 	}
 
-	// Warn if the provider advertises missing capabilities for what's being requested.
-	if cr, ok := provider.(CapabilityReporter); ok {
-		caps := cr.Capabilities()
-		if len(a.toolSpecs) > 0 && !caps.ToolUse {
-			a.logf("[agent] WARNING: provider does not support tool use — tools will be ignored by the model")
-		}
-		if a.tokenBudget > 0 && !caps.TokenUsage {
-			a.logf("[agent] WARNING: provider does not report token usage — token budget enforcement will not work")
-		}
-	}
-
 	return a, nil
-}
-
-// logf logs a formatted message if a logger is configured.
-func (a *Agent) logf(format string, v ...any) {
-	if a.logger != nil {
-		a.logger.Printf(format, v...)
-	}
 }
 
 // ---------------------------------------------------------------------------

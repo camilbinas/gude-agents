@@ -24,6 +24,5 @@ type Swarm = agent.Swarm
 // Constructor and option functions.
 var New = agent.NewSwarm
 var WithMaxHandoffs = agent.WithSwarmMaxHandoffs
-var WithLogger = agent.WithSwarmLogger
 var WithMiddleware = agent.WithSwarmMiddleware
 var WithMemory = agent.WithSwarmMemory

@@ -22,9 +22,9 @@ Creates a new `Agent`. Returns an error if any tool is missing a name, descripti
 Defaults:
 - `maxIterations`: 10
 - `parallelTools`: false
-- No memory, middleware, guardrails, logger, token budget, retriever, or context formatter
+- No memory, middleware, guardrails, token budget, retriever, or context formatter
 
-If the provider implements `CapabilityReporter`, the constructor logs warnings when tools are registered but the model doesn't support tool use, or when a token budget is set but the model doesn't report token usage.
+If the provider implements `CapabilityReporter`, the constructor validates that the provider supports the requested capabilities (e.g., tool use, token usage reporting).
 
 ## Option Functions
 
@@ -116,20 +116,6 @@ Adds output guardrails that run on the final text response before it is returned
 
 ```go
 type OutputGuardrail func(ctx context.Context, response string) (string, error)
-```
-
-### `WithLogger`
-
-```go
-func WithLogger(l Logger) Option
-```
-
-Sets a logger for the agent. The agent logs iteration counts, tool names, tool errors, and tool completions.
-
-```go
-type Logger interface {
-    Printf(format string, v ...any)
-}
 ```
 
 ### `WithTokenBudget`

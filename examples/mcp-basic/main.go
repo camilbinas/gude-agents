@@ -65,7 +65,6 @@ When asked to perform calculations or operations, always use the available tools
 Show your work by describing what each tool returned.`),
 		mcpTools,
 		agent.WithMaxIterations(15),
-		agent.WithLogger(log.Default()),
 	)
 	if err != nil {
 		log.Fatal(err)

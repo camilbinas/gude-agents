@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// Logger is an optional interface for agent logging.
-// Documented in docs/agent-api.md — update when changing interface.
+// Logger is an optional interface for logging. Used by memory strategies
+// for error reporting during background operations.
 type Logger interface {
 	Printf(format string, v ...any)
 }
@@ -83,15 +83,6 @@ func WithInputGuardrail(g ...InputGuardrail) Option {
 func WithOutputGuardrail(g ...OutputGuardrail) Option {
 	return func(a *Agent) error {
 		a.outputGuardrails = append(a.outputGuardrails, g...)
-		return nil
-	}
-}
-
-// WithLogger sets an optional logger for the agent.
-func WithLogger(l Logger) Option {
-	return func(a *Agent) error {
-		a.logger = l
-		a.loggerSet = true
 		return nil
 	}
 }

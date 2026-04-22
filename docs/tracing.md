@@ -135,32 +135,6 @@ All attribute key constants are exported from the `tracing` package for use in c
 
 All attribute keys follow the `<component>.<property>` dot-separated lowercase naming convention, consistent with OpenTelemetry semantic conventions.
 
-## Structured Logging Bridge
-
-When `WithTracing` is enabled and no custom logger is set via `WithLogger`, the tracing module automatically installs a structured `Logger` on the agent. This logger implements the `agent.Logger` interface and attaches trace correlation fields to every log entry.
-
-```go
-// The auto-installed logger adds trace_id and span_id to each log entry
-// when a span is active in the context.
-//
-// Output fields:
-//   msg      — the formatted log message
-//   trace_id — the active span's trace ID (if present)
-//   span_id  — the active span's span ID (if present)
-```
-
-You can create a logger manually for custom use:
-
-```go
-logger := tracing.NewLogger(ctx)
-logger.Output = func(ctx context.Context, msg string, fields map[string]any) {
-    // fields contains "msg", "trace_id", "span_id"
-    slog.Info(msg, "trace_id", fields["trace_id"], "span_id", fields["span_id"])
-}
-```
-
-If you provide your own logger via `agent.WithLogger(myLogger)`, the auto-logger is not installed and your logger is used as-is.
-
 ## Graph Tracing
 
 For graph workflows, use `WithGraphTracing` to instrument `Graph.Run` and each node execution:

@@ -38,16 +38,6 @@ func TestWorker_SetsMaxIterations3(t *testing.T) {
 	}
 }
 
-func TestWorker_SetsLogger(t *testing.T) {
-	a, err := Worker(mockProvider{}, prompt.Text("sys"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.logger == nil {
-		t.Error("expected logger to be set")
-	}
-}
-
 func TestWorker_AcceptsExtraOptions(t *testing.T) {
 	a, err := Worker(mockProvider{}, prompt.Text("sys"), nil, WithMaxIterations(1))
 	if err != nil {
@@ -75,16 +65,6 @@ func TestOrchestrator_SetsParallelTools(t *testing.T) {
 	}
 	if !a.parallelTools {
 		t.Error("expected parallelTools=true")
-	}
-}
-
-func TestOrchestrator_SetsLogger(t *testing.T) {
-	a, err := Orchestrator(mockProvider{}, prompt.Text("sys"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.logger == nil {
-		t.Error("expected logger to be set")
 	}
 }
 

@@ -101,7 +101,6 @@ func main() {
 		{Name: "technical", Description: "Handles bugs, errors, and technical how-to questions", Agent: techAgent},
 	},
 		prometheus.WithSwarmMetrics(),
-		agent.WithSwarmLogger(log.Default()),
 		agent.WithSwarmMaxHandoffs(5),
 		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
 	)

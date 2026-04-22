@@ -74,7 +74,7 @@ func main() {
 	}
 
 	// Build the graph.
-	g, err := graph.NewGraph(graph.WithGraphLogger(log.Default()))
+	g, err := graph.NewGraph()
 	if err != nil {
 		log.Fatal(err)
 	}

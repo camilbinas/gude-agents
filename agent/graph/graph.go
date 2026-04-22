@@ -42,7 +42,6 @@ type Graph struct {
 	routes      map[string]route    // one route per source node
 	joins       map[string][]string // node → required predecessors
 	maxIter     int
-	logger      agent.Logger
 	tracingHook GraphTracingHook // nil = no tracing
 	metricsHook GraphMetricsHook // nil = no metrics
 	loggingHook GraphLoggingHook // nil = no structured logging
@@ -59,14 +58,6 @@ func WithGraphMaxIterations(n int) GraphOption {
 			return &GraphValidationError{Message: "MaxIterations must be >= 1"}
 		}
 		g.maxIter = n
-		return nil
-	}
-}
-
-// WithGraphLogger sets an optional logger for graph execution events.
-func WithGraphLogger(l agent.Logger) GraphOption {
-	return func(g *Graph) error {
-		g.logger = l
 		return nil
 	}
 }
@@ -270,7 +261,6 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 		return &GraphIterationError{Limit: e.graph.maxIter}
 	}
 	e.iterations++
-	iterCount := e.iterations
 	e.mu.Unlock()
 
 	fn := e.graph.nodes[nodeName]
@@ -297,8 +287,6 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 	if e.graph.loggingHook != nil {
 		e.graph.loggingHook.OnNodeStart(nodeName)
 		nodeStart = time.Now()
-	} else if e.graph.logger != nil {
-		e.graph.logger.Printf("[graph] node %q starting (iteration %d)", nodeName, iterCount)
 	}
 
 	result, err := fn(ctx, stateCopy)
@@ -314,14 +302,7 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 	}
 
 	if err != nil {
-		if e.graph.loggingHook == nil && e.graph.logger != nil {
-			e.graph.logger.Printf("[graph] node %q failed: %v", nodeName, err)
-		}
 		return err
-	}
-
-	if e.graph.loggingHook == nil && e.graph.logger != nil {
-		e.graph.logger.Printf("[graph] node %q completed", nodeName)
 	}
 
 	// Extract __usage__ key and accumulate, then merge result into shared state.
@@ -340,9 +321,6 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 	if hasRoute {
 		switch {
 		case r.static != "":
-			if e.graph.logger != nil {
-				e.graph.logger.Printf("[graph] routing %q → %q (static)", nodeName, r.static)
-			}
 			if err := e.step(ctx, r.static); err != nil {
 				return err
 			}
@@ -357,9 +335,6 @@ func (e *runExec) step(ctx context.Context, nodeName string) error {
 			if next != "" {
 				if _, ok := e.graph.nodes[next]; !ok {
 					return &GraphValidationError{Message: fmt.Sprintf("router returned unknown node %q", next)}
-				}
-				if e.graph.logger != nil {
-					e.graph.logger.Printf("[graph] routing %q → %q (conditional)", nodeName, next)
 				}
 				if err := e.step(ctx, next); err != nil {
 					return err
@@ -405,9 +380,6 @@ func (e *runExec) checkJoins(ctx context.Context, nodeName string) error {
 		}
 		e.mu.Unlock()
 		if allDone {
-			if e.graph.logger != nil {
-				e.graph.logger.Printf("[graph] join node %q all predecessors done, executing", joinNode)
-			}
 			if err := e.step(ctx, joinNode); err != nil {
 				return err
 			}

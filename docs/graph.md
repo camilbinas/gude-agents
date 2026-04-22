@@ -122,14 +122,12 @@ Token usage is accumulated from nodes that set `state["__usage__"]` to an `agent
 ```go
 g, err := graph.NewGraph(
     graph.WithGraphMaxIterations(50),  // default: 100
-    graph.WithGraphLogger(log.Default()),
 )
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `WithGraphMaxIterations(n)` | 100 | Max node executions per Run. Returns error if n < 1. |
-| `WithGraphLogger(l)` | nil | Logger for graph execution events |
 
 ## AgentNode
 
@@ -200,7 +198,7 @@ import (
 )
 
 func main() {
-    g, err := graph.NewGraph(graph.WithGraphLogger(log.Default()))
+    g, err := graph.NewGraph()
     if err != nil {
         log.Fatal(err)
     }

@@ -66,12 +66,3 @@ func (a *Agent) SetTracingHook(h TracingHook) {
 func (a *Agent) TracingHook() TracingHook {
 	return a.tracingHook
 }
-
-// SetLoggerIfNotSet sets the logger only if no custom logger was explicitly
-// provided via WithLogger. Called by the tracing submodule to install the
-// structured logger automatically.
-func (a *Agent) SetLoggerIfNotSet(l Logger) {
-	if !a.loggerSet {
-		a.logger = l
-	}
-}

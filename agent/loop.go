@@ -245,8 +245,6 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 
 		if a.loggingHook != nil {
 			a.loggingHook.OnIterationStart(iteration + 1)
-		} else {
-			a.logf("[agent] iteration %d", iteration+1)
 		}
 
 		hasOutputGuardrails := len(a.outputGuardrails) > 0
@@ -548,8 +546,6 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 		delay := a.retryBaseDelay << uint(attempt)
 		if a.loggingHook != nil {
 			a.loggingHook.OnProviderCallEnd(err, TokenUsage{}, 0, 0)
-		} else {
-			a.logf("[agent] provider call failed (attempt %d/%d), retrying in %s: %v", attempt+1, maxAttempts, delay, err)
 		}
 
 		select {
@@ -593,8 +589,6 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 
 		if a.loggingHook != nil {
 			a.loggingHook.OnToolStart(tc.Name)
-		} else {
-			a.logf("[tool] %s", tc.Name)
 		}
 
 		toolStart := time.Now()
@@ -609,8 +603,6 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			}
 			if a.loggingHook != nil {
 				a.loggingHook.OnToolEnd(tc.Name, err, time.Since(toolStart))
-			} else {
-				a.logf("[tool] %s validation error: %v", tc.Name, toolErr)
 			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -638,8 +630,6 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			}
 			if a.loggingHook != nil {
 				a.loggingHook.OnToolEnd(tc.Name, err, time.Since(toolStart))
-			} else {
-				a.logf("[tool] %s error: %v", tc.Name, toolErr)
 			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
@@ -659,8 +649,6 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 
 		if a.loggingHook != nil {
 			a.loggingHook.OnToolEnd(tc.Name, nil, time.Since(toolStart))
-		} else {
-			a.logf("[tool] %s done", tc.Name)
 		}
 		results[i] = ToolResultBlock{
 			ToolUseID: tc.ToolUseID,
