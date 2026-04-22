@@ -1,5 +1,8 @@
 # gude-agents
 
+> **⚠️ Pre-1.0 — Expect Breaking Changes**
+> This project is under active development. Until version 1.0.0 is tagged, the API may change between minor releases without deprecation cycles. Pin your dependency to a specific version if stability matters.
+
 A Go agent framework for building LLM-powered applications. `gude-agents` provides a composable, provider-agnostic toolkit for creating conversational AI agents with tool use, memory, RAG, guardrails, and multi-agent orchestration.
 
 ```
