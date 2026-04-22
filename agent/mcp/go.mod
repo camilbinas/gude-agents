@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/mcp
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.6.0
+	github.com/camilbinas/gude-agents v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 )
 
