@@ -163,7 +163,7 @@ func TestIntegration_Metrics_SwarmWithHandoff(t *testing.T) {
 		{Name: "billing", Description: "Handles refunds, invoices, and payments", Agent: billing},
 	},
 		swarm.WithMaxHandoffs(3),
-		swarm.WithLogger(testLogger(t)),
+		
 		prometheus.WithSwarmMetrics(prometheus.WithRegisterer(reg)),
 	)
 	if err != nil {

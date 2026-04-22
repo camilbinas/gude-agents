@@ -111,7 +111,7 @@ func main() {
 
 	// 4. Build the graph with metrics.
 	g, err := graph.NewGraph(
-		graph.WithGraphMaxIterations(20),
+		graph.WithMaxIterations(20),
 		prometheus.WithGraphMetrics(),
 	)
 	if err != nil {

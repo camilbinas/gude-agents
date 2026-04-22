@@ -113,7 +113,7 @@ func main() {
 
 	// 4. Build the graph with tracing.
 	g, err := graph.NewGraph(
-		graph.WithGraphMaxIterations(20),
+		graph.WithMaxIterations(20),
 		tracing.WithGraphTracing(nil),
 	)
 	if err != nil {

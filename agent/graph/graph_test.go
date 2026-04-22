@@ -95,12 +95,12 @@ func TestGraphBuilder(t *testing.T) {
 		}
 	})
 
-	t.Run("6.5 WithGraphMaxIterations rejects value < 1", func(t *testing.T) {
-		_, err := NewGraph(WithGraphMaxIterations(0))
+	t.Run("6.5 WithMaxIterations rejects value < 1", func(t *testing.T) {
+		_, err := NewGraph(WithMaxIterations(0))
 		if !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError for 0, got %v", err)
 		}
-		_, err = NewGraph(WithGraphMaxIterations(-5))
+		_, err = NewGraph(WithMaxIterations(-5))
 		if !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError for -5, got %v", err)
 		}
@@ -332,7 +332,7 @@ func TestGraphExecution(t *testing.T) {
 	})
 
 	t.Run("7.6 cyclic graph hits MaxIterations returns GraphIterationError", func(t *testing.T) {
-		g := mustGraph(t, WithGraphMaxIterations(3))
+		g := mustGraph(t, WithMaxIterations(3))
 		mustAddNode(t, g, "a", noop)
 		mustAddNode(t, g, "b", noop)
 		g.SetEntry("a")

@@ -87,7 +87,7 @@ func main() {
 
 	// Build the typed graph — nodes receive and return State directly.
 	g, err := graph.NewTypedGraph[State](
-		graph.WithGraphMaxIterations(20),
+		graph.WithMaxIterations(20),
 	)
 	if err != nil {
 		log.Fatal(err)

@@ -48,7 +48,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant with access to weather and time tools. Be concise."),
 		[]tool.Tool{utils.WeatherTool(), utils.TimeTool()},
-		debug.WithDebugLogging(),
+		debug.WithLogging(),
 		agent.WithName("friendly-agent"),
 		agent.WithMemory(memory.NewStore(), "debug-session"),
 	)

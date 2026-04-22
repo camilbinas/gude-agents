@@ -11,7 +11,7 @@
 //	import agentdebug "github.com/camilbinas/gude-agents/agent/logging/debug"
 //
 //	a, err := agent.Default(provider, instructions, tools,
-//	    agentdebug.WithDebugLogging(),
+//	    agentdebug.WithLogging(),
 //	)
 package debug
 
@@ -240,9 +240,9 @@ func (h *debugHook) OnSwarmHandoff(from, to string) {
 // Option functions
 // ---------------------------------------------------------------------------
 
-// WithDebugLogging returns an agent.Option that installs the colored debug
+// WithLogging returns an agent.Option that installs the colored debug
 // logging hook. Logs are written to stdout.
-func WithDebugLogging() agent.Option {
+func WithLogging() agent.Option {
 	return func(a *agent.Agent) error {
 		h := newDebugHook(os.Stdout)
 		h.agentName = a.Name()
@@ -251,9 +251,9 @@ func WithDebugLogging() agent.Option {
 	}
 }
 
-// WithGraphDebugLogging returns a graph.GraphOption that installs the colored
+// WithGraphLogging returns a graph.GraphOption that installs the colored
 // debug logging hook on a graph.
-func WithGraphDebugLogging() graph.GraphOption {
+func WithGraphLogging() graph.GraphOption {
 	return func(g *graph.Graph) error {
 		h := newDebugHook(os.Stdout)
 		g.SetGraphLoggingHook(h)
@@ -261,9 +261,9 @@ func WithGraphDebugLogging() graph.GraphOption {
 	}
 }
 
-// WithSwarmDebugLogging returns an agent.SwarmOption that installs the colored
+// WithSwarmLogging returns an agent.SwarmOption that installs the colored
 // debug logging hook on a swarm.
-func WithSwarmDebugLogging() agent.SwarmOption {
+func WithSwarmLogging() agent.SwarmOption {
 	return func(s *agent.Swarm) error {
 		h := newDebugHook(os.Stdout)
 		s.SetSwarmLoggingHook(h)

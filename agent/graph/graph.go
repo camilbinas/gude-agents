@@ -50,9 +50,9 @@ type Graph struct {
 // GraphOption configures a Graph.
 type GraphOption func(*Graph) error
 
-// WithGraphMaxIterations sets the maximum number of node executions per Run.
+// WithMaxIterations sets the maximum number of node executions per Run.
 // Returns an error if n < 1.
-func WithGraphMaxIterations(n int) GraphOption {
+func WithMaxIterations(n int) GraphOption {
 	return func(g *Graph) error {
 		if n < 1 {
 			return &GraphValidationError{Message: "MaxIterations must be >= 1"}

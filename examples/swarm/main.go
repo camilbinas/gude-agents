@@ -35,7 +35,7 @@ func main() {
 			Narrowing:    "Never try to answer questions yourself — always hand off.",
 		},
 		nil,
-		debug.WithDebugLogging(),
+		debug.WithLogging(),
 		agent.WithName("triage"),
 	)
 	if err != nil {
@@ -53,7 +53,7 @@ func main() {
 			Narrowing:    "If the question is not about billing, use transfer_to_triage to route it back.",
 		},
 		[]tool.Tool{utils.CheckBalanceTool()},
-		debug.WithDebugLogging(),
+		debug.WithLogging(),
 		agent.WithName("billing"),
 	)
 	if err != nil {
@@ -71,7 +71,7 @@ func main() {
 			Narrowing:    "If the question is not technical, use transfer_to_triage to route it back.",
 		},
 		[]tool.Tool{utils.SearchDocsTool()},
-		debug.WithDebugLogging(),
+		debug.WithLogging(),
 		agent.WithName("technical"),
 	)
 	if err != nil {
@@ -86,7 +86,7 @@ func main() {
 	},
 		agent.WithSwarmMaxHandoffs(5),
 		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
-		debug.WithSwarmDebugLogging(),
+		debug.WithSwarmLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

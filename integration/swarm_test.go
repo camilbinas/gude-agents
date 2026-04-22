@@ -50,7 +50,7 @@ func TestIntegration_Swarm_SingleHandoff(t *testing.T) {
 	sw, err := swarm.New([]swarm.Member{
 		{Name: "triage", Description: "Routes requests to the right specialist", Agent: triage},
 		{Name: "billing", Description: "Handles refunds, invoices, and payments", Agent: billing},
-	}, swarm.WithMaxHandoffs(3), swarm.WithLogger(testLogger(t)))
+	}, swarm.WithMaxHandoffs(3))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestIntegration_Swarm_MemoryAcrossTurns(t *testing.T) {
 		{Name: "technical", Description: "Handles technical support questions", Agent: technical},
 	},
 		swarm.WithMemory(store, "swarm-conv-1"),
-		swarm.WithLogger(testLogger(t)),
+		
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestIntegration_Swarm_WithPerRequestConversationID(t *testing.T) {
 		{Name: "beta", Description: "Secondary assistant", Agent: beta},
 	},
 		swarm.WithMemory(store, ""),
-		swarm.WithLogger(testLogger(t)),
+		
 	)
 	if err != nil {
 		t.Fatal(err)

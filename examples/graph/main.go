@@ -35,7 +35,7 @@ func main() {
 
 	summariser, err := agent.Worker(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
-	), nil, debug.WithDebugLogging(), agent.WithName("summariser"))
+	), nil, debug.WithLogging(), agent.WithName("summariser"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func main() {
 	sentimentAnalyser, err := agent.Worker(haiku, prompt.Text(
 		"Analyse the sentiment of the provided article. "+
 			"Return a single word: Positive, Negative, or Neutral.",
-	), nil, debug.WithDebugLogging(), agent.WithName("sentiment"))
+	), nil, debug.WithLogging(), agent.WithName("sentiment"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,8 +51,8 @@ func main() {
 	// --- Build the graph ---
 
 	g, err := graph.NewGraph(
-		graph.WithGraphMaxIterations(20),
-		debug.WithGraphDebugLogging(),
+		graph.WithMaxIterations(20),
+		debug.WithGraphLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
