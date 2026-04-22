@@ -1,6 +1,6 @@
 # LLM Providers
 
-gude-agents ships with four built-in LLM providers: AWS Bedrock, Anthropic, OpenAI, and Google Gemini. Each provider implements the `Provider` interface, so they're interchangeable — swap one for another without changing your agent code.
+gude-agents ships with four built-in LLM providers: AWS Bedrock, Anthropic, OpenAI, and Google Gemini. It also supports local model servers (Ollama, vLLM) via the OpenAI provider's compatible endpoint constructors. Each provider implements the `Provider` interface, so they're interchangeable — swap one for another without changing your agent code.
 
 | Provider | Import | Details |
 |----------|--------|---------|
@@ -8,6 +8,8 @@ gude-agents ships with four built-in LLM providers: AWS Bedrock, Anthropic, Open
 | Anthropic | `agent/provider/anthropic` | [Anthropic docs](providers/anthropic.md) |
 | OpenAI | `agent/provider/openai` | [OpenAI docs](providers/openai.md) |
 | Google Gemini | `agent/provider/gemini` | [Gemini docs](providers/gemini.md) |
+| Ollama (local) | `agent/provider/ollama` | [Ollama docs](providers/ollama.md) |
+| vLLM (local) | `agent/provider/vllm` | [vLLM docs](providers/vllm.md) |
 
 ## Quick Start
 
@@ -16,6 +18,8 @@ bedrock.GlobalClaudeSonnet4_6()    // AWS Bedrock (uses AWS credential chain)
 anthropic.ClaudeSonnet4_6()  // Anthropic API (uses ANTHROPIC_API_KEY)
 openai.GPT4_1()              // OpenAI API (uses OPENAI_API_KEY)
 gemini.Gemini25Flash()       // Gemini API (uses GEMINI_API_KEY)
+ollama.New("qwen2.5")        // Local Ollama server (uses OLLAMA_HOST)
+vllm.New("mistral")          // Local vLLM server (uses VLLM_BASE_URL)
 ```
 
 Each provider has `Cheapest()`, `Standard()`, `Smartest()` tier aliases. These mappings change over time as better models become available — pin a specific constructor (e.g., `GlobalClaudeSonnet4_6()`) if you need a stable model across upgrades.
@@ -206,13 +210,13 @@ Import: `github.com/camilbinas/gude-agents/agent/provider/registry`
 
 ### Setup
 
-Call `RegisterBuiltins()` once at startup to register all four built-in providers:
+Call `RegisterBuiltins()` once at startup to register all built-in providers:
 
 ```go
 import "github.com/camilbinas/gude-agents/agent/provider/registry"
 
 func init() {
-    registry.RegisterBuiltins() // registers bedrock, anthropic, openai, gemini
+    registry.RegisterBuiltins() // registers bedrock, anthropic, openai, gemini, ollama, vllm
 }
 ```
 
@@ -255,6 +259,8 @@ Pass `nil` for any tier your provider doesn't support.
 - [Anthropic Provider](providers/anthropic.md) — Anthropic API configuration and models
 - [OpenAI Provider](providers/openai.md) — OpenAI and compatible endpoints
 - [Gemini Provider](providers/gemini.md) — Google Gemini configuration and models
+- [Ollama Provider](providers/ollama.md) — local Ollama model server
+- [vLLM Provider](providers/vllm.md) — local vLLM model server
 - [Getting Started](getting-started.md) — installation and first agent
 - [Fallback Provider](fallback-provider.md) — automatic failover across providers
 - [Agent API Reference](agent-api.md) — full list of options and methods

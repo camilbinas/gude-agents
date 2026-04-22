@@ -139,3 +139,5 @@ func main() {
 - [LLM Providers Overview](../providers.md) — interfaces, extended thinking, direct SDK access, custom providers
 - [Fallback Provider](../fallback-provider.md) — automatic failover across providers
 - [RAG Pipeline](../rag.md) — OpenAI embedder implementations
+- [Ollama Provider](ollama.md) — local Ollama server (uses this provider internally)
+- [vLLM Provider](vllm.md) — local vLLM server (uses this provider internally)

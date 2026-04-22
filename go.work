@@ -15,8 +15,10 @@ use (
 	./agent/provider/bedrock
 	./agent/provider/fallback
 	./agent/provider/gemini
+	./agent/provider/ollama
 	./agent/provider/openai
 	./agent/provider/registry
+	./agent/provider/vllm
 	./agent/rag/bedrock
 	./agent/rag/gemini
 	./agent/rag/openai
