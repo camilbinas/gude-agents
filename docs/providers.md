@@ -216,7 +216,7 @@ Call `RegisterBuiltins()` once at startup to register all built-in providers:
 import "github.com/camilbinas/gude-agents/agent/provider/registry"
 
 func init() {
-    registry.RegisterBuiltins() // registers bedrock, anthropic, openai, gemini, ollama, vllm
+    registry.RegisterBuiltins() // registers bedrock, anthropic, openai, gemini, ollama
 }
 ```
 
@@ -238,6 +238,16 @@ provider, err := registry.FromEnv()
 ```
 
 Defaults to `bedrock` / `standard` when the variables are unset.
+
+### Why vLLM is not in the registry
+
+vLLM is not included in `RegisterBuiltins` because it has no fixed model catalog — the available model depends entirely on what the user launched their vLLM server with. Use `vllm.New(model)` directly instead:
+
+```go
+import "github.com/camilbinas/gude-agents/agent/provider/vllm"
+
+provider, err := vllm.New("mistralai/Mistral-7B-Instruct-v0.2")
+```
 
 ### Custom Providers
 
