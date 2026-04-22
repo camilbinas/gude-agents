@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/provider/registry
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.3.0
+	github.com/camilbinas/gude-agents v0.4.0
 	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.2.1
 	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.2.1
 	github.com/camilbinas/gude-agents/agent/provider/gemini v0.2.1
