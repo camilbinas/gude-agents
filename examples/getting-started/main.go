@@ -1,6 +1,6 @@
 // Run:
 //
-//	go run ./simple
+//	go run ./getting-started
 
 package main
 
@@ -10,6 +10,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -17,7 +18,12 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Cheapest())
 
-	a, err := agent.Default(provider, prompt.Text("You are a helpful assistant. Be concise."), nil)
+	a, err := agent.Default(
+		provider,
+		prompt.Text("You are a helpful assistant. Be concise."),
+		nil,
+		debug.WithLogging(),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

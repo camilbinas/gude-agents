@@ -29,6 +29,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/memory/dynamodb"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -63,6 +64,8 @@ func main() {
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
 		agent.WithMemory(mem, "demo-conversation"),
+		agent.WithName("helpful-agent"),
+		debug.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

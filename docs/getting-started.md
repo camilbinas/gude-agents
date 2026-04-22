@@ -14,7 +14,7 @@ Then add the provider and driver modules you need:
 
 ```bash
 # Pick a provider
-go get github.com/camilbinas/gude-agents/agent/provider/bedrock    # AWS Bedrock
+go get github.com/camilbinas/gude-agents/agent/provider/bedrock     # AWS Bedrock
 go get github.com/camilbinas/gude-agents/agent/provider/anthropic   # Anthropic
 go get github.com/camilbinas/gude-agents/agent/provider/openai      # OpenAI
 go get github.com/camilbinas/gude-agents/agent/provider/gemini      # Google Gemini
@@ -27,11 +27,11 @@ go get github.com/camilbinas/gude-agents/agent/memory/sqlite        # SQLite mem
 go get github.com/camilbinas/gude-agents/agent/memory/postgres      # PostgreSQL memory
 
 # Optional: RAG embedders and vector stores
-go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock embedders
+go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock knowledge bases + embedders
 go get github.com/camilbinas/gude-agents/agent/rag/openai           # OpenAI embedders
-go get github.com/camilbinas/gude-agents/agent/rag/gemini          # Gemini embedders
+go get github.com/camilbinas/gude-agents/agent/rag/gemini           # Gemini embedders
 go get github.com/camilbinas/gude-agents/agent/rag/redis            # Redis vector store
-go get github.com/camilbinas/gude-agents/agent/rag/postgres        # PostgreSQL + pgvector
+go get github.com/camilbinas/gude-agents/agent/rag/postgres         # PostgreSQL + pgvector
 
 # Optional: MCP tool integration
 go get github.com/camilbinas/gude-agents/agent/mcp
@@ -58,6 +58,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -69,11 +70,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 2. Create an agent with sensible defaults.
+	// 2. Create an agent with sensible defaults and debug logging.
 	a, err := agent.Default(
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil, // no tools
+		debug.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -139,6 +141,24 @@ usage, err := a.InvokeStream(ctx, "Tell me a joke", func(chunk string) {
 ```
 
 Under the hood, `Invoke` is a thin wrapper around `InvokeStream` that concatenates all chunks into a string.
+
+## Logging
+
+gude-agents ships two logging packages. Both implement the same hook interfaces so you can swap them without changing your agent code.
+
+### debug — colored output for local development
+
+`agent/logging/debug` prints human-readable, ANSI-colored trace output to stdout. Zero configuration required — just add `debug.WithLogging()` as an option:
+
+```go
+import "github.com/camilbinas/gude-agents/agent/logging/debug"
+
+a, err := agent.Default(provider, instructions, tools,
+    debug.WithLogging(),
+)
+```
+
+Not intended for production — the colored output is designed to be read while the agent is running, not aggregated.
 
 ## Preset Constructors
 
