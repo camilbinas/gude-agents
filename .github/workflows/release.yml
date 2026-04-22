@@ -124,10 +124,17 @@ jobs:
           ROOT_MODULE="github.com/camilbinas/gude-agents"
           SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
 
+          # Update root module references in all submodule go.mod files.
           for sub in $SUBMODULES; do
             GOMOD="$sub/go.mod"
             if [ -f "$GOMOD" ]; then
+              # Update root module reference.
               sed -i "s|${ROOT_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${ROOT_MODULE} ${NEW_VERSION}|g" "$GOMOD"
+              # Update cross-submodule references
+              for dep in $SUBMODULES; do
+                DEP_MODULE="${ROOT_MODULE}/${dep}"
+                sed -i "s|${DEP_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${DEP_MODULE} ${NEW_VERSION}|g" "$GOMOD"
+              done
               echo "  Updated $GOMOD"
             fi
           done
