@@ -2,20 +2,17 @@
 #
 # Trigger: push to master with conventional commit messages.
 # Behavior:
-#   1. Parses commits since the last root tag to determine the version bump.
-#   2. Verifies the code builds (using go.work for local module resolution).
-#   3. Updates every submodule's go.mod to require the new root version.
-#   4. Commits the go.mod changes.
-#   5. Creates tags for the root module and every submodule listed in go.work.
-#   6. Pushes tags and the go.mod update commit.
-#   7. Creates a GitHub Release with auto-generated notes.
+#   1. Cleans up any stale bump commit/tags from previous failed runs.
+#   2. Parses commits since the last root tag to determine the version bump.
+#   3. Verifies the code builds and tests pass (using go.work).
+#   4. Updates every submodule's go.mod to require the new root version.
+#   5. Commits the go.mod changes, creates all tags, and pushes atomically.
+#   6. Creates a GitHub Release with auto-generated notes.
 #
 # Conventional commit prefixes:
-#   feat:  → minor bump   (0.2.1 → 0.3.0)
-#   fix:   → patch bump   (0.2.1 → 0.2.2)
-#   feat!: or BREAKING CHANGE → major bump (0.2.1 → 1.0.0)
-#
-# To skip a release, ensure no feat/fix commits are in the push.
+#   feat:  → minor bump   (0.3.0 → 0.4.0)
+#   fix:   → patch bump   (0.3.0 → 0.3.1)
+#   feat!: or BREAKING CHANGE → major bump (0.3.0 → 1.0.0)
 
 name: Release
 
@@ -39,46 +36,57 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Clean up any stale bump commit pushed by a previous failed run.
+      # A stale bump commit has the message "chore: bump module versions to vX.Y.Z"
+      # but no corresponding tag yet. We revert it so the version calculation
+      # starts from a clean state.
+      - name: Clean up stale bump commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          LAST_MSG=$(git log -1 --pretty=format:"%s")
+          if echo "$LAST_MSG" | grep -qE '^chore: bump module versions to v'; then
+            BUMP_VERSION=$(echo "$LAST_MSG" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+            # Check if the tag for this version exists — if not, it's a stale bump.
+            if ! git tag --list "$BUMP_VERSION" | grep -q "$BUMP_VERSION"; then
+              echo "Reverting stale bump commit for $BUMP_VERSION"
+              git revert --no-edit HEAD
+              git push origin master
+            fi
+          fi
+
       - name: Determine version bump
         id: bump
         run: |
-          # Find the latest root tag.
           LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           if [ -z "$LATEST_TAG" ]; then
-            echo "No existing tags found, starting at v0.1.0"
             LATEST_TAG="v0.0.0"
           fi
           echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
-          # Parse version components.
           VERSION="${LATEST_TAG#v}"
           MAJOR=$(echo "$VERSION" | cut -d. -f1)
           MINOR=$(echo "$VERSION" | cut -d. -f2)
           PATCH=$(echo "$VERSION" | cut -d. -f3)
 
-          # Scan commits since last tag for conventional commit prefixes.
           BUMP="none"
           COMMITS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%s" -- . 2>/dev/null || git log --pretty=format:"%s" -- .)
 
           while IFS= read -r msg; do
             if echo "$msg" | grep -qE '^[a-z]+(\(.+\))?!:' || echo "$msg" | grep -q 'BREAKING CHANGE'; then
-              BUMP="major"
-              break
+              BUMP="major"; break
             fi
             if echo "$msg" | grep -qE '^feat(\(.+\))?:'; then
-              if [ "$BUMP" != "major" ]; then
-                BUMP="minor"
-              fi
+              [ "$BUMP" != "major" ] && BUMP="minor"
             fi
             if echo "$msg" | grep -qE '^fix(\(.+\))?:'; then
-              if [ "$BUMP" = "none" ]; then
-                BUMP="patch"
-              fi
+              [ "$BUMP" = "none" ] && BUMP="patch"
             fi
           done <<< "$COMMITS"
 
           if [ "$BUMP" = "none" ]; then
-            echo "No conventional commits found — skipping release."
+            echo "No conventional commits — skipping release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -95,8 +103,8 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "Bump: $BUMP — $LATEST_TAG → $NEW_VERSION"
 
-      # Build and test using go.work so local modules resolve against the
-      # working tree — no published tags needed at this point.
+      # Build and test BEFORE touching go.mod or creating any tags.
+      # Uses go.work so local modules resolve without published tags.
       - name: Verify build and tests
         if: steps.bump.outputs.skip == 'false'
         run: |
@@ -104,17 +112,17 @@ jobs:
           GOWORK=$(pwd)/go.work go vet ./agent/...
           GOWORK=$(pwd)/go.work go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
 
+      # Everything below only runs if build+tests pass.
+      # go.mod bump, tags, and push are done atomically so a failure
+      # in any step doesn't leave the repo in a half-released state.
+
       - name: Update submodule go.mod files
         if: steps.bump.outputs.skip == 'false'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
         run: |
           ROOT_MODULE="github.com/camilbinas/gude-agents"
-
-          # Parse submodule paths from go.work (skip ".", "examples", "integration").
           SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
-
-          echo "Updating submodule go.mod files to require $ROOT_MODULE $NEW_VERSION"
 
           for sub in $SUBMODULES; do
             GOMOD="$sub/go.mod"
@@ -124,17 +132,15 @@ jobs:
             fi
           done
 
-          # Also update examples/go.mod.
           if [ -f "examples/go.mod" ]; then
             sed -i "s|${ROOT_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${ROOT_MODULE} ${NEW_VERSION}|g" examples/go.mod
             for sub in $SUBMODULES; do
               SUB_MODULE="${ROOT_MODULE}/${sub}"
               sed -i "s|${SUB_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${SUB_MODULE} ${NEW_VERSION}|g" examples/go.mod
             done
-            echo "  Updated examples/go.mod"
           fi
 
-      - name: Commit go.mod updates
+      - name: Commit, tag, and push atomically
         if: steps.bump.outputs.skip == 'false'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
@@ -143,35 +149,24 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add -A .
-
-          if git diff --cached --quiet; then
-            echo "No go.mod changes to commit."
-          else
+          if ! git diff --cached --quiet; then
             git commit -m "chore: bump module versions to ${NEW_VERSION}"
           fi
 
-      - name: Create tags
-        if: steps.bump.outputs.skip == 'false'
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
           # Delete stale local tags from previous failed runs.
           git tag -d "$NEW_VERSION" 2>/dev/null || true
 
+          # Root tag.
           git tag "$NEW_VERSION"
-          echo "Tagged: $NEW_VERSION"
 
+          # Submodule tags.
           SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
-
           for sub in $SUBMODULES; do
-            TAG="${sub}/${NEW_VERSION}"
-            git tag "$TAG"
-            echo "Tagged: $TAG"
+            git tag -d "${sub}/${NEW_VERSION}" 2>/dev/null || true
+            git tag "${sub}/${NEW_VERSION}"
           done
 
-      - name: Push tags and commit
-        if: steps.bump.outputs.skip == 'false'
-        run: |
+          # Push commit and all tags together.
           git push origin master
           git push origin --tags
 
