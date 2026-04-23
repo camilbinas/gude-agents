@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2
-	github.com/camilbinas/gude-agents v0.15.0
+	github.com/camilbinas/gude-agents v0.16.0
 	pgregory.net/rapid v1.2.0
 )
 
