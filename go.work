@@ -20,6 +20,7 @@ use (
 	./agent/provider/registry
 	./agent/provider/vllm
 	./agent/rag/bedrock
+	./agent/rag/document/pdf
 	./agent/rag/gemini
 	./agent/rag/openai
 	./agent/rag/postgres

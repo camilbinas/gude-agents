@@ -226,6 +226,7 @@ type IngestOption func(*ingestConfig)
 type ingestConfig struct {
 	chunkSize    int
 	chunkOverlap int
+	concurrency  int
 }
 
 // WithChunkSize sets the chunk size for text splitting during ingestion.
@@ -238,8 +239,21 @@ func WithChunkOverlap(n int) IngestOption {
 	return func(c *ingestConfig) { c.chunkOverlap = n }
 }
 
+// WithConcurrency sets the number of parallel embedding calls during ingestion.
+// Default is 1 (sequential). Higher values speed up ingestion but increase
+// API request rate. A good starting point is 5–10.
+func WithConcurrency(n int) IngestOption {
+	return func(c *ingestConfig) {
+		if n < 1 {
+			n = 1
+		}
+		c.concurrency = n
+	}
+}
+
 // Ingest splits each text into chunks, embeds each chunk, and stores the
 // resulting documents and embeddings in the VectorStore.
+// Use WithConcurrency to parallelize embedding calls.
 // Documented in docs/rag.md — update when changing signature, defaults, or chunking behavior.
 func Ingest(
 	ctx context.Context,
@@ -249,23 +263,27 @@ func Ingest(
 	metadata []map[string]string,
 	opts ...IngestOption,
 ) error {
-	cfg := ingestConfig{chunkSize: 512, chunkOverlap: 64}
+	cfg := ingestConfig{chunkSize: 512, chunkOverlap: 64, concurrency: 1}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 
-	var allDocs []agent.Document
-	var allEmbeddings [][]float64
+	// Build all documents first (cheap, no API calls).
+	type docChunk struct {
+		doc   agent.Document
+		chunk string
+	}
+	var chunks []docChunk
 
 	for si, text := range texts {
-		chunks := SplitText(text, cfg.chunkSize, cfg.chunkOverlap)
+		parts := SplitText(text, cfg.chunkSize, cfg.chunkOverlap)
 
 		var srcMeta map[string]string
 		if si < len(metadata) {
 			srcMeta = metadata[si]
 		}
 
-		for ci, chunk := range chunks {
+		for ci, part := range parts {
 			merged := make(map[string]string)
 			for k, v := range srcMeta {
 				merged[k] = v
@@ -273,15 +291,67 @@ func Ingest(
 			merged["source_index"] = strconv.Itoa(si)
 			merged["chunk_index"] = strconv.Itoa(ci)
 
-			doc := agent.Document{Content: chunk, Metadata: merged}
+			chunks = append(chunks, docChunk{
+				doc:   agent.Document{Content: part, Metadata: merged},
+				chunk: part,
+			})
+		}
+	}
 
-			embedding, err := embedder.Embed(ctx, chunk)
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	// Embed all chunks (parallel when concurrency > 1).
+	allDocs := make([]agent.Document, len(chunks))
+	allEmbeddings := make([][]float64, len(chunks))
+
+	if cfg.concurrency <= 1 {
+		// Sequential path — no goroutine overhead.
+		for i, c := range chunks {
+			embedding, err := embedder.Embed(ctx, c.chunk)
 			if err != nil {
-				return fmt.Errorf("ingest: embed chunk %d: %w", ci, err)
+				return fmt.Errorf("ingest: embed chunk %d: %w", i, err)
 			}
+			allDocs[i] = c.doc
+			allEmbeddings[i] = embedding
+		}
+	} else {
+		// Parallel path — bounded concurrency via semaphore.
+		sem := make(chan struct{}, cfg.concurrency)
+		errs := make([]error, len(chunks))
 
-			allDocs = append(allDocs, doc)
-			allEmbeddings = append(allEmbeddings, embedding)
+		var wg sync.WaitGroup
+		for i, c := range chunks {
+			allDocs[i] = c.doc
+
+			wg.Add(1)
+			go func(idx int, chunk string) {
+				defer wg.Done()
+
+				sem <- struct{}{}        // acquire
+				defer func() { <-sem }() // release
+
+				if ctx.Err() != nil {
+					errs[idx] = ctx.Err()
+					return
+				}
+
+				embedding, err := embedder.Embed(ctx, chunk)
+				if err != nil {
+					errs[idx] = fmt.Errorf("ingest: embed chunk %d: %w", idx, err)
+					return
+				}
+				allEmbeddings[idx] = embedding
+			}(i, c.chunk)
+		}
+		wg.Wait()
+
+		// Return the first error.
+		for _, err := range errs {
+			if err != nil {
+				return err
+			}
 		}
 	}
 

@@ -192,11 +192,13 @@ func Ingest(
 |--------|---------|-------------|
 | `WithChunkSize(n int)` | 512 | Maximum chunk size in runes |
 | `WithChunkOverlap(n int)` | 64 | Overlap between consecutive chunks in runes |
+| `WithConcurrency(n int)` | 1 | Number of parallel embedding calls. Higher values speed up ingestion but increase API request rate. |
 
 ```go
 err := rag.Ingest(ctx, store, embedder, texts, metadata,
     rag.WithChunkSize(256),
     rag.WithChunkOverlap(32),
+    rag.WithConcurrency(10),
 )
 ```
 
@@ -380,6 +382,18 @@ a, err := agent.Default(
 ```
 
 When the LLM calls this tool, it receives the formatted document content as the tool result. If no documents are found, the result is `"No relevant documents found."`. An optional `ContextFormatter` argument overrides `DefaultContextFormatter`.
+
+### Choosing Between the Two
+
+| | `WithRetriever` | `NewRetrieverTool` |
+|---|---|---|
+| **When retrieves** | Every invocation, before the first LLM call | LLM decides when to call it |
+| **LLM calls** | 1 | 2+ (one to decide to search, one to answer) |
+| **Speed** | Faster — retrieval and LLM call don't chain | Slower — extra round-trip |
+| **Token cost** | Always pays retrieval cost | Only when LLM calls the tool |
+| **Best for** | Document Q&A where context is always needed | Agents with multiple tools where search is optional |
+
+Use `WithRetriever` when every question needs document context (e.g. a PDF assistant). Use `NewRetrieverTool` when the agent has other tools and retrieval is just one option — the LLM can also formulate a better search query than the raw user message.
 
 ## Document Loaders
 
