@@ -3,12 +3,12 @@ module github.com/camilbinas/gude-agents/agent/provider/ollama
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.10.0
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.10.0
+	github.com/camilbinas/gude-agents v0.11.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.11.0
 )
 
 require (
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.10.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.11.0 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
