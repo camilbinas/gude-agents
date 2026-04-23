@@ -11,6 +11,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -53,17 +54,6 @@ func recordAttrs(r slog.Record) map[string]slog.Value {
 	return attrs
 }
 
-// mockProvider is a minimal Provider for creating agents in tests.
-type mockProvider struct{}
-
-func (mockProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return &agent.ProviderResponse{Text: "ok"}, nil
-}
-
-func (mockProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, _ agent.StreamCallback) (*agent.ProviderResponse, error) {
-	return &agent.ProviderResponse{Text: "ok"}, nil
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -74,7 +64,7 @@ func TestWithLogging_InstallsHook(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithLogging(WithHandler(ch))
 
-	a, err := agent.New(mockProvider{}, prompt.Text("sys"), nil, opt)
+	a, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "ok"})), prompt.Text("sys"), nil, opt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,11 +96,11 @@ func TestWithSwarmLogging_InstallsHook(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithSwarmLogging(WithHandler(ch))
 
-	a1, err := agent.New(mockProvider{}, prompt.Text("agent1"), nil)
+	a1, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "ok"})), prompt.Text("agent1"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error creating agent1: %v", err)
 	}
-	a2, err := agent.New(mockProvider{}, prompt.Text("agent2"), nil)
+	a2, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "ok"})), prompt.Text("agent2"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error creating agent2: %v", err)
 	}

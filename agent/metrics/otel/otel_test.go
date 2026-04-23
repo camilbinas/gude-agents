@@ -2,12 +2,11 @@ package otel
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"testing"
 
 	agent "github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/testutil"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
@@ -15,35 +14,6 @@ import (
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
-
-// mockProvider is a minimal Provider for creating agents in tests.
-type mockProvider struct {
-	mu        sync.Mutex
-	responses []*agent.ProviderResponse
-	callIndex int
-}
-
-func newMockProvider(responses ...*agent.ProviderResponse) *mockProvider {
-	return &mockProvider{responses: responses}
-}
-
-func (p *mockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return p.ConverseStream(ctx, params, nil)
-}
-
-func (p *mockProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.callIndex >= len(p.responses) {
-		return nil, fmt.Errorf("mockProvider: no more responses (call %d)", p.callIndex)
-	}
-	resp := p.responses[p.callIndex]
-	p.callIndex++
-	if len(resp.ToolCalls) == 0 && resp.Text != "" && cb != nil {
-		cb(resp.Text)
-	}
-	return resp, nil
-}
 
 // findMetric searches collected ResourceMetrics for a metric with the given name.
 func findMetric(rm metricdata.ResourceMetrics, name string) *metricdata.Metrics {
@@ -68,7 +38,7 @@ func TestWithMetrics_InstallsHook(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(mp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -86,7 +56,7 @@ func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(mp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -112,7 +82,7 @@ func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 // TestWithMetrics_NilMeterProvider verifies nil MeterProvider falls back to global.
 // Validates: Requirement 2.4
 func TestWithMetrics_NilMeterProvider(t *testing.T) {
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 
 	// Should not panic and should install hook using global provider.
 	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(nil))
@@ -132,7 +102,7 @@ func TestWithMetrics_WithNamespace(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 	_, err := agent.New(prov, prompt.Text("sys"), nil,
 		WithMetrics(mp, WithNamespace("myapp")),
 	)
@@ -203,7 +173,7 @@ func TestDurationRecording(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(mp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

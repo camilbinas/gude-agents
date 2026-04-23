@@ -17,6 +17,7 @@ import (
 
 	agent "github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/testutil"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -91,47 +92,13 @@ var (
 // Mock Provider
 // ---------------------------------------------------------------------------
 
-type mockProvider struct {
-	mu        sync.Mutex
-	responses []*agent.ProviderResponse
-	callIndex int
+func newMockProvider(responses ...*agent.ProviderResponse) *testutil.MockProvider {
+	return testutil.NewMockProvider(testutil.WithResponses(responses...))
 }
 
-func newMockProvider(responses ...*agent.ProviderResponse) *mockProvider {
-	return &mockProvider{responses: responses}
+func newMockProviderWithModel(modelID string, responses ...*agent.ProviderResponse) *testutil.MockProvider {
+	return testutil.NewMockProvider(testutil.WithModelID(modelID), testutil.WithResponses(responses...))
 }
-
-func (p *mockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return p.ConverseStream(ctx, params, nil)
-}
-
-func (p *mockProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.callIndex >= len(p.responses) {
-		return nil, fmt.Errorf("mockProvider: no more responses (call %d)", p.callIndex)
-	}
-	resp := p.responses[p.callIndex]
-	p.callIndex++
-	if len(resp.ToolCalls) == 0 && resp.Text != "" && cb != nil {
-		cb(resp.Text)
-	}
-	return resp, nil
-}
-
-type mockProviderWithModel struct {
-	*mockProvider
-	modelID string
-}
-
-func newMockProviderWithModel(modelID string, responses ...*agent.ProviderResponse) *mockProviderWithModel {
-	return &mockProviderWithModel{
-		mockProvider: newMockProvider(responses...),
-		modelID:      modelID,
-	}
-}
-
-func (p *mockProviderWithModel) ModelID() string { return p.modelID }
 
 type errorProvider struct{ err error }
 

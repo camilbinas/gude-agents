@@ -3,7 +3,6 @@ package prometheus
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,41 +15,13 @@ import (
 
 	agent "github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/testutil"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
-
-// mockProvider is a minimal Provider that returns pre-configured responses.
-type mockProvider struct {
-	mu        sync.Mutex
-	responses []*agent.ProviderResponse
-	callIndex int
-}
-
-func newMockProvider(responses ...*agent.ProviderResponse) *mockProvider {
-	return &mockProvider{responses: responses}
-}
-
-func (p *mockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return p.ConverseStream(ctx, params, nil)
-}
-
-func (p *mockProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.callIndex >= len(p.responses) {
-		return nil, fmt.Errorf("mockProvider: no more responses (call %d)", p.callIndex)
-	}
-	resp := p.responses[p.callIndex]
-	p.callIndex++
-	if len(resp.ToolCalls) == 0 && resp.Text != "" && cb != nil {
-		cb(resp.Text)
-	}
-	return resp, nil
-}
 
 // mockTracingHook is a minimal TracingHook that records which callbacks were invoked.
 type mockTracingHook struct {
@@ -114,7 +85,7 @@ func (h *mockTracingHook) OnMaxIterationsExceeded(_ context.Context, _ int) {}
 // TestWithMetrics_InstallsHook verifies that WithMetrics sets MetricsHook on the agent.
 func TestWithMetrics_InstallsHook(t *testing.T) {
 	reg := prom.NewRegistry()
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
 		WithMetrics(WithRegisterer(reg)),
@@ -131,7 +102,7 @@ func TestWithMetrics_InstallsHook(t *testing.T) {
 // TestWithMetrics_CustomRegisterer verifies that a custom registerer receives metrics.
 func TestWithMetrics_CustomRegisterer(t *testing.T) {
 	reg := prom.NewRegistry()
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
 		WithMetrics(WithRegisterer(reg)),
@@ -306,7 +277,7 @@ func TestDurationRecording(t *testing.T) {
 // TestNilHookNoPanic verifies that an agent with nil MetricsHook doesn't panic
 // during invocation.
 func TestNilHookNoPanic(t *testing.T) {
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 
 	// Create agent without WithMetrics — MetricsHook should be nil.
 	a, err := agent.New(prov, prompt.Text("sys"), nil)
@@ -331,7 +302,7 @@ func TestNilHookNoPanic(t *testing.T) {
 // TestCoexistenceWithTracing verifies both hooks receive callbacks when both are set.
 func TestCoexistenceWithTracing(t *testing.T) {
 	reg := prom.NewRegistry()
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 
 	tracingHook := &mockTracingHook{}
 
@@ -410,7 +381,7 @@ func TestAgentLoop_MetricsHookCalled(t *testing.T) {
 	reg := prom.NewRegistry()
 
 	// Mock provider: first response triggers a tool call, second is the final text.
-	prov := newMockProvider(
+	prov := testutil.NewMockProvider(testutil.WithResponses(
 		&agent.ProviderResponse{
 			ToolCalls: []tool.Call{
 				{ToolUseID: "call-1", Name: "my-tool", Input: json.RawMessage(`{}`)},
@@ -421,7 +392,7 @@ func TestAgentLoop_MetricsHookCalled(t *testing.T) {
 			Text:  "done",
 			Usage: agent.TokenUsage{InputTokens: 20, OutputTokens: 10},
 		},
-	)
+	))
 
 	// Register a simple tool that the mock provider will invoke.
 	myTool := tool.NewRaw("my-tool", "A test tool", map[string]any{"type": "object"},
@@ -534,7 +505,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	reg := prom.NewRegistry()
 
 	// Mock provider: tool call then final text (exercises the full loop).
-	prov := newMockProvider(
+	prov := testutil.NewMockProvider(testutil.WithResponses(
 		&agent.ProviderResponse{
 			ToolCalls: []tool.Call{
 				{ToolUseID: "call-1", Name: "my-tool", Input: json.RawMessage(`{}`)},
@@ -545,7 +516,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 			Text:  "all done",
 			Usage: agent.TokenUsage{InputTokens: 8, OutputTokens: 4},
 		},
-	)
+	))
 
 	myTool := tool.NewRaw("my-tool", "A test tool", map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) {

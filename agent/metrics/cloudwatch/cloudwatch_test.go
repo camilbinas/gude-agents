@@ -3,7 +3,6 @@ package cloudwatch
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	agent "github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,35 +44,6 @@ func newTestHook(mock *mockCWClient) *cloudwatchHook {
 		stopCh:        make(chan struct{}),
 		doneCh:        make(chan struct{}),
 	}
-}
-
-// mockProvider is a minimal Provider for creating agents in tests.
-type mockProvider struct {
-	mu        sync.Mutex
-	responses []*agent.ProviderResponse
-	callIndex int
-}
-
-func newMockProvider(responses ...*agent.ProviderResponse) *mockProvider {
-	return &mockProvider{responses: responses}
-}
-
-func (p *mockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return p.ConverseStream(ctx, params, nil)
-}
-
-func (p *mockProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.callIndex >= len(p.responses) {
-		return nil, fmt.Errorf("mockProvider: no more responses (call %d)", p.callIndex)
-	}
-	resp := p.responses[p.callIndex]
-	p.callIndex++
-	if len(resp.ToolCalls) == 0 && resp.Text != "" && cb != nil {
-		cb(resp.Text)
-	}
-	return resp, nil
 }
 
 // allData returns all MetricDatum across all PutMetricData calls.
@@ -136,7 +107,7 @@ func TestWithMetrics_WithClient(t *testing.T) {
 		Region: "us-east-1",
 	})
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 	opt, shutdown := WithMetrics(WithClient(realClient))
 
 	a, err := agent.New(prov, prompt.Text("sys"), nil, opt)
@@ -168,7 +139,7 @@ func TestWithMetrics_ReturnsShutdown(t *testing.T) {
 	}
 
 	// Apply the option to an agent and verify shutdown works.
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 	_, err := agent.New(prov, prompt.Text("sys"), nil, opt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
