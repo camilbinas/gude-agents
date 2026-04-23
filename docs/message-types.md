@@ -48,7 +48,7 @@ type ContentBlock interface {
 }
 ```
 
-`ContentBlock` is a sealed interface — only the three implementations defined in the `agent` package satisfy it. The unexported `contentBlock()` marker method prevents external types from implementing the interface.
+`ContentBlock` is a sealed interface — only the four implementations defined in the `agent` package satisfy it. The unexported `contentBlock()` marker method prevents external types from implementing the interface.
 
 ### TextBlock
 
@@ -99,6 +99,44 @@ Holds the result of a tool execution. Sent back to the LLM as part of a user-rol
 | `ToolUseID` | `string` | Matches the `ToolUseID` from the corresponding `ToolUseBlock` |
 | `Content` | `string` | The tool's text output |
 | `IsError` | `bool` | `true` if the tool returned an error |
+
+### ImageSource
+
+```go
+type ImageSource struct {
+    Data     []byte
+    Base64   string
+    MIMEType string
+}
+
+func (s ImageSource) Validate() error
+```
+
+Holds image data as either raw bytes or a pre-encoded base64 string, plus the MIME type. Set exactly one of `Data` or `Base64` — when both are set, providers prefer `Data`.
+
+| Field | Type | Description |
+|---|---|---|
+| `Data` | `[]byte` | Raw image bytes; mutually exclusive with `Base64` |
+| `Base64` | `string` | Pre-encoded base64 string (RFC 4648); mutually exclusive with `Data` |
+| `MIMEType` | `string` | Image format; must be one of `image/jpeg`, `image/png`, `image/gif`, `image/webp` |
+
+`Validate()` returns `nil` when `MIMEType` is one of the four supported values, or a descriptive error otherwise. The error message contains the invalid MIME type string.
+
+### ImageBlock
+
+```go
+type ImageBlock struct {
+    Source ImageSource
+}
+```
+
+A `ContentBlock` that carries image data. Attach one or more `ImageBlock` values to an invocation via `WithImages` on the context — the agent loop prepends them to the first user message before calling the provider. All four providers (Bedrock, Anthropic, OpenAI, Gemini) translate `ImageBlock` to their respective native image APIs.
+
+| Field | Type | Description |
+|---|---|---|
+| `Source` | `ImageSource` | The image payload and MIME type |
+
+Supported MIME types: `image/jpeg`, `image/png`, `image/gif`, `image/webp`. Any other value causes the agent loop to return an error before the provider is called.
 
 ## InferenceConfig
 
@@ -250,7 +288,7 @@ Pairs a `Document` with its similarity score. Returned by `VectorStore.Search` t
 
 ## See Also
 
-- [Agent API Reference](agent-api.md) — `Agent` constructor, options, and methods
+- [Agent API Reference](agent-api.md) — `Agent` constructor, options, `WithImages`/`GetImages`, and methods
 - [Tool System](tools.md) — `Tool`, `Spec`, `Call`, and `Choice` types
 - [RAG Pipeline](rag.md) — `Embedder`, `VectorStore`, `Retriever` interfaces
 - [Memory System](memory.md) — storing and loading `Message` history

@@ -326,6 +326,35 @@ func GetInferenceConfig(ctx context.Context) *InferenceConfig
 
 Retrieves the per-invocation `InferenceConfig` from a context. Returns `nil` if none is attached.
 
+### `WithImages`
+
+```go
+func WithImages(ctx context.Context, images []ImageBlock) context.Context
+```
+
+Returns a context that attaches a slice of `ImageBlock` values for the current invocation. The agent loop reads these images and prepends them to the first user message before calling the provider, enabling vision-capable models to reason over visual content alongside text.
+
+```go
+img := agent.ImageBlock{
+    Source: agent.ImageSource{
+        Data:     imageBytes,
+        MIMEType: "image/jpeg",
+    },
+}
+ctx := agent.WithImages(context.Background(), []agent.ImageBlock{img})
+result, _, err := a.Invoke(ctx, "What is in this image?")
+```
+
+Pass `nil` or an empty slice to clear any previously attached images. When multiple `WithImages` calls are chained on the same context, the innermost (most recent) call wins.
+
+### `GetImages`
+
+```go
+func GetImages(ctx context.Context) []ImageBlock
+```
+
+Retrieves the image slice from a context. Returns `nil` if no images are attached or if an empty slice was stored.
+
 ### `Invoke`
 
 ```go
@@ -400,6 +429,7 @@ Both `Invoke` and `InvokeStream` can return errors for:
 
 - **Input guardrail failure**: a guardrail returned an error before the provider was called
 - **Inference config validation failure**: a per-invocation `InferenceConfig` contains invalid values (e.g., temperature outside [0.0, 1.0])
+- **Invalid image MIME type**: an `ImageBlock` attached via `WithImages` has an unsupported `MIMEType`
 - **Memory load failure**: the configured `Memory` failed to load conversation history
 - **Retriever failure**: the configured `Retriever` returned an error
 - **Provider error**: the LLM backend returned an error
@@ -446,13 +476,14 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
 1. **Input guardrails** — the user message passes through all configured `InputGuardrail` functions in order. Any error aborts the invocation.
 2. **Memory load** — if `WithMemory` is configured, conversation history is loaded.
 3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved and injected as context before the user message.
-4. **Agent loop** (up to `maxIterations`):
+4. **Image injection** — if `WithImages` was called on the context, each `ImageBlock`'s MIME type is validated and the images are prepended to the first user message's content slice. An invalid MIME type returns an error before the provider is called.
+5. **Agent loop** (up to `maxIterations`):
    - The provider is called with the current messages, system prompt, and tool specs.
    - If the provider returns **tool calls**: the agent executes them and loops back.
    - If the provider returns a **text response**: the loop exits.
    - If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
-5. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
-6. **Memory save** — if `WithMemory` is configured, the full conversation is saved.
+6. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
+7. **Memory save** — if `WithMemory` is configured, the full conversation (including any `ImageBlock` values) is saved.
 
 If the loop reaches `maxIterations` without a text response, an error is returned.
 

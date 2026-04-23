@@ -1,6 +1,7 @@
 package bedrock
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -44,9 +45,12 @@ func TestToBedrockRole_UnknownDefaultsToUser(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestToBedrockContentBlocks_TextBlock(t *testing.T) {
-	blocks := toBedrockContentBlocks([]agent.ContentBlock{
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.TextBlock{Text: "hello"},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(blocks))
 	}
@@ -61,9 +65,12 @@ func TestToBedrockContentBlocks_TextBlock(t *testing.T) {
 
 func TestToBedrockContentBlocks_ToolUseBlock(t *testing.T) {
 	input := json.RawMessage(`{"query":"test"}`)
-	blocks := toBedrockContentBlocks([]agent.ContentBlock{
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: input},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(blocks))
 	}
@@ -83,9 +90,12 @@ func TestToBedrockContentBlocks_ToolUseBlock(t *testing.T) {
 }
 
 func TestToBedrockContentBlocks_ToolResultBlock(t *testing.T) {
-	blocks := toBedrockContentBlocks([]agent.ContentBlock{
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.ToolResultBlock{ToolUseID: "tu-1", Content: "result text", IsError: false},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(blocks))
 	}
@@ -102,9 +112,12 @@ func TestToBedrockContentBlocks_ToolResultBlock(t *testing.T) {
 }
 
 func TestToBedrockContentBlocks_ToolResultBlockWithError(t *testing.T) {
-	blocks := toBedrockContentBlocks([]agent.ContentBlock{
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.ToolResultBlock{ToolUseID: "tu-2", Content: "something failed", IsError: true},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	tr, ok := blocks[0].(*types.ContentBlockMemberToolResult)
 	if !ok {
 		t.Fatalf("expected *ContentBlockMemberToolResult, got %T", blocks[0])
@@ -115,10 +128,13 @@ func TestToBedrockContentBlocks_ToolResultBlockWithError(t *testing.T) {
 }
 
 func TestToBedrockContentBlocks_MixedBlocks(t *testing.T) {
-	blocks := toBedrockContentBlocks([]agent.ContentBlock{
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.TextBlock{Text: "thinking..."},
 		agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: json.RawMessage(`{}`)},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks, got %d", len(blocks))
 	}
@@ -131,7 +147,10 @@ func TestToBedrockContentBlocks_MixedBlocks(t *testing.T) {
 }
 
 func TestToBedrockContentBlocks_Empty(t *testing.T) {
-	blocks := toBedrockContentBlocks(nil)
+	blocks, err := toBedrockContentBlocks(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(blocks) != 0 {
 		t.Errorf("expected 0 blocks, got %d", len(blocks))
 	}
@@ -142,9 +161,12 @@ func TestToBedrockContentBlocks_Empty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestToBedrockMessages_SingleUserMessage(t *testing.T) {
-	msgs := toBedrockMessages([]agent.Message{
+	msgs, err := toBedrockMessages([]agent.Message{
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
@@ -157,11 +179,14 @@ func TestToBedrockMessages_SingleUserMessage(t *testing.T) {
 }
 
 func TestToBedrockMessages_MultiTurnConversation(t *testing.T) {
-	msgs := toBedrockMessages([]agent.Message{
+	msgs, err := toBedrockMessages([]agent.Message{
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi there"}}},
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "bye"}}},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
@@ -177,7 +202,7 @@ func TestToBedrockMessages_MultiTurnConversation(t *testing.T) {
 }
 
 func TestToBedrockMessages_WithToolResultContent(t *testing.T) {
-	msgs := toBedrockMessages([]agent.Message{
+	msgs, err := toBedrockMessages([]agent.Message{
 		{
 			Role: agent.RoleUser,
 			Content: []agent.ContentBlock{
@@ -185,6 +210,9 @@ func TestToBedrockMessages_WithToolResultContent(t *testing.T) {
 			},
 		},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
@@ -697,3 +725,106 @@ func TestBuildAdditionalFields_ThinkingOnly_NoTopK(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// ImageBlock translation tests (sub-task 5.1)
+// ---------------------------------------------------------------------------
+
+func TestToBedrockContentBlocks_ImageBlock_RawBytes(t *testing.T) {
+	rawBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10} // JPEG magic bytes
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Data:     rawBytes,
+				MIMEType: "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	img, ok := blocks[0].(*types.ContentBlockMemberImage)
+	if !ok {
+		t.Fatalf("expected *ContentBlockMemberImage, got %T", blocks[0])
+	}
+	if img.Value.Format != types.ImageFormatJpeg {
+		t.Errorf("expected ImageFormatJpeg, got %v", img.Value.Format)
+	}
+	src, ok := img.Value.Source.(*types.ImageSourceMemberBytes)
+	if !ok {
+		t.Fatalf("expected *ImageSourceMemberBytes, got %T", img.Value.Source)
+	}
+	if string(src.Value) != string(rawBytes) {
+		t.Errorf("expected bytes %v, got %v", rawBytes, src.Value)
+	}
+}
+
+func TestToBedrockContentBlocks_ImageBlock_Base64String(t *testing.T) {
+	rawBytes := []byte("hello image data")
+	encoded := base64.StdEncoding.EncodeToString(rawBytes)
+
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Base64:   encoded,
+				MIMEType: "image/png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	img, ok := blocks[0].(*types.ContentBlockMemberImage)
+	if !ok {
+		t.Fatalf("expected *ContentBlockMemberImage, got %T", blocks[0])
+	}
+	if img.Value.Format != types.ImageFormatPng {
+		t.Errorf("expected ImageFormatPng, got %v", img.Value.Format)
+	}
+	src, ok := img.Value.Source.(*types.ImageSourceMemberBytes)
+	if !ok {
+		t.Fatalf("expected *ImageSourceMemberBytes, got %T", img.Value.Source)
+	}
+	if string(src.Value) != string(rawBytes) {
+		t.Errorf("expected decoded bytes %q, got %q", rawBytes, src.Value)
+	}
+}
+
+func TestToBedrockContentBlocks_ImageBlock_InvalidBase64_ReturnsError(t *testing.T) {
+	_, err := toBedrockContentBlocks([]agent.ContentBlock{
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Base64:   "not-valid-base64!!!",
+				MIMEType: "image/jpeg",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error for invalid base64, got nil")
+	}
+}
+
+func TestToBedrockImageFormat_AllMIMETypes(t *testing.T) {
+	cases := []struct {
+		mimeType string
+		expected types.ImageFormat
+	}{
+		{"image/jpeg", types.ImageFormatJpeg},
+		{"image/png", types.ImageFormatPng},
+		{"image/gif", types.ImageFormatGif},
+		{"image/webp", types.ImageFormatWebp},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mimeType, func(t *testing.T) {
+			got := toBedrockImageFormat(tc.mimeType)
+			if got != tc.expected {
+				t.Errorf("toBedrockImageFormat(%q) = %v, want %v", tc.mimeType, got, tc.expected)
+			}
+		})
+	}
+}

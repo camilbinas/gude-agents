@@ -160,6 +160,12 @@ func (h *slogHook) OnRetrieverEnd(err error, docCount int, duration time.Duratio
 	h.log(level, "retriever.end", attrs...)
 }
 
+func (h *slogHook) OnImagesAttached(imageCount int) {
+	h.log(slog.LevelDebug, "images.attached",
+		slog.Int("image_count", imageCount),
+	)
+}
+
 func (h *slogHook) OnMaxIterationsExceeded(limit int) {
 	h.log(slog.LevelWarn, "max_iterations_exceeded",
 		slog.Int("limit", limit),

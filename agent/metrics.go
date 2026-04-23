@@ -23,6 +23,10 @@ type MetricsHook interface {
 	// OnGuardrailComplete is called after a guardrail evaluation.
 	// direction is "input" or "output". blocked is true if the guardrail rejected.
 	OnGuardrailComplete(direction string, blocked bool)
+
+	// OnImagesAttached is called when images are attached to the invocation via WithImages.
+	// imageCount is the number of ImageBlock values prepended to the first user message.
+	OnImagesAttached(imageCount int)
 }
 
 // SetMetricsHook sets the metrics hook. Called by the metrics submodule's Option.

@@ -48,6 +48,7 @@ type InvokeSpanParams struct {
 	SystemPrompt    string           // the agent's system instructions
 	InferenceConfig *InferenceConfig // merged inference config; nil = provider defaults
 	AgentName       string           // empty if WithName was not called
+	ImageCount      int              // number of images attached via WithImages; 0 if none
 }
 
 // ProviderCallParams carries data for a provider call span.

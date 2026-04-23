@@ -158,6 +158,10 @@ func (h *debugHook) OnRetrieverEnd(err error, docCount int, duration time.Durati
 	h.p(" %s✓ %s  %d docs%s\n", dim, fmtDur(duration), docCount, reset)
 }
 
+func (h *debugHook) OnImagesAttached(imageCount int) {
+	h.p("%s◈ images  %s%d image(s) attached%s\n", dim, dim, imageCount, reset)
+}
+
 func (h *debugHook) OnMaxIterationsExceeded(limit int) {
 	h.p("    %s⚠ max iterations (%d) exceeded%s\n", yellow, limit, reset)
 }

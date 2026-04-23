@@ -281,7 +281,10 @@ func TestToGeminiParts_NilToolUseInput(t *testing.T) {
 		},
 	}
 
-	parts := toGeminiParts(blocks)
+	parts, err := toGeminiParts(blocks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -309,7 +312,10 @@ func TestToGeminiParts_EmptyToolUseInput(t *testing.T) {
 		},
 	}
 
-	parts := toGeminiParts(blocks)
+	parts, err := toGeminiParts(blocks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
@@ -522,5 +528,157 @@ func TestBuildConfig_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
 	// MaxOutputTokens should be the constructor default
 	if config.MaxOutputTokens != 4096 {
 		t.Errorf("expected MaxOutputTokens 4096, got %d", config.MaxOutputTokens)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 8.1 — ImageBlock translation
+// ---------------------------------------------------------------------------
+
+func TestToGeminiParts_ImageBlock_RawBytes(t *testing.T) {
+	rawBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10} // JPEG magic bytes
+	blocks := []agent.ContentBlock{
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Data:     rawBytes,
+				MIMEType: "image/jpeg",
+			},
+		},
+	}
+
+	parts, err := toGeminiParts(blocks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+
+	part := parts[0]
+	if part.InlineData == nil {
+		t.Fatal("expected InlineData part, got nil")
+	}
+	if part.InlineData.MIMEType != "image/jpeg" {
+		t.Errorf("expected MIME type %q, got %q", "image/jpeg", part.InlineData.MIMEType)
+	}
+	if string(part.InlineData.Data) != string(rawBytes) {
+		t.Errorf("expected raw bytes to be passed through unchanged")
+	}
+}
+
+func TestToGeminiParts_ImageBlock_Base64String(t *testing.T) {
+	rawBytes := []byte("hello image data")
+	encoded := "aGVsbG8gaW1hZ2UgZGF0YQ==" // base64 of "hello image data"
+
+	blocks := []agent.ContentBlock{
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Base64:   encoded,
+				MIMEType: "image/png",
+			},
+		},
+	}
+
+	parts, err := toGeminiParts(blocks)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+
+	part := parts[0]
+	if part.InlineData == nil {
+		t.Fatal("expected InlineData part, got nil")
+	}
+	if part.InlineData.MIMEType != "image/png" {
+		t.Errorf("expected MIME type %q, got %q", "image/png", part.InlineData.MIMEType)
+	}
+	if string(part.InlineData.Data) != string(rawBytes) {
+		t.Errorf("expected decoded bytes %q, got %q", rawBytes, part.InlineData.Data)
+	}
+}
+
+func TestToGeminiParts_ImageBlock_InvalidBase64_ReturnsError(t *testing.T) {
+	blocks := []agent.ContentBlock{
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Base64:   "not-valid-base64!!!",
+				MIMEType: "image/jpeg",
+			},
+		},
+	}
+
+	_, err := toGeminiParts(blocks)
+	if err == nil {
+		t.Fatal("expected error for invalid base64, got nil")
+	}
+
+	var providerErr *agent.ProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("expected *agent.ProviderError, got %T: %v", err, err)
+	}
+}
+
+func TestToGeminiParts_ImageBlock_UserAndModelRoles(t *testing.T) {
+	rawBytes := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic bytes
+
+	msgs := []agent.Message{
+		{
+			Role: agent.RoleUser,
+			Content: []agent.ContentBlock{
+				agent.ImageBlock{
+					Source: agent.ImageSource{
+						Data:     rawBytes,
+						MIMEType: "image/png",
+					},
+				},
+				agent.TextBlock{Text: "What is in this image?"},
+			},
+		},
+		{
+			Role: agent.RoleAssistant,
+			Content: []agent.ContentBlock{
+				agent.ImageBlock{
+					Source: agent.ImageSource{
+						Data:     rawBytes,
+						MIMEType: "image/png",
+					},
+				},
+				agent.TextBlock{Text: "It is a PNG image."},
+			},
+		},
+	}
+
+	contents, err := toGeminiContents(msgs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(contents) != 2 {
+		t.Fatalf("expected 2 contents, got %d", len(contents))
+	}
+
+	// User message
+	userContent := contents[0]
+	if userContent.Role != "user" {
+		t.Errorf("expected role %q, got %q", "user", userContent.Role)
+	}
+	if len(userContent.Parts) != 2 {
+		t.Fatalf("expected 2 parts in user message, got %d", len(userContent.Parts))
+	}
+	if userContent.Parts[0].InlineData == nil {
+		t.Error("expected first part of user message to be InlineData (image)")
+	}
+
+	// Model message
+	modelContent := contents[1]
+	if modelContent.Role != "model" {
+		t.Errorf("expected role %q, got %q", "model", modelContent.Role)
+	}
+	if len(modelContent.Parts) != 2 {
+		t.Fatalf("expected 2 parts in model message, got %d", len(modelContent.Parts))
+	}
+	if modelContent.Parts[0].InlineData == nil {
+		t.Error("expected first part of model message to be InlineData (image)")
 	}
 }

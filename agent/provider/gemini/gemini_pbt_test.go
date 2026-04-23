@@ -206,7 +206,10 @@ func TestProperty_GeminiContentBlockMapping(t *testing.T) {
 		case 0: // TextBlock
 			text := rapid.StringMatching(`[a-zA-Z0-9 ]{1,50}`).Draw(t, "text")
 			blocks := []agent.ContentBlock{agent.TextBlock{Text: text}}
-			parts := toGeminiParts(blocks)
+			parts, err := toGeminiParts(blocks)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if len(parts) != 1 {
 				t.Fatalf("expected 1 part, got %d", len(parts))
 			}
@@ -231,7 +234,10 @@ func TestProperty_GeminiContentBlockMapping(t *testing.T) {
 				Name:      name,
 				Input:     json.RawMessage(inputJSON),
 			}}
-			parts := toGeminiParts(blocks)
+			parts, err := toGeminiParts(blocks)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if len(parts) != 1 {
 				t.Fatalf("expected 1 part, got %d", len(parts))
 			}
@@ -254,7 +260,10 @@ func TestProperty_GeminiContentBlockMapping(t *testing.T) {
 				ToolUseID: toolUseID,
 				Content:   content,
 			}}
-			parts := toGeminiParts(blocks)
+			parts, err := toGeminiParts(blocks)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if len(parts) != 1 {
 				t.Fatalf("expected 1 part, got %d", len(parts))
 			}

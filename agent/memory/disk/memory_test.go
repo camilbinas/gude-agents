@@ -248,3 +248,76 @@ func TestToolBlocks(t *testing.T) {
 		t.Errorf("expected 'found it', got %q", tr.Content)
 	}
 }
+
+// TestImageBlock verifies that disk memory correctly round-trips an ImageBlock
+// through Save + Load — both raw bytes and pre-encoded base64 representations.
+// This is the end-to-end memory persistence test for the image-input feature.
+func TestImageBlock(t *testing.T) {
+	m, err := New(tempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	rawBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+	const preEncoded = "aGVsbG8gaW1hZ2UgZGF0YQ=="
+
+	msgs := []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{
+			agent.ImageBlock{Source: agent.ImageSource{Data: rawBytes, MIMEType: "image/jpeg"}},
+			agent.ImageBlock{Source: agent.ImageSource{Base64: preEncoded, MIMEType: "image/png"}},
+			agent.TextBlock{Text: "describe these"},
+		}},
+		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{
+			agent.TextBlock{Text: "Two images, got it."},
+		}},
+	}
+
+	if err := m.Save(ctx, "images", msgs); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := m.Load(ctx, "images")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(loaded) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(loaded))
+	}
+	if len(loaded[0].Content) != 3 {
+		t.Fatalf("expected 3 content blocks, got %d", len(loaded[0].Content))
+	}
+
+	// First block: raw bytes image.
+	img0, ok := loaded[0].Content[0].(agent.ImageBlock)
+	if !ok {
+		t.Fatalf("content[0]: expected ImageBlock, got %T", loaded[0].Content[0])
+	}
+	if string(img0.Source.Data) != string(rawBytes) {
+		t.Errorf("raw bytes corrupted: expected %v, got %v", rawBytes, img0.Source.Data)
+	}
+	if img0.Source.MIMEType != "image/jpeg" {
+		t.Errorf("MIMEType: expected 'image/jpeg', got %q", img0.Source.MIMEType)
+	}
+
+	// Second block: pre-encoded base64 image.
+	img1, ok := loaded[0].Content[1].(agent.ImageBlock)
+	if !ok {
+		t.Fatalf("content[1]: expected ImageBlock, got %T", loaded[0].Content[1])
+	}
+	if img1.Source.Base64 != preEncoded {
+		t.Errorf("base64 corrupted: expected %q, got %q", preEncoded, img1.Source.Base64)
+	}
+	if img1.Source.MIMEType != "image/png" {
+		t.Errorf("MIMEType: expected 'image/png', got %q", img1.Source.MIMEType)
+	}
+
+	// Third block: text survives alongside images.
+	tb, ok := loaded[0].Content[2].(agent.TextBlock)
+	if !ok {
+		t.Fatalf("content[2]: expected TextBlock, got %T", loaded[0].Content[2])
+	}
+	if tb.Text != "describe these" {
+		t.Errorf("text corrupted: expected %q, got %q", "describe these", tb.Text)
+	}
+}

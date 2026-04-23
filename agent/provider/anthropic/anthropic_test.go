@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -469,5 +470,120 @@ func TestBuildParams_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
 	// MaxTokens should be the constructor default
 	if result.MaxTokens != 4096 {
 		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 6.1 — Unit tests for Anthropic image translation
+// ---------------------------------------------------------------------------
+
+// TestToAnthropicContentBlocks_ImageBlock_RawBytes verifies that raw bytes are
+// base64-encoded and the resulting block uses the base64 source type.
+func TestToAnthropicContentBlocks_ImageBlock_RawBytes(t *testing.T) {
+	rawBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG magic bytes
+	block := agent.ImageBlock{
+		Source: agent.ImageSource{
+			Data:     rawBytes,
+			MIMEType: "image/jpeg",
+		},
+	}
+
+	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(result))
+	}
+	img := result[0].OfImage
+	if img == nil {
+		t.Fatal("expected OfImage to be set")
+	}
+	if img.Source.OfBase64 == nil {
+		t.Fatal("expected OfBase64 source to be set")
+	}
+
+	expectedEncoded := base64.StdEncoding.EncodeToString(rawBytes)
+	if img.Source.OfBase64.Data != expectedEncoded {
+		t.Errorf("expected encoded data %q, got %q", expectedEncoded, img.Source.OfBase64.Data)
+	}
+}
+
+// TestToAnthropicContentBlocks_ImageBlock_PreEncodedBase64 verifies that a
+// pre-encoded base64 string is used directly without re-encoding.
+func TestToAnthropicContentBlocks_ImageBlock_PreEncodedBase64(t *testing.T) {
+	rawBytes := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic bytes
+	preEncoded := base64.StdEncoding.EncodeToString(rawBytes)
+
+	block := agent.ImageBlock{
+		Source: agent.ImageSource{
+			Base64:   preEncoded,
+			MIMEType: "image/png",
+		},
+	}
+
+	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(result))
+	}
+	img := result[0].OfImage
+	if img == nil {
+		t.Fatal("expected OfImage to be set")
+	}
+	if img.Source.OfBase64 == nil {
+		t.Fatal("expected OfBase64 source to be set")
+	}
+	// Must be the original pre-encoded string, not double-encoded.
+	if img.Source.OfBase64.Data != preEncoded {
+		t.Errorf("expected pre-encoded data %q, got %q", preEncoded, img.Source.OfBase64.Data)
+	}
+}
+
+// TestToAnthropicContentBlocks_ImageBlock_MIMETypeMapping verifies that the
+// MIMEType field is mapped directly to the media_type in the SDK struct.
+func TestToAnthropicContentBlocks_ImageBlock_MIMETypeMapping(t *testing.T) {
+	mimeTypes := []string{"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+	for _, mime := range mimeTypes {
+		t.Run(mime, func(t *testing.T) {
+			block := agent.ImageBlock{
+				Source: agent.ImageSource{
+					Data:     []byte{0x01, 0x02},
+					MIMEType: mime,
+				},
+			}
+
+			result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser)
+
+			if len(result) != 1 {
+				t.Fatalf("expected 1 block, got %d", len(result))
+			}
+			img := result[0].OfImage
+			if img == nil {
+				t.Fatal("expected OfImage to be set")
+			}
+			if img.Source.OfBase64 == nil {
+				t.Fatal("expected OfBase64 source to be set")
+			}
+			if string(img.Source.OfBase64.MediaType) != mime {
+				t.Errorf("expected media_type %q, got %q", mime, img.Source.OfBase64.MediaType)
+			}
+		})
+	}
+}
+
+// TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped verifies that
+// an ImageBlock in an assistant-role message is skipped without panic or output.
+func TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped(t *testing.T) {
+	block := agent.ImageBlock{
+		Source: agent.ImageSource{
+			Data:     []byte{0x01, 0x02, 0x03},
+			MIMEType: "image/png",
+		},
+	}
+
+	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleAssistant)
+
+	if len(result) != 0 {
+		t.Errorf("expected 0 blocks for assistant-role ImageBlock, got %d", len(result))
 	}
 }

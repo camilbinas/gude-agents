@@ -159,3 +159,110 @@ func TestUnmarshal_EmptyArray(t *testing.T) {
 		t.Fatalf("expected empty slice, got %d messages", len(messages))
 	}
 }
+
+// TestMarshalUnmarshal_ImageBlock_RawBytes serialises a message containing
+// an ImageBlock with raw bytes and verifies the round-trip preserves the
+// data, base64, and MIME type fields.
+func TestMarshalUnmarshal_ImageBlock_RawBytes(t *testing.T) {
+	rawBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+	original := []agent.Message{
+		{
+			Role: agent.RoleUser,
+			Content: []agent.ContentBlock{
+				agent.ImageBlock{
+					Source: agent.ImageSource{
+						Data:     rawBytes,
+						MIMEType: "image/jpeg",
+					},
+				},
+				agent.TextBlock{Text: "describe this"},
+			},
+		},
+	}
+
+	data, err := MarshalMessages(original)
+	if err != nil {
+		t.Fatalf("MarshalMessages: %v", err)
+	}
+
+	if !strings.Contains(string(data), `"type":"image"`) {
+		t.Errorf("expected JSON to contain %q, got: %s", `"type":"image"`, string(data))
+	}
+
+	got, err := UnmarshalMessages(data)
+	if err != nil {
+		t.Fatalf("UnmarshalMessages: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(got))
+	}
+	if len(got[0].Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(got[0].Content))
+	}
+
+	img, ok := got[0].Content[0].(agent.ImageBlock)
+	if !ok {
+		t.Fatalf("expected content[0] to be ImageBlock, got %T", got[0].Content[0])
+	}
+	if string(img.Source.Data) != string(rawBytes) {
+		t.Errorf("Data: expected %v, got %v", rawBytes, img.Source.Data)
+	}
+	if img.Source.Base64 != "" {
+		t.Errorf("Base64: expected empty, got %q", img.Source.Base64)
+	}
+	if img.Source.MIMEType != "image/jpeg" {
+		t.Errorf("MIMEType: expected %q, got %q", "image/jpeg", img.Source.MIMEType)
+	}
+
+	tb, ok := got[0].Content[1].(agent.TextBlock)
+	if !ok {
+		t.Fatalf("expected content[1] to be TextBlock, got %T", got[0].Content[1])
+	}
+	if tb.Text != "describe this" {
+		t.Errorf("TextBlock.Text: expected %q, got %q", "describe this", tb.Text)
+	}
+}
+
+// TestMarshalUnmarshal_ImageBlock_Base64 verifies the round-trip preserves
+// a pre-encoded base64 source without corrupting or re-encoding it.
+func TestMarshalUnmarshal_ImageBlock_Base64(t *testing.T) {
+	const preEncoded = "aGVsbG8gaW1hZ2UgZGF0YQ=="
+	original := []agent.Message{
+		{
+			Role: agent.RoleUser,
+			Content: []agent.ContentBlock{
+				agent.ImageBlock{
+					Source: agent.ImageSource{
+						Base64:   preEncoded,
+						MIMEType: "image/png",
+					},
+				},
+			},
+		},
+	}
+
+	data, err := MarshalMessages(original)
+	if err != nil {
+		t.Fatalf("MarshalMessages: %v", err)
+	}
+
+	got, err := UnmarshalMessages(data)
+	if err != nil {
+		t.Fatalf("UnmarshalMessages: %v", err)
+	}
+
+	img, ok := got[0].Content[0].(agent.ImageBlock)
+	if !ok {
+		t.Fatalf("expected ImageBlock, got %T", got[0].Content[0])
+	}
+	if img.Source.Base64 != preEncoded {
+		t.Errorf("Base64: expected %q, got %q", preEncoded, img.Source.Base64)
+	}
+	if len(img.Source.Data) != 0 {
+		t.Errorf("Data: expected empty, got %v", img.Source.Data)
+	}
+	if img.Source.MIMEType != "image/png" {
+		t.Errorf("MIMEType: expected %q, got %q", "image/png", img.Source.MIMEType)
+	}
+}

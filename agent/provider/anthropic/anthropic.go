@@ -5,7 +5,10 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -272,7 +275,7 @@ func toAnthropicMessages(msgs []agent.Message) []anthropicsdk.MessageParam {
 	for i, m := range msgs {
 		out[i] = anthropicsdk.MessageParam{
 			Role:    toAnthropicRole(m.Role),
-			Content: toAnthropicContentBlocks(m.Content),
+			Content: toAnthropicContentBlocks(m.Content, m.Role),
 		}
 	}
 	return out
@@ -287,7 +290,21 @@ func toAnthropicRole(r agent.Role) anthropicsdk.MessageParamRole {
 	}
 }
 
-func toAnthropicContentBlocks(blocks []agent.ContentBlock) []anthropicsdk.ContentBlockParamUnion {
+// imageBytes returns the raw bytes from an ImageSource.
+// If Source.Data is set, it is returned directly.
+// If Source.Base64 is set, it is decoded from standard base64.
+func imageBytes(src agent.ImageSource) ([]byte, error) {
+	if len(src.Data) > 0 {
+		return src.Data, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(src.Base64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	return b, nil
+}
+
+func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []anthropicsdk.ContentBlockParamUnion {
 	out := make([]anthropicsdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -303,6 +320,27 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock) []anthropicsdk.Conten
 			out = append(out, anthropicsdk.NewToolUseBlock(v.ToolUseID, input, v.Name))
 		case agent.ToolResultBlock:
 			out = append(out, anthropicsdk.NewToolResultBlock(v.ToolUseID, v.Content, v.IsError))
+		case agent.ImageBlock:
+			if role == agent.RoleAssistant {
+				log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")
+				continue
+			}
+			var encoded string
+			if v.Source.Base64 != "" {
+				// Pre-encoded: use directly without re-encoding.
+				encoded = v.Source.Base64
+			} else {
+				bytes, err := imageBytes(v.Source)
+				if err != nil {
+					log.Printf("anthropic: failed to get image bytes: %v (skipping block)", err)
+					continue
+				}
+				encoded = base64.StdEncoding.EncodeToString(bytes)
+			}
+			out = append(out, anthropicsdk.NewImageBlockBase64(
+				string(v.Source.MIMEType),
+				encoded,
+			))
 		}
 	}
 	return out

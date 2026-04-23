@@ -218,6 +218,10 @@ func (h *cloudwatchHook) OnGuardrailComplete(direction string, blocked bool) {
 	}
 }
 
+func (h *cloudwatchHook) OnImagesAttached(imageCount int) {
+	h.append(counterDatum("AgentImagesAttachedTotal", float64(imageCount)))
+}
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------

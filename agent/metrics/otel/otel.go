@@ -31,6 +31,7 @@ type otelHook struct {
 	toolCallDuration     metric.Float64Histogram
 	guardrailBlockTotal  metric.Int64Counter
 	iterationTotal       metric.Int64Counter
+	imagesAttachedTotal  metric.Int64Counter
 }
 
 var _ agent.MetricsHook = (*otelHook)(nil)
@@ -98,6 +99,12 @@ func (h *otelHook) register() error {
 		return err
 	}
 
+	h.imagesAttachedTotal, err = h.meter.Int64Counter("agent.images.attached.total",
+		metric.WithDescription("Total number of images attached to agent invocations via WithImages."))
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -155,6 +162,10 @@ func (h *otelHook) OnGuardrailComplete(direction string, blocked bool) {
 		h.guardrailBlockTotal.Add(context.Background(), 1,
 			metric.WithAttributes(append(h.baseAttrs(), attribute.String("direction", direction))...))
 	}
+}
+
+func (h *otelHook) OnImagesAttached(imageCount int) {
+	h.imagesAttachedTotal.Add(context.Background(), int64(imageCount), metric.WithAttributes(h.baseAttrs()...))
 }
 
 // baseAttrs returns the common attributes for all metrics.

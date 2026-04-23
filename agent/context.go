@@ -62,3 +62,23 @@ func GetInferenceConfig(ctx context.Context) *InferenceConfig {
 	cfg, _ := ctx.Value(inferenceConfigKey{}).(*InferenceConfig)
 	return cfg
 }
+
+// imagesKey is the context key for per-invocation image slices.
+type imagesKey struct{}
+
+// WithImages attaches a slice of ImageBlock values to the context for the
+// current invocation. Pass nil or an empty slice to clear any previously
+// attached images.
+func WithImages(ctx context.Context, images []ImageBlock) context.Context {
+	return context.WithValue(ctx, imagesKey{}, images)
+}
+
+// GetImages retrieves the image slice from the context.
+// Returns nil if no images are attached or if an empty slice was stored.
+func GetImages(ctx context.Context) []ImageBlock {
+	images, _ := ctx.Value(imagesKey{}).([]ImageBlock)
+	if len(images) == 0 {
+		return nil
+	}
+	return images
+}

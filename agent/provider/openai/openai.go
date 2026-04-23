@@ -5,7 +5,9 @@ package openai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -298,6 +300,26 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 			out = append(out, openaisdk.UserMessage(v.Text))
 		case agent.ToolResultBlock:
 			out = append(out, openaisdk.ToolMessage(v.Content, v.ToolUseID))
+		case agent.ImageBlock:
+			var b64 string
+			if v.Source.Base64 != "" {
+				// Pre-encoded: use directly.
+				b64 = v.Source.Base64
+			} else {
+				bytes, err := imageBytes(v.Source)
+				if err != nil {
+					// Skip on error (log if needed)
+					continue
+				}
+				b64 = base64.StdEncoding.EncodeToString(bytes)
+			}
+			dataURI := fmt.Sprintf("data:%s;base64,%s", v.Source.MIMEType, b64)
+			out = append(out, openaisdk.UserMessage([]openaisdk.ChatCompletionContentPartUnionParam{
+				openaisdk.ImageContentPart(openaisdk.ChatCompletionContentPartImageImageURLParam{
+					URL:    dataURI,
+					Detail: "auto",
+				}),
+			}))
 		}
 	}
 	return out
@@ -322,6 +344,9 @@ func toOpenAIAssistantMessage(blocks []agent.ContentBlock) openaisdk.ChatComplet
 					},
 				},
 			})
+		case agent.ImageBlock:
+			// ImageBlock in assistant-role messages is silently skipped.
+			_ = v
 		}
 	}
 
@@ -336,6 +361,20 @@ func toOpenAIAssistantMessage(blocks []agent.ContentBlock) openaisdk.ChatComplet
 	return openaisdk.ChatCompletionMessageParamUnion{
 		OfAssistant: &msg,
 	}
+}
+
+// imageBytes returns the raw bytes from an ImageSource.
+// If Source.Data is set, it is returned directly.
+// If Source.Base64 is set, it is decoded from standard base64.
+func imageBytes(src agent.ImageSource) ([]byte, error) {
+	if len(src.Data) > 0 {
+		return src.Data, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(src.Base64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	return b, nil
 }
 
 // toOpenAITools converts framework ToolSpecs to OpenAI function tool params.

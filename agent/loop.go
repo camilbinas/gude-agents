@@ -44,6 +44,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 			SystemPrompt:    a.instructions,
 			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
 			AgentName:       a.name,
+			ImageCount:      len(GetImages(ctx)),
 		})
 	}
 
@@ -67,6 +68,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 			SystemPrompt:    a.instructions,
 			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
 			AgentName:       a.name,
+			ImageCount:      len(GetImages(ctx)),
 		})
 	}
 
@@ -217,9 +219,32 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			}
 		}
 	}
+	// Resolve images from context and validate MIME types.
+	images := GetImages(ctx)
+	for _, img := range images {
+		if err := img.Source.Validate(); err != nil {
+			return cumulative, err
+		}
+	}
+
+	if a.loggingHook != nil && len(images) > 0 {
+		a.loggingHook.OnImagesAttached(len(images))
+	}
+
+	if a.metricsHook != nil && len(images) > 0 {
+		a.metricsHook.OnImagesAttached(len(images))
+	}
+
+	// Build the first user message, prepending images when present.
+	var firstContent []ContentBlock
+	for _, img := range images {
+		firstContent = append(firstContent, img)
+	}
+	firstContent = append(firstContent, TextBlock{Text: msg})
+
 	messages = append(messages, Message{
 		Role:    RoleUser,
-		Content: []ContentBlock{TextBlock{Text: msg}},
+		Content: firstContent,
 	})
 
 	return a.runLoop(ctx, convID, messages, ragOffset, a.instructions, mergedInferenceCfg, cb)

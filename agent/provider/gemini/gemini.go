@@ -5,7 +5,9 @@ package gemini
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -108,7 +110,10 @@ func (p *GeminiProvider) Client() *genai.Client { return p.client }
 
 func (p *GeminiProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	config := buildConfig(p, params)
-	contents := toGeminiContents(params.Messages)
+	contents, err := toGeminiContents(params.Messages)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := p.client.Models.GenerateContent(ctx, p.model, contents, config)
 	if err != nil {
@@ -124,7 +129,10 @@ func (p *GeminiProvider) Converse(ctx context.Context, params agent.ConversePara
 
 func (p *GeminiProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
 	config := buildConfig(p, params)
-	contents := toGeminiContents(params.Messages)
+	contents, err := toGeminiContents(params.Messages)
+	if err != nil {
+		return nil, err
+	}
 
 	iter := p.client.Models.GenerateContentStream(ctx, p.model, contents, config)
 
@@ -270,20 +278,38 @@ func parseResponse(resp *genai.GenerateContentResponse) *agent.ProviderResponse 
 // ptr returns a pointer to the given value.
 func ptr[T any](v T) *T { return &v }
 
+// imageBytes returns the raw bytes from an ImageSource.
+// If Source.Data is set, it is returned directly.
+// If Source.Base64 is set, it is decoded from standard base64.
+func imageBytes(src agent.ImageSource) ([]byte, error) {
+	if len(src.Data) > 0 {
+		return src.Data, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(src.Base64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	return b, nil
+}
+
 // toGeminiContents converts framework messages to Gemini content objects.
-func toGeminiContents(msgs []agent.Message) []*genai.Content {
+func toGeminiContents(msgs []agent.Message) ([]*genai.Content, error) {
 	out := make([]*genai.Content, len(msgs))
 	for i, m := range msgs {
+		parts, err := toGeminiParts(m.Content)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = &genai.Content{
 			Role:  toGeminiRole(m.Role),
-			Parts: toGeminiParts(m.Content),
+			Parts: parts,
 		}
 	}
-	return out
+	return out, nil
 }
 
 // toGeminiParts converts framework content blocks to Gemini parts.
-func toGeminiParts(blocks []agent.ContentBlock) []*genai.Part {
+func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 	parts := make([]*genai.Part, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -299,9 +325,15 @@ func toGeminiParts(blocks []agent.ContentBlock) []*genai.Part {
 			parts = append(parts, genai.NewPartFromFunctionCall(v.Name, args))
 		case agent.ToolResultBlock:
 			parts = append(parts, genai.NewPartFromFunctionResponse(v.ToolUseID, map[string]any{"result": v.Content}))
+		case agent.ImageBlock:
+			bytes, err := imageBytes(v.Source)
+			if err != nil {
+				return nil, &agent.ProviderError{Cause: fmt.Errorf("ImageBlock base64 decode: %w", err)}
+			}
+			parts = append(parts, genai.NewPartFromBytes(bytes, v.Source.MIMEType))
 		}
 	}
-	return parts
+	return parts, nil
 }
 
 // toGeminiRole maps a framework role to the Gemini role string.

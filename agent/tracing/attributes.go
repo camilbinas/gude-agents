@@ -26,6 +26,7 @@ const (
 	AttrMemoryConversationID    = "memory.conversation_id"
 	AttrRetrieverQuery          = "retriever.query"
 	AttrRetrieverDocumentCount  = "retriever.document_count"
+	AttrAgentImageCount         = "agent.image_count"
 	AttrGraphIterations         = "graph.iterations"
 )
 

@@ -149,3 +149,72 @@ func TestWithInferenceConfig_RoundTrip(t *testing.T) {
 		t.Errorf("StopSequences: expected [STOP END], got %v", got.StopSequences)
 	}
 }
+
+func TestGetImages_NilWhenNoneAttached(t *testing.T) {
+	ctx := context.Background()
+
+	images := GetImages(ctx)
+	if images != nil {
+		t.Fatalf("expected nil, got %v", images)
+	}
+}
+
+func TestWithImages_RoundTrip(t *testing.T) {
+	want := []ImageBlock{
+		{Source: ImageSource{MIMEType: "image/jpeg", Data: []byte{0xFF, 0xD8}}},
+		{Source: ImageSource{MIMEType: "image/png", Data: []byte{0x89, 0x50}}},
+	}
+
+	ctx := WithImages(context.Background(), want)
+	got := GetImages(ctx)
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d images, got %d", len(want), len(got))
+	}
+	for i, img := range got {
+		if img.Source.MIMEType != want[i].Source.MIMEType {
+			t.Errorf("image[%d] MIMEType: expected %q, got %q", i, want[i].Source.MIMEType, img.Source.MIMEType)
+		}
+	}
+}
+
+func TestWithImages_NilSlice(t *testing.T) {
+	ctx := WithImages(context.Background(), nil)
+
+	images := GetImages(ctx)
+	if images != nil {
+		t.Fatalf("expected nil, got %v", images)
+	}
+}
+
+func TestWithImages_EmptySlice(t *testing.T) {
+	ctx := WithImages(context.Background(), []ImageBlock{})
+
+	images := GetImages(ctx)
+	if images != nil {
+		t.Fatalf("expected nil, got %v", images)
+	}
+}
+
+func TestWithImages_ChainedCallsInnermostWins(t *testing.T) {
+	outer := []ImageBlock{
+		{Source: ImageSource{MIMEType: "image/gif", Data: []byte{0x47}}},
+	}
+	inner := []ImageBlock{
+		{Source: ImageSource{MIMEType: "image/webp", Data: []byte{0x52}}},
+		{Source: ImageSource{MIMEType: "image/png", Data: []byte{0x89}}},
+	}
+
+	ctx := WithImages(context.Background(), outer)
+	ctx = WithImages(ctx, inner)
+
+	got := GetImages(ctx)
+	if len(got) != len(inner) {
+		t.Fatalf("expected %d images from innermost call, got %d", len(inner), len(got))
+	}
+	for i, img := range got {
+		if img.Source.MIMEType != inner[i].Source.MIMEType {
+			t.Errorf("image[%d] MIMEType: expected %q, got %q", i, inner[i].Source.MIMEType, img.Source.MIMEType)
+		}
+	}
+}

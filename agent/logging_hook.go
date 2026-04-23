@@ -44,6 +44,10 @@ type LoggingHook interface {
 	// OnRetrieverEnd is called after Retriever.Retrieve with the outcome.
 	OnRetrieverEnd(err error, docCount int, duration time.Duration)
 
+	// OnImagesAttached is called when images are attached to the invocation via WithImages.
+	// imageCount is the number of ImageBlock values prepended to the first user message.
+	OnImagesAttached(imageCount int)
+
 	// OnMaxIterationsExceeded records the max-iterations-exceeded event.
 	OnMaxIterationsExceeded(limit int)
 }

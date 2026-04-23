@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -709,5 +710,149 @@ func TestBuildParams_PartialInferenceConfig_OnlyTemperature_OpenAI(t *testing.T)
 	// MaxCompletionTokens should be the constructor default
 	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 4096 {
 		t.Errorf("expected MaxCompletionTokens 4096, got %v", result.MaxCompletionTokens.Value)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Feature: image-input — OpenAI image translation (Task 7.1)
+// ---------------------------------------------------------------------------
+
+// TestToOpenAIUserMessages_ImageBlock_RawBytes verifies that raw bytes produce
+// the correct data URI: data:image/jpeg;base64,<encoded>.
+func TestToOpenAIUserMessages_ImageBlock_RawBytes(t *testing.T) {
+	rawBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG magic bytes
+	block := agent.ImageBlock{
+		Source: agent.ImageSource{
+			Data:     rawBytes,
+			MIMEType: "image/jpeg",
+		},
+	}
+
+	msgs := toOpenAIUserMessages([]agent.ContentBlock{block})
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].OfUser == nil {
+		t.Fatal("expected user message")
+	}
+
+	parts := msgs[0].OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 content part, got %d", len(parts))
+	}
+	if parts[0].OfImageURL == nil {
+		t.Fatal("expected image URL content part")
+	}
+
+	expectedB64 := base64.StdEncoding.EncodeToString(rawBytes)
+	expectedURI := "data:image/jpeg;base64," + expectedB64
+	gotURL := parts[0].OfImageURL.ImageURL.URL
+	if gotURL != expectedURI {
+		t.Errorf("expected data URI %q, got %q", expectedURI, gotURL)
+	}
+}
+
+// TestToOpenAIUserMessages_ImageBlock_PreEncodedBase64 verifies that a
+// pre-encoded base64 string is used directly in the data URI without re-encoding.
+func TestToOpenAIUserMessages_ImageBlock_PreEncodedBase64(t *testing.T) {
+	rawBytes := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic bytes
+	preEncoded := base64.StdEncoding.EncodeToString(rawBytes)
+
+	block := agent.ImageBlock{
+		Source: agent.ImageSource{
+			Base64:   preEncoded,
+			MIMEType: "image/png",
+		},
+	}
+
+	msgs := toOpenAIUserMessages([]agent.ContentBlock{block})
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].OfUser == nil {
+		t.Fatal("expected user message")
+	}
+
+	parts := msgs[0].OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 content part, got %d", len(parts))
+	}
+	if parts[0].OfImageURL == nil {
+		t.Fatal("expected image URL content part")
+	}
+
+	expectedURI := "data:image/png;base64," + preEncoded
+	gotURL := parts[0].OfImageURL.ImageURL.URL
+	if gotURL != expectedURI {
+		t.Errorf("expected data URI %q, got %q", expectedURI, gotURL)
+	}
+}
+
+// TestToOpenAIUserMessages_ImageBlock_DetailAuto verifies that the detail field
+// is set to "auto".
+func TestToOpenAIUserMessages_ImageBlock_DetailAuto(t *testing.T) {
+	block := agent.ImageBlock{
+		Source: agent.ImageSource{
+			Data:     []byte{0x47, 0x49, 0x46}, // GIF magic bytes
+			MIMEType: "image/gif",
+		},
+	}
+
+	msgs := toOpenAIUserMessages([]agent.ContentBlock{block})
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].OfUser == nil {
+		t.Fatal("expected user message")
+	}
+
+	parts := msgs[0].OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 content part, got %d", len(parts))
+	}
+	if parts[0].OfImageURL == nil {
+		t.Fatal("expected image URL content part")
+	}
+
+	gotDetail := parts[0].OfImageURL.ImageURL.Detail
+	if gotDetail != "auto" {
+		t.Errorf("expected detail %q, got %q", "auto", gotDetail)
+	}
+}
+
+// TestToOpenAIAssistantMessage_ImageBlock_Skipped verifies that an ImageBlock
+// in an assistant-role message is silently skipped — no panic, no tool call output.
+func TestToOpenAIAssistantMessage_ImageBlock_Skipped(t *testing.T) {
+	blocks := []agent.ContentBlock{
+		agent.TextBlock{Text: "Here is my analysis."},
+		agent.ImageBlock{
+			Source: agent.ImageSource{
+				Data:     []byte{0x00, 0x01, 0x02},
+				MIMEType: "image/webp",
+			},
+		},
+	}
+
+	// Should not panic.
+	msg := toOpenAIAssistantMessage(blocks)
+
+	if msg.OfAssistant == nil {
+		t.Fatal("expected assistant message")
+	}
+
+	// Text should be preserved.
+	if !msg.OfAssistant.Content.OfString.Valid() {
+		t.Fatal("expected text content to be set")
+	}
+	if msg.OfAssistant.Content.OfString.Value != "Here is my analysis." {
+		t.Errorf("expected text %q, got %q", "Here is my analysis.", msg.OfAssistant.Content.OfString.Value)
+	}
+
+	// No tool calls should be produced from the ImageBlock.
+	if len(msg.OfAssistant.ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls, got %d", len(msg.OfAssistant.ToolCalls))
 	}
 }

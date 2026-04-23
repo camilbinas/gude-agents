@@ -16,6 +16,10 @@ type jsonContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	Content   string          `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// Image fields (populated when Type == "image").
+	ImageData     []byte `json:"image_data,omitempty"`      // raw image bytes; mutually exclusive with ImageBase64
+	ImageBase64   string `json:"image_base64,omitempty"`    // pre-encoded base64 string; mutually exclusive with ImageData
+	ImageMIMEType string `json:"image_mime_type,omitempty"` // one of image/jpeg, image/png, image/gif, image/webp
 }
 
 // jsonMessage is the JSON envelope for an agent.Message.
@@ -70,6 +74,13 @@ func ContentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 		return jsonContentBlock{Type: "tool_use", ToolUseID: b.ToolUseID, Name: b.Name, Input: b.Input}
 	case agent.ToolResultBlock:
 		return jsonContentBlock{Type: "tool_result", ToolUseID: b.ToolUseID, Content: b.Content, IsError: b.IsError}
+	case agent.ImageBlock:
+		return jsonContentBlock{
+			Type:          "image",
+			ImageData:     b.Source.Data,
+			ImageBase64:   b.Source.Base64,
+			ImageMIMEType: b.Source.MIMEType,
+		}
 	default:
 		return jsonContentBlock{Type: "unknown"}
 	}
@@ -84,6 +95,14 @@ func JSONToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 		return agent.ToolUseBlock{ToolUseID: jcb.ToolUseID, Name: jcb.Name, Input: jcb.Input}
 	case "tool_result":
 		return agent.ToolResultBlock{ToolUseID: jcb.ToolUseID, Content: jcb.Content, IsError: jcb.IsError}
+	case "image":
+		return agent.ImageBlock{
+			Source: agent.ImageSource{
+				Data:     jcb.ImageData,
+				Base64:   jcb.ImageBase64,
+				MIMEType: jcb.ImageMIMEType,
+			},
+		}
 	default:
 		return agent.TextBlock{}
 	}

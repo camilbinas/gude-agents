@@ -48,9 +48,7 @@ func WithPreserveRecentMessages(n int) SummaryOption {
 }
 
 // WithTriggerThreshold sets the percentage of the threshold at which
-// summarization triggers. Defaults to 80 (summarization fires when the
-// summarizable message count reaches 80% of the threshold). The value
-// is clamped to the range [1, 100].
+// summarization triggers. Defaults to 80%.
 func WithTriggerThreshold(pct int) SummaryOption {
 	return func(s *Summary) error {
 		if pct < 1 || pct > 100 {

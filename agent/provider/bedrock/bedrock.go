@@ -5,7 +5,9 @@ package bedrock
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -183,9 +185,13 @@ func (p *BedrockProvider) Client() *bedrockruntime.Client { return p.client }
 // Converse sends messages to Bedrock and returns a complete response.
 func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
+	msgs, err := toBedrockMessages(params.Messages)
+	if err != nil {
+		return nil, &agent.ProviderError{Cause: err}
+	}
 	input := &bedrockruntime.ConverseInput{
 		ModelId:         aws.String(p.model),
-		Messages:        toBedrockMessages(params.Messages),
+		Messages:        msgs,
 		InferenceConfig: infCfg,
 	}
 	if params.System != "" {
@@ -269,9 +275,13 @@ func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResp
 // returned in the ProviderResponse.
 func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
+	msgs, err := toBedrockMessages(params.Messages)
+	if err != nil {
+		return nil, &agent.ProviderError{Cause: err}
+	}
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId:         aws.String(p.model),
-		Messages:        toBedrockMessages(params.Messages),
+		Messages:        msgs,
 		InferenceConfig: infCfg,
 	}
 	if params.System != "" {
@@ -446,15 +456,19 @@ func (p *BedrockProvider) buildAdditionalFields(cfg *agent.InferenceConfig) docu
 // ---------------------------------------------------------------------------
 
 // toBedrockMessages converts framework Messages to Bedrock SDK Messages.
-func toBedrockMessages(msgs []agent.Message) []types.Message {
+func toBedrockMessages(msgs []agent.Message) ([]types.Message, error) {
 	out := make([]types.Message, len(msgs))
 	for i, m := range msgs {
+		blocks, err := toBedrockContentBlocks(m.Content)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = types.Message{
 			Role:    toBedrockRole(m.Role),
-			Content: toBedrockContentBlocks(m.Content),
+			Content: blocks,
 		}
 	}
-	return out
+	return out, nil
 }
 
 func toBedrockRole(r agent.Role) types.ConversationRole {
@@ -466,7 +480,7 @@ func toBedrockRole(r agent.Role) types.ConversationRole {
 	}
 }
 
-func toBedrockContentBlocks(blocks []agent.ContentBlock) []types.ContentBlock {
+func toBedrockContentBlocks(blocks []agent.ContentBlock) ([]types.ContentBlock, error) {
 	out := make([]types.ContentBlock, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -502,9 +516,54 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock) []types.ContentBlock {
 				trb.Status = types.ToolResultStatusError
 			}
 			out = append(out, &types.ContentBlockMemberToolResult{Value: trb})
+
+		case agent.ImageBlock:
+			bytes, err := imageBytes(v.Source)
+			if err != nil {
+				return nil, fmt.Errorf("ImageBlock base64 decode: %w", err)
+			}
+			format := toBedrockImageFormat(v.Source.MIMEType)
+			out = append(out, &types.ContentBlockMemberImage{
+				Value: types.ImageBlock{
+					Format: format,
+					Source: &types.ImageSourceMemberBytes{
+						Value: bytes,
+					},
+				},
+			})
 		}
 	}
-	return out
+	return out, nil
+}
+
+// imageBytes returns the raw bytes from an ImageSource.
+// If Source.Data is set, it is returned directly.
+// If Source.Base64 is set, it is decoded from standard base64.
+func imageBytes(src agent.ImageSource) ([]byte, error) {
+	if len(src.Data) > 0 {
+		return src.Data, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(src.Base64)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	return b, nil
+}
+
+// toBedrockImageFormat maps a MIME type string to the Bedrock ImageFormat enum.
+func toBedrockImageFormat(mimeType string) types.ImageFormat {
+	switch mimeType {
+	case "image/jpeg":
+		return types.ImageFormatJpeg
+	case "image/png":
+		return types.ImageFormatPng
+	case "image/gif":
+		return types.ImageFormatGif
+	case "image/webp":
+		return types.ImageFormatWebp
+	default:
+		return types.ImageFormatJpeg // fallback; MIME type should be validated before reaching here
+	}
 }
 
 // toToolConfig converts framework ToolSpecs to a Bedrock ToolConfiguration.
