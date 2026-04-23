@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/memory/sqlite
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.14.0
+	github.com/camilbinas/gude-agents v0.15.0
 	modernc.org/sqlite v1.37.1
 	pgregory.net/rapid v1.2.0
 )
