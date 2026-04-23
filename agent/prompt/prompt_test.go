@@ -193,3 +193,130 @@ func TestCOSTAR_FieldOrder(t *testing.T) {
 func TestCOSTAR_ImplementsInstructions(t *testing.T) {
 	var _ Instructions = COSTAR{}
 }
+
+// --- APE ---
+
+func TestAPE_AllFields(t *testing.T) {
+	a := APE{
+		Action:      "Search the knowledge base and answer questions",
+		Purpose:     "Help support agents resolve tickets faster",
+		Expectation: "Concise answers with source links",
+	}
+	s := a.String()
+
+	checks := []struct {
+		label, want string
+	}{
+		{"Action", "Action: Search the knowledge base and answer questions"},
+		{"Purpose", "Purpose: Help support agents resolve tickets faster"},
+		{"Expectation", "Expectation: Concise answers with source links"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(s, c.want) {
+			t.Errorf("%s: expected %q in output, got:\n%s", c.label, c.want, s)
+		}
+	}
+}
+
+func TestAPE_EmptyFieldsOmitted(t *testing.T) {
+	a := APE{Action: "Do stuff"}
+	s := a.String()
+
+	if !strings.Contains(s, "Action: Do stuff") {
+		t.Errorf("expected Action in output, got:\n%s", s)
+	}
+	for _, absent := range []string{"Purpose:", "Expectation:"} {
+		if strings.Contains(s, absent) {
+			t.Errorf("expected %q to be absent, got:\n%s", absent, s)
+		}
+	}
+}
+
+func TestAPE_AllEmpty(t *testing.T) {
+	a := APE{}
+	if a.String() != "" {
+		t.Errorf("expected empty string for zero-value APE, got %q", a.String())
+	}
+}
+
+func TestAPE_FieldOrder(t *testing.T) {
+	a := APE{Action: "A", Purpose: "B", Expectation: "C"}
+	s := a.String()
+
+	if !(strings.Index(s, "Action:") < strings.Index(s, "Purpose:") &&
+		strings.Index(s, "Purpose:") < strings.Index(s, "Expectation:")) {
+		t.Errorf("fields not in expected order in:\n%s", s)
+	}
+}
+
+func TestAPE_ImplementsInstructions(t *testing.T) {
+	var _ Instructions = APE{}
+}
+
+// --- TRACE ---
+
+func TestTRACE_AllFields(t *testing.T) {
+	tr := TRACE{
+		Task:    "Code review assistant",
+		Request: "Review pull requests for bugs and style",
+		Action:  "Read the diff, identify issues, suggest fixes",
+		Context: "Go microservice using pgx for Postgres",
+		Example: "Input: bad SQL\nOutput: use parameterized queries",
+	}
+	s := tr.String()
+
+	checks := []struct {
+		label, want string
+	}{
+		{"Task", "Task: Code review assistant"},
+		{"Request", "Request: Review pull requests for bugs and style"},
+		{"Action", "Action: Read the diff, identify issues, suggest fixes"},
+		{"Context", "Context: Go microservice using pgx for Postgres"},
+		{"Example", "Example: Input: bad SQL"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(s, c.want) {
+			t.Errorf("%s: expected %q in output, got:\n%s", c.label, c.want, s)
+		}
+	}
+}
+
+func TestTRACE_EmptyFieldsOmitted(t *testing.T) {
+	tr := TRACE{Task: "Summarize", Context: "Legal documents"}
+	s := tr.String()
+
+	if !strings.Contains(s, "Task: Summarize") {
+		t.Errorf("expected Task in output, got:\n%s", s)
+	}
+	if !strings.Contains(s, "Context: Legal documents") {
+		t.Errorf("expected Context in output, got:\n%s", s)
+	}
+	for _, absent := range []string{"Request:", "Action:", "Example:"} {
+		if strings.Contains(s, absent) {
+			t.Errorf("expected %q to be absent, got:\n%s", absent, s)
+		}
+	}
+}
+
+func TestTRACE_AllEmpty(t *testing.T) {
+	tr := TRACE{}
+	if tr.String() != "" {
+		t.Errorf("expected empty string for zero-value TRACE, got %q", tr.String())
+	}
+}
+
+func TestTRACE_FieldOrder(t *testing.T) {
+	tr := TRACE{Task: "A", Request: "B", Action: "C", Context: "D", Example: "E"}
+	s := tr.String()
+
+	if !(strings.Index(s, "Task:") < strings.Index(s, "Request:") &&
+		strings.Index(s, "Request:") < strings.Index(s, "Action:") &&
+		strings.Index(s, "Action:") < strings.Index(s, "Context:") &&
+		strings.Index(s, "Context:") < strings.Index(s, "Example:")) {
+		t.Errorf("fields not in expected order in:\n%s", s)
+	}
+}
+
+func TestTRACE_ImplementsInstructions(t *testing.T) {
+	var _ Instructions = TRACE{}
+}

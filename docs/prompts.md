@@ -1,6 +1,6 @@
 # Prompt System
 
-The prompt system provides structured ways to define agent instructions. Every agent needs a system prompt — the `Instructions` interface lets you pass anything from a plain string to a full prompt framework like RISEN or COSTAR.
+The prompt system provides structured ways to define agent instructions. Every agent needs a system prompt — the `Instructions` interface lets you pass anything from a plain string to a full prompt framework like RISEN, COSTAR, APE, or TRACE.
 
 ## Instructions Interface
 
@@ -85,6 +85,58 @@ func (c COSTAR) String() string
 ```
 
 `String()` concatenates the non-empty fields with labels like `Context:`, `Objective:`, `Style:`, `Tone:`, `Audience:`, and `Response format:`, separated by newlines.
+
+## prompt.APE
+
+```go
+type APE struct {
+    Action      string
+    Purpose     string
+    Expectation string
+}
+```
+
+`APE` builds a system prompt using the APE framework: Action, Purpose, Expectation. A concise format that works well for tool-heavy agents where you want to be direct about what the agent does and how.
+
+| Field         | Purpose                                                  |
+|---------------|----------------------------------------------------------|
+| `Action`      | What the agent should do                                 |
+| `Purpose`     | Why it's doing it (the business goal)                    |
+| `Expectation` | What good output looks like (constraints, format, tone)  |
+
+```go
+func (a APE) String() string
+```
+
+`String()` concatenates the non-empty fields with labels like `Action:`, `Purpose:`, and `Expectation:`, separated by newlines.
+
+## prompt.TRACE
+
+```go
+type TRACE struct {
+    Task    string
+    Request string
+    Action  string
+    Context string
+    Example string
+}
+```
+
+`TRACE` builds a system prompt using the TRACE framework: Task, Request, Action, Context, Example. Useful when you want to show the model what good output looks like via an example.
+
+| Field     | Purpose                                                    |
+|-----------|------------------------------------------------------------|
+| `Task`    | The agent's role or identity                               |
+| `Request` | What the agent is being asked to do                        |
+| `Action`  | How the agent should approach the task                     |
+| `Context` | Background information about the domain or codebase        |
+| `Example` | A concrete input/output example of the desired behavior    |
+
+```go
+func (tr TRACE) String() string
+```
+
+`String()` concatenates the non-empty fields with labels like `Task:`, `Request:`, `Action:`, `Context:`, and `Example:`, separated by newlines.
 
 ## Code Examples
 
