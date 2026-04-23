@@ -101,7 +101,7 @@ func main() {
 
 	// ── RAG retriever ─────────────────────────────────────────────────────────
 	retriever := rag.NewRetriever(embedder, store,
-		rag.WithTopK(3),
+		rag.WithMaxResults(3),
 		rag.WithScoreThreshold(0.4),
 	)
 

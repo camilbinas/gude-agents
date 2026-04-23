@@ -38,7 +38,7 @@ func main() {
 	// RAGAgent preset enforces the retriever at the call site.
 	provider := bedrock.Must(bedrock.Standard())
 
-	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
+	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
 	a, err := agent.RAGAgent(
 		provider,

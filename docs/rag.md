@@ -92,13 +92,13 @@ Defaults: `topK=4`, `scoreThreshold=0.0`, no reranker.
 
 | Option | Description |
 |--------|-------------|
-| `WithTopK(k int)` | Maximum number of documents to retrieve (default: 4) |
+| `WithMaxResults(k int)` | Maximum number of documents to retrieve (default: 4) |
 | `WithScoreThreshold(t float64)` | Minimum cosine similarity score for returned documents (default: 0.0) |
 | `WithReranker(rr agent.Reranker)` | Attaches a reranker that re-scores candidates after retrieval |
 
 ```go
 retriever := rag.NewRetriever(embedder, store,
-    rag.WithTopK(5),
+    rag.WithMaxResults(5),
     rag.WithScoreThreshold(0.7),
 )
 ```
@@ -337,7 +337,7 @@ There are two ways to wire RAG into an agent:
 Attach a retriever to the agent with the `WithRetriever` option. The agent calls `Retrieve` once per invocation (before the first provider call) and injects the formatted documents as a user/assistant message turn in the conversation.
 
 ```go
-retriever := rag.NewRetriever(embedder, store, rag.WithTopK(3))
+retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(3))
 
 a, err := agent.Default(
     provider,
@@ -380,6 +380,61 @@ a, err := agent.Default(
 ```
 
 When the LLM calls this tool, it receives the formatted document content as the tool result. If no documents are found, the result is `"No relevant documents found."`. An optional `ContextFormatter` argument overrides `DefaultContextFormatter`.
+
+## Document Loaders
+
+The `agent/rag/document` package extracts text from files for ingestion. It supports plain text, Markdown, CSV, JSON, YAML, HTML, source code, and DOCX out of the box. PDF support is available via a separate submodule.
+
+### Loading Files
+
+```go
+import "github.com/camilbinas/gude-agents/agent/rag/document"
+
+// Load specific files
+texts, metadata, err := document.LoadFiles(ctx, []string{"guide.md", "faq.docx"})
+
+// Load a directory (with optional extension filter)
+texts, metadata, err := document.LoadDir(ctx, "docs/",
+    document.WithExtensions(".md", ".txt", ".pdf"),
+)
+```
+
+`LoadFiles` and `LoadDir` return parallel slices of text content and metadata ready for `rag.Ingest`:
+
+```go
+err = rag.Ingest(ctx, store, embedder, texts, metadata)
+```
+
+### PDF Support
+
+PDF parsing requires a separate import — blank-import the `pdf` submodule to register the `.pdf` parser:
+
+```go
+import (
+    "github.com/camilbinas/gude-agents/agent/rag/document"
+    _ "github.com/camilbinas/gude-agents/agent/rag/document/pdf" // enables .pdf
+)
+```
+
+Install: `go get github.com/camilbinas/gude-agents/agent/rag/document/pdf`
+
+### Custom Parsers
+
+Register a parser for any file extension:
+
+```go
+document.RegisterParser(".rtf", document.ParserFunc(func(ctx context.Context, path string) (string, error) {
+    // your RTF extraction logic
+    return text, nil
+}))
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `WithExtensions(".md", ".pdf")` | Only load files with these extensions |
+| `WithParser(".ext", parser)` | Add a custom parser scoped to this call |
 
 ## Code Example
 
@@ -434,7 +489,7 @@ func main() {
 
     // 4. Create a retriever.
     retriever := rag.NewRetriever(embedder, store,
-        rag.WithTopK(2),
+        rag.WithMaxResults(2),
         rag.WithScoreThreshold(0.5),
     )
 
@@ -470,3 +525,5 @@ func main() {
 - [Providers](providers.md) — Bedrock and OpenAI provider setup
 - [Tool System](tools.md) — how tools work in the agent loop
 - [Message Types](message-types.md) — `Document` and `ScoredDocument` types
+- `examples/rag-pdf` — PDF document ingestion and querying
+- `examples/rag-basic` — basic RAG with text documents

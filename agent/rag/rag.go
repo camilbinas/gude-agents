@@ -172,6 +172,10 @@ func WithTopK(k int) RetrieverOption {
 	return func(r *Retriever) { r.topK = k }
 }
 
+// WithMaxResults sets the maximum number of documents to retrieve.
+// This is an alias for WithTopK.
+func WithMaxResults(k int) RetrieverOption { return WithTopK(k) }
+
 // WithScoreThreshold sets the minimum similarity score for returned documents.
 func WithScoreThreshold(t float64) RetrieverOption {
 	return func(r *Retriever) { r.scoreThreshold = t }

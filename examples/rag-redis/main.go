@@ -59,7 +59,7 @@ func main() {
 
 	provider := bedrock.Must(bedrock.Standard())
 
-	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
+	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
 	a, err := agent.Default(
 		provider,
