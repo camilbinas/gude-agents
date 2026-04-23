@@ -24,21 +24,6 @@ vllm.New("mistral")          // Local vLLM server (uses VLLM_BASE_URL)
 
 Each provider has `Cheapest()`, `Standard()`, `Smartest()` tier aliases. These mappings change over time as better models become available — pin a specific constructor (e.g., `GlobalClaudeSonnet4_6()`) if you need a stable model across upgrades.
 
-## Provider Interface
-
-Every provider implements these two methods:
-
-```go
-type Provider interface {
-    Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error)
-    ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
-}
-```
-
-`Converse` sends messages and returns a complete response. `ConverseStream` does the same but delivers text chunks incrementally through the `StreamCallback`. Both return a `ProviderResponse` containing the text, any tool calls, and token usage.
-
-You don't call these methods directly — the agent loop handles that. But if you're building a custom provider, this is the interface to implement.
-
 ## ModelIdentifier Interface
 
 Providers can optionally implement `ModelIdentifier` to expose the underlying model ID:
@@ -161,7 +146,7 @@ Note: direct SDK calls bypass the agent loop entirely — no memory, tools, guar
 
 ## Implementing a Custom Provider
 
-To create your own provider, implement the `Provider` interface:
+Implement the `Provider` interface:
 
 ```go
 type Provider interface {

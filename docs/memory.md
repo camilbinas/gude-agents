@@ -104,21 +104,13 @@ This is useful when you want the model to see conversation text but not raw tool
 func NewSummary(inner Memory, threshold int, fn SummaryFunc, opts ...SummaryOption) (*Summary, error)
 ```
 
-Triggers background summarization when the summarizable message count (total minus preserved) reaches the configured trigger percentage (default 80%) of `threshold`. The threshold is specified in **turns** (user+assistant exchanges) — a threshold of 10 means 10 turns (20 messages internally). Preserved messages (set via `WithPreserveRecentMessages`) are excluded from the trigger count.
-
-When triggered, a goroutine calls the `SummaryFunc` on messages up to the cutoff point, replaces them with a summary turn (user summary + assistant acknowledgment), and saves the result back to the inner store.
+Automatically summarizes old messages when the conversation grows beyond `threshold` turns (user+assistant exchanges). When triggered, older messages are replaced with a compact summary turn, keeping the context window manageable without losing important history.
 
 ```go
 type SummaryFunc func(ctx context.Context, messages []Message) ([2]Message, error)
 ```
 
-The `SummaryFunc` returns a `[2]Message` — a user message containing the summary text followed by an assistant acknowledgment. This ensures the summarized conversation always starts with a user message and maintains strict alternation.
-
-Key behaviors:
-- The trigger compares the summarizable count (`total messages - preserved messages`) against `threshold * 2 * triggerPct / 100`
-- Only one summarization runs at a time (subsequent saves skip if one is already in progress)
-- Summarization runs in a background goroutine — `Save` returns immediately
-- The summary turn replaces all messages up to the cutoff; any messages added after the cutoff are preserved
+The `SummaryFunc` receives the messages to summarize and returns a `[2]Message` — a user message with the summary text followed by an assistant acknowledgment.
 
 #### DefaultSummaryFunc
 
@@ -206,13 +198,7 @@ if err != nil {
 
 ## Composable Middleware Pattern
 
-Strategies wrap each other like middleware. Each strategy takes an `inner Memory` as its first argument, so you build a pipeline by nesting constructors. Messages flow through the chain: `Save` writes down to the base store, `Load` reads from the base store and transforms on the way back up.
-
-```
-Filter → Window → Store
-```
-
-In code, the innermost store is created first, then wrapped outward:
+Strategies wrap each other like middleware. Each strategy takes an `inner Memory` as its first argument, so you build a pipeline by nesting constructors:
 
 ```go
 store    := memory.NewStore()           // base storage
@@ -220,15 +206,7 @@ windowed := memory.NewWindow(store, 20) // keep last 20 messages
 filtered := memory.NewFilter(windowed)  // strip tool blocks
 ```
 
-When the agent calls `filtered.Load(ctx, id)`:
-1. `Filter.Load` calls `Window.Load`
-2. `Window.Load` calls `Store.Load`, then trims to last 20
-3. `Filter` strips tool blocks from the trimmed result
-
-When the agent calls `filtered.Save(ctx, id, msgs)`:
-1. `Filter.Save` passes through to `Window.Save`
-2. `Window.Save` passes through to `Store.Save`
-3. The full message slice is stored (strategies only transform on Load)
+`Save` writes through to the base store unchanged. `Load` reads from the base store and transforms on the way back up — Window trims, Filter strips tool blocks.
 
 ## Code Example
 

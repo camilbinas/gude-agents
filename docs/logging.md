@@ -95,8 +95,6 @@ For graph and swarm hooks:
 | GraphRunEnd, NodeEnd, SwarmRunEnd, SwarmAgentEnd | Info | Error |
 | SwarmHandoff | Info | — |
 
-Start events are Debug because they fire frequently and are mainly useful for detailed debugging. End events are Info because they carry outcome data (duration, token usage). Errors always escalate to Error level.
-
 ## Structured Attributes
 
 Each log entry includes relevant key-value attributes:

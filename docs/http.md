@@ -141,14 +141,7 @@ a.Invoke(ctx, msg)
 
 ## Thread Safety
 
-All components are safe for concurrent use from multiple goroutines:
-
-- `Agent.Invoke` / `InvokeStream` — no shared mutable state; conversation ID resolved from context
-- `memory.Store` — `sync.RWMutex` protected
-- `redis.RedisMemory` — stateless, delegates to Redis
-- `memory.Summary` — per-conversation summarization locks (different conversations summarize concurrently)
-- `Swarm.Run` — `activeAgent` protected by mutex, conversation ID resolved from context
-- `mcp.Pool` — connection pooling with acquire/release
+All components are safe for concurrent use from multiple goroutines. A single `Agent`, `Swarm`, or memory store can handle many simultaneous requests — conversation isolation comes from the per-request conversation ID, not from separate instances.
 
 ## Production Recommendations
 

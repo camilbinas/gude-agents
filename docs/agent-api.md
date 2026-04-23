@@ -441,29 +441,20 @@ if errors.Is(err, agent.ErrTokenBudgetExceeded) {
 
 ## Agent Loop Behavior
 
-Each call to `Invoke` or `InvokeStream` runs the following loop:
+Each call to `Invoke` or `InvokeStream` runs the following steps:
 
 1. **Input guardrails** — the user message passes through all configured `InputGuardrail` functions in order. Any error aborts the invocation.
-
-2. **Memory load** — if `WithMemory` is configured, conversation history is loaded and prepended to the message list.
-
-3. **Inference config resolution** — the agent merges any per-invocation `InferenceConfig` (from the context) over agent-level defaults, then validates the merged result. Invalid values abort the invocation before the provider is called.
-
-4. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved once and injected as a user/assistant message turn in the conversation (not into the system prompt).
-
-5. **Agent loop** (up to `maxIterations`):
-   - The provider is called with the current messages, system prompt, tool specs, and merged inference config.
-   - Token usage is accumulated. If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
-   - If the provider returns **tool calls**: the agent executes them (sequentially or in parallel depending on `WithParallelToolExecution`), appends the assistant message and tool results to the conversation, and loops back to step 5.
+2. **Memory load** — if `WithMemory` is configured, conversation history is loaded.
+3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved and injected as context before the user message.
+4. **Agent loop** (up to `maxIterations`):
+   - The provider is called with the current messages, system prompt, and tool specs.
+   - If the provider returns **tool calls**: the agent executes them and loops back.
    - If the provider returns a **text response**: the loop exits.
+   - If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
+5. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
+6. **Memory save** — if `WithMemory` is configured, the full conversation is saved.
 
-6. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions. Any error aborts the invocation.
-
-7. **Memory save** — if `WithMemory` is configured, the full conversation (including the new exchange) is saved.
-
-8. **Return** — the text response and cumulative `TokenUsage` are returned.
-
-If the loop reaches `maxIterations` without the provider producing a text-only response, an error is returned.
+If the loop reaches `maxIterations` without a text response, an error is returned.
 
 ## See Also
 

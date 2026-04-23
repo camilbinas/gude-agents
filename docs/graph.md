@@ -115,7 +115,7 @@ type GraphResult struct {
 }
 ```
 
-Token usage is accumulated from nodes that set `state["__usage__"]` to an `agent.TokenUsage` value. The key is removed from state after extraction.
+`Usage` accumulates token usage from any agent nodes in the graph. `State` contains the final merged state after all nodes have run.
 
 ## Options
 

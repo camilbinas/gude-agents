@@ -1,45 +1,6 @@
 # Tool System
 
-The tool system lets you define functions that the LLM can invoke during a conversation. You describe a tool's name, purpose, and input schema — the framework handles marshalling, unmarshalling, and wiring it into the agent loop. The `tool` package provides both a typed generic constructor that auto-generates JSON Schema from Go struct tags and a raw constructor for manual schema control.
-
-## Tool Struct
-
-`Tool` pairs a specification (what the LLM sees) with a handler (what runs when the LLM calls it):
-
-```go
-type Tool struct {
-    Spec    Spec
-    Handler func(ctx context.Context, input json.RawMessage) (string, error)
-}
-```
-
-The `Handler` receives raw JSON from the LLM's tool call and returns a string result (or error) that gets sent back as a `ToolResultBlock`.
-
-## Spec
-
-`Spec` is the schema sent to the provider so the LLM knows about the tool:
-
-```go
-type Spec struct {
-    Name        string
-    Description string
-    InputSchema map[string]any // JSON Schema object
-}
-```
-
-- `Name` — unique identifier the LLM uses to call the tool
-- `Description` — natural language explanation of what the tool does (this is what the LLM reads to decide when to use it)
-- `InputSchema` — a JSON Schema object describing the expected input parameters
-
-## Handler Type
-
-The typed `Handler` is a generic function signature used with `tool.New[T]`:
-
-```go
-type Handler[T any] func(ctx context.Context, input T) (string, error)
-```
-
-Your handler receives a fully deserialized Go struct — no manual JSON parsing needed. Return a string result for the LLM, or an error to signal failure.
+The tool system lets you define functions that the LLM can invoke during a conversation. You describe a tool's name, purpose, and input schema — the framework handles marshalling, unmarshalling, and wiring it into the agent loop.
 
 ## tool.New[T] — Typed Constructor
 
@@ -47,31 +8,33 @@ Your handler receives a fully deserialized Go struct — no manual JSON parsing 
 func New[T any](name, description string, handler Handler[T]) Tool
 ```
 
-`New` creates a `Tool` from a typed handler. It calls `GenerateSchema[T]()` to auto-generate a JSON Schema from the struct type `T`, then wraps your handler to handle JSON unmarshalling automatically.
+The recommended way to create tools. Auto-generates a JSON Schema from the struct type `T` using struct tags, and handles JSON unmarshalling automatically.
+
+```go
+type WeatherInput struct {
+    City  string `json:"city"  description:"The city to get weather for" required:"true"`
+    Units string `json:"units" description:"Temperature units"           enum:"celsius,fahrenheit"`
+}
+
+weatherTool := tool.New("get_weather", "Get the current weather for a city.",
+    func(ctx context.Context, in WeatherInput) (string, error) {
+        return fmt.Sprintf("Weather in %s: 22°C, sunny", in.City), nil
+    },
+)
+```
 
 ### Struct Tag Schema Generation
 
-`GenerateSchema[T]` uses reflection to build a JSON Schema from struct tags on `T`. Four tags are supported:
+Four tags control the generated JSON Schema:
 
 | Tag | Purpose | Example |
 |-----|---------|---------|
-| `json` | Sets the property name in the schema. Use `"-"` to exclude a field. | `json:"city"` |
-| `description` | Adds a `description` field to the property schema. | `description:"The target city name"` |
-| `required` | When set to `"true"`, adds the field to the schema's `required` array. | `required:"true"` |
-| `enum` | Restricts the value to a comma-separated list of allowed values. | `enum:"celsius,fahrenheit"` |
+| `json` | Sets the property name. Use `"-"` to exclude a field. | `json:"city"` |
+| `description` | Adds a description visible to the LLM. | `description:"The target city name"` |
+| `required` | When `"true"`, marks the field as required. | `required:"true"` |
+| `enum` | Restricts to a comma-separated list of values. | `enum:"celsius,fahrenheit"` |
 
-Go types map to JSON Schema types automatically:
-
-| Go Type | JSON Schema Type |
-|---------|-----------------|
-| `string` | `"string"` |
-| `int`, `int64`, `uint`, etc. | `"integer"` |
-| `float32`, `float64` | `"number"` |
-| `bool` | `"boolean"` |
-| slices, arrays | `"array"` (with `items`) |
-| structs | `"object"` (recursive) |
-
-Unexported fields are skipped. Pointer types are unwrapped to their element type.
+Go types map to JSON Schema types automatically (`string`, `int`/`int64` → `integer`, `float64` → `number`, `bool`, slices → `array`, structs → `object`).
 
 ## tool.NewRaw — Manual Schema Constructor
 

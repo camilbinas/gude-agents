@@ -88,15 +88,9 @@ agent.invoke
 ├── agent.iteration                (per loop iteration)
 │   ├── agent.provider.call
 │   ├── agent.tool.<tool_name>     (per tool call, may be concurrent)
-│   │   └── (middleware-created spans)
 │   └── agent.guardrail.output     (per output guardrail, on final iteration)
 └── agent.memory.save              (if memory configured)
 ```
-
-- `agent.invoke` is the root span wrapping the entire invocation.
-- Each loop iteration gets its own `agent.iteration` child span.
-- Provider calls, tool executions, and guardrails nest under the current iteration.
-- Memory and retriever spans are direct children of `agent.invoke`.
 
 ## Attribute Reference
 

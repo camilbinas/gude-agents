@@ -91,23 +91,11 @@ Retrieves the per-invocation `InferenceConfig` from a Go `context.Context`. Retu
 
 ## Per-Invocation Scoping
 
-Inside `InvokeStream`, the agent does this before anything else:
+Each call to `Invoke` or `InvokeStream` creates a fresh `InvocationContext` and attaches it to the Go context that flows through middleware and tool handlers. This means:
 
-```go
-ic := NewInvocationContext()
-ctx = WithInvocationContext(ctx, ic)
-```
-
-This `ctx` is then passed to input guardrails, the provider, tool handlers, middleware, and output guardrails. Every component in the invocation pipeline shares the same `InvocationContext` instance, but separate invocations each get their own.
-
-## Concurrency Safety
-
-`InvocationContext` uses a `sync.RWMutex` internally:
-
-- `Set` acquires a write lock
-- `Get` acquires a read lock
-
-This makes it safe to use with `WithParallelToolExecution`, where multiple tool handlers run concurrently in separate goroutines. Multiple readers can access the store simultaneously, and writers are serialized.
+- Each invocation gets its own isolated store — no cross-request leakage
+- Middleware can write values that tool handlers read (and vice versa)
+- Concurrent tool executions (when `WithParallelToolExecution` is enabled) can safely read and write to the same `InvocationContext`
 
 ## Code Example
 

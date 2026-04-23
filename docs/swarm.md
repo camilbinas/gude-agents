@@ -4,8 +4,6 @@ A swarm is a group of agents that can hand off conversations to each other. Unli
 
 This is useful when different agents own different domains and the conversation might flow between them naturally. Think customer support: a triage agent routes to billing or technical support, and those specialists can route back if the question changes scope.
 
-## How It Works
-
 ```
 ┌──────────┐  transfer_to_billing  ┌──────────┐
 │  Triage  │ ────────────────────► │ Billing  │
@@ -20,11 +18,7 @@ This is useful when different agents own different domains and the conversation 
 └──────────┘
 ```
 
-1. You define agents as `SwarmMember`s with a name, description, and `*Agent`.
-2. `NewSwarm` automatically injects `transfer_to_<name>` tools into each agent for every other member.
-3. When you call `swarm.Run()`, the first member starts as the active agent.
-4. If the active agent calls a `transfer_to_<name>` tool, the swarm transfers the conversation (with full context) to that agent.
-5. The new agent continues the conversation until it either responds or hands off again.
+`NewSwarm` automatically injects `transfer_to_<name>` tools into each agent. When an agent calls one, the swarm transfers the full conversation to that agent. The first member in the slice starts as the active agent.
 
 ## Creating a Swarm
 

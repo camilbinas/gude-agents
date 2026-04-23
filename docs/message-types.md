@@ -1,6 +1,6 @@
 # Message Types
 
-The `agent` package defines the conversation data model used throughout gude-agents. These types represent messages, content blocks, provider call parameters, and RAG documents. Understanding them is essential when working with memory, custom providers, or middleware.
+Reference for the conversation data model used throughout gude-agents. These types are relevant when working with memory, custom providers, or middleware.
 
 All types below live in the `agent` package (`github.com/camilbinas/gude-agents/agent`) unless otherwise noted.
 

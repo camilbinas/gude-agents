@@ -2,34 +2,30 @@
 
 Middleware wraps tool execution to add cross-cutting behavior like logging, metrics, retries, or authorization. Each middleware intercepts every tool call the agent makes, running logic before and/or after the underlying handler.
 
-## ToolHandlerFunc
-
-```go
-type ToolHandlerFunc func(ctx context.Context, toolName string, input json.RawMessage) (string, error)
-```
-
-`ToolHandlerFunc` is the signature of a tool handler after middleware wrapping. It receives the Go context, the name of the tool being called, and the raw JSON input from the LLM. It returns the tool's string result or an error.
-
-## Middleware
+## Writing Middleware
 
 ```go
 type Middleware func(next ToolHandlerFunc) ToolHandlerFunc
 ```
 
-A `Middleware` takes the next handler in the chain and returns a new handler that wraps it. Inside the wrapper you can:
+A middleware takes the next handler and returns a new handler that wraps it:
 
-- Run logic before calling `next` (pre-processing)
-- Call `next(ctx, toolName, input)` to invoke the next middleware or the actual tool handler
-- Run logic after `next` returns (post-processing)
-- Short-circuit by returning a result without calling `next` at all
+```go
+func loggingMiddleware(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
+    return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+        log.Printf("calling tool: %s", toolName)
+        result, err := next(ctx, toolName, input)
+        log.Printf("tool done: %s err=%v", toolName, err)
+        return result, err
+    }
+}
+```
 
-Register middleware with the `WithMiddleware` option:
+Register with `WithMiddleware`:
 
 ```go
 agent.WithMiddleware(loggingMiddleware, metricsMiddleware)
 ```
-
-You can pass multiple middleware in a single call or add them with separate `WithMiddleware` calls — they accumulate.
 
 ## Execution Order
 

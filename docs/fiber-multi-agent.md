@@ -24,14 +24,6 @@ If you haven't read [HTTP & Multi-Tenant Environments](http.md) yet, start there
 
 One orchestrator agent instance handles all requests. Each request provides a `conversation_id` via the context, so conversations are isolated without creating agents per user.
 
-## Dependencies
-
-```bash
-go get github.com/gofiber/fiber/v3
-go get github.com/camilbinas/gude-agents
-go get github.com/camilbinas/gude-agents/agent/provider/bedrock
-```
-
 ## Full Example
 
 ```go
@@ -198,24 +190,6 @@ source.onmessage = (e) => console.log(e.data);
 source.addEventListener("done", () => source.close());
 source.addEventListener("error", (e) => console.error(e.data));
 ```
-
-## Fiber v3 vs v2 Streaming
-
-If you're migrating from Fiber v2, the streaming API changed:
-
-```go
-// Fiber v2 — uses fasthttp directly
-c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
-    // ...
-}))
-
-// Fiber v3 — first-class method on the context
-c.SendStreamWriter(func(w *bufio.Writer) {
-    // ...
-})
-```
-
-`SendStreamWriter` is cleaner and returns an error, so you can handle stream setup failures. The `bufio.Writer` interface is the same — your `InvokeStream` callback code doesn't change.
 
 ## Stub Tools
 
