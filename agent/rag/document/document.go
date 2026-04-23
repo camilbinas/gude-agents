@@ -73,6 +73,7 @@ type LoadOption func(*loadConfig)
 type loadConfig struct {
 	extensions []string // if set, only load files with these extensions
 	parsers    map[string]Parser
+	maxDepth   int // 0 = unlimited (default); 1 = flat (no subdirectories); n = n levels deep
 }
 
 // WithExtensions filters files to only those with the given extensions.
@@ -89,6 +90,16 @@ func WithExtensions(exts ...string) LoadOption {
 func WithParser(ext string, p Parser) LoadOption {
 	return func(c *loadConfig) {
 		c.parsers[strings.ToLower(ext)] = p
+	}
+}
+
+// WithMaxDepth limits how deep LoadDir descends into subdirectories.
+// A depth of 1 means only files directly in the target directory (flat).
+// A depth of 2 includes one level of subdirectories, and so on.
+// The default (0) means unlimited depth — all subdirectories are walked.
+func WithMaxDepth(depth int) LoadOption {
+	return func(c *loadConfig) {
+		c.maxDepth = depth
 	}
 }
 
@@ -155,9 +166,13 @@ func LoadFiles(ctx context.Context, paths []string, opts ...LoadOption) (texts [
 }
 
 // LoadDir walks a directory and extracts text from all supported files.
-// Use WithExtensions to filter by file type.
+// Use WithExtensions to filter by file type and WithMaxDepth to limit recursion.
 func LoadDir(ctx context.Context, dir string, opts ...LoadOption) (texts []string, metadata []map[string]string, err error) {
 	cfg := newLoadConfig(opts)
+
+	// Clean the root so depth calculation is consistent.
+	dir = filepath.Clean(dir)
+	rootDepth := strings.Count(dir, string(filepath.Separator))
 
 	var paths []string
 	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -165,7 +180,21 @@ func LoadDir(ctx context.Context, dir string, opts ...LoadOption) (texts []strin
 			return err
 		}
 		if info.IsDir() {
+			// Skip subdirectories beyond maxDepth.
+			if cfg.maxDepth > 0 {
+				pathDepth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - rootDepth
+				if pathDepth >= cfg.maxDepth {
+					return filepath.SkipDir
+				}
+			}
 			return nil
+		}
+		// Check file depth (file's parent depth must be within limit).
+		if cfg.maxDepth > 0 {
+			fileDepth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - rootDepth
+			if fileDepth > cfg.maxDepth {
+				return nil
+			}
 		}
 		ext := filepath.Ext(path)
 		if !cfg.allowExt(ext) {

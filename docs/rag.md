@@ -449,6 +449,7 @@ document.RegisterParser(".rtf", document.ParserFunc(func(ctx context.Context, pa
 |--------|-------------|
 | `WithExtensions(".md", ".pdf")` | Only load files with these extensions |
 | `WithParser(".ext", parser)` | Add a custom parser scoped to this call |
+| `WithMaxDepth(n)` | Limit directory recursion depth. 1 = flat (no subdirectories), 2 = one level of subdirs, 0 = unlimited (default) |
 
 ## Code Example
 
