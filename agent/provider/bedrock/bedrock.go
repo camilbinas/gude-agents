@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 
@@ -520,9 +521,13 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock) ([]types.ContentBlock, 
 		case agent.ImageBlock:
 			bytes, err := imageBytes(v.Source)
 			if err != nil {
-				return nil, fmt.Errorf("ImageBlock base64 decode: %w", err)
+				return nil, fmt.Errorf("ImageBlock: %w", err)
 			}
-			format := toBedrockImageFormat(v.Source.MIMEType)
+			mimeType := v.Source.MIMEType
+			if mimeType == "" {
+				mimeType = "image/jpeg" // fallback for URL sources
+			}
+			format := toBedrockImageFormat(mimeType)
 			out = append(out, &types.ContentBlockMemberImage{
 				Value: types.ImageBlock{
 					Format: format,
@@ -539,15 +544,34 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock) ([]types.ContentBlock, 
 // imageBytes returns the raw bytes from an ImageSource.
 // If Source.Data is set, it is returned directly.
 // If Source.Base64 is set, it is decoded from standard base64.
+// If Source.URL is set, the image is fetched via HTTP GET.
 func imageBytes(src agent.ImageSource) ([]byte, error) {
 	if len(src.Data) > 0 {
 		return src.Data, nil
 	}
-	b, err := base64.StdEncoding.DecodeString(src.Base64)
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
+	if src.Base64 != "" {
+		b, err := base64.StdEncoding.DecodeString(src.Base64)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode: %w", err)
+		}
+		return b, nil
 	}
-	return b, nil
+	if src.URL != "" {
+		resp, err := http.Get(src.URL)
+		if err != nil {
+			return nil, fmt.Errorf("fetch image URL: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetch image URL: status %d", resp.StatusCode)
+		}
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read image URL body: %w", err)
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("ImageSource has no data, base64, or URL")
 }
 
 // toBedrockImageFormat maps a MIME type string to the Bedrock ImageFormat enum.

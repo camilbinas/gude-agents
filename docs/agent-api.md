@@ -347,6 +347,17 @@ result, _, err := a.Invoke(ctx, "What is in this image?")
 
 Pass `nil` or an empty slice to clear any previously attached images. When multiple `WithImages` calls are chained on the same context, the innermost (most recent) call wins.
 
+Images can also be passed by URL instead of raw bytes — no MIME type needed:
+
+```go
+img := agent.ImageBlock{
+    Source: agent.ImageSource{
+        URL: "https://example.com/photo.jpg",
+    },
+}
+ctx := agent.WithImages(context.Background(), []agent.ImageBlock{img})
+```
+
 ### `GetImages`
 
 ```go

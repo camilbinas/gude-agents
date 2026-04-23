@@ -325,22 +325,34 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []an
 				log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")
 				continue
 			}
-			var encoded string
-			if v.Source.Base64 != "" {
-				// Pre-encoded: use directly without re-encoding.
-				encoded = v.Source.Base64
+			if v.Source.URL != "" {
+				// URL source: pass directly to the provider.
+				out = append(out, anthropicsdk.ContentBlockParamUnion{
+					OfImage: &anthropicsdk.ImageBlockParam{
+						Source: anthropicsdk.ImageBlockParamSourceUnion{
+							OfURL: &anthropicsdk.URLImageSourceParam{
+								URL: v.Source.URL,
+							},
+						},
+					},
+				})
 			} else {
-				bytes, err := imageBytes(v.Source)
-				if err != nil {
-					log.Printf("anthropic: failed to get image bytes: %v (skipping block)", err)
-					continue
+				var encoded string
+				if v.Source.Base64 != "" {
+					encoded = v.Source.Base64
+				} else {
+					bytes, err := imageBytes(v.Source)
+					if err != nil {
+						log.Printf("anthropic: failed to get image bytes: %v (skipping block)", err)
+						continue
+					}
+					encoded = base64.StdEncoding.EncodeToString(bytes)
 				}
-				encoded = base64.StdEncoding.EncodeToString(bytes)
+				out = append(out, anthropicsdk.NewImageBlockBase64(
+					string(v.Source.MIMEType),
+					encoded,
+				))
 			}
-			out = append(out, anthropicsdk.NewImageBlockBase64(
-				string(v.Source.MIMEType),
-				encoded,
-			))
 		}
 	}
 	return out

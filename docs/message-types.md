@@ -106,21 +106,23 @@ Holds the result of a tool execution. Sent back to the LLM as part of a user-rol
 type ImageSource struct {
     Data     []byte
     Base64   string
+    URL      string
     MIMEType string
 }
 
 func (s ImageSource) Validate() error
 ```
 
-Holds image data as either raw bytes or a pre-encoded base64 string, plus the MIME type. Set exactly one of `Data` or `Base64` — when both are set, providers prefer `Data`.
+Holds image data as either raw bytes, a pre-encoded base64 string, or a URL pointing to a hosted image, plus the MIME type. Set exactly one of `Data`, `Base64`, or `URL` — when multiple are set, providers prefer `Data` over `Base64` over `URL`.
 
 | Field | Type | Description |
 |---|---|---|
-| `Data` | `[]byte` | Raw image bytes; mutually exclusive with `Base64` |
-| `Base64` | `string` | Pre-encoded base64 string (RFC 4648); mutually exclusive with `Data` |
-| `MIMEType` | `string` | Image format; must be one of `image/jpeg`, `image/png`, `image/gif`, `image/webp` |
+| `Data` | `[]byte` | Raw image bytes; mutually exclusive with `Base64` and `URL` |
+| `Base64` | `string` | Pre-encoded base64 string (RFC 4648); mutually exclusive with `Data` and `URL` |
+| `URL` | `string` | Publicly accessible image URL; mutually exclusive with `Data` and `Base64` |
+| `MIMEType` | `string` | Image format; required for `Data`/`Base64`, optional for `URL` (provider resolves it) |
 
-`Validate()` returns `nil` when `MIMEType` is one of the four supported values, or a descriptive error otherwise. The error message contains the invalid MIME type string.
+`Validate()` returns `nil` when the source is well-formed. For `Data`/`Base64` sources, `MIMEType` must be one of `image/jpeg`, `image/png`, `image/gif`, `image/webp`. For `URL` sources, MIME type validation is skipped — the provider resolves the format from the URL.
 
 ### ImageBlock
 

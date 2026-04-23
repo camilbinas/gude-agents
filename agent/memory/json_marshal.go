@@ -19,6 +19,7 @@ type jsonContentBlock struct {
 	// Image fields (populated when Type == "image").
 	ImageData     []byte `json:"image_data,omitempty"`      // raw image bytes; mutually exclusive with ImageBase64
 	ImageBase64   string `json:"image_base64,omitempty"`    // pre-encoded base64 string; mutually exclusive with ImageData
+	ImageURL      string `json:"image_url,omitempty"`       // publicly accessible image URL
 	ImageMIMEType string `json:"image_mime_type,omitempty"` // one of image/jpeg, image/png, image/gif, image/webp
 }
 
@@ -79,6 +80,7 @@ func ContentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 			Type:          "image",
 			ImageData:     b.Source.Data,
 			ImageBase64:   b.Source.Base64,
+			ImageURL:      b.Source.URL,
 			ImageMIMEType: b.Source.MIMEType,
 		}
 	default:
@@ -100,6 +102,7 @@ func JSONToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 			Source: agent.ImageSource{
 				Data:     jcb.ImageData,
 				Base64:   jcb.ImageBase64,
+				URL:      jcb.ImageURL,
 				MIMEType: jcb.ImageMIMEType,
 			},
 		}

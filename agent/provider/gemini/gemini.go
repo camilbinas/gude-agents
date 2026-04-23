@@ -326,11 +326,20 @@ func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 		case agent.ToolResultBlock:
 			parts = append(parts, genai.NewPartFromFunctionResponse(v.ToolUseID, map[string]any{"result": v.Content}))
 		case agent.ImageBlock:
-			bytes, err := imageBytes(v.Source)
-			if err != nil {
-				return nil, &agent.ProviderError{Cause: fmt.Errorf("ImageBlock base64 decode: %w", err)}
+			if v.Source.URL != "" {
+				// URL source: use Gemini's URI-based part.
+				mimeType := v.Source.MIMEType
+				if mimeType == "" {
+					mimeType = "image/jpeg" // fallback
+				}
+				parts = append(parts, genai.NewPartFromURI(v.Source.URL, mimeType))
+			} else {
+				bytes, err := imageBytes(v.Source)
+				if err != nil {
+					return nil, &agent.ProviderError{Cause: fmt.Errorf("ImageBlock: %w", err)}
+				}
+				parts = append(parts, genai.NewPartFromBytes(bytes, v.Source.MIMEType))
 			}
-			parts = append(parts, genai.NewPartFromBytes(bytes, v.Source.MIMEType))
 		}
 	}
 	return parts, nil

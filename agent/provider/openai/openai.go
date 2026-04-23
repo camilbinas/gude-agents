@@ -301,22 +301,26 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 		case agent.ToolResultBlock:
 			out = append(out, openaisdk.ToolMessage(v.Content, v.ToolUseID))
 		case agent.ImageBlock:
-			var b64 string
-			if v.Source.Base64 != "" {
-				// Pre-encoded: use directly.
-				b64 = v.Source.Base64
+			var imageURL string
+			if v.Source.URL != "" {
+				// URL source: pass directly to the provider.
+				imageURL = v.Source.URL
 			} else {
-				bytes, err := imageBytes(v.Source)
-				if err != nil {
-					// Skip on error (log if needed)
-					continue
+				var b64 string
+				if v.Source.Base64 != "" {
+					b64 = v.Source.Base64
+				} else {
+					bytes, err := imageBytes(v.Source)
+					if err != nil {
+						continue
+					}
+					b64 = base64.StdEncoding.EncodeToString(bytes)
 				}
-				b64 = base64.StdEncoding.EncodeToString(bytes)
+				imageURL = fmt.Sprintf("data:%s;base64,%s", v.Source.MIMEType, b64)
 			}
-			dataURI := fmt.Sprintf("data:%s;base64,%s", v.Source.MIMEType, b64)
 			out = append(out, openaisdk.UserMessage([]openaisdk.ChatCompletionContentPartUnionParam{
 				openaisdk.ImageContentPart(openaisdk.ChatCompletionContentPartImageImageURLParam{
-					URL:    dataURI,
+					URL:    imageURL,
 					Detail: "auto",
 				}),
 			}))
