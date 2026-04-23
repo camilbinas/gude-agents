@@ -7,8 +7,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.4
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4
 	github.com/aws/smithy-go v1.24.2
-	github.com/camilbinas/gude-agents v0.9.0
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.9.0
+	github.com/camilbinas/gude-agents v0.10.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.10.0
 	pgregory.net/rapid v1.2.0
 )
 
