@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -544,27 +543,6 @@ func toBedrockToolChoice(tc *tool.Choice) types.ToolChoice {
 		}}
 	default:
 		return nil
-	}
-}
-
-// Capabilities implements agent.CapabilityReporter, advertising what the
-// underlying Bedrock model supports based on its model ID prefix.
-func (p *BedrockProvider) Capabilities() agent.Capabilities {
-	// OpenAI gpt-oss models on Bedrock support text only — no tool use or token usage.
-	// Source: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-openai.html
-	// "The OpenAI models support only text input and text output."
-	if strings.HasPrefix(p.model, "openai.") {
-		return agent.Capabilities{
-			ToolUse:    false,
-			ToolChoice: false,
-			TokenUsage: false,
-		}
-	}
-	// All other Bedrock models (Anthropic, Amazon Nova, Qwen, etc.) support full capabilities.
-	return agent.Capabilities{
-		ToolUse:    true,
-		ToolChoice: true,
-		TokenUsage: true,
 	}
 }
 

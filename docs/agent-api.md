@@ -24,8 +24,6 @@ Defaults:
 - `parallelTools`: false
 - No memory, middleware, guardrails, token budget, retriever, or context formatter
 
-If the provider implements `CapabilityReporter`, the constructor validates that the provider supports the requested capabilities (e.g., tool use, token usage reporting).
-
 ## Option Functions
 
 Each `Option` is a `func(*Agent) error` that configures the agent at construction time.

@@ -39,24 +39,6 @@ type Provider interface {
 
 You don't call these methods directly — the agent loop handles that. But if you're building a custom provider, this is the interface to implement.
 
-## CapabilityReporter Interface
-
-Providers can optionally implement `CapabilityReporter` to advertise what their model supports:
-
-```go
-type CapabilityReporter interface {
-    Capabilities() Capabilities
-}
-
-type Capabilities struct {
-    ToolUse    bool // model supports tool/function calling
-    ToolChoice bool // model supports tool choice modes (auto, any, specific)
-    TokenUsage bool // model reports token usage in responses
-}
-```
-
-All four built-in providers implement this interface. The agent constructor uses it to log warnings — for example, if you register tools with a model that doesn't support tool use, or set a token budget with a model that doesn't report usage.
-
 ## ModelIdentifier Interface
 
 Providers can optionally implement `ModelIdentifier` to expose the underlying model ID:
@@ -189,18 +171,6 @@ type Provider interface {
 ```
 
 `ConverseParams` contains the messages, system prompt, tool configuration, and tool choice. `ProviderResponse` contains the text response, tool calls, and token usage. See [Message Types](message-types.md) for full type definitions.
-
-Optionally implement `CapabilityReporter` to let the agent know what your model supports:
-
-```go
-func (p *MyProvider) Capabilities() agent.Capabilities {
-    return agent.Capabilities{
-        ToolUse:    true,
-        ToolChoice: true,
-        TokenUsage: true,
-    }
-}
-```
 
 ## Provider Registry
 

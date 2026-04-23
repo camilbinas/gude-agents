@@ -126,24 +126,6 @@ func TestNew_WithMaxTokensOverride(t *testing.T) {
 // 5.2 — Capabilities
 // ---------------------------------------------------------------------------
 
-func TestCapabilities_AllTrue(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "test-key")
-	p, err := New("gemini-2.5-flash")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	caps := p.Capabilities()
-	if !caps.ToolUse {
-		t.Error("expected ToolUse to be true")
-	}
-	if !caps.ToolChoice {
-		t.Error("expected ToolChoice to be true")
-	}
-	if !caps.TokenUsage {
-		t.Error("expected TokenUsage to be true")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // 5.3 — Model constructors and tier aliases
 // ---------------------------------------------------------------------------

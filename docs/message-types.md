@@ -254,4 +254,4 @@ Pairs a `Document` with its similarity score. Returned by `VectorStore.Search` t
 - [Tool System](tools.md) — `Tool`, `Spec`, `Call`, and `Choice` types
 - [RAG Pipeline](rag.md) — `Embedder`, `VectorStore`, `Retriever` interfaces
 - [Memory System](memory.md) — storing and loading `Message` history
-- [Providers](providers.md) — `Provider` and `CapabilityReporter` interfaces
+- [Providers](providers.md) — `Provider` interface

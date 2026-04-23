@@ -16,7 +16,6 @@ import (
 type stubProvider struct {
 	err  error
 	resp *agent.ProviderResponse
-	caps *agent.Capabilities // nil = does not implement CapabilityReporter
 }
 
 func (s *stubProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
@@ -31,24 +30,6 @@ func (s *stubProvider) ConverseStream(_ context.Context, _ agent.ConverseParams,
 		cb(s.resp.Text)
 	}
 	return s.resp, nil
-}
-
-func (s *stubProvider) Capabilities() agent.Capabilities {
-	if s.caps != nil {
-		return *s.caps
-	}
-	return agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}
-}
-
-// noCapProvider implements Provider but NOT CapabilityReporter.
-type noCapProvider struct{}
-
-func (noCapProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return &agent.ProviderResponse{}, nil
-}
-
-func (noCapProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, _ agent.StreamCallback) (*agent.ProviderResponse, error) {
-	return &agent.ProviderResponse{}, nil
 }
 
 func okProvider(text string) *stubProvider {
@@ -117,40 +98,6 @@ func TestConverseStream_AllFail_ReturnsError(t *testing.T) {
 	_, err := p.ConverseStream(context.Background(), agent.ConverseParams{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "all providers failed")
-}
-
-// ── Capabilities ──────────────────────────────────────────────────────────────
-
-func TestCapabilities_IntersectsAcrossProviders(t *testing.T) {
-	full := &stubProvider{caps: &agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}}
-	limited := &stubProvider{caps: &agent.Capabilities{ToolUse: true, ToolChoice: false, TokenUsage: false}}
-
-	p := fallback.New(full, limited)
-	caps := p.Capabilities()
-
-	assert.True(t, caps.ToolUse)
-	assert.False(t, caps.ToolChoice) // limited by the weakest provider
-	assert.False(t, caps.TokenUsage)
-}
-
-func TestCapabilities_AllFull(t *testing.T) {
-	full := &stubProvider{caps: &agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}}
-	p := fallback.New(full, full)
-	caps := p.Capabilities()
-	assert.True(t, caps.ToolUse)
-	assert.True(t, caps.ToolChoice)
-	assert.True(t, caps.TokenUsage)
-}
-
-func TestCapabilities_NonReporterIsConservative(t *testing.T) {
-	p := fallback.New(
-		&stubProvider{caps: &agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}},
-		noCapProvider{},
-	)
-	caps := p.Capabilities()
-	assert.False(t, caps.ToolUse)
-	assert.False(t, caps.ToolChoice)
-	assert.False(t, caps.TokenUsage)
 }
 
 // ── Single provider edge case ─────────────────────────────────────────────────

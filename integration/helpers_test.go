@@ -52,15 +52,6 @@ func (tp *trackingProvider) ConverseStream(ctx context.Context, params agent.Con
 	return resp, err
 }
 
-// Forward capability interfaces so the agent doesn't log warnings.
-
-func (tp *trackingProvider) Capabilities() agent.Capabilities {
-	if cr, ok := tp.inner.(agent.CapabilityReporter); ok {
-		return cr.Capabilities()
-	}
-	return agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}
-}
-
 func (tp *trackingProvider) ModelID() string {
 	if mi, ok := tp.inner.(agent.ModelIdentifier); ok {
 		return mi.ModelID()

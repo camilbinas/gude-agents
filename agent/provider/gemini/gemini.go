@@ -102,16 +102,6 @@ func (p *GeminiProvider) ModelID() string { return p.model }
 // not exposed through the agent.Provider interface.
 func (p *GeminiProvider) Client() *genai.Client { return p.client }
 
-// Capabilities implements agent.CapabilityReporter, advertising what the
-// underlying Gemini model supports.
-func (p *GeminiProvider) Capabilities() agent.Capabilities {
-	return agent.Capabilities{
-		ToolUse:    true,
-		ToolChoice: true,
-		TokenUsage: true,
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Converse (non-streaming)
 // ---------------------------------------------------------------------------

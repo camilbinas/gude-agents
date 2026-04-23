@@ -46,21 +46,6 @@ provider := fallback.New(anthropicProvider, bedrockProvider, openaiProvider)
 
 Providers are tried left to right. The first success wins.
 
-## Capabilities
-
-`fallback.Provider` implements `CapabilityReporter`. It returns the **intersection** of capabilities across all providers in the chain — a capability is only advertised if every provider supports it.
-
-```go
-caps := provider.Capabilities()
-// caps.ToolUse    — true only if all providers support tool use
-// caps.ToolChoice — true only if all providers support tool choice
-// caps.TokenUsage — true only if all providers report token usage
-```
-
-If any provider in the chain does not implement `CapabilityReporter`, the fallback provider conservatively returns all-false capabilities.
-
-This matters when mixing providers with different capabilities — for example, pairing a full-featured Claude provider with an OpenAI GPT-OSS model on Bedrock (which doesn't support tool use). The agent will correctly detect that tools aren't universally available.
-
 ## Testing with a Fake Provider
 
 A common pattern is to use a fake provider that always fails to verify fallback behavior:
@@ -100,8 +85,6 @@ In practice this means the budget is slightly under-enforced when a provider fai
 ### Structured output requires ToolChoice support from all providers
 
 `InvokeStructured` uses forced tool choice (`tool.ChoiceTool`) to guarantee a JSON response. If any provider in the fallback chain doesn't support `ToolChoice`, the structured output call may fail or return unstructured text on that provider.
-
-The fallback provider's `Capabilities()` returns the intersection across all providers, so the agent will log a warning at construction time if `ToolChoice` is not universally supported — but only if every provider implements `CapabilityReporter`. If a provider doesn't implement that interface, the fallback conservatively reports all-false capabilities, which will trigger the warning regardless.
 ## Error Behavior
 
 - If the primary succeeds, no fallback is attempted.

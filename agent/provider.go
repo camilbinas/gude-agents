@@ -111,20 +111,6 @@ type Provider interface {
 	ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
 }
 
-// Capabilities describes what features a Provider's model supports.
-type Capabilities struct {
-	ToolUse    bool
-	ToolChoice bool
-	TokenUsage bool
-}
-
-// CapabilityReporter is an optional interface a Provider can implement to
-// advertise what its underlying model supports.
-// Documented in docs/providers.md — update when changing interface or Capabilities struct.
-type CapabilityReporter interface {
-	Capabilities() Capabilities
-}
-
 // ModelIdentifier is an optional interface a Provider can implement to
 // expose the underlying model ID.
 type ModelIdentifier interface {

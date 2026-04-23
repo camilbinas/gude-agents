@@ -59,27 +59,3 @@ func (p *Provider) ConverseStream(ctx context.Context, params agent.ConversePara
 	}
 	return nil, fmt.Errorf("all providers failed: %w", lastErr)
 }
-
-// Capabilities returns the intersection of capabilities across all providers
-// in the chain — only advertises a capability if every provider supports it.
-func (p *Provider) Capabilities() agent.Capabilities {
-	caps := agent.Capabilities{ToolUse: true, ToolChoice: true, TokenUsage: true}
-	for _, provider := range p.chain {
-		cr, ok := provider.(agent.CapabilityReporter)
-		if !ok {
-			// Unknown capabilities — assume the most conservative.
-			return agent.Capabilities{}
-		}
-		c := cr.Capabilities()
-		if !c.ToolUse {
-			caps.ToolUse = false
-		}
-		if !c.ToolChoice {
-			caps.ToolChoice = false
-		}
-		if !c.TokenUsage {
-			caps.TokenUsage = false
-		}
-	}
-	return caps
-}
