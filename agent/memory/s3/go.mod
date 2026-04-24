@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
-	github.com/camilbinas/gude-agents v0.18.0
+	github.com/camilbinas/gude-agents v0.18.1
 	pgregory.net/rapid v1.2.0
 )
 
