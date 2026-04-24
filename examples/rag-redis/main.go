@@ -20,10 +20,12 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
+	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
@@ -38,6 +40,7 @@ func main() {
 		ragredis.Options{Addr: redisAddr},
 		"example-docs",
 		1024, // Titan Embed V2 outputs 1024 dimensions
+		ragredis.WithDropExisting(),
 	)
 	if err != nil {
 		log.Fatalf("redis vectorstore: %v", err)
@@ -52,7 +55,7 @@ func main() {
 		"Kubernetes is an open-source container orchestration platform that automates deployment, scaling, and management of containerized applications.",
 	}
 
-	if err = rag.Ingest(ctx, store, embedder, docs, nil); err != nil {
+	if err = rag.Ingest(ctx, store, embedder, docs, nil, rag.WithConcurrency(5)); err != nil {
 		log.Fatalf("ingest: %v", err)
 	}
 	fmt.Printf("Ingested %d documents\n", len(docs))
@@ -61,19 +64,17 @@ func main() {
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
-	a, err := agent.Default(
+	a, err := agent.RAGAgent(
 		provider,
 		prompt.Text("Answer questions using only the provided context. Be concise."),
+		retriever,
 		nil,
-		agent.WithRetriever(retriever),
+		debug.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(ctx, "What is Redis used for?")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Answer:", result)
+	fmt.Println("\nAsk questions about the ingested documents. Type 'quit' to exit.")
+	utils.Chat(ctx, a)
 }

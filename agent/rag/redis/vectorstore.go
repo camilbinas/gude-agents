@@ -66,13 +66,23 @@ func WithHNSWEFConstruction(ef int) VectorStoreOption {
 	}
 }
 
+// WithDropExisting drops the index and its documents before creating a fresh
+// one. Useful for examples and development where you want a clean slate on
+// every run. Do not use in production — it deletes all indexed data.
+func WithDropExisting() VectorStoreOption {
+	return func(s *VectorStore) {
+		s.dropExisting = true
+	}
+}
+
 // VectorStore implements agent.VectorStore using Redis Stack (RediSearch).
 type VectorStore struct {
-	client    *goredis.Client
-	indexName string
-	dim       int
-	hnswM     int
-	hnswEF    int
+	client       *goredis.Client
+	indexName    string
+	dim          int
+	hnswM        int
+	hnswEF       int
+	dropExisting bool
 }
 
 // New creates a new VectorStore. Pings Redis, then creates the HNSW index via
@@ -98,13 +108,18 @@ func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*
 	}
 
 	// Create the HNSW index. Silently ignore "Index already exists" errors.
+	if s.dropExisting {
+		// FT.DROPINDEX with DD deletes the index and all associated hashes.
+		_ = client.Do(context.Background(), "FT.DROPINDEX", indexName, "DD").Err()
+	}
+
 	err := client.Do(context.Background(), "FT.CREATE", indexName,
 		"ON", "HASH",
 		"PREFIX", "1", indexName+":",
 		"SCHEMA",
 		"content", "TEXT",
 		"metadata", "TEXT",
-		"embedding", "VECTOR", "HNSW", "6",
+		"embedding", "VECTOR", "HNSW", "10",
 		"TYPE", "FLOAT32",
 		"DIM", dim,
 		"DISTANCE_METRIC", "COSINE",
@@ -180,8 +195,84 @@ func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK
 		return nil, fmt.Errorf("redis vectorstore: search: %w", err)
 	}
 
-	results, ok := res.([]interface{})
-	if !ok || len(results) < 1 {
+	// go-redis v9 returns RESP3 map format from Redis Stack 7+.
+	// Older versions or RESP2 connections return a flat []interface{}.
+	// Handle both.
+	switch v := res.(type) {
+	case map[interface{}]interface{}:
+		return s.parseRESP3(v)
+	case []interface{}:
+		return s.parseRESP2(v)
+	default:
+		return nil, nil
+	}
+}
+
+// parseRESP3 handles the map-based response from Redis Stack 7+ / RESP3.
+//
+//	{
+//	  "total_results": int64,
+//	  "results": [ { "id": ..., "extra_attributes": { "content": ..., "score": ... } }, ... ]
+//	}
+func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredDocument, error) {
+	resultsRaw, ok := m["results"]
+	if !ok {
+		return nil, nil
+	}
+	items, ok := resultsRaw.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil, nil
+	}
+
+	var scored []agent.ScoredDocument
+	for _, item := range items {
+		entry, ok := item.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		attrsRaw, ok := entry["extra_attributes"]
+		if !ok {
+			continue
+		}
+		attrs, ok := attrsRaw.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+
+		content, _ := attrs["content"].(string)
+		metadataJSON, _ := attrs["metadata"].(string)
+		scoreStr, _ := attrs["score"].(string)
+
+		distance, err := strconv.ParseFloat(scoreStr, 64)
+		if err != nil {
+			continue
+		}
+		similarity := 1 - distance
+
+		var metadata map[string]string
+		if metadataJSON != "" {
+			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+		}
+
+		scored = append(scored, agent.ScoredDocument{
+			Document: agent.Document{
+				Content:  content,
+				Metadata: metadata,
+			},
+			Score: similarity,
+		})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].Score > scored[j].Score
+	})
+	return scored, nil
+}
+
+// parseRESP2 handles the flat array response from RESP2 connections.
+// Format: [total, key1, [field, val, ...], key2, [field, val, ...], ...]
+func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument, error) {
+	if len(results) < 1 {
 		return nil, nil
 	}
 
