@@ -1,25 +1,13 @@
 // Example: Tool preset constructors for common patterns.
 //
-// Demonstrates NewSimple, NewString, and NewConfirm — three convenience
-// constructors that eliminate boilerplate for the most common tool shapes:
+// Demonstrates NewSimple and NewString — convenience constructors that
+// eliminate boilerplate for the most common tool shapes:
 //
 //   - NewSimple: no input parameters (e.g. "what time is it?")
 //   - NewString: a single required string parameter (e.g. "look up order X")
-//   - NewConfirm: a boolean confirmation gate (e.g. "approve this refund?")
 //
 // The agent plays a customer-support role with an interactive chat loop.
-// Try asking it to look up an order, check the time, or process a refund.
-//
-// Sample session:
-//
-//	You: what time is it?
-//	Agent: The current time is 2026-04-16T14:32:01+02:00.
-//
-//	You: look up order ORD-1234
-//	Agent: Order ORD-1234 is currently shipped with a total of $42.00.
-//
-//	You: I'd like a refund for that
-//	Agent: I've processed the refund of $42.00 for order ORD-1234.
+// Try asking it to look up an order or check the time.
 //
 // Run:
 //
@@ -59,20 +47,9 @@ func main() {
 		},
 	)
 
-	// NewConfirm — boolean confirmation parameter.
-	refundTool := tool.NewConfirm("approve_refund", "Approve a refund for the most recently looked-up order",
-		func(ctx context.Context, confirmed bool) (string, error) {
-			if !confirmed {
-				return "Refund cancelled.", nil
-			}
-			return "Refund of $42.00 processed successfully.", nil
-		},
-	)
-
 	instructions := prompt.Text(strings.Join([]string{
 		"You are a customer support assistant.",
-		"You can check the current time, look up orders, and process refunds.",
-		"Always look up the order before approving a refund.",
+		"You can check the current time and look up orders.",
 	}, " "))
 
 	store := memory.NewStore()
@@ -80,14 +57,14 @@ func main() {
 	a, err := agent.Default(
 		provider,
 		instructions,
-		[]tool.Tool{timeTool, lookupTool, refundTool},
+		[]tool.Tool{timeTool, lookupTool},
 		agent.WithMemory(store, "tool-presets-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Customer support agent ready. Try asking for a refund. Type 'quit' to exit.")
+	fmt.Println("Customer support agent ready. Try looking up an order. Type 'quit' to exit.")
 
 	utils.Chat(context.Background(), a)
 }

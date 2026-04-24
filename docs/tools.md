@@ -100,25 +100,6 @@ searchTool := tool.NewString("search", "Search the knowledge base", "query", "Th
 )
 ```
 
-## tool.NewConfirm — Boolean Confirmation
-
-```go
-func NewConfirm(name, description string, handler func(ctx context.Context, confirmed bool) (string, error)) Tool
-```
-
-`NewConfirm` creates a `Tool` with a single required `confirm` boolean parameter. Useful for approval flows where the LLM must explicitly confirm an action before it proceeds.
-
-```go
-refundTool := tool.NewConfirm("approve_refund", "Approve the pending refund",
-    func(ctx context.Context, confirmed bool) (string, error) {
-        if !confirmed {
-            return "Refund cancelled.", nil
-        }
-        return processRefund()
-    },
-)
-```
-
 ## tool.NewAsync — Async Side Effects (Fire-and-Forget)
 
 ```go
