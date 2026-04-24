@@ -27,6 +27,7 @@ use (
 	./agent/rag/redis
 	./agent/logging/slog
 	./agent/logging/debug
+	./agent/tool/webfetch/markdown
 	./agent/tracing
 	./agent/tracing/sentry
 	./examples

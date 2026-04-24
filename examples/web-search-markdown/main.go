@@ -1,11 +1,9 @@
-// Example: Web search and fetch tools.
+// Example: Web search with markdown-formatted fetch.
 //
-// Gives the agent two tools:
-//   - web_search: searches the web using the Tavily Search API
-//   - web_fetch: fetches a URL and returns its text content
-//
-// The agent searches first, then fetches the most relevant result to
-// answer the question with up-to-date information.
+// Same as the web-search example, but uses the markdown formatter for
+// web_fetch. Fetched pages are converted to clean markdown instead of
+// stripped plain text — preserving headings, links, lists, and code
+// blocks for better LLM comprehension and lower token usage.
 //
 // Prerequisites:
 //
@@ -13,7 +11,7 @@
 //
 // Run:
 //
-//	go run ./web-search
+//	go run ./web-search-markdown
 
 package main
 
@@ -29,6 +27,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/agent/tool/webfetch"
+	"github.com/camilbinas/gude-agents/agent/tool/webfetch/markdown"
 	"github.com/camilbinas/gude-agents/agent/tool/websearch/tavily"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
@@ -46,7 +45,7 @@ func main() {
 		},
 		[]tool.Tool{
 			tavily.New(os.Getenv("TAVILY_API_KEY")),
-			webfetch.New(),
+			webfetch.New(webfetch.WithFormatter(markdown.Formatter())),
 		},
 		debug.WithLogging(),
 		agent.WithParallelToolExecution(),
@@ -56,9 +55,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Web search agent ready. Type 'quit' to exit.")
+	fmt.Println("Web search agent (markdown) ready. Type 'quit' to exit.")
 	fmt.Println("Try: What are the latest Go releases?")
 	fmt.Println()
 
-	utils.Chat(context.Background(), a)
+	utils.Chat(context.Background(), a, utils.ChatOptions{})
 }

@@ -258,6 +258,84 @@ The generated JSON Schema for `WeatherInput` looks like:
 }
 ```
 
+## Built-in Tools
+
+The framework ships ready-to-use tools for common agent capabilities. Each is a separate package — import only what you need.
+
+### webfetch — Fetch Web Pages
+
+`agent/tool/webfetch` provides a production-ready `web_fetch` tool that retrieves a URL and returns clean text.
+
+```go
+import "github.com/camilbinas/gude-agents/agent/tool/webfetch"
+
+fetchTool := webfetch.New()
+```
+
+Features: configurable timeout, body size limit, redirect limit, content-type filtering (text only), SSRF protection (blocks private IPs), HTML stripping, and character truncation.
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithTimeout(d)` | HTTP request timeout | 15s |
+| `WithMaxBytes(n)` | Max response body size | 32 KB |
+| `WithMaxRedirects(n)` | Max redirects to follow | 3 |
+| `WithMaxChars(n)` | Max characters in output | 4000 |
+| `WithFormatter(f)` | Custom HTML-to-text formatter | regex strip |
+| `WithClient(c)` | Custom `*http.Client` | — |
+
+#### Markdown Formatter
+
+The optional `webfetch/markdown` sub-module converts HTML to clean markdown instead of stripping tags. This preserves structure (headings, links, lists, code blocks) which can improve answer quality. Note that markdown output uses more input tokens than plain text — benchmark both for your use case.
+
+```go
+import (
+    "github.com/camilbinas/gude-agents/agent/tool/webfetch"
+    "github.com/camilbinas/gude-agents/agent/tool/webfetch/markdown"
+)
+
+fetchTool := webfetch.New(webfetch.WithFormatter(markdown.Formatter()))
+```
+
+### websearch — Web Search
+
+Search tools live under `agent/tool/websearch/`.
+
+#### Tavily
+
+```go
+import "github.com/camilbinas/gude-agents/agent/tool/websearch/tavily"
+
+searchTool := tavily.New(os.Getenv("TAVILY_API_KEY"))
+```
+
+Requires `TAVILY_API_KEY` from [app.tavily.com](https://app.tavily.com).
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithMaxResults(n)` | Max search results | 5 |
+| `WithTimeout(d)` | HTTP request timeout | 10s |
+| `WithMaxCharsPerResult(n)` | Max chars per snippet | 300 |
+| `WithSearchDepth(s)` | `"basic"` or `"advanced"` | `"basic"` |
+| `WithIncludeAnswer()` | Include AI-generated answer | false |
+| `WithClient(c)` | Custom `*http.Client` | — |
+
+#### Brave
+
+```go
+import "github.com/camilbinas/gude-agents/agent/tool/websearch/brave"
+
+searchTool := brave.New(os.Getenv("BRAVE_API_KEY"))
+```
+
+Requires `BRAVE_API_KEY` from [brave.com/search/api](https://brave.com/search/api/).
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithMaxResults(n)` | Max search results | 5 |
+| `WithTimeout(d)` | HTTP request timeout | 10s |
+| `WithMaxCharsPerResult(n)` | Max chars per snippet | 300 |
+| `WithClient(c)` | Custom `*http.Client` | — |
+
 ## See Also
 
 - [Agent API Reference](agent-api.md) — `agent.New` constructor and how tools are passed to the agent

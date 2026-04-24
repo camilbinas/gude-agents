@@ -38,12 +38,18 @@ const (
 // Option configures the fetch tool.
 type Option func(*config)
 
+// Formatter transforms raw HTML into a text representation for the LLM.
+// The default formatter strips HTML tags and collapses whitespace.
+// See the webfetch/markdown sub-package for a markdown formatter.
+type Formatter func(html string) (string, error)
+
 type config struct {
 	timeout      time.Duration
 	maxBytes     int64
 	maxRedirects int
 	maxChars     int
 	client       *http.Client
+	formatter    Formatter
 }
 
 // WithTimeout sets the HTTP request timeout. Default: 15s.
@@ -75,6 +81,15 @@ func WithClient(client *http.Client) Option {
 	return func(c *config) { c.client = client }
 }
 
+// WithFormatter sets a custom HTML-to-text formatter. The default strips
+// HTML tags and collapses whitespace. Use the webfetch/markdown sub-package
+// for markdown output:
+//
+//	webfetch.New(webfetch.WithFormatter(markdown.Formatter()))
+func WithFormatter(f Formatter) Option {
+	return func(c *config) { c.formatter = f }
+}
+
 // New creates a web_fetch tool with the given options.
 func New(opts ...Option) tool.Tool {
 	cfg := &config{
@@ -103,12 +118,15 @@ func New(opts ...Option) tool.Tool {
 
 	maxBytes := cfg.maxBytes
 	maxChars := cfg.maxChars
+	format := cfg.formatter
+
+	if format == nil {
+		format = defaultFormatter
+	}
 
 	return tool.NewRaw(
 		"web_fetch",
 		"Fetch a web page and return its text content. "+
-			"Strips HTML tags and returns clean text suitable for reading. "+
-			"Only fetches text-based content (HTML, plain text, XML, JSON). "+
 			"Use after a web search to read a specific result in detail.",
 		map[string]any{
 			"type": "object",
@@ -127,12 +145,12 @@ func New(opts ...Option) tool.Tool {
 			if err := json.Unmarshal(input, &req); err != nil {
 				return "", err
 			}
-			return fetchPage(ctx, client, req.URL, maxBytes, maxChars)
+			return fetchPage(ctx, client, req.URL, maxBytes, maxChars, format)
 		},
 	)
 }
 
-func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxBytes int64, maxChars int) (string, error) {
+func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxBytes int64, maxChars int, format Formatter) (string, error) {
 	if pageURL == "" {
 		return "", errors.New("url is required")
 	}
@@ -183,7 +201,10 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 		truncatedBySize = true
 	}
 
-	text := stripHTML(string(body))
+	text, err := format(string(body))
+	if err != nil {
+		return "", fmt.Errorf("format content: %w", err)
+	}
 
 	if len(text) > maxChars {
 		text = text[:maxChars]
@@ -237,8 +258,9 @@ func isPrivateURL(rawURL string) bool {
 var reHTMLTag = regexp.MustCompile(`<[^>]*>`)
 var reMultiWS = regexp.MustCompile(`\s{2,}`)
 
-func stripHTML(s string) string {
-	s = reHTMLTag.ReplaceAllString(s, " ")
-	s = reMultiWS.ReplaceAllString(s, " ")
-	return strings.TrimSpace(s)
+// defaultFormatter strips HTML tags and collapses whitespace.
+func defaultFormatter(html string) (string, error) {
+	html = reHTMLTag.ReplaceAllString(html, " ")
+	html = reMultiWS.ReplaceAllString(html, " ")
+	return strings.TrimSpace(html), nil
 }
