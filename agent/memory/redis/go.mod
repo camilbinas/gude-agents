@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/memory/redis
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.19.0
+	github.com/camilbinas/gude-agents v0.20.0
 	github.com/redis/go-redis/v9 v9.18.0
 	pgregory.net/rapid v1.2.0
 )
