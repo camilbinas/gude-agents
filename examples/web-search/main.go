@@ -41,16 +41,18 @@ func main() {
 
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text("You are a helpful research assistant with access to web search and fetch tools. "+
-			"Always search the web before answering questions about current events, recent data, or anything "+
-			"that might have changed since your training. After searching, fetch the most relevant result "+
-			"to get detailed information. Be concise and cite your sources."),
+		prompt.APE{
+			Action:      "Search the web and fetch pages to answer questions with up-to-date information.",
+			Purpose:     "Provide accurate, current answers by using web_search before responding, then web_fetch to read the most relevant result in detail.",
+			Expectation: "Be concise. Always cite sources with URLs. If search results are sufficient, skip fetching.",
+		},
 		[]tool.Tool{
 			tavily.New(apiKey),
 			webfetch.New(),
 		},
-		debug.WithLogging(),
 		agent.WithParallelToolExecution(),
+		agent.WithMaxIterations(10),
+		debug.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
