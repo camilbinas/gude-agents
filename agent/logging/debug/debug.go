@@ -113,7 +113,7 @@ func (h *debugHook) OnProviderCallEnd(err error, usage agent.TokenUsage, toolCal
 }
 
 func (h *debugHook) OnToolStart(toolName string) {
-	h.p("    %s⚙ %s%s", cyan, toolName, reset)
+	h.p("    %s⚙ %s%s\n", cyan, toolName, reset)
 }
 
 func (h *debugHook) OnToolEnd(toolName string, err error, duration time.Duration) {
