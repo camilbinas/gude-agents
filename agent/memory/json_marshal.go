@@ -27,6 +27,16 @@ type jsonContentBlock struct {
 	DocURL      string `json:"doc_url,omitempty"`       // publicly accessible document URL
 	DocMIMEType string `json:"doc_mime_type,omitempty"` // e.g. "application/pdf"
 	DocName     string `json:"doc_name,omitempty"`      // optional filename hint
+	// Tool result images (populated when Type == "tool_result" and images are present).
+	ToolResultImages []jsonToolResultImage `json:"tool_result_images,omitempty"`
+}
+
+// jsonToolResultImage is the JSON envelope for an image in a tool result.
+type jsonToolResultImage struct {
+	Data     []byte `json:"data,omitempty"`
+	Base64   string `json:"base64,omitempty"`
+	URL      string `json:"url,omitempty"`
+	MIMEType string `json:"mime_type,omitempty"`
 }
 
 // jsonMessage is the JSON envelope for an agent.Message.
@@ -80,7 +90,16 @@ func ContentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 	case agent.ToolUseBlock:
 		return jsonContentBlock{Type: "tool_use", ToolUseID: b.ToolUseID, Name: b.Name, Input: b.Input}
 	case agent.ToolResultBlock:
-		return jsonContentBlock{Type: "tool_result", ToolUseID: b.ToolUseID, Content: b.Content, IsError: b.IsError}
+		jcb := jsonContentBlock{Type: "tool_result", ToolUseID: b.ToolUseID, Content: b.Content, IsError: b.IsError}
+		for _, img := range b.Images {
+			jcb.ToolResultImages = append(jcb.ToolResultImages, jsonToolResultImage{
+				Data:     img.Source.Data,
+				Base64:   img.Source.Base64,
+				URL:      img.Source.URL,
+				MIMEType: img.Source.MIMEType,
+			})
+		}
+		return jcb
 	case agent.ImageBlock:
 		return jsonContentBlock{
 			Type:          "image",
@@ -111,7 +130,18 @@ func JSONToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 	case "tool_use":
 		return agent.ToolUseBlock{ToolUseID: jcb.ToolUseID, Name: jcb.Name, Input: jcb.Input}
 	case "tool_result":
-		return agent.ToolResultBlock{ToolUseID: jcb.ToolUseID, Content: jcb.Content, IsError: jcb.IsError}
+		trb := agent.ToolResultBlock{ToolUseID: jcb.ToolUseID, Content: jcb.Content, IsError: jcb.IsError}
+		for _, img := range jcb.ToolResultImages {
+			trb.Images = append(trb.Images, agent.ImageBlock{
+				Source: agent.ImageSource{
+					Data:     img.Data,
+					Base64:   img.Base64,
+					URL:      img.URL,
+					MIMEType: img.MIMEType,
+				},
+			})
+		}
+		return trb
 	case "image":
 		return agent.ImageBlock{
 			Source: agent.ImageSource{

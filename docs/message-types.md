@@ -89,16 +89,18 @@ type ToolResultBlock struct {
     ToolUseID string
     Content   string
     IsError   bool
+    Images    []ImageBlock // optional images returned by the tool
 }
 ```
 
-Holds the result of a tool execution. Sent back to the LLM as part of a user-role message so the model can incorporate the tool's output into its next response.
+Holds the result of a tool execution. Sent back to the LLM as part of a user-role message so the model can incorporate the tool's output into its next response. Tools that return images (e.g. screenshot tools, chart generators) populate the `Images` field.
 
 | Field | Type | Description |
 |---|---|---|
 | `ToolUseID` | `string` | Matches the `ToolUseID` from the corresponding `ToolUseBlock` |
 | `Content` | `string` | The tool's text output |
 | `IsError` | `bool` | `true` if the tool returned an error |
+| `Images` | `[]ImageBlock` | Optional images returned by the tool (see [Rich Tool Output](#rich-tool-output) in tools.md) |
 
 ### ImageSource
 

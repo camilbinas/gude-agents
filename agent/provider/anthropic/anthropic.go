@@ -319,7 +319,47 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []an
 			}
 			out = append(out, anthropicsdk.NewToolUseBlock(v.ToolUseID, input, v.Name))
 		case agent.ToolResultBlock:
-			out = append(out, anthropicsdk.NewToolResultBlock(v.ToolUseID, v.Content, v.IsError))
+			if len(v.Images) == 0 {
+				out = append(out, anthropicsdk.NewToolResultBlock(v.ToolUseID, v.Content, v.IsError))
+			} else {
+				content := []anthropicsdk.ToolResultBlockParamContentUnion{
+					{OfText: &anthropicsdk.TextBlockParam{Text: v.Content}},
+				}
+				for _, img := range v.Images {
+					if img.Source.URL != "" {
+						content = append(content, anthropicsdk.ToolResultBlockParamContentUnion{
+							OfImage: &anthropicsdk.ImageBlockParam{
+								Source: anthropicsdk.ImageBlockParamSourceUnion{
+									OfURL: &anthropicsdk.URLImageSourceParam{URL: img.Source.URL},
+								},
+							},
+						})
+					} else {
+						var encoded string
+						if img.Source.Base64 != "" {
+							encoded = img.Source.Base64
+						} else if len(img.Source.Data) > 0 {
+							encoded = base64.StdEncoding.EncodeToString(img.Source.Data)
+						}
+						content = append(content, anthropicsdk.ToolResultBlockParamContentUnion{
+							OfImage: &anthropicsdk.ImageBlockParam{
+								Source: anthropicsdk.ImageBlockParamSourceUnion{
+									OfBase64: &anthropicsdk.Base64ImageSourceParam{
+										MediaType: anthropicsdk.Base64ImageSourceParamMediaType(img.Source.MIMEType),
+										Data:      encoded,
+									},
+								},
+							},
+						})
+					}
+				}
+				toolBlock := anthropicsdk.ToolResultBlockParam{
+					ToolUseID: v.ToolUseID,
+					Content:   content,
+					IsError:   anthropicsdk.Bool(v.IsError),
+				}
+				out = append(out, anthropicsdk.ContentBlockParamUnion{OfToolResult: &toolBlock})
+			}
 		case agent.ImageBlock:
 			if role == agent.RoleAssistant {
 				log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")

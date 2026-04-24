@@ -299,7 +299,13 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 		case agent.TextBlock:
 			out = append(out, openaisdk.UserMessage(v.Text))
 		case agent.ToolResultBlock:
-			out = append(out, openaisdk.ToolMessage(v.Content, v.ToolUseID))
+			// OpenAI tool messages only support text content.
+			// Images in tool results are described as text.
+			content := v.Content
+			if len(v.Images) > 0 {
+				content += fmt.Sprintf("\n\n[%d image(s) attached — this provider does not support images in tool results]", len(v.Images))
+			}
+			out = append(out, openaisdk.ToolMessage(content, v.ToolUseID))
 		case agent.ImageBlock:
 			var imageURL string
 			if v.Source.URL != "" {

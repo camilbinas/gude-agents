@@ -658,6 +658,56 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call) []ToolResul
 			return
 		}
 
+		// Execute the tool handler — rich handlers (returning images) take precedence.
+		if t.RichHandler != nil {
+			richOut, err := t.RichHandler(toolCtx, tc.Input)
+			if err != nil {
+				toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+				if finishTool != nil {
+					finishTool(err, "")
+				}
+				if finishMetricsTool != nil {
+					finishMetricsTool(err)
+				}
+				if a.loggingHook != nil {
+					a.loggingHook.OnToolEnd(tc.Name, err, time.Since(toolStart))
+				}
+				results[i] = ToolResultBlock{
+					ToolUseID: tc.ToolUseID,
+					Content:   toolErr.Error(),
+					IsError:   true,
+				}
+				return
+			}
+
+			if finishTool != nil {
+				finishTool(nil, richOut.Text)
+			}
+			if finishMetricsTool != nil {
+				finishMetricsTool(nil)
+			}
+			if a.loggingHook != nil {
+				a.loggingHook.OnToolEnd(tc.Name, nil, time.Since(toolStart))
+			}
+
+			result := ToolResultBlock{
+				ToolUseID: tc.ToolUseID,
+				Content:   richOut.Text,
+			}
+			for _, img := range richOut.Images {
+				result.Images = append(result.Images, ImageBlock{
+					Source: ImageSource{
+						Data:     img.Data,
+						Base64:   img.Base64,
+						URL:      img.URL,
+						MIMEType: img.MIMEType,
+					},
+				})
+			}
+			results[i] = result
+			return
+		}
+
 		handler := ChainMiddleware(
 			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
 				return t.Handler(ctx, input)

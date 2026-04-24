@@ -340,6 +340,23 @@ func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 			parts = append(parts, genai.NewPartFromFunctionCall(v.Name, args))
 		case agent.ToolResultBlock:
 			parts = append(parts, genai.NewPartFromFunctionResponse(v.ToolUseID, map[string]any{"result": v.Content}))
+			// Gemini function responses don't support images directly.
+			// Append images as inline image parts after the function response.
+			for _, img := range v.Images {
+				if img.Source.URL != "" {
+					mimeType := img.Source.MIMEType
+					if mimeType == "" {
+						mimeType = "image/jpeg"
+					}
+					parts = append(parts, genai.NewPartFromURI(img.Source.URL, mimeType))
+				} else {
+					bytes, err := imageBytes(img.Source)
+					if err != nil {
+						return nil, &agent.ProviderError{Cause: fmt.Errorf("tool result ImageBlock: %w", err)}
+					}
+					parts = append(parts, genai.NewPartFromBytes(bytes, img.Source.MIMEType))
+				}
+			}
 		case agent.ImageBlock:
 			if v.Source.URL != "" {
 				// URL source: use Gemini's URI-based part.

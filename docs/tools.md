@@ -258,6 +258,60 @@ The generated JSON Schema for `WeatherInput` looks like:
 }
 ```
 
+## tool.NewRich — Rich Output (Text + Images)
+
+```go
+func NewRich[T any](name, description string, handler RichHandler[T]) Tool
+```
+
+`NewRich` creates a `Tool` whose handler returns `*Output` — text plus optional images. Use this for tools that need to return images to the LLM, such as screenshot tools, chart generators, or image search.
+
+```go
+type Output struct {
+    Text   string
+    Images []Image
+}
+
+type Image struct {
+    Data     []byte // raw image bytes
+    Base64   string // pre-encoded base64 string
+    URL      string // publicly accessible image URL
+    MIMEType string // e.g. "image/png", "image/jpeg"
+}
+```
+
+```go
+screenshotTool := tool.NewRich("screenshot", "Take a screenshot of a URL",
+    func(ctx context.Context, in ScreenshotInput) (*tool.Output, error) {
+        png, err := takeScreenshot(in.URL)
+        if err != nil {
+            return nil, err
+        }
+        return &tool.Output{
+            Text:   fmt.Sprintf("Screenshot of %s captured", in.URL),
+            Images: []tool.Image{{Data: png, MIMEType: "image/png"}},
+        }, nil
+    },
+)
+```
+
+`NewRichRaw` is the manual-schema variant:
+
+```go
+func NewRichRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (*Output, error)) Tool
+```
+
+Provider support for images in tool results:
+
+| Provider | Image support |
+|----------|--------------|
+| Bedrock | Native image content blocks in tool results |
+| Anthropic | Native image content blocks in tool results |
+| Gemini | Images appended as inline parts after function response |
+| OpenAI | Text fallback (OpenAI does not support images in tool results) |
+
+Existing `(string, error)` handlers continue to work unchanged. The `RichHandler` is optional — when set, it takes precedence over `Handler`.
+
 ## Built-in Tools
 
 The framework ships ready-to-use tools for common agent capabilities. Each is a separate package — import only what you need.

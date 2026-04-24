@@ -45,11 +45,31 @@ type Call struct {
 // Documented in docs/tools.md — update when changing signature.
 type Handler[T any] func(ctx context.Context, input T) (string, error)
 
+// Output is a rich tool result that can include text and images.
+// Use this when a tool needs to return images alongside text (e.g.
+// screenshot tools, chart generators, image search).
+type Output struct {
+	Text   string
+	Images []Image
+}
+
+// Image holds image data for tool output. Set exactly one of Data, Base64, or URL.
+type Image struct {
+	Data     []byte // raw image bytes
+	Base64   string // pre-encoded base64 string
+	URL      string // publicly accessible image URL
+	MIMEType string // e.g. "image/png", "image/jpeg"
+}
+
+// RichHandler is the function signature for tools that return rich output.
+type RichHandler[T any] func(ctx context.Context, input T) (*Output, error)
+
 // Tool pairs a spec with a raw handler.
 // Documented in docs/tools.md — update when changing struct fields.
 type Tool struct {
-	Spec    Spec
-	Handler func(ctx context.Context, input json.RawMessage) (string, error)
+	Spec        Spec
+	Handler     func(ctx context.Context, input json.RawMessage) (string, error)
+	RichHandler func(ctx context.Context, input json.RawMessage) (*Output, error) // optional; takes precedence over Handler
 }
 
 // New creates a Tool from a typed handler function.
@@ -165,6 +185,42 @@ func NewRaw(name, description string, schema map[string]any, handler func(ctx co
 			InputSchema: schema,
 		},
 		Handler: handler,
+	}
+}
+
+// NewRich creates a Tool from a typed handler that returns rich output
+// (text + images). Use this for tools that need to return images to the
+// LLM, such as screenshot tools, chart generators, or image search.
+func NewRich[T any](name, description string, handler RichHandler[T]) Tool {
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: GenerateSchema[T](),
+		},
+		RichHandler: func(ctx context.Context, input json.RawMessage) (*Output, error) {
+			var v T
+			if err := json.Unmarshal(input, &v); err != nil {
+				return nil, err
+			}
+			return handler(ctx, v)
+		},
+	}
+}
+
+// NewRichRaw creates a Tool with a hand-crafted schema and a rich handler
+// that returns text + images.
+func NewRichRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (*Output, error)) Tool {
+	if schema == nil {
+		schema = map[string]any{"type": "object"}
+	}
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: schema,
+		},
+		RichHandler: handler,
 	}
 }
 

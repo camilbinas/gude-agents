@@ -61,7 +61,7 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 
 	// Register and validate tools.
 	for _, t := range tools {
-		if t.Spec.Name == "" || t.Spec.Description == "" || t.Handler == nil {
+		if t.Spec.Name == "" || t.Spec.Description == "" || (t.Handler == nil && t.RichHandler == nil) {
 			return nil, fmt.Errorf("tool %q: name, description, and handler are required", t.Spec.Name)
 		}
 		if _, exists := a.tools[t.Spec.Name]; exists {

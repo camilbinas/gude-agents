@@ -516,6 +516,22 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock) ([]types.ContentBlock, 
 					&types.ToolResultContentBlockMemberText{Value: v.Content},
 				},
 			}
+			for _, img := range v.Images {
+				bytes, err := imageBytes(img.Source)
+				if err != nil {
+					return nil, fmt.Errorf("tool result ImageBlock: %w", err)
+				}
+				mimeType := img.Source.MIMEType
+				if mimeType == "" {
+					mimeType = "image/jpeg"
+				}
+				trb.Content = append(trb.Content, &types.ToolResultContentBlockMemberImage{
+					Value: types.ImageBlock{
+						Format: toBedrockImageFormat(mimeType),
+						Source: &types.ImageSourceMemberBytes{Value: bytes},
+					},
+				})
+			}
 			if v.IsError {
 				trb.Status = types.ToolResultStatusError
 			}

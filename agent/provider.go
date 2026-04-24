@@ -46,6 +46,7 @@ type ToolResultBlock struct {
 	ToolUseID string
 	Content   string
 	IsError   bool
+	Images    []ImageBlock // optional images returned by the tool
 }
 
 // Each block type implements the sealed ContentBlock interface.
