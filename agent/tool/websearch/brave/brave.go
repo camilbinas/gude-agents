@@ -8,11 +8,10 @@
 //	searchTool := brave.New(os.Getenv("BRAVE_API_KEY"))
 //	searchTool := brave.New(apiKey, brave.WithMaxResults(3))
 //
-//	a, _ := agent.Default(provider, system, []tool.Tool{searchTool})
-//
 // Prerequisites:
 //
 //   - BRAVE_API_KEY: API key from https://brave.com/search/api/
+
 package brave
 
 import (
