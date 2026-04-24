@@ -111,6 +111,14 @@ func WithHNSWEFConstruction(ef int) VectorStoreOption
 
 Sets the HNSW `EF_CONSTRUCTION` parameter — the size of the dynamic candidate list during index building. Higher values improve index quality at the cost of build time. Default: `200`.
 
+#### WithDropExisting
+
+```go
+func WithDropExisting() VectorStoreOption
+```
+
+Drops the index and all its documents before creating a fresh one. Useful for examples and development where you want a clean slate on every run. Do not use in production — it deletes all indexed data.
+
 ### Methods
 
 - `Add(ctx, docs, embeddings)` — stores documents and their embeddings as Redis hashes. Each document gets a UUID-based key under the index prefix.
