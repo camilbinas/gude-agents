@@ -13,8 +13,6 @@ import (
 
 // ChatOptions configures the interactive chat loop.
 type ChatOptions struct {
-	// ShowUsage prints token usage after each response. Default: false.
-	ShowUsage bool
 	// ClearFunc is called when the user types "clear". If nil, clear is not supported.
 	ClearFunc func(ctx context.Context) error
 }
@@ -51,16 +49,14 @@ func Chat(ctx context.Context, a *agent.Agent, opts ...ChatOptions) {
 			continue
 		}
 
-		usage, err := a.InvokeStream(ctx, input, func(chunk string) {
+		_, err := a.InvokeStream(ctx, input, func(chunk string) {
 			fmt.Print(chunk)
 		})
 		fmt.Println()
+
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			continue
-		}
-		if o.ShowUsage {
-			fmt.Printf("[tokens: %d in / %d out]\n", usage.InputTokens, usage.OutputTokens)
 		}
 	}
 }

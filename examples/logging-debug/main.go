@@ -60,5 +60,5 @@ func main() {
 	fmt.Println()
 	fmt.Println("Try: What's the weather in Tokyo and the time in America/New_York?")
 
-	utils.Chat(ctx, a, utils.ChatOptions{ShowUsage: false})
+	utils.Chat(ctx, a)
 }

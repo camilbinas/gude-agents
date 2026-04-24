@@ -93,7 +93,7 @@ func main() {
 
 	// 5. Interactive chat.
 	fmt.Println("\nAsk questions about your documents. Type 'quit' to exit.")
-	utils.Chat(ctx, a, utils.ChatOptions{ShowUsage: false})
+	utils.Chat(ctx, a)
 }
 
 // logAndFormat prints the retrieved chunks and returns the formatted context string.

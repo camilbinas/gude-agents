@@ -59,5 +59,5 @@ func main() {
 	fmt.Println("Try: What are the latest Go releases?")
 	fmt.Println()
 
-	utils.Chat(context.Background(), a, utils.ChatOptions{})
+	utils.Chat(context.Background(), a)
 }
