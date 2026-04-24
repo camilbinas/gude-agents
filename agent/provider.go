@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -53,45 +52,6 @@ type ToolResultBlock struct {
 func (TextBlock) contentBlock()       {}
 func (ToolUseBlock) contentBlock()    {}
 func (ToolResultBlock) contentBlock() {}
-
-// ImageSource holds image data as either raw bytes, a pre-encoded base64 string,
-// or a URL pointing to a hosted image, plus the MIME type that identifies the
-// image format.
-// Set exactly one of Data, Base64, or URL.
-type ImageSource struct {
-	Data     []byte // raw image bytes; mutually exclusive with Base64 and URL
-	Base64   string // pre-encoded base64 string (RFC 4648); mutually exclusive with Data and URL
-	URL      string // publicly accessible image URL; mutually exclusive with Data and Base64
-	MIMEType string // must be one of the four supported MIME types (required for Data/Base64, optional for URL)
-}
-
-// validMIMETypes is the set of MIME types accepted by all four providers.
-var validMIMETypes = map[string]bool{
-	"image/jpeg": true,
-	"image/png":  true,
-	"image/gif":  true,
-	"image/webp": true,
-}
-
-// Validate returns nil if the ImageSource is well-formed.
-// For Data/Base64 sources, MIMEType must be one of the four supported values.
-// For URL sources, MIMEType validation is skipped (the provider resolves it).
-func (s ImageSource) Validate() error {
-	if s.URL != "" {
-		return nil // URL-based; provider handles format detection
-	}
-	if !validMIMETypes[s.MIMEType] {
-		return fmt.Errorf("unsupported image MIME type %s: must be one of image/jpeg, image/png, image/gif, image/webp", s.MIMEType)
-	}
-	return nil
-}
-
-// ImageBlock is a ContentBlock that carries image data.
-type ImageBlock struct {
-	Source ImageSource
-}
-
-func (ImageBlock) contentBlock() {} // satisfies the sealed ContentBlock interface
 
 // TokenUsage records token consumption for a single Provider call.
 // Documented in docs/agent-api.md and docs/message-types.md — update when changing fields.

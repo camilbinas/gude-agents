@@ -353,6 +353,31 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []an
 					encoded,
 				))
 			}
+		case agent.DocumentBlock:
+			if role == agent.RoleAssistant {
+				log.Printf("anthropic: DocumentBlock in assistant-role message is not supported and will be skipped")
+				continue
+			}
+			if v.Source.URL != "" {
+				out = append(out, anthropicsdk.NewDocumentBlock(anthropicsdk.URLPDFSourceParam{
+					URL: v.Source.URL,
+				}))
+			} else {
+				var encoded string
+				if v.Source.Base64 != "" {
+					encoded = v.Source.Base64
+				} else {
+					bytes, err := imageBytes(agent.ImageSource{Data: v.Source.Data})
+					if err != nil {
+						log.Printf("anthropic: failed to get document bytes: %v (skipping block)", err)
+						continue
+					}
+					encoded = base64.StdEncoding.EncodeToString(bytes)
+				}
+				out = append(out, anthropicsdk.NewDocumentBlock(anthropicsdk.Base64PDFSourceParam{
+					Data: encoded,
+				}))
+			}
 		}
 	}
 	return out

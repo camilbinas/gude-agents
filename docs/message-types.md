@@ -48,7 +48,7 @@ type ContentBlock interface {
 }
 ```
 
-`ContentBlock` is a sealed interface — only the four implementations defined in the `agent` package satisfy it. The unexported `contentBlock()` marker method prevents external types from implementing the interface.
+`ContentBlock` is a sealed interface — only the five implementations defined in the `agent` package satisfy it. The unexported `contentBlock()` marker method prevents external types from implementing the interface.
 
 ### TextBlock
 
@@ -124,6 +124,8 @@ Holds image data as either raw bytes, a pre-encoded base64 string, or a URL poin
 
 `Validate()` returns `nil` when the source is well-formed. For `Data`/`Base64` sources, `MIMEType` must be one of `image/jpeg`, `image/png`, `image/gif`, `image/webp`. For `URL` sources, MIME type validation is skipped — the provider resolves the format from the URL.
 
+`ImageMIMEFromExt(ext)` is a convenience helper that maps a file extension (e.g. `".jpg"`, `".png"`) to the corresponding MIME type. Returns an error for unsupported extensions.
+
 ### ImageBlock
 
 ```go
@@ -139,6 +141,48 @@ A `ContentBlock` that carries image data. Attach one or more `ImageBlock` values
 | `Source` | `ImageSource` | The image payload and MIME type |
 
 Supported MIME types: `image/jpeg`, `image/png`, `image/gif`, `image/webp`. Any other value causes the agent loop to return an error before the provider is called.
+
+### DocumentSource
+
+```go
+type DocumentSource struct {
+    Data     []byte
+    Base64   string
+    URL      string
+    MIMEType string
+    Name     string
+}
+
+func (s DocumentSource) Validate() error
+```
+
+Holds document data as either raw bytes, a pre-encoded base64 string, or a URL, plus the MIME type and an optional filename hint. Set exactly one of `Data`, `Base64`, or `URL`.
+
+| Field | Type | Description |
+|---|---|---|
+| `Data` | `[]byte` | Raw document bytes; mutually exclusive with `Base64` and `URL` |
+| `Base64` | `string` | Pre-encoded base64 string (RFC 4648); mutually exclusive with `Data` and `URL` |
+| `URL` | `string` | Publicly accessible document URL; mutually exclusive with `Data` and `Base64` |
+| `MIMEType` | `string` | Document format; required for `Data`/`Base64`, optional for `URL` |
+| `Name` | `string` | Optional filename hint for the provider (e.g. `"contract.pdf"`) |
+
+Supported MIME types: `application/pdf`, `text/plain`, `text/html`, `text/csv`, `text/markdown`, plus Office formats (`.doc`, `.docx`, `.xls`, `.xlsx`). For `URL` sources, MIME type validation is skipped.
+
+`DocumentMIMEFromExt(ext)` is a convenience helper that maps a file extension (e.g. `".pdf"`, `".docx"`) to the corresponding MIME type. Returns an error for unsupported extensions.
+
+### DocumentBlock
+
+```go
+type DocumentBlock struct {
+    Source DocumentSource
+}
+```
+
+A `ContentBlock` that carries an inline document (PDF, Word, spreadsheet, etc.). Attach one or more `DocumentBlock` values to an invocation via `WithDocuments` on the context — the agent loop prepends them to the first user message before images and text. All four providers translate `DocumentBlock` to their respective native document APIs.
+
+| Field | Type | Description |
+|---|---|---|
+| `Source` | `DocumentSource` | The document payload, MIME type, and optional name |
 
 ## InferenceConfig
 

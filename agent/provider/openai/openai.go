@@ -324,6 +324,26 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 					Detail: "auto",
 				}),
 			}))
+		case agent.DocumentBlock:
+			var b64 string
+			if v.Source.Base64 != "" {
+				b64 = v.Source.Base64
+			} else if v.Source.URL != "" {
+				// OpenAI doesn't support document URLs directly; skip.
+				continue
+			} else {
+				b64 = base64.StdEncoding.EncodeToString(v.Source.Data)
+			}
+			name := v.Source.Name
+			if name == "" {
+				name = "document.pdf"
+			}
+			out = append(out, openaisdk.UserMessage([]openaisdk.ChatCompletionContentPartUnionParam{
+				openaisdk.FileContentPart(openaisdk.ChatCompletionContentPartFileFileParam{
+					FileData: openaisdk.String(fmt.Sprintf("data:%s;base64,%s", v.Source.MIMEType, b64)),
+					Filename: openaisdk.String(name),
+				}),
+			}))
 		}
 	}
 	return out
@@ -350,6 +370,9 @@ func toOpenAIAssistantMessage(blocks []agent.ContentBlock) openaisdk.ChatComplet
 			})
 		case agent.ImageBlock:
 			// ImageBlock in assistant-role messages is silently skipped.
+			_ = v
+		case agent.DocumentBlock:
+			// DocumentBlock in assistant-role messages is silently skipped.
 			_ = v
 		}
 	}

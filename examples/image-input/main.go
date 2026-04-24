@@ -43,7 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	mimeType, err := mimeFromExt(filepath.Ext(imagePath))
+	mimeType, err := agent.ImageMIMEFromExt(filepath.Ext(imagePath))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,19 +77,4 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println()
-}
-
-func mimeFromExt(ext string) (string, error) {
-	switch strings.ToLower(ext) {
-	case ".jpg", ".jpeg":
-		return "image/jpeg", nil
-	case ".png":
-		return "image/png", nil
-	case ".gif":
-		return "image/gif", nil
-	case ".webp":
-		return "image/webp", nil
-	default:
-		return "", fmt.Errorf("unsupported extension %q", ext)
-	}
 }

@@ -27,6 +27,10 @@ type MetricsHook interface {
 	// OnImagesAttached is called when images are attached to the invocation via WithImages.
 	// imageCount is the number of ImageBlock values prepended to the first user message.
 	OnImagesAttached(imageCount int)
+
+	// OnDocumentsAttached is called when documents are attached to the invocation via WithDocuments.
+	// docCount is the number of DocumentBlock values prepended to the first user message.
+	OnDocumentsAttached(docCount int)
 }
 
 // SetMetricsHook sets the metrics hook. Called by the metrics submodule's Option.

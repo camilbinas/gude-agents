@@ -366,6 +366,45 @@ func GetImages(ctx context.Context) []ImageBlock
 
 Retrieves the image slice from a context. Returns `nil` if no images are attached or if an empty slice was stored.
 
+### `WithDocuments`
+
+```go
+func WithDocuments(ctx context.Context, docs []DocumentBlock) context.Context
+```
+
+Returns a context that attaches a slice of `DocumentBlock` values for the current invocation. The agent loop prepends documents to the first user message before images and text, enabling the model to reason over PDFs, Word documents, spreadsheets, and other file types.
+
+```go
+pdf, _ := os.ReadFile("contract.pdf")
+doc := agent.DocumentBlock{
+    Source: agent.DocumentSource{
+        Data:     pdf,
+        MIMEType: "application/pdf",
+        Name:     "contract.pdf",
+    },
+}
+ctx := agent.WithDocuments(context.Background(), []agent.DocumentBlock{doc})
+result, _, err := a.Invoke(ctx, "Summarize this contract.")
+```
+
+Documents can also be passed by URL:
+
+```go
+doc := agent.DocumentBlock{
+    Source: agent.DocumentSource{
+        URL: "https://example.com/report.pdf",
+    },
+}
+```
+
+### `GetDocuments`
+
+```go
+func GetDocuments(ctx context.Context) []DocumentBlock
+```
+
+Retrieves the document slice from a context. Returns `nil` if no documents are attached or if an empty slice was stored.
+
 ### `Invoke`
 
 ```go
@@ -441,6 +480,7 @@ Both `Invoke` and `InvokeStream` can return errors for:
 - **Input guardrail failure**: a guardrail returned an error before the provider was called
 - **Inference config validation failure**: a per-invocation `InferenceConfig` contains invalid values (e.g., temperature outside [0.0, 1.0])
 - **Invalid image MIME type**: an `ImageBlock` attached via `WithImages` has an unsupported `MIMEType`
+- **Invalid document MIME type**: a `DocumentBlock` attached via `WithDocuments` has an unsupported `MIMEType`
 - **Memory load failure**: the configured `Memory` failed to load conversation history
 - **Retriever failure**: the configured `Retriever` returned an error
 - **Provider error**: the LLM backend returned an error
@@ -488,13 +528,14 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
 2. **Memory load** — if `WithMemory` is configured, conversation history is loaded.
 3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved and injected as context before the user message.
 4. **Image injection** — if `WithImages` was called on the context, each `ImageBlock`'s MIME type is validated and the images are prepended to the first user message's content slice. An invalid MIME type returns an error before the provider is called.
-5. **Agent loop** (up to `maxIterations`):
+5. **Document injection** — if `WithDocuments` was called on the context, each `DocumentBlock`'s MIME type is validated and the documents are prepended before images in the first user message. An invalid MIME type returns an error before the provider is called.
+6. **Agent loop** (up to `maxIterations`):
    - The provider is called with the current messages, system prompt, and tool specs.
    - If the provider returns **tool calls**: the agent executes them and loops back.
    - If the provider returns a **text response**: the loop exits.
    - If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
-6. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
-7. **Memory save** — if `WithMemory` is configured, the full conversation (including any `ImageBlock` values) is saved.
+7. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
+8. **Memory save** — if `WithMemory` is configured, the full conversation (including any `ImageBlock` and `DocumentBlock` values) is saved.
 
 If the loop reaches `maxIterations` without a text response, an error is returned.
 

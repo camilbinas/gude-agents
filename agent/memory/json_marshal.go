@@ -21,6 +21,12 @@ type jsonContentBlock struct {
 	ImageBase64   string `json:"image_base64,omitempty"`    // pre-encoded base64 string; mutually exclusive with ImageData
 	ImageURL      string `json:"image_url,omitempty"`       // publicly accessible image URL
 	ImageMIMEType string `json:"image_mime_type,omitempty"` // one of image/jpeg, image/png, image/gif, image/webp
+	// Document fields (populated when Type == "document").
+	DocData     []byte `json:"doc_data,omitempty"`      // raw document bytes
+	DocBase64   string `json:"doc_base64,omitempty"`    // pre-encoded base64 string
+	DocURL      string `json:"doc_url,omitempty"`       // publicly accessible document URL
+	DocMIMEType string `json:"doc_mime_type,omitempty"` // e.g. "application/pdf"
+	DocName     string `json:"doc_name,omitempty"`      // optional filename hint
 }
 
 // jsonMessage is the JSON envelope for an agent.Message.
@@ -83,6 +89,15 @@ func ContentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 			ImageURL:      b.Source.URL,
 			ImageMIMEType: b.Source.MIMEType,
 		}
+	case agent.DocumentBlock:
+		return jsonContentBlock{
+			Type:        "document",
+			DocData:     b.Source.Data,
+			DocBase64:   b.Source.Base64,
+			DocURL:      b.Source.URL,
+			DocMIMEType: b.Source.MIMEType,
+			DocName:     b.Source.Name,
+		}
 	default:
 		return jsonContentBlock{Type: "unknown"}
 	}
@@ -104,6 +119,16 @@ func JSONToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 				Base64:   jcb.ImageBase64,
 				URL:      jcb.ImageURL,
 				MIMEType: jcb.ImageMIMEType,
+			},
+		}
+	case "document":
+		return agent.DocumentBlock{
+			Source: agent.DocumentSource{
+				Data:     jcb.DocData,
+				Base64:   jcb.DocBase64,
+				URL:      jcb.DocURL,
+				MIMEType: jcb.DocMIMEType,
+				Name:     jcb.DocName,
 			},
 		}
 	default:

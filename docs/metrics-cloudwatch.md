@@ -79,6 +79,7 @@ Adds extra key-value pairs as dimensions to all published metrics. For example, 
 | `AgentGuardrailBlockTotal` | `Direction`, `AgentName` | Guardrail rejections |
 | `AgentIterationTotal` | `AgentName` | Total loop iterations |
 | `AgentImagesAttachedTotal` | `AgentName` | Total images attached via `WithImages` |
+| `AgentDocumentsAttachedTotal` | `AgentName` | Total documents attached via `WithDocuments` |
 
 ### Duration Metrics (StatisticSets)
 

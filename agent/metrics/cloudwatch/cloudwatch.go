@@ -222,6 +222,10 @@ func (h *cloudwatchHook) OnImagesAttached(imageCount int) {
 	h.append(counterDatum("AgentImagesAttachedTotal", float64(imageCount)))
 }
 
+func (h *cloudwatchHook) OnDocumentsAttached(docCount int) {
+	h.append(counterDatum("AgentDocumentsAttachedTotal", float64(docCount)))
+}
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------

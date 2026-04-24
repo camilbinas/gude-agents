@@ -116,6 +116,7 @@ If the registerer also implements `prometheus.Gatherer` (as `prometheus.NewRegis
 | `agent_guardrail_block_total` | `direction` | Guardrail rejections (only incremented when blocked) |
 | `agent_iteration_total` | — | Total loop iterations |
 | `agent_images_attached_total` | — | Total images attached via `WithImages` (incremented by image count per invocation) |
+| `agent_documents_attached_total` | — | Total documents attached via `WithDocuments` (incremented by document count per invocation) |
 
 ### Histograms
 

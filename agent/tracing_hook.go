@@ -49,6 +49,7 @@ type InvokeSpanParams struct {
 	InferenceConfig *InferenceConfig // merged inference config; nil = provider defaults
 	AgentName       string           // empty if WithName was not called
 	ImageCount      int              // number of images attached via WithImages; 0 if none
+	DocumentCount   int              // number of documents attached via WithDocuments; 0 if none
 }
 
 // ProviderCallParams carries data for a provider call span.

@@ -166,6 +166,12 @@ func (h *slogHook) OnImagesAttached(imageCount int) {
 	)
 }
 
+func (h *slogHook) OnDocumentsAttached(docCount int) {
+	h.log(slog.LevelDebug, "documents.attached",
+		slog.Int("document_count", docCount),
+	)
+}
+
 func (h *slogHook) OnMaxIterationsExceeded(limit int) {
 	h.log(slog.LevelWarn, "max_iterations_exceeded",
 		slog.Int("limit", limit),

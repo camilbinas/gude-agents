@@ -32,6 +32,7 @@ type otelHook struct {
 	guardrailBlockTotal  metric.Int64Counter
 	iterationTotal       metric.Int64Counter
 	imagesAttachedTotal  metric.Int64Counter
+	docsAttachedTotal    metric.Int64Counter
 }
 
 var _ agent.MetricsHook = (*otelHook)(nil)
@@ -105,6 +106,12 @@ func (h *otelHook) register() error {
 		return err
 	}
 
+	h.docsAttachedTotal, err = h.meter.Int64Counter("agent.documents.attached.total",
+		metric.WithDescription("Total number of documents attached to agent invocations via WithDocuments."))
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -166,6 +173,10 @@ func (h *otelHook) OnGuardrailComplete(direction string, blocked bool) {
 
 func (h *otelHook) OnImagesAttached(imageCount int) {
 	h.imagesAttachedTotal.Add(context.Background(), int64(imageCount), metric.WithAttributes(h.baseAttrs()...))
+}
+
+func (h *otelHook) OnDocumentsAttached(docCount int) {
+	h.docsAttachedTotal.Add(context.Background(), int64(docCount), metric.WithAttributes(h.baseAttrs()...))
 }
 
 // baseAttrs returns the common attributes for all metrics.

@@ -93,6 +93,9 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 	if params.ImageCount > 0 {
 		span.SetAttributes(attribute.Int(AttrAgentImageCount, params.ImageCount))
 	}
+	if params.DocumentCount > 0 {
+		span.SetAttributes(attribute.Int(AttrAgentDocumentCount, params.DocumentCount))
+	}
 	if h.captureContent {
 		if params.UserMessage != "" {
 			span.SetAttributes(attribute.String(AttrGenAIPrompt, params.UserMessage))

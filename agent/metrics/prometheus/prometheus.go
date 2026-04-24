@@ -47,6 +47,7 @@ type prometheusHook struct {
 	guardrailBlockTotal  *prometheus.CounterVec
 	iterationTotal       prometheus.Counter
 	imagesAttachedTotal  prometheus.Counter
+	docsAttachedTotal    prometheus.Counter
 }
 
 var _ agent.MetricsHook = (*prometheusHook)(nil)
@@ -109,12 +110,17 @@ func (h *prometheusHook) register() {
 		Help: "Total number of images attached to agent invocations via WithImages.", ConstLabels: cl,
 	})
 
+	h.docsAttachedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: ns, Name: "agent_documents_attached_total",
+		Help: "Total number of documents attached to agent invocations via WithDocuments.", ConstLabels: cl,
+	})
+
 	// Register all collectors.
 	for _, c := range []prometheus.Collector{
 		h.invokeTotal, h.invokeDuration,
 		h.providerCallTotal, h.providerCallDuration, h.providerTokensTotal,
 		h.toolCallTotal, h.toolCallDuration,
-		h.guardrailBlockTotal, h.iterationTotal, h.imagesAttachedTotal,
+		h.guardrailBlockTotal, h.iterationTotal, h.imagesAttachedTotal, h.docsAttachedTotal,
 	} {
 		h.registerer.MustRegister(c)
 	}
@@ -182,6 +188,10 @@ func (h *prometheusHook) OnGuardrailComplete(direction string, blocked bool) {
 // It increments the images-attached counter by imageCount.
 func (h *prometheusHook) OnImagesAttached(imageCount int) {
 	h.imagesAttachedTotal.Add(float64(imageCount))
+}
+
+func (h *prometheusHook) OnDocumentsAttached(docCount int) {
+	h.docsAttachedTotal.Add(float64(docCount))
 }
 
 // WithMetrics returns an agent.Option that enables Prometheus metrics.

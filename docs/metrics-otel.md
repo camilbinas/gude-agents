@@ -52,6 +52,7 @@ Sets the meter instrumentation scope name. When not set, the default `github.com
 | `agent.guardrail.block.total` | `direction`, `agent_name` | Guardrail rejections |
 | `agent.iteration.total` | `agent_name` | Total loop iterations |
 | `agent.images.attached.total` | `agent_name` | Total images attached via `WithImages` |
+| `agent.documents.attached.total` | `agent_name` | Total documents attached via `WithDocuments` |
 
 ### Histograms
 

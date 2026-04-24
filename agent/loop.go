@@ -45,6 +45,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
 			AgentName:       a.name,
 			ImageCount:      len(GetImages(ctx)),
+			DocumentCount:   len(GetDocuments(ctx)),
 		})
 	}
 
@@ -69,6 +70,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 			InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
 			AgentName:       a.name,
 			ImageCount:      len(GetImages(ctx)),
+			DocumentCount:   len(GetDocuments(ctx)),
 		})
 	}
 
@@ -235,8 +237,27 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		a.metricsHook.OnImagesAttached(len(images))
 	}
 
-	// Build the first user message, prepending images when present.
+	// Resolve documents from context and validate MIME types.
+	documents := GetDocuments(ctx)
+	for _, doc := range documents {
+		if err := doc.Source.Validate(); err != nil {
+			return cumulative, err
+		}
+	}
+
+	if a.loggingHook != nil && len(documents) > 0 {
+		a.loggingHook.OnDocumentsAttached(len(documents))
+	}
+
+	if a.metricsHook != nil && len(documents) > 0 {
+		a.metricsHook.OnDocumentsAttached(len(documents))
+	}
+
+	// Build the first user message, prepending documents and images when present.
 	var firstContent []ContentBlock
+	for _, doc := range documents {
+		firstContent = append(firstContent, doc)
+	}
 	for _, img := range images {
 		firstContent = append(firstContent, img)
 	}

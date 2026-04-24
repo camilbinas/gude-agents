@@ -11,6 +11,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -536,6 +539,22 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock) ([]types.ContentBlock, 
 					},
 				},
 			})
+
+		case agent.DocumentBlock:
+			bytes, err := documentBytes(v.Source)
+			if err != nil {
+				return nil, fmt.Errorf("DocumentBlock: %w", err)
+			}
+			name := sanitizeDocName(v.Source.Name)
+			out = append(out, &types.ContentBlockMemberDocument{
+				Value: types.DocumentBlock{
+					Name:   aws.String(name),
+					Format: toBedrockDocFormat(v.Source.MIMEType),
+					Source: &types.DocumentSourceMemberBytes{
+						Value: bytes,
+					},
+				},
+			})
 		}
 	}
 	return out, nil
@@ -586,7 +605,89 @@ func toBedrockImageFormat(mimeType string) types.ImageFormat {
 	case "image/webp":
 		return types.ImageFormatWebp
 	default:
-		return types.ImageFormatJpeg // fallback; MIME type should be validated before reaching here
+		return types.ImageFormatJpeg
+	}
+}
+
+// reInvalidDocNameChars matches characters not allowed in Bedrock document names.
+// Bedrock only allows: alphanumeric, whitespace, hyphens, parentheses, square brackets.
+var reInvalidDocNameChars = regexp.MustCompile(`[^a-zA-Z0-9\s\-\(\)\[\]]`)
+
+// reMultiSpaces collapses consecutive whitespace to a single space.
+var reMultiSpaces = regexp.MustCompile(`\s{2,}`)
+
+// sanitizeDocName cleans a filename for Bedrock's DocumentBlock.Name field.
+// Strips the extension, replaces invalid characters, and collapses whitespace.
+func sanitizeDocName(name string) string {
+	if name == "" {
+		return "document"
+	}
+	// Strip file extension (e.g. "report.pdf" → "report").
+	if idx := len(name) - len(filepath.Ext(name)); idx > 0 {
+		name = name[:idx]
+	}
+	name = reInvalidDocNameChars.ReplaceAllString(name, " ")
+	name = reMultiSpaces.ReplaceAllString(name, " ")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "document"
+	}
+	return name
+}
+
+// documentBytes returns the raw bytes from a DocumentSource, same logic as imageBytes.
+func documentBytes(src agent.DocumentSource) ([]byte, error) {
+	if len(src.Data) > 0 {
+		return src.Data, nil
+	}
+	if src.Base64 != "" {
+		b, err := base64.StdEncoding.DecodeString(src.Base64)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode: %w", err)
+		}
+		return b, nil
+	}
+	if src.URL != "" {
+		resp, err := http.Get(src.URL)
+		if err != nil {
+			return nil, fmt.Errorf("fetch document URL: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetch document URL: status %d", resp.StatusCode)
+		}
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read document URL body: %w", err)
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("DocumentSource has no data, base64, or URL")
+}
+
+// toBedrockDocFormat maps a MIME type to the Bedrock DocumentFormat enum.
+func toBedrockDocFormat(mimeType string) types.DocumentFormat {
+	switch mimeType {
+	case "application/pdf":
+		return types.DocumentFormatPdf
+	case "text/csv":
+		return types.DocumentFormatCsv
+	case "text/html":
+		return types.DocumentFormatHtml
+	case "text/plain":
+		return types.DocumentFormatTxt
+	case "text/markdown":
+		return types.DocumentFormatMd
+	case "application/msword":
+		return types.DocumentFormatDoc
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return types.DocumentFormatDocx
+	case "application/vnd.ms-excel":
+		return types.DocumentFormatXls
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return types.DocumentFormatXlsx
+	default:
+		return types.DocumentFormatPdf
 	}
 }
 

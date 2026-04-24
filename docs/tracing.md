@@ -103,6 +103,7 @@ All attribute key constants are exported from the `tracing` package for use in c
 | `AttrAgentModelID` | `agent.model_id` | Model ID (if provider implements `ModelIdentifier`) |
 | `AttrAgentConversationID` | `agent.conversation_id` | Conversation ID (if memory configured) |
 | `AttrAgentImageCount` | `agent.image_count` | Number of images attached via `WithImages` (only set when > 0) |
+| `AttrAgentDocumentCount` | `agent.document_count` | Number of documents attached via `WithDocuments` (only set when > 0) |
 | `AttrAgentTokenUsageInput` | `agent.token_usage.input` | Cumulative input tokens on successful invocation |
 | `AttrAgentTokenUsageOutput` | `agent.token_usage.output` | Cumulative output tokens on successful invocation |
 | `AttrAgentIterationNumber` | `agent.iteration.number` | 1-based iteration number |

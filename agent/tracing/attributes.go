@@ -27,6 +27,7 @@ const (
 	AttrRetrieverQuery          = "retriever.query"
 	AttrRetrieverDocumentCount  = "retriever.document_count"
 	AttrAgentImageCount         = "agent.image_count"
+	AttrAgentDocumentCount      = "agent.document_count"
 	AttrGraphIterations         = "graph.iterations"
 )
 

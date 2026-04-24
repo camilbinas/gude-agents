@@ -292,6 +292,21 @@ func imageBytes(src agent.ImageSource) ([]byte, error) {
 	return b, nil
 }
 
+// documentBytes returns the raw bytes from a DocumentSource.
+func documentBytes(src agent.DocumentSource) ([]byte, error) {
+	if len(src.Data) > 0 {
+		return src.Data, nil
+	}
+	if src.Base64 != "" {
+		b, err := base64.StdEncoding.DecodeString(src.Base64)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode: %w", err)
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("DocumentSource has no data or base64")
+}
+
 // toGeminiContents converts framework messages to Gemini content objects.
 func toGeminiContents(msgs []agent.Message) ([]*genai.Content, error) {
 	out := make([]*genai.Content, len(msgs))
@@ -339,6 +354,24 @@ func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 					return nil, &agent.ProviderError{Cause: fmt.Errorf("ImageBlock: %w", err)}
 				}
 				parts = append(parts, genai.NewPartFromBytes(bytes, v.Source.MIMEType))
+			}
+		case agent.DocumentBlock:
+			if v.Source.URL != "" {
+				mimeType := v.Source.MIMEType
+				if mimeType == "" {
+					mimeType = "application/pdf"
+				}
+				parts = append(parts, genai.NewPartFromURI(v.Source.URL, mimeType))
+			} else {
+				bytes, err := documentBytes(v.Source)
+				if err != nil {
+					return nil, &agent.ProviderError{Cause: fmt.Errorf("DocumentBlock: %w", err)}
+				}
+				mimeType := v.Source.MIMEType
+				if mimeType == "" {
+					mimeType = "application/pdf"
+				}
+				parts = append(parts, genai.NewPartFromBytes(bytes, mimeType))
 			}
 		}
 	}

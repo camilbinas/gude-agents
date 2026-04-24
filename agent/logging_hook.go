@@ -48,6 +48,10 @@ type LoggingHook interface {
 	// imageCount is the number of ImageBlock values prepended to the first user message.
 	OnImagesAttached(imageCount int)
 
+	// OnDocumentsAttached is called when documents are attached to the invocation via WithDocuments.
+	// docCount is the number of DocumentBlock values prepended to the first user message.
+	OnDocumentsAttached(docCount int)
+
 	// OnMaxIterationsExceeded records the max-iterations-exceeded event.
 	OnMaxIterationsExceeded(limit int)
 }

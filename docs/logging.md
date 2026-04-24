@@ -81,7 +81,7 @@ Each lifecycle point maps to a log level:
 
 | Lifecycle Point | Default Level | With Error |
 |---|---|---|
-| InvokeStart, IterationStart, ProviderCallStart, ToolStart, MemoryStart, RetrieverStart, ImagesAttached | Debug | — |
+| InvokeStart, IterationStart, ProviderCallStart, ToolStart, MemoryStart, RetrieverStart, ImagesAttached, DocumentsAttached | Debug | — |
 | InvokeEnd, ProviderCallEnd, ToolEnd, MemoryEnd, RetrieverEnd | Info | Error |
 | GuardrailComplete (not blocked) | Debug | Error |
 | GuardrailComplete (blocked) | Warn | Error |
@@ -115,6 +115,7 @@ Each log entry includes relevant key-value attributes:
 | `tool_call_count` | ProviderCallEnd | Number of tool calls in provider response |
 | `doc_count` | RetrieverEnd | Number of retrieved documents |
 | `image_count` | ImagesAttached | Number of images attached via `WithImages` |
+| `document_count` | DocumentsAttached | Number of documents attached via `WithDocuments` |
 | `operation` | MemoryStart, MemoryEnd | Memory operation (`load` or `save`) |
 | `message_count` | MemoryEnd | Number of messages loaded or saved |
 | `direction` | GuardrailComplete | Guardrail direction (`input` or `output`) |

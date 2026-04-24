@@ -82,3 +82,23 @@ func GetImages(ctx context.Context) []ImageBlock {
 	}
 	return images
 }
+
+// documentsKey is the context key for per-invocation document slices.
+type documentsKey struct{}
+
+// WithDocuments attaches a slice of DocumentBlock values to the context for the
+// current invocation. Pass nil or an empty slice to clear any previously
+// attached documents.
+func WithDocuments(ctx context.Context, docs []DocumentBlock) context.Context {
+	return context.WithValue(ctx, documentsKey{}, docs)
+}
+
+// GetDocuments retrieves the document slice from the context.
+// Returns nil if no documents are attached or if an empty slice was stored.
+func GetDocuments(ctx context.Context) []DocumentBlock {
+	docs, _ := ctx.Value(documentsKey{}).([]DocumentBlock)
+	if len(docs) == 0 {
+		return nil
+	}
+	return docs
+}
