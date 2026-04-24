@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/metrics/otel
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.17.0
+	github.com/camilbinas/gude-agents v0.18.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0
 	go.opentelemetry.io/otel/sdk/metric v1.43.0
