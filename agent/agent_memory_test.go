@@ -145,3 +145,77 @@ func TestAgent_ConversationLoadFailureReturnsError(t *testing.T) {
 		t.Errorf("expected error to contain 'conversation load', got: %v", err)
 	}
 }
+
+// trackingWaiter implements Conversation and ConversationWaiter.
+// It records whether Wait was called.
+type trackingWaiter struct {
+	waited bool
+	mu     sync.Mutex
+	data   map[string][]Message
+}
+
+func newTrackingWaiter() *trackingWaiter {
+	return &trackingWaiter{data: make(map[string][]Message)}
+}
+
+func (w *trackingWaiter) Load(_ context.Context, id string) ([]Message, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.data[id], nil
+}
+
+func (w *trackingWaiter) Save(_ context.Context, id string, msgs []Message) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.data[id] = msgs
+	return nil
+}
+
+func (w *trackingWaiter) Wait() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.waited = true
+}
+
+func TestAgent_Close_CallsConversationWaiter(t *testing.T) {
+	sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
+	waiter := newTrackingWaiter()
+
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(waiter, "conv-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a.Close()
+
+	waiter.mu.Lock()
+	defer waiter.mu.Unlock()
+	if !waiter.waited {
+		t.Fatal("expected Close to call Wait on ConversationWaiter")
+	}
+}
+
+func TestAgent_Close_NoopWithoutConversation(t *testing.T) {
+	sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
+	a, err := New(sp, prompt.Text("sys"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not panic.
+	a.Close()
+	a.Close() // safe to call multiple times
+}
+
+func TestAgent_Close_NoopWhenConversationIsNotWaiter(t *testing.T) {
+	sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
+	store := newTestMemoryStore() // does not implement ConversationWaiter
+
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "conv-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not panic — store doesn't implement Wait.
+	a.Close()
+}
