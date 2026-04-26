@@ -56,7 +56,8 @@ func main() {
 		memory.NewRecallTool(scopedStore, embedder),
 	}
 
-	// 3. Build the agent.
+	store := conversation.NewWindow(conversation.NewInMemory(), 40)
+
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
 		prompt.RISEN{
@@ -68,13 +69,13 @@ func main() {
 		},
 		tools,
 		debug.WithLogging(),
-		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "composable-session"),
+		agent.WithConversation(store, "composable-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// 4. Set the identifier on the context.
+	// 3. Set the identifier on the context.
 	ctx := agent.WithIdentifier(context.Background(), "user-123")
 
 	fmt.Println("Chat agent with composable episodic memory. Type 'quit' to exit.")
