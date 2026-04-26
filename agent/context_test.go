@@ -218,3 +218,28 @@ func TestWithImages_ChainedCallsInnermostWins(t *testing.T) {
 		}
 	}
 }
+
+func TestWithIdentifier_RoundTrip(t *testing.T) {
+	ctx := WithIdentifier(context.Background(), "user-42")
+
+	got := GetIdentifier(ctx)
+	if got != "user-42" {
+		t.Fatalf("expected %q, got %q", "user-42", got)
+	}
+}
+
+func TestGetIdentifier_EmptyWhenNoneAttached(t *testing.T) {
+	got := GetIdentifier(context.Background())
+	if got != "" {
+		t.Fatalf("expected empty string, got %q", got)
+	}
+}
+
+func TestWithIdentifier_EmptyStringIgnored(t *testing.T) {
+	ctx := WithIdentifier(context.Background(), "")
+
+	got := GetIdentifier(ctx)
+	if got != "" {
+		t.Fatalf("expected empty string, got %q", got)
+	}
+}
