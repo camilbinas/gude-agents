@@ -59,7 +59,6 @@ func recordAttrs(r slog.Record) map[string]slog.Value {
 // ---------------------------------------------------------------------------
 
 // TestWithLogging_InstallsHook verifies WithLogging sets LoggingHook on agent.
-// Validates: Requirement 9.4
 func TestWithLogging_InstallsHook(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithLogging(WithHandler(ch))
@@ -75,7 +74,6 @@ func TestWithLogging_InstallsHook(t *testing.T) {
 }
 
 // TestWithGraphLogging_InstallsHook verifies WithGraphLogging sets GraphLoggingHook on graph.
-// Validates: Requirement 9.5
 func TestWithGraphLogging_InstallsHook(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithGraphLogging(WithHandler(ch))
@@ -91,7 +89,6 @@ func TestWithGraphLogging_InstallsHook(t *testing.T) {
 }
 
 // TestWithSwarmLogging_InstallsHook verifies WithSwarmLogging sets SwarmLoggingHook on swarm.
-// Validates: Requirement 9.6
 func TestWithSwarmLogging_InstallsHook(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithSwarmLogging(WithHandler(ch))
@@ -119,7 +116,6 @@ func TestWithSwarmLogging_InstallsHook(t *testing.T) {
 }
 
 // TestWithHandler_CustomHandler verifies custom slog.Handler receives log entries.
-// Validates: Requirement 4.4
 func TestWithHandler_CustomHandler(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -136,7 +132,6 @@ func TestWithHandler_CustomHandler(t *testing.T) {
 }
 
 // TestDefaultHandler verifies default uses slog.Default().
-// Validates: Requirement 4.5
 func TestDefaultHandler(t *testing.T) {
 	h := newSlogHook(nil)
 
@@ -158,7 +153,6 @@ func TestDefaultHandler(t *testing.T) {
 }
 
 // TestWithMinLevel_FiltersBelow verifies entries below min level are not emitted.
-// Validates: Requirement 4.8
 func TestWithMinLevel_FiltersBelow(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch), WithMinLevel(slog.LevelInfo)})
@@ -179,7 +173,6 @@ func TestWithMinLevel_FiltersBelow(t *testing.T) {
 }
 
 // TestLogLevel_DebugForStarts verifies start events emit at Debug level.
-// Validates: Requirement 4.6
 func TestLogLevel_DebugForStarts(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -207,7 +200,6 @@ func TestLogLevel_DebugForStarts(t *testing.T) {
 }
 
 // TestLogLevel_InfoForEnds verifies end events emit at Info level.
-// Validates: Requirement 4.6
 func TestLogLevel_InfoForEnds(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -238,7 +230,6 @@ func TestLogLevel_InfoForEnds(t *testing.T) {
 }
 
 // TestLogLevel_ErrorOnFailure verifies end events with error emit at Error level.
-// Validates: Requirement 4.6
 func TestLogLevel_ErrorOnFailure(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -270,7 +261,6 @@ func TestLogLevel_ErrorOnFailure(t *testing.T) {
 }
 
 // TestLogLevel_WarnForMaxIterations verifies max iterations emits at Warn level.
-// Validates: Requirement 4.6
 func TestLogLevel_WarnForMaxIterations(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -290,7 +280,6 @@ func TestLogLevel_WarnForMaxIterations(t *testing.T) {
 }
 
 // TestLogLevel_WarnForGuardrailBlock verifies guardrail block emits at Warn level.
-// Validates: Requirement 4.6
 func TestLogLevel_WarnForGuardrailBlock(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -318,7 +307,6 @@ func TestLogLevel_WarnForGuardrailBlock(t *testing.T) {
 }
 
 // TestStructuredAttributes verifies log entries contain expected key-value attributes.
-// Validates: Requirement 4.7
 func TestStructuredAttributes(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -361,7 +349,6 @@ func TestStructuredAttributes(t *testing.T) {
 }
 
 // TestInvokeEnd_IncludesTokenUsage verifies invoke end includes input_tokens and output_tokens.
-// Validates: Requirement 4.7
 func TestInvokeEnd_IncludesTokenUsage(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
@@ -393,7 +380,6 @@ func TestInvokeEnd_IncludesTokenUsage(t *testing.T) {
 }
 
 // TestToolEnd_IncludesDuration verifies tool end includes duration_ms.
-// Validates: Requirement 4.7
 func TestToolEnd_IncludesDuration(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})

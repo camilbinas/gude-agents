@@ -81,14 +81,12 @@ func TestStore_SaveReturnsCopy(t *testing.T) {
 	}
 }
 
-// Feature: memory-strategies, Property 5: List returns all saved conversation IDs
 
 // TestStoreListReturnsAllSavedConversationIDs verifies that for any set of
 // distinct conversation IDs saved to a Store, calling List returns a slice
 // containing exactly those IDs (in any order), with no duplicates and no
 // missing entries.
 //
-// **Validates: Requirements 5.3, 5.4**
 func TestStoreListReturnsAllSavedConversationIDs(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		numConvs := rapid.IntRange(1, 20).Draw(t, "numConversations")
@@ -136,14 +134,12 @@ func TestStoreListReturnsAllSavedConversationIDs(t *testing.T) {
 	})
 }
 
-// Feature: memory-strategies, Property 6: Delete removes exactly the target conversation
 
 // TestStoreDeleteRemovesExactlyTargetConversation verifies that for any Store
 // containing a set of conversations, deleting one conversation by ID causes
 // that ID to no longer appear in List results and its messages to no longer be
 // loadable, while all other conversations remain unchanged.
 //
-// **Validates: Requirements 6.2, 6.3**
 func TestStoreDeleteRemovesExactlyTargetConversation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		numConvs := rapid.IntRange(2, 10).Draw(t, "numConversations")

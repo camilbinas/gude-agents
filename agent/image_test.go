@@ -56,7 +56,7 @@ func TestImageSourceValidate_InvalidMIMEType(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Loop image propagation tests (Task 3, sub-task 3.2)
+// Loop image propagation tests
 // ---------------------------------------------------------------------------
 
 // TestLoop_NoImages_SingleTextBlock verifies that when no images are attached,

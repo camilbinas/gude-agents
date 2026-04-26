@@ -9,7 +9,6 @@ import (
 )
 
 // TestNormalize_NilInput verifies that nil input returns nil.
-// Validates: Requirement 8.2
 func TestNormalize_NilInput(t *testing.T) {
 	for _, strategy := range []NormStrategy{NormMerge, NormFill, NormRemove} {
 		got := NormalizeMessages(nil, strategy)
@@ -20,7 +19,6 @@ func TestNormalize_NilInput(t *testing.T) {
 }
 
 // TestNormalize_EmptyInput verifies that empty input returns an empty slice.
-// Validates: Requirement 8.3
 func TestNormalize_EmptyInput(t *testing.T) {
 	for _, strategy := range []NormStrategy{NormMerge, NormFill, NormRemove} {
 		got := NormalizeMessages([]Message{}, strategy)
@@ -35,7 +33,6 @@ func TestNormalize_EmptyInput(t *testing.T) {
 
 // TestNormalize_AlreadyAlternating verifies that a valid alternating sequence
 // passes through unchanged for each strategy.
-// Validates: Requirements 1.2, 2.3, 3.2
 func TestNormalize_AlreadyAlternating(t *testing.T) {
 	input := []Message{
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "hello"}}},
@@ -72,7 +69,6 @@ func TestNormalize_AlreadyAlternating(t *testing.T) {
 
 // TestNormalize_SingleAssistantMessage verifies that a single assistant message
 // gets a synthetic user message prepended for each strategy.
-// Validates: Requirements 4.1, 4.2, 4.3
 func TestNormalize_SingleAssistantMessage(t *testing.T) {
 	input := []Message{
 		{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "I'm an assistant"}}},
@@ -113,7 +109,6 @@ func TestNormalize_SingleAssistantMessage(t *testing.T) {
 
 // TestNormalize_MergeTwoConsecutiveUserMessages verifies that two consecutive
 // user messages are merged into one with combined content blocks.
-// Validates: Requirements 1.1, 1.3
 func TestNormalize_MergeTwoConsecutiveUserMessages(t *testing.T) {
 	input := []Message{
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "first"}}},
@@ -135,7 +130,6 @@ func TestNormalize_MergeTwoConsecutiveUserMessages(t *testing.T) {
 
 // TestNormalize_MergeThreeConsecutiveAssistantMessages verifies that three
 // consecutive assistant messages are merged into one in a single pass.
-// Validates: Requirements 1.1, 1.4
 func TestNormalize_MergeThreeConsecutiveAssistantMessages(t *testing.T) {
 	input := []Message{
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "start"}}},
@@ -166,7 +160,6 @@ func TestNormalize_MergeThreeConsecutiveAssistantMessages(t *testing.T) {
 
 // TestNormalize_FillInsertsSyntheticMessages verifies that the Fill strategy
 // inserts correct synthetic messages between same-role pairs.
-// Validates: Requirements 2.1, 2.2, 2.4
 func TestNormalize_FillInsertsSyntheticMessages(t *testing.T) {
 	input := []Message{
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "u1"}}},
@@ -215,7 +208,6 @@ func TestNormalize_FillInsertsSyntheticMessages(t *testing.T) {
 
 // TestNormalize_RemoveKeepsLastInRun verifies that the Remove strategy keeps
 // only the last message in a same-role run.
-// Validates: Requirements 3.1, 3.3
 func TestNormalize_RemoveKeepsLastInRun(t *testing.T) {
 	input := []Message{
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "u1"}}},
@@ -245,7 +237,6 @@ func TestNormalize_RemoveKeepsLastInRun(t *testing.T) {
 
 // TestNormalize_MixedContentBlocksPreserved verifies that TextBlock, ToolUseBlock,
 // and ToolResultBlock content blocks are preserved during normalization.
-// Validates: Requirements 7.1, 7.2, 7.3
 func TestNormalize_MixedContentBlocksPreserved(t *testing.T) {
 	toolInput := json.RawMessage(`{"key":"value"}`)
 
@@ -311,7 +302,6 @@ func TestNormalize_MixedContentBlocksPreserved(t *testing.T) {
 
 // TestNormalize_MixedContentBlocksMerged verifies that mixed content blocks
 // are correctly combined when merging consecutive same-role messages.
-// Validates: Requirements 1.1, 7.1
 func TestNormalize_MixedContentBlocksMerged(t *testing.T) {
 	toolInput := json.RawMessage(`{"q":"test"}`)
 
@@ -342,7 +332,6 @@ func TestNormalize_MixedContentBlocksMerged(t *testing.T) {
 
 // TestNormalize_OriginalSliceNotMutated verifies that the original input slice
 // and its messages' Content slices are not modified by NormalizeMessages.
-// Validates: Requirement 6.2
 func TestNormalize_OriginalSliceNotMutated(t *testing.T) {
 	input := []Message{
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "u1"}}},
@@ -387,7 +376,6 @@ func TestNormalize_OriginalSliceNotMutated(t *testing.T) {
 
 // TestWithMessageNormalizer_ValidStrategies verifies that WithMessageNormalizer
 // with each valid strategy sets the normStrategy field correctly on the agent.
-// Validates: Requirement 5.1
 func TestWithMessageNormalizer_ValidStrategies(t *testing.T) {
 	strategies := []struct {
 		name     string
@@ -419,7 +407,6 @@ func TestWithMessageNormalizer_ValidStrategies(t *testing.T) {
 
 // TestWithMessageNormalizer_InvalidStrategy verifies that WithMessageNormalizer
 // with an invalid strategy value returns an error from New.
-// Validates: Requirement 5.4
 func TestWithMessageNormalizer_InvalidStrategy(t *testing.T) {
 	_, err := New(mockProvider{}, prompt.Text("sys"), nil, WithMessageNormalizer(NormStrategy(99)))
 	if err == nil {
@@ -429,7 +416,6 @@ func TestWithMessageNormalizer_InvalidStrategy(t *testing.T) {
 
 // TestWithoutMessageNormalizer_SetsDisabled verifies that WithoutMessageNormalizer
 // sets normDisabled to true on the agent.
-// Validates: Requirement 5.3
 func TestWithoutMessageNormalizer_SetsDisabled(t *testing.T) {
 	a, err := New(mockProvider{}, prompt.Text("sys"), nil, WithoutMessageNormalizer())
 	if err != nil {
@@ -443,7 +429,6 @@ func TestWithoutMessageNormalizer_SetsDisabled(t *testing.T) {
 // TestNormalize_DefaultBehaviorAppliesMerge verifies that the default behavior
 // (no normalizer option) will apply Merge strategy. When no option is set,
 // normStrategy is nil and normDisabled is false, so runLoop defaults to NormMerge.
-// Validates: Requirement 5.2
 func TestNormalize_DefaultBehaviorAppliesMerge(t *testing.T) {
 	a, err := New(mockProvider{}, prompt.Text("sys"), nil)
 	if err != nil {
@@ -462,7 +447,6 @@ func TestNormalize_DefaultBehaviorAppliesMerge(t *testing.T) {
 // TestNormalize_WithoutNormalizerPassesRawMessages verifies that
 // WithoutMessageNormalizer causes normDisabled to be true, meaning
 // raw messages pass through to the provider without normalization.
-// Validates: Requirement 6.3
 func TestNormalize_WithoutNormalizerPassesRawMessages(t *testing.T) {
 	a, err := New(mockProvider{}, prompt.Text("sys"), nil, WithoutMessageNormalizer())
 	if err != nil {

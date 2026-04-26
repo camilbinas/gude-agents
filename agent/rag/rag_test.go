@@ -12,8 +12,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Feature: rag, Property 1: SplitText chunk size bound
-// **Validates: Requirements 4.6**
 func TestSplitText_ChunkSizeBound(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		text := rapid.StringOf(rapid.Rune()).Draw(t, "text")
@@ -34,8 +32,6 @@ func TestSplitText_ChunkSizeBound(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 2: SplitText zero-overlap partition
-// **Validates: Requirements 4.5**
 func TestSplitText_ZeroOverlapPartition(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		text := rapid.StringOf(rapid.Rune()).Draw(t, "text")
@@ -57,10 +53,8 @@ func TestSplitText_ZeroOverlapPartition(t *testing.T) {
 }
 
 // --- Unit tests for SplitText edge cases ---
-// Requirements: 4.2, 4.3, 4.4
 
 func TestSplitTextE_EmptyInput(t *testing.T) {
-	// Requirement 4.4: empty text returns empty slice
 	chunks, err := SplitTextE("", 10, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -71,7 +65,6 @@ func TestSplitTextE_EmptyInput(t *testing.T) {
 }
 
 func TestSplitText_EmptyInput(t *testing.T) {
-	// Requirement 4.4: empty text returns empty slice (clamping variant)
 	chunks := SplitText("", 10, 0)
 	if len(chunks) != 0 {
 		t.Fatalf("expected empty slice, got %v", chunks)
@@ -79,7 +72,6 @@ func TestSplitText_EmptyInput(t *testing.T) {
 }
 
 func TestSplitTextE_ChunkSizeLessThanOne(t *testing.T) {
-	// Requirement 4.2: chunkSize < 1 returns error
 	tests := []struct {
 		name      string
 		chunkSize int
@@ -103,7 +95,6 @@ func TestSplitTextE_ChunkSizeLessThanOne(t *testing.T) {
 }
 
 func TestSplitTextE_OverlapGEChunkSize(t *testing.T) {
-	// Requirement 4.3: chunkOverlap >= chunkSize returns error
 	tests := []struct {
 		name         string
 		chunkSize    int
@@ -235,8 +226,6 @@ func TestSplitTextE_BoundaryValues(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 3: MemoryStore search returns results in descending score order
-// **Validates: Requirements 3.4**
 func TestMemoryStore_SearchDescendingOrder(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		const dim = 8
@@ -285,8 +274,6 @@ func TestMemoryStore_SearchDescendingOrder(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 4: MemoryStore returns all documents when topK exceeds store size
-// **Validates: Requirements 3.5**
 func TestMemoryStore_SearchReturnsAllWhenTopKExceedsSize(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		const dim = 8
@@ -331,10 +318,8 @@ func TestMemoryStore_SearchReturnsAllWhenTopKExceedsSize(t *testing.T) {
 }
 
 // --- Unit tests for MemoryStore error cases ---
-// Requirements: 3.2, 3.3, 3.6
 
 func TestMemoryStore_AddLengthMismatch(t *testing.T) {
-	// Requirement 3.2: Add with mismatched docs/embeddings lengths returns error
 	store := NewMemoryStore()
 	ctx := context.Background()
 
@@ -378,7 +363,6 @@ func TestMemoryStore_AddLengthMismatch(t *testing.T) {
 }
 
 func TestMemoryStore_SearchTopKLessThanOne(t *testing.T) {
-	// Requirement 3.3: Search with topK < 1 returns error
 	store := NewMemoryStore()
 	ctx := context.Background()
 
@@ -412,7 +396,6 @@ func TestMemoryStore_SearchTopKLessThanOne(t *testing.T) {
 }
 
 func TestMemoryStore_ConcurrentAccess(t *testing.T) {
-	// Requirement 3.6: MemoryStore is safe for concurrent use.
 	// This test should pass with -race flag.
 	store := NewMemoryStore()
 	ctx := context.Background()
@@ -470,8 +453,6 @@ func (m *mockVectorStore) Search(_ context.Context, _ []float64, _ int) ([]agent
 	return m.searchResults, m.searchErr
 }
 
-// Feature: rag, Property 7: Retriever returns documents in descending score order
-// **Validates: Requirements 6.3**
 func TestRetriever_DescendingOrder(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate between 1 and 20 scored documents in descending score order
@@ -531,8 +512,6 @@ func TestRetriever_DescendingOrder(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 8: Retriever score threshold filters low-scoring documents
-// **Validates: Requirements 6.4**
 func TestRetriever_ScoreThreshold(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		threshold := rapid.Float64Range(0, 1).Draw(t, "threshold")
@@ -607,8 +586,6 @@ func (m *mockReranker) Rerank(_ context.Context, _ string, docs []agent.Document
 	return reversed, nil
 }
 
-// Feature: rag, Property 13: Reranker output is used as the final retrieval result
-// **Validates: Requirements 9.3**
 func TestRetriever_RerankerOutputUsed(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate between 1 and 20 scored documents with scores in [0, 1].
@@ -666,7 +643,6 @@ func TestRetriever_RerankerOutputUsed(t *testing.T) {
 }
 
 // --- Unit tests for Retriever error cases ---
-// Requirements: 6.4, 6.5, 9.4
 
 // errReranker is a mock reranker that always returns an error.
 type errReranker struct {
@@ -678,7 +654,6 @@ func (m *errReranker) Rerank(_ context.Context, _ string, _ []agent.Document) ([
 }
 
 func TestRetriever_EmptyQueryError(t *testing.T) {
-	// Requirement 6.5: empty query returns descriptive error
 	store := &mockVectorStore{}
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
 	retriever := NewRetriever(embedder, store)
@@ -694,7 +669,6 @@ func TestRetriever_EmptyQueryError(t *testing.T) {
 }
 
 func TestRetriever_RerankerErrorWrapping(t *testing.T) {
-	// Requirement 9.4: reranker error is wrapped with "reranker: " prefix
 	store := &mockVectorStore{
 		searchResults: []agent.ScoredDocument{
 			{Document: agent.Document{Content: "doc1"}, Score: 0.9},
@@ -716,7 +690,6 @@ func TestRetriever_RerankerErrorWrapping(t *testing.T) {
 }
 
 func TestRetriever_ScoreThresholdExactMatch(t *testing.T) {
-	// Requirement 6.4: document with score exactly equal to threshold is included
 	threshold := 0.75
 	store := &mockVectorStore{
 		searchResults: []agent.ScoredDocument{
@@ -749,7 +722,6 @@ func TestRetriever_ScoreThresholdExactMatch(t *testing.T) {
 }
 
 func TestRetriever_ScoreThresholdBelowExcluded(t *testing.T) {
-	// Requirement 6.4: document with score just below threshold is excluded
 	threshold := 0.75
 	justBelow := 0.7499999999999999
 	store := &mockVectorStore{
@@ -792,8 +764,6 @@ func (r *recordingVectorStore) Search(_ context.Context, _ []float64, _ int) ([]
 	return nil, nil
 }
 
-// Feature: rag, Property 5: Ingest stores the correct number of chunks
-// **Validates: Requirements 5.2**
 func TestIngest_ChunkCount(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		texts := rapid.SliceOfN(rapid.StringMatching("[a-z]{1,100}"), 1, 5).Draw(t, "texts")
@@ -829,8 +799,6 @@ func TestIngest_ChunkCount(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 6: Ingest propagates chunk_index and source_index metadata
-// **Validates: Requirements 5.7**
 func TestIngest_MetadataPropagation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate non-empty texts to ensure chunks are produced.
@@ -867,7 +835,6 @@ func TestIngest_MetadataPropagation(t *testing.T) {
 }
 
 // --- Unit tests for Ingest error handling ---
-// Requirements: 5.3, 5.4, 5.5
 
 // failingEmbedder returns an error after a configured number of successful calls.
 type failingEmbedder struct {
@@ -898,7 +865,6 @@ func (f *failingVectorStore) Search(_ context.Context, _ []float64, _ int) ([]ag
 }
 
 func TestIngest_EmbedFailureWrapping(t *testing.T) {
-	// Requirement 5.4: embed failure wraps error with "ingest: embed chunk %d: %w"
 	innerErr := fmt.Errorf("model unavailable")
 	embedder := &failingEmbedder{
 		succeedCount: 0, // fail on the very first chunk
@@ -931,7 +897,6 @@ func TestIngest_EmbedFailureWrapping(t *testing.T) {
 }
 
 func TestIngest_EmbedFailureSecondChunk(t *testing.T) {
-	// Requirement 5.4: embed failure on a later chunk includes the correct chunk index
 	innerErr := fmt.Errorf("rate limited")
 	embedder := &failingEmbedder{
 		succeedCount: 2, // succeed on chunks 0 and 1, fail on chunk 2
@@ -960,7 +925,6 @@ func TestIngest_EmbedFailureSecondChunk(t *testing.T) {
 }
 
 func TestIngest_StoreFailureWrapping(t *testing.T) {
-	// Requirement 5.5: store failure wraps error with "ingest: store.Add: %w"
 	innerErr := fmt.Errorf("disk full")
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
 	store := &failingVectorStore{err: innerErr}
@@ -984,7 +948,6 @@ func TestIngest_StoreFailureWrapping(t *testing.T) {
 }
 
 func TestIngest_NilMetadata(t *testing.T) {
-	// Requirement 5.3: nil metadata does not panic, documents get source_index/chunk_index
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
 	store := &recordingVectorStore{}
 
@@ -1017,7 +980,6 @@ func TestIngest_NilMetadata(t *testing.T) {
 }
 
 func TestIngest_ShortMetadata(t *testing.T) {
-	// Requirement 5.3: metadata shorter than texts — texts without corresponding
 	// metadata get source_index/chunk_index but no user-supplied keys.
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
 	store := &recordingVectorStore{}

@@ -57,8 +57,6 @@ func genJSONMessages(t *rapid.T) []agent.Message {
 	return msgs
 }
 
-// Feature: memory-drivers, Property 1: JSON serialisation round-trip
-// **Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5**
 func TestProperty_MarshalUnmarshalRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		original := genJSONMessages(t)

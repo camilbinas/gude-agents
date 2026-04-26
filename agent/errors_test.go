@@ -1,6 +1,5 @@
 package agent
 
-// Feature: agent-framework-improvements, Property 5: Error unwrap chain is preserved for all framework error types
 
 import (
 	"errors"
@@ -13,7 +12,6 @@ import (
 // TestProperty5 verifies that errors.As succeeds at every wrapping depth
 // for ProviderError, ToolError, and GuardrailError.
 //
-// Validates: Requirements 7.4, 7.5
 func TestProperty5(t *testing.T) {
 	t.Run("ProviderError", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {

@@ -10,7 +10,6 @@ import (
 
 // TestMarshal_TextBlock serialises a message containing a TextBlock and asserts
 // the JSON output contains the expected "type":"text" and "text" fields.
-// Validates: Req 13.1
 func TestMarshal_TextBlock(t *testing.T) {
 	messages := []agent.Message{
 		{
@@ -45,7 +44,6 @@ func TestMarshal_TextBlock(t *testing.T) {
 
 // TestMarshal_ToolUseBlock serialises a message containing a ToolUseBlock and
 // asserts the JSON output contains the expected fields.
-// Validates: Req 13.2
 func TestMarshal_ToolUseBlock(t *testing.T) {
 	messages := []agent.Message{
 		{
@@ -87,7 +85,6 @@ func TestMarshal_ToolUseBlock(t *testing.T) {
 
 // TestMarshal_ToolResultBlock serialises a message containing a ToolResultBlock
 // and asserts the JSON output contains the expected fields.
-// Validates: Req 13.3
 func TestMarshal_ToolResultBlock(t *testing.T) {
 	messages := []agent.Message{
 		{

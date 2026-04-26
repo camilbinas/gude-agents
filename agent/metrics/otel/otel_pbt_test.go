@@ -80,7 +80,6 @@ func matchOTELAttrs(dp metricdata.DataPoint[int64], want map[string]string) bool
 // Property 1: OTEL invoke counter correctness with status mapping
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 1: OTEL invoke counter correctness with status mapping
 //
 // TestProperty_OTELInvokeCounterCorrectness verifies that for any sequence of
 // N invocations with random success/error outcomes, the OTEL agent.invoke.total
@@ -88,7 +87,6 @@ func matchOTELAttrs(dp metricdata.DataPoint[int64], want map[string]string) bool
 // with attribute status="error" equals the count of non-nil errors, and the
 // sum of both equals N.
 //
-// **Validates: Requirements 3.1, 5.3**
 func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -129,7 +127,6 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 // Property 2: OTEL provider metrics with model ID fallback
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 2: OTEL provider metrics with model ID fallback
 //
 // TestProperty_OTELProviderMetricsWithModelIDFallback verifies that for any
 // sequence of provider call completions with random TokenUsage values
@@ -139,7 +136,6 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 //   - The token counter per (model_id, direction) pair is correct (only for successful calls)
 //   - The model_id attribute equals the input when non-empty, "unknown" when empty
 //
-// **Validates: Requirements 3.2, 3.3, 5.1**
 func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -231,7 +227,6 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 // Property 3: OTEL tool call counter correctness
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 3: OTEL tool call counter correctness
 //
 // TestProperty_OTELToolCallCounterCorrectness verifies that for any sequence
 // of tool executions with random tool names (from a fixed set) and random
@@ -239,7 +234,6 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 // (tool_name, status) pair equals the count of calls with that tool name and
 // outcome.
 //
-// **Validates: Requirements 3.4**
 func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -298,7 +292,6 @@ func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 // Property 4: OTEL guardrail block counter selectivity
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 4: OTEL guardrail block counter selectivity
 //
 // TestProperty_OTELGuardrailBlockSelectivity verifies that for any sequence of
 // guardrail completions with random direction ("input"/"output") and random
@@ -306,7 +299,6 @@ func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 // for each direction SHALL equal the count of calls where blocked was true for
 // that direction. Calls with blocked=false SHALL NOT increment the counter.
 //
-// **Validates: Requirements 3.5**
 func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -355,13 +347,11 @@ func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 // Property 5: OTEL iteration counter monotonicity
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 5: OTEL iteration counter monotonicity
 //
 // TestProperty_OTELIterationCounterMonotonicity verifies that for any
 // non-negative integer N, calling OnIterationStart exactly N times results in
 // the OTEL agent.iteration.total counter having value N.
 //
-// **Validates: Requirements 3.6**
 func TestProperty_OTELIterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()

@@ -23,8 +23,6 @@ func skipIfNoRedis(t *testing.T) string {
 
 func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
-// Feature: redis-providers, Property 1: Conversation Save/Load Round-Trip
-// **Validates: Requirements 3.1, 3.5, 4.1, 5.1, 5.2, 5.3**
 func TestProperty_ConversationSaveLoadRoundTrip(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -58,11 +56,10 @@ func TestProperty_ConversationSaveLoadRoundTrip(t *testing.T) {
 	})
 }
 
-// --- Unit Tests for RedisConversation (Task 2.5) ---
+// --- Unit Tests for RedisConversation ---
 
 // TestNew_UnreachableAddr verifies that NewRedisConversation returns an error
 // containing "ping" when the Redis address is unreachable.
-// Validates: Requirement 2.3
 func TestNew_UnreachableAddr(t *testing.T) {
 	_, err := New(RedisOptions{Addr: "localhost:1"})
 	if err == nil {
@@ -75,7 +72,6 @@ func TestNew_UnreachableAddr(t *testing.T) {
 
 // TestRedisConversation_LoadNonExistent verifies that Load for a non-existent conversation ID
 // returns an empty (non-nil) slice and nil error.
-// Validates: Requirement 4.2
 func TestRedisConversation_LoadNonExistent(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -99,7 +95,6 @@ func TestRedisConversation_LoadNonExistent(t *testing.T) {
 
 // TestRedisConversation_DefaultKeyPrefix verifies that a newly created RedisConversation
 // has the default key prefix "gude:".
-// Validates: Requirement 2.7
 func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -116,7 +111,6 @@ func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
 
 // TestRedisConversation_TTLSet verifies that when WithTTL is configured, saved keys
 // have a TTL set in Redis.
-// Validates: Requirements 2.5, 3.2
 func TestRedisConversation_TTLSet(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -153,7 +147,6 @@ func TestRedisConversation_TTLSet(t *testing.T) {
 
 // TestRedisConversation_NoExpiration verifies that when no TTL is configured (default),
 // saved keys have no expiration (TTL returns -1 in Redis).
-// Validates: Requirements 2.6, 3.3
 func TestRedisConversation_NoExpiration(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -200,7 +193,6 @@ func searchSubstr(s, substr string) bool {
 }
 
 // TestRedisConversation_WithOption verifies that RedisConversation is accepted by agent.WithConversation.
-// Validates: Requirement 2.4
 func TestRedisConversation_WithOption(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	mem, err := New(RedisOptions{Addr: addr})
@@ -217,11 +209,10 @@ func TestRedisConversation_WithOption(t *testing.T) {
 	}
 }
 
-// --- Integration Tests for RedisConversation List and Delete (Task 8.4) ---
+// --- Integration Tests for RedisConversation List and Delete ---
 
 // TestRedisConversation_ListReturnsSavedConversationIDs verifies that List returns
 // all conversation IDs that have been saved, using a unique key prefix.
-// Validates: Requirement 5.5
 func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -276,7 +267,6 @@ func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 
 // TestRedisConversation_DeleteRemovesTargetKey verifies that Delete removes the target
 // conversation while leaving other conversations intact.
-// Validates: Requirement 6.5
 func TestRedisConversation_DeleteRemovesTargetKey(t *testing.T) {
 	addr := skipIfNoRedis(t)
 

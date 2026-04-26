@@ -11,7 +11,6 @@ import (
 )
 
 // ===========================================================================
-// Task 9.1: Graph Tracing Tests
 // ===========================================================================
 
 func TestGraphTracing_RunSpanCreated(t *testing.T) {
@@ -210,7 +209,6 @@ func TestGraphTracing_ErrorStatusOnNodeFailure(t *testing.T) {
 }
 
 // ===========================================================================
-// Task 9.2: Graph Fork Tracing
 // ===========================================================================
 
 func TestGraphTracing_ForkNodeSpansShareParent(t *testing.T) {

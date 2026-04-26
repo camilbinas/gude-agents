@@ -10,10 +10,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// ---------------------------------------------------------------------------
-// Task 10.1 — Unit tests for validateToolInput and integration with executeTools
-// ---------------------------------------------------------------------------
-
 func TestValidateToolInput_MissingRequired(t *testing.T) {
 	schema := map[string]any{
 		"type": "object",

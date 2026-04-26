@@ -83,7 +83,6 @@ func dimValue(d cwtypes.MetricDatum, name string) string {
 // ---------------------------------------------------------------------------
 
 // TestWithMetrics_InstallsHook verifies that WithMetrics sets MetricsHook on the agent.
-// Validates: Requirement 8.3
 func TestWithMetrics_InstallsHook(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
@@ -100,7 +99,6 @@ func TestWithMetrics_InstallsHook(t *testing.T) {
 }
 
 // TestWithMetrics_WithClient verifies WithClient bypasses default credential chain.
-// Validates: Requirement 8.4
 func TestWithMetrics_WithClient(t *testing.T) {
 	// Create a real *cw.Client with dummy config to avoid credential issues.
 	realClient := cw.New(cw.Options{
@@ -126,7 +124,6 @@ func TestWithMetrics_WithClient(t *testing.T) {
 }
 
 // TestWithMetrics_ReturnsShutdown verifies WithMetrics returns both option and shutdown function.
-// Validates: Requirement 14.3
 func TestWithMetrics_ReturnsShutdown(t *testing.T) {
 	realClient := cw.New(cw.Options{Region: "us-east-1"})
 	opt, shutdown := WithMetrics(WithClient(realClient))
@@ -152,7 +149,6 @@ func TestWithMetrics_ReturnsShutdown(t *testing.T) {
 }
 
 // TestDefaultNamespace verifies default namespace is "GudeAgents".
-// Validates: Requirement 9.2
 func TestDefaultNamespace(t *testing.T) {
 	if defaultNamespace != "GudeAgents" {
 		t.Fatalf("expected default namespace %q, got %q", "GudeAgents", defaultNamespace)
@@ -167,7 +163,6 @@ func TestDefaultNamespace(t *testing.T) {
 }
 
 // TestWithNamespace verifies custom namespace appears in PutMetricData calls.
-// Validates: Requirements 9.1, 9.3
 func TestWithNamespace(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
@@ -191,7 +186,6 @@ func TestWithNamespace(t *testing.T) {
 }
 
 // TestWithDimensions verifies extra dimensions appear on all data points.
-// Validates: Requirement 12.5
 func TestWithDimensions(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
@@ -227,7 +221,6 @@ func TestWithDimensions(t *testing.T) {
 }
 
 // TestDefaultFlushInterval verifies default flush interval is 60 seconds.
-// Validates: Requirement 13.3
 func TestDefaultFlushInterval(t *testing.T) {
 	if defaultFlushInterval != 60*time.Second {
 		t.Fatalf("expected default flush interval 60s, got %v", defaultFlushInterval)
@@ -242,7 +235,6 @@ func TestDefaultFlushInterval(t *testing.T) {
 }
 
 // TestDurationStatisticSet verifies duration metrics use StatisticSet with Seconds unit.
-// Validates: Requirements 11.1, 11.2, 11.3
 func TestDurationStatisticSet(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
@@ -304,7 +296,6 @@ func TestDurationStatisticSet(t *testing.T) {
 }
 
 // TestFlush_SendsBufferedData verifies Flush method triggers immediate flush.
-// Validates: Requirement 13.5
 func TestFlush_SendsBufferedData(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
@@ -340,7 +331,6 @@ func TestFlush_SendsBufferedData(t *testing.T) {
 }
 
 // TestFlush_RetainsOnError verifies failed PutMetricData retains data points.
-// Validates: Requirement 13.6
 func TestFlush_RetainsOnError(t *testing.T) {
 	mock := &mockCWClient{err: errors.New("network error")}
 	hook := newTestHook(mock)
@@ -383,7 +373,6 @@ func TestFlush_RetainsOnError(t *testing.T) {
 }
 
 // TestShutdown_FinalFlush verifies Shutdown performs final flush and stops goroutine.
-// Validates: Requirement 14.1
 func TestShutdown_FinalFlush(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
@@ -418,7 +407,6 @@ func TestShutdown_FinalFlush(t *testing.T) {
 }
 
 // TestShutdown_ContextCancellation verifies Shutdown respects context cancellation.
-// Validates: Requirement 14.2
 func TestShutdown_ContextCancellation(t *testing.T) {
 	// Use a mock that blocks on PutMetricData to simulate slow flush.
 	blockCh := make(chan struct{})
@@ -464,7 +452,6 @@ func TestShutdown_ContextCancellation(t *testing.T) {
 }
 
 // TestBuffering verifies data points accumulate in buffer between flushes.
-// Validates: Requirement 13.1
 func TestBuffering(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)

@@ -9,14 +9,12 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Feature: memory-strategies, Property 1: Window round-trip preserves tail
 
 // TestWindowRoundTripPreservesTail verifies that for any valid message slice
 // and any positive integer N, saving then loading through Window returns a
 // slice whose length is at most N, whose messages are a suffix of the original
 // slice, and which contains no orphaned tool_result blocks.
 //
-// **Validates: Requirements 1.3, 1.4, 1.6**
 func TestWindowRoundTripPreservesTail(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := genMessages(t)

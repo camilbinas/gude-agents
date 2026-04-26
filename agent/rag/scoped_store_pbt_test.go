@@ -61,7 +61,6 @@ func genMetadata(t *rapid.T) map[string]string {
 // Property 1: ScopedStore Add injects scope metadata
 // ---------------------------------------------------------------------------
 
-// Feature: unified-memory-providers, Property 1: ScopedStore Add injects scope metadata
 //
 // TestProperty_ScopedStoreAddInjectsScope verifies that for any non-empty
 // identifier string and any list of documents with arbitrary metadata
@@ -70,7 +69,6 @@ func genMetadata(t *rapid.T) map[string]string {
 // in the underlying VectorStore has metadata["_scope_id"] equal to the
 // provided identifier. Pre-existing _scope_id values are overwritten.
 //
-// **Validates: Requirements 2.2, 8.1, 8.2, 8.4**
 func TestProperty_ScopedStoreAddInjectsScope(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		embedder := &hashEmbedder{dim: 16}
@@ -171,7 +169,6 @@ func (r *recordingScopedStore) Search(_ context.Context, _ []float64, topK int) 
 // Property 2: ScopedStore Search isolates by identifier
 // ---------------------------------------------------------------------------
 
-// Feature: unified-memory-providers, Property 2: ScopedStore Search isolates by identifier
 //
 // TestProperty_ScopedStoreSearchIsolation verifies that for any two distinct
 // non-empty identifier strings A and B, and any documents stored under each
@@ -179,7 +176,6 @@ func (r *recordingScopedStore) Search(_ context.Context, _ []float64, topK int) 
 // returns only documents whose _scope_id metadata equals A — no documents
 // stored under identifier B appear in the results.
 //
-// **Validates: Requirements 2.3, 8.3, 9.3**
 func TestProperty_ScopedStoreSearchIsolation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		const dim = 16

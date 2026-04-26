@@ -17,20 +17,17 @@ import (
 )
 
 // ===========================================================================
-// Task 10: Property-Based Tests
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
 // 10.1 — Property 1: Invoke span carries configured attributes
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 1: Invoke span carries configured attributes
 //
 // For any agent configuration (max_iterations, model_id, conversation_id),
 // when tracing is enabled and the agent is invoked, the agent.invoke span
 // contains attributes matching the configured values.
 //
-// **Validates: Requirements 2.1, 2.2, 12.2**
 func TestProperty_InvokeSpanAttributes(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		maxIter := rapid.IntRange(1, 20).Draw(t, "max_iterations")
@@ -84,13 +81,11 @@ func TestProperty_InvokeSpanAttributes(t *testing.T) {
 // 10.2 — Property 2: Successful invocation records OK status and token usage
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 2: Successful invocation records OK status and token usage
 //
 // For any successful agent invocation with tracing enabled, the agent.invoke
 // span has status OK and contains token usage attributes matching the
 // cumulative usage.
 //
-// **Validates: Requirements 2.3**
 func TestProperty_SuccessTokenUsage(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		inputTokens := rapid.IntRange(0, 10000).Draw(t, "input_tokens")
@@ -136,12 +131,10 @@ func TestProperty_SuccessTokenUsage(t *testing.T) {
 // 10.3 — Property 3: Failed operations record Error status
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 3: Failed operations record Error status
 //
 // For any traced operation that fails with a random error, the corresponding
 // span has status Error and the error is recorded on the span.
 //
-// **Validates: Requirements 2.4, 4.3, 5.3, 5.4, 7.4, 9.3, 10.4, 11.3**
 func TestProperty_ErrorSpans(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		errMsg := rapid.StringMatching("[a-z][a-z0-9 ]{0,30}").Draw(t, "error_message")
@@ -201,12 +194,10 @@ func hasErrorEvent(span tracetest.SpanStub) bool {
 // 10.4 — Property 4: Iteration spans are numbered sequentially
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 4: Iteration spans are numbered sequentially
 //
 // For any agent invocation that runs N iterations, exactly N agent.iteration
 // child spans are created with correct 1-based numbering.
 //
-// **Validates: Requirements 3.1, 3.2**
 func TestProperty_IterationNumbering(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// N iterations: N-1 tool-call iterations + 1 final text iteration.
@@ -264,12 +255,10 @@ func TestProperty_IterationNumbering(t *testing.T) {
 // 10.5 — Property 8: Tool spans are named after the tool
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 8: Tool spans are named after the tool
 //
 // For any tool execution, a span named agent.tool.<tool_name> is created
 // and carries a tool.name attribute matching the tool's registered name.
 //
-// **Validates: Requirements 5.1, 5.2**
 func TestProperty_ToolSpanNaming(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		toolName := rapid.StringMatching("[a-z][a-z0-9_]{0,15}").Draw(t, "tool_name")
@@ -320,12 +309,10 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 // Property 5: Tracing span name consistency (memory-package-rename)
 // ---------------------------------------------------------------------------
 
-// Feature: memory-package-rename, Property 5: Tracing span name consistency
 //
 // For any memory operation string ("load" or "save"), the tracing hook SHALL
 // produce a span name of the form "agent.conversation.{operation}".
 //
-// **Validates: Requirements 15.1, 15.2**
 func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		operation := rapid.SampledFrom([]string{"load", "save"}).Draw(t, "operation")
@@ -370,12 +357,10 @@ func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 // 10.6 — Property 14: Attribute keys follow naming convention
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 14: Attribute keys follow naming convention
 //
 // For all exported attribute key constants, each matches the regex
 // ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
 //
-// **Validates: Requirements 12.1**
 func TestProperty_AttributeNamingConvention(t *testing.T) {
 	pattern := regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 
@@ -431,12 +416,10 @@ func TestProperty_AttributeNamingConvention(t *testing.T) {
 // 10.7 — Property 15: Structured logger includes trace correlation
 // ---------------------------------------------------------------------------
 
-// Feature: otel-tracing, Property 15: Structured logger includes trace correlation
 //
 // For any log entry emitted by the structured Logger while a span is active,
 // the output contains trace_id and span_id fields matching the active span.
 //
-// **Validates: Requirements 14.2, 14.3**
 func TestProperty_StructuredLoggerTraceCorrelation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		spanName := rapid.StringMatching("[a-z][a-z0-9-]{0,20}").Draw(t, "span_name")

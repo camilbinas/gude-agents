@@ -10,13 +10,10 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Feature: agent-framework-improvements, Property 7: Valid tool inputs are never rejected by schema validation
-// Feature: agent-framework-improvements, Property 8: Invalid tool inputs are always rejected without calling the handler
 
 // TestProperty7_ValidInputsNeverRejected verifies that a payload satisfying the schema
 // is never rejected by validateToolInput and the handler is always called.
 //
-// Validates: Requirements 13.3, 13.4
 func TestProperty7_ValidInputsNeverRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate 1–4 required field names.
@@ -66,7 +63,6 @@ func TestProperty7_ValidInputsNeverRejected(t *testing.T) {
 // TestProperty7_ValidEnumInputsNeverRejected verifies that enum-constrained fields
 // with valid values are never rejected.
 //
-// Validates: Requirements 13.3, 13.4
 func TestProperty7_ValidEnumInputsNeverRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate 2–4 enum values.
@@ -99,7 +95,6 @@ func TestProperty7_ValidEnumInputsNeverRejected(t *testing.T) {
 // TestProperty8_InvalidInputsAlwaysRejected verifies that a payload violating the schema
 // is always rejected and the handler is never called.
 //
-// Validates: Requirements 13.1, 13.2
 func TestProperty8_InvalidInputsAlwaysRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a required field name.
@@ -123,7 +118,6 @@ func TestProperty8_InvalidInputsAlwaysRejected(t *testing.T) {
 
 // TestProperty8_InvalidEnumAlwaysRejected verifies that an out-of-enum value is always rejected.
 //
-// Validates: Requirements 13.1, 13.2
 func TestProperty8_InvalidEnumAlwaysRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Fixed enum so we can guarantee the payload value is outside it.
@@ -158,7 +152,6 @@ func TestProperty8_InvalidEnumAlwaysRejected(t *testing.T) {
 // TestProperty8_HandlerNotCalledOnInvalidInput verifies end-to-end that the handler
 // is never invoked when schema validation fails.
 //
-// Validates: Requirements 13.1, 13.2
 func TestProperty8_HandlerNotCalledOnInvalidInput(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		field := rapid.StringMatching(`[a-z][a-z0-9]{0,7}`).Draw(rt, "field")

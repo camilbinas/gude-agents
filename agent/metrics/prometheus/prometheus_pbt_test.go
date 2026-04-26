@@ -87,13 +87,11 @@ func newTestHook(ns string) (*prometheusHook, *prom.Registry) {
 // Property 1: Status label mapping
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 1: Status label mapping
 //
 // TestProperty_StatusLabelMapping verifies that for any error value (nil or
 // non-nil), the statusLabel helper returns "success" for nil and "error" for
 // non-nil.
 //
-// **Validates: Requirements 9.3**
 func TestProperty_StatusLabelMapping(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		isErr := rapid.Bool().Draw(rt, "isError")
@@ -119,13 +117,11 @@ func TestProperty_StatusLabelMapping(t *testing.T) {
 // Property 2: Model ID fallback
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 2: Model ID fallback
 //
 // TestProperty_ModelIDFallback verifies that for any string passed as modelID
 // to OnProviderCallStart, the label recorded on provider metrics equals the
 // input when non-empty, and equals "unknown" when the input is empty.
 //
-// **Validates: Requirements 9.1**
 func TestProperty_ModelIDFallback(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a string that may be empty.
@@ -158,13 +154,11 @@ func TestProperty_ModelIDFallback(t *testing.T) {
 // Property 3: Invoke counter correctness
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 3: Invoke counter correctness
 //
 // TestProperty_InvokeCounterCorrectness verifies that for any sequence of N
 // invocations with random success/error outcomes, the invoke counter sums
 // match the expected counts.
 //
-// **Validates: Requirements 4.1**
 func TestProperty_InvokeCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 50).Draw(rt, "n")
@@ -205,13 +199,11 @@ func TestProperty_InvokeCounterCorrectness(t *testing.T) {
 // Property 4: Provider token accounting
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 4: Provider token accounting
 //
 // TestProperty_ProviderTokenAccounting verifies that for any sequence of
 // provider call completions with random TokenUsage values and model IDs,
 // token counters sum correctly per model and direction.
 //
-// **Validates: Requirements 4.2, 4.3**
 func TestProperty_ProviderTokenAccounting(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 30).Draw(rt, "n")
@@ -256,13 +248,11 @@ func TestProperty_ProviderTokenAccounting(t *testing.T) {
 // Property 5: Tool call counter correctness
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 5: Tool call counter correctness
 //
 // TestProperty_ToolCallCounterCorrectness verifies that for any sequence of
 // tool executions with random tool names and outcomes, counters match per
 // (tool_name, status) pair.
 //
-// **Validates: Requirements 4.4**
 func TestProperty_ToolCallCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 30).Draw(rt, "n")
@@ -308,13 +298,11 @@ func TestProperty_ToolCallCounterCorrectness(t *testing.T) {
 // Property 6: Guardrail block counter selectivity
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 6: Guardrail block counter selectivity
 //
 // TestProperty_GuardrailBlockSelectivity verifies that for any sequence of
 // guardrail completions with random direction and blocked values, the counter
 // only increments when blocked is true.
 //
-// **Validates: Requirements 4.5**
 func TestProperty_GuardrailBlockSelectivity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 50).Draw(rt, "n")
@@ -353,13 +341,11 @@ func TestProperty_GuardrailBlockSelectivity(t *testing.T) {
 // Property 7: Iteration counter monotonicity
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 7: Iteration counter monotonicity
 //
 // TestProperty_IterationCounterMonotonicity verifies that for any non-negative
 // integer N, calling OnIterationStart exactly N times results in the counter
 // having value N.
 //
-// **Validates: Requirements 4.6**
 func TestProperty_IterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(0, 100).Draw(rt, "n")
@@ -380,14 +366,12 @@ func TestProperty_IterationCounterMonotonicity(t *testing.T) {
 // Property 8: Namespace prefixing
 // ---------------------------------------------------------------------------
 
-// Feature: prometheus-metrics, Property 8: Namespace prefixing
 //
 // TestProperty_NamespacePrefixing verifies that for any non-empty namespace
 // string, all registered metric names are prefixed with that namespace
 // followed by an underscore. When the namespace is empty, metric names have
 // no prefix.
 //
-// **Validates: Requirements 8.4**
 func TestProperty_NamespacePrefixing(t *testing.T) {
 	baseNames := []string{
 		"agent_invoke_total",

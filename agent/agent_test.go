@@ -536,10 +536,6 @@ func TestInvokeStream_NilCallbackDoesNotPanic(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Task 3.1 — Structured error type propagation tests
-// ---------------------------------------------------------------------------
-
 // errorProvider always returns an error from ConverseStream.
 type errorProvider struct{ err error }
 

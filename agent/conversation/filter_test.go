@@ -8,14 +8,12 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Feature: memory-strategies, Property 3: Filter round-trip retains only TextBlocks
 
 // TestFilterRoundTripRetainsOnlyTextBlocks verifies that for any valid message
 // slice, saving then loading through Filter returns messages containing only
 // TextBlock content blocks. Every TextBlock from the original messages appears
 // in the result, and messages that contained no TextBlock are omitted entirely.
 //
-// **Validates: Requirements 4.3, 4.4, 4.6**
 func TestFilterRoundTripRetainsOnlyTextBlocks(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := genMessages(t)

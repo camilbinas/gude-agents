@@ -8,7 +8,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Feature: unified-memory-providers, Property 4: Adapter Remember / Recall round-trip
 //
 // TestProperty_AdapterRoundTrip verifies that for any non-empty identifier and
 // any non-empty fact string with arbitrary metadata, after calling
@@ -16,7 +15,6 @@ import (
 // Adapter.Recall(ctx, identifier, fact, 10) returns a non-empty []Entry
 // slice containing an Entry whose Fact field equals the stored fact.
 //
-// **Validates: Requirements 6.3, 6.4, 6.5**
 func TestProperty_AdapterRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		identifier := genNonEmptyString(rt, "identifier")

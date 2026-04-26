@@ -14,10 +14,8 @@ import (
 )
 
 // --- Unit tests for DefaultContextFormatter ---
-// Requirements: 8.1, 8.2, 8.3
 
 func TestDefaultContextFormatter_EmptySlice(t *testing.T) {
-	// Requirement 8.3: empty slice returns ""
 	result := DefaultContextFormatter([]Document{})
 	if result != "" {
 		t.Fatalf("expected empty string for empty slice, got %q", result)
@@ -25,7 +23,6 @@ func TestDefaultContextFormatter_EmptySlice(t *testing.T) {
 }
 
 func TestDefaultContextFormatter_NilSlice(t *testing.T) {
-	// Requirement 8.3: nil slice returns ""
 	result := DefaultContextFormatter(nil)
 	if result != "" {
 		t.Fatalf("expected empty string for nil slice, got %q", result)
@@ -33,7 +30,6 @@ func TestDefaultContextFormatter_NilSlice(t *testing.T) {
 }
 
 func TestDefaultContextFormatter_SingleDoc(t *testing.T) {
-	// Requirement 8.2: formats with 1-based index
 	docs := []Document{{Content: "hello world"}}
 	result := DefaultContextFormatter(docs)
 	expected := "<retrieved_context>\n[1] hello world\n</retrieved_context>"
@@ -43,7 +39,6 @@ func TestDefaultContextFormatter_SingleDoc(t *testing.T) {
 }
 
 func TestDefaultContextFormatter_MultipleDocs(t *testing.T) {
-	// Requirement 8.2: formats multiple docs with 1-based indices
 	docs := []Document{
 		{Content: "first doc"},
 		{Content: "second doc"},
@@ -72,8 +67,6 @@ func randomDocument() *rapid.Generator[Document] {
 	})
 }
 
-// Feature: rag, Property 11: DefaultContextFormatter includes all document contents with index numbers
-// **Validates: Requirements 8.2**
 func TestDefaultContextFormatter_ContainsAllDocs(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		docs := rapid.SliceOfN(randomDocument(), 1, 20).Draw(t, "docs")
@@ -148,8 +141,6 @@ func (p *iteratingProvider) ConverseStream(_ context.Context, _ ConverseParams, 
 	return &ProviderResponse{Text: text}, nil
 }
 
-// Feature: rag, Property 9: Retriever is called exactly once per invocation regardless of tool iterations
-// **Validates: Requirements 12.1, 12.2**
 func TestAgent_RetrieverCalledOnce(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		toolIterations := rapid.IntRange(1, 5).Draw(t, "toolIterations")
@@ -188,8 +179,6 @@ func TestAgent_RetrieverCalledOnce(t *testing.T) {
 	})
 }
 
-// Feature: rag, Property 10: Retrieved documents appear in the messages sent to the provider
-// **Validates: Requirements 7.4**
 func TestAgent_RetrievedDocsInSystemPrompt(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		docs := rapid.SliceOfN(randomDocument(), 1, 10).Draw(t, "docs")
@@ -235,7 +224,6 @@ func TestAgent_RetrievedDocsInSystemPrompt(t *testing.T) {
 }
 
 // --- Unit tests for agent RAG integration ---
-// Requirements: 7.3, 7.5, 8.4, 12.3, 13.2, 13.3
 
 // errorRetriever is a mock retriever that always returns an error.
 type errorRetriever struct {
@@ -283,7 +271,6 @@ func (m *recordingMemory) Save(_ context.Context, _ string, msgs []Message) erro
 
 // TestAgent_RetrieverErrorWrapping verifies that when the retriever returns an error,
 // the agent wraps it with the "retriever: " prefix.
-// Requirement 7.3
 func TestAgent_RetrieverErrorWrapping(t *testing.T) {
 	innerErr := fmt.Errorf("connection timeout")
 	retriever := &errorRetriever{err: innerErr}
@@ -309,7 +296,6 @@ func TestAgent_RetrieverErrorWrapping(t *testing.T) {
 
 // TestAgent_EmptyRetrieval verifies that when the retriever returns an empty slice,
 // the system prompt is passed to the provider unchanged.
-// Requirement 7.5
 func TestAgent_EmptyRetrieval(t *testing.T) {
 	retriever := &emptyRetriever{}
 	provider := newCapturingProvider(&ProviderResponse{Text: "ok"})
@@ -337,7 +323,6 @@ func TestAgent_EmptyRetrieval(t *testing.T) {
 
 // TestAgent_CustomContextFormatter verifies that when WithContextFormatter is configured,
 // the custom formatter is used instead of DefaultContextFormatter.
-// Requirement 8.4
 func TestAgent_CustomContextFormatter(t *testing.T) {
 	docs := []Document{
 		{Content: "doc one", Metadata: map[string]string{}},
@@ -398,7 +383,6 @@ func TestAgent_CustomContextFormatter(t *testing.T) {
 // TestAgent_RAGContextNotPersistedToMemory verifies that when both a retriever and memory
 // are configured, the RAG-augmented system prompt is NOT saved to memory — only the
 // original messages are persisted.
-// Requirements: 13.2, 13.3
 func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
 	docs := []Document{
 		{Content: "secret RAG context", Metadata: map[string]string{}},
@@ -468,7 +452,6 @@ func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
 
 // TestAgent_RAGAndToolsCoexistence verifies that when both a retriever and tools are
 // configured, the retriever is called exactly once and tools work across iterations.
-// Requirements: 12.3, 13.2, 13.3
 func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 	docs := []Document{
 		{Content: "retrieved context", Metadata: map[string]string{}},
@@ -539,8 +522,6 @@ func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 	}
 }
 
-// Feature: rag, Property 12: NewRetrieverTool handler returns formatted document content for any query
-// **Validates: Requirements 14.2**
 func TestNewRetrieverTool_HandlerFormatsResult(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		query := rapid.String().Draw(t, "query")
@@ -579,10 +560,8 @@ func TestNewRetrieverTool_HandlerFormatsResult(t *testing.T) {
 }
 
 // --- Unit tests for NewRetrieverTool ---
-// Requirements: 14.3, 14.4, 14.5, 14.6
 
 func TestNewRetrieverTool_SchemaShape(t *testing.T) {
-	// Requirement 14.3: tool input schema has a single required "query" string field
 	retriever := &countingRetriever{docs: nil}
 	tool := NewRetrieverTool("search", "search docs", retriever)
 
@@ -635,7 +614,6 @@ func TestNewRetrieverTool_SchemaShape(t *testing.T) {
 }
 
 func TestNewRetrieverTool_EmptyRetrieval(t *testing.T) {
-	// Requirement 14.5: empty retrieval returns "No relevant documents found."
 	retriever := &emptyRetriever{}
 	tool := NewRetrieverTool("search", "search docs", retriever)
 
@@ -656,7 +634,6 @@ func TestNewRetrieverTool_EmptyRetrieval(t *testing.T) {
 }
 
 func TestNewRetrieverTool_ErrorPropagation(t *testing.T) {
-	// Requirement 14.4: retriever error is propagated as tool error
 	innerErr := fmt.Errorf("retrieve: query must not be empty")
 	retriever := &errorRetriever{err: innerErr}
 	tool := NewRetrieverTool("search", "search docs", retriever)
@@ -676,7 +653,6 @@ func TestNewRetrieverTool_ErrorPropagation(t *testing.T) {
 }
 
 func TestNewRetrieverTool_CustomFormatter(t *testing.T) {
-	// Requirement 14.6: optional ContextFormatter controls how docs are formatted
 	docs := []Document{
 		{Content: "alpha", Metadata: map[string]string{}},
 		{Content: "beta", Metadata: map[string]string{}},

@@ -16,11 +16,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 5: Anthropic ToolChoice mapping
-// **Validates: Requirements 3.3**
-// ---------------------------------------------------------------------------
-
 func TestProperty_AnthropicToolChoiceMapping(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mode := rapid.SampledFrom([]tool.ChoiceMode{
@@ -64,11 +59,6 @@ func TestProperty_AnthropicToolChoiceMapping(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 13: Anthropic TokenUsage population
-// **Validates: Requirements 7.3**
-// ---------------------------------------------------------------------------
 
 func TestProperty_AnthropicTokenUsagePopulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -128,10 +118,6 @@ func newTestProvider(serverURL string) *AnthropicProvider {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Task 4.1 — Unit test for streaming token counts
-// ---------------------------------------------------------------------------
-
 // TestConverseStream_TokenCounts verifies that InputTokens comes from message_start
 // and OutputTokens comes from message_delta.
 func TestConverseStream_TokenCounts(t *testing.T) {
@@ -169,12 +155,6 @@ func TestConverseStream_TokenCounts(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Task 4.2 — Property tests for streaming token consistency
-// ---------------------------------------------------------------------------
-
-// Feature: agent-framework-improvements, Property 1: Streaming token counts are non-zero for non-empty prompts
-// **Validates: Requirements 2.3**
 func TestProperty_StreamingTokenCountsNonZero(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		prompt := rapid.StringOf(rapid.RuneFrom([]rune("abcdefghijklmnopqrstuvwxyz"))).Filter(func(s string) bool {
@@ -215,8 +195,6 @@ func TestProperty_StreamingTokenCountsNonZero(t *testing.T) {
 	})
 }
 
-// Feature: agent-framework-improvements, Property 2: Streaming and non-streaming token totals are consistent
-// **Validates: Requirements 2.3, 2.4**
 func TestProperty_StreamingNonStreamingTokenConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		inputTokens := rapid.IntRange(1, 1000).Draw(t, "inputTokens")
@@ -276,7 +254,7 @@ func TestProperty_StreamingNonStreamingTokenConsistency(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildParams — InferenceConfig mapping (Task 7)
+// buildParams — InferenceConfig mapping
 // ---------------------------------------------------------------------------
 
 func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
@@ -472,10 +450,6 @@ func TestBuildParams_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
 		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Task 6.1 — Unit tests for Anthropic image translation
-// ---------------------------------------------------------------------------
 
 // TestToAnthropicContentBlocks_ImageBlock_RawBytes verifies that raw bytes are
 // base64-encoded and the resulting block uses the base64 source type.

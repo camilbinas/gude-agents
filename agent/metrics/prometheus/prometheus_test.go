@@ -371,7 +371,7 @@ func getCounterValue(m *dto.Metric) float64 {
 }
 
 // ---------------------------------------------------------------------------
-// Integration Tests (Task 7.1)
+// Integration Tests
 // ---------------------------------------------------------------------------
 
 // TestAgentLoop_MetricsHookCalled runs a full agent loop with a mock provider

@@ -17,7 +17,6 @@ import (
 // Property 4: Error prefix consistency (memory-package-rename)
 // ---------------------------------------------------------------------------
 
-// Feature: memory-package-rename, Property 4: Error prefix consistency
 //
 // For any error returned by memory package validation, the prefix SHALL be
 // "memory:"; for redis memory it SHALL be "redis memory:"; for agentcore
@@ -30,7 +29,6 @@ import (
 //   - Part B: Scan source files in the redis and agentcore submodules for
 //     error string literals and verify they use the correct prefix.
 //
-// **Validates: Requirements 14.1, 14.2, 14.3, 14.4**
 func TestProperty_ErrorPrefixConsistency(t *testing.T) {
 	t.Run("MemoryAdapterErrors", testMemoryAdapterErrorPrefix)
 	t.Run("SourceFileErrorPrefixes", testSourceFileErrorPrefixes)

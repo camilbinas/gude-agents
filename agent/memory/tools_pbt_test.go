@@ -1,4 +1,3 @@
-// Feature: unified-memory-providers, Property 3: NewRememberTool / NewRecallTool round-trip
 package memory
 
 import (
@@ -23,7 +22,6 @@ import (
 // NewRememberTool to store the fact, invoking NewRecallTool with the same
 // fact as the query returns a non-empty result containing the original fact text.
 //
-// **Validates: Requirements 3.2, 3.4**
 func TestProperty_NewToolsRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate random inputs.
@@ -87,7 +85,6 @@ func TestProperty_NewToolsRoundTrip(t *testing.T) {
 // Property 5: RememberTool stores complete metadata
 // ---------------------------------------------------------------------------
 
-// Feature: unified-memory-providers, Property 5: RememberTool stores complete metadata
 //
 // TestProperty_RememberToolMetadata verifies that for any non-empty fact string
 // and any non-nil user-provided metadata map, after invoking NewRememberTool to
@@ -96,7 +93,6 @@ func TestProperty_NewToolsRoundTrip(t *testing.T) {
 // identifier, a metadata["created_at"] value parseable as RFC 3339, and all
 // user-provided metadata key-value pairs present in the document metadata.
 //
-// **Validates: Requirements 3.8**
 func TestProperty_RememberToolMetadata(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate random inputs.
@@ -207,10 +203,6 @@ func TestProperty_RememberToolMetadata(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Feature: unified-memory-providers, Property 6: RecallTool output contains all result fields
-// ---------------------------------------------------------------------------
-
 // TestProperty_RecallToolOutputFormat verifies that for any non-empty slice of
 // ScoredDocuments (with arbitrary fact text, non-nil metadata including user keys,
 // created_at, and _scope_id, and random scores), the formatted string output of
@@ -218,7 +210,6 @@ func TestProperty_RememberToolMetadata(t *testing.T) {
 // key-value pair (excluding _scope_id and created_at), the created_at timestamp
 // in RFC 3339 format, and the similarity score formatted to 4 decimal places.
 //
-// **Validates: Requirements 3.9**
 func TestProperty_RecallToolOutputFormat(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate 1–5 ScoredDocuments with non-nil metadata.
@@ -296,17 +287,12 @@ func TestProperty_RecallToolOutputFormat(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Feature: unified-memory-providers, Property 7: Tool name customization via functional options
-// ---------------------------------------------------------------------------
-
 // TestProperty_ToolNameCustomization verifies that for any non-empty tool name
 // string, creating a NewRememberTool with WithToolName(name) produces a tool
 // whose Spec.Name equals the provided name. The same holds for NewRecallTool.
 // When no WithToolName option is provided, NewRememberTool defaults to
 // "remember" and NewRecallTool defaults to "recall".
 //
-// **Validates: Requirements 3.10, 3.11**
 func TestProperty_ToolNameCustomization(t *testing.T) {
 	// Shared dependencies — tools are not invoked, so a single store/embedder suffices.
 	memStore := rag.NewMemoryStore()

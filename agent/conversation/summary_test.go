@@ -27,7 +27,6 @@ func makeMessages(n int) []agent.Message {
 // TestSummary_TriggersAt80Percent verifies that summarization is triggered
 // when the message count reaches 80% of the threshold.
 //
-// **Validates: Requirements 3.3**
 func TestSummary_TriggersAt80Percent(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -82,7 +81,6 @@ func TestSummary_TriggersAt80Percent(t *testing.T) {
 // TestSummary_SkipsWhenAlreadySummarizing verifies that a second summarization
 // is not triggered while one is already in progress.
 //
-// **Validates: Requirements 3.8**
 func TestSummary_SkipsWhenAlreadySummarizing(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -148,7 +146,6 @@ func TestSummary_SkipsWhenAlreadySummarizing(t *testing.T) {
 // TestSummary_PreservesMessagesOnFailure verifies that when SummaryFunc returns
 // an error, the original messages remain unchanged in the store.
 //
-// **Validates: Requirements 3.6**
 func TestSummary_PreservesMessagesOnFailure(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -194,7 +191,6 @@ func TestSummary_PreservesMessagesOnFailure(t *testing.T) {
 // TestSummary_MergesCorrectly verifies that after summarization completes,
 // the store contains [user summary, assistant ack] + [new messages added after cutoff].
 //
-// **Validates: Requirements 3.5**
 func TestSummary_MergesCorrectly(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -261,7 +257,6 @@ func TestSummary_MergesCorrectly(t *testing.T) {
 // TestSummary_ConcurrentLoadSaveDuringSummarization verifies that Load and Save
 // operations succeed without panics or races while summarization is in progress.
 //
-// **Validates: Requirements 3.4**
 func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -336,7 +331,6 @@ func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 // TestSummary_NoRetriggerAfterCompletion verifies that once summarization completes,
 // calling Save again at the same threshold does NOT trigger a second summarization.
 //
-// **Validates: Requirements 3.1**
 func TestSummary_NoRetriggerAfterCompletion(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()

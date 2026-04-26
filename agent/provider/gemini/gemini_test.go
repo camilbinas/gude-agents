@@ -124,9 +124,6 @@ func TestNew_WithMaxTokensOverride(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // 5.2 — Capabilities
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // 5.3 — Model constructors and tier aliases
 // ---------------------------------------------------------------------------
 
@@ -334,7 +331,7 @@ func TestToGeminiParts_EmptyToolUseInput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildConfig — InferenceConfig mapping (Task 9)
+// buildConfig — InferenceConfig mapping
 // ---------------------------------------------------------------------------
 
 func TestBuildConfig_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {

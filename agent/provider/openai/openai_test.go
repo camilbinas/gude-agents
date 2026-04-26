@@ -12,11 +12,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 6: OpenAI ToolChoice mapping
-// **Validates: Requirements 3.4**
-// ---------------------------------------------------------------------------
-
 func TestProperty_OpenAIToolChoiceMapping(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mode := rapid.SampledFrom([]tool.ChoiceMode{
@@ -66,11 +61,6 @@ func TestProperty_OpenAIToolChoiceMapping(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 7: OpenAI message mapping preserves content
-// **Validates: Requirements 4.2**
-// ---------------------------------------------------------------------------
 
 func TestProperty_OpenAIMessageMappingPreservesContent(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -181,11 +171,6 @@ func TestProperty_OpenAIMessageMappingToolResult(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 8: OpenAI response parsing preserves content
-// **Validates: Requirements 4.3, 4.4**
-// ---------------------------------------------------------------------------
-
 func TestProperty_OpenAIResponseParsingPreservesContent(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		text := rapid.StringMatching(`[a-zA-Z0-9 ]{1,200}`).Draw(t, "text")
@@ -271,11 +256,6 @@ func TestProperty_OpenAIResponseParsingPreservesContent(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 9: OpenAI stream text forwarding
-// **Validates: Requirements 5.2**
-// ---------------------------------------------------------------------------
-
 func TestProperty_OpenAIStreamTextForwarding(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		numChunks := rapid.IntRange(1, 10).Draw(t, "numChunks")
@@ -317,11 +297,6 @@ func TestProperty_OpenAIStreamTextForwarding(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 10: OpenAI stream tool call accumulation
-// **Validates: Requirements 5.3**
-// ---------------------------------------------------------------------------
 
 func TestProperty_OpenAIStreamToolCallAccumulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -371,11 +346,6 @@ func TestProperty_OpenAIStreamToolCallAccumulation(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 11: OpenAI ToolSpec mapping
-// **Validates: Requirements 5.6**
-// ---------------------------------------------------------------------------
-
 func TestProperty_OpenAIToolSpecMapping(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		name := rapid.StringMatching(`[a-z_][a-z0-9_]{0,30}`).Draw(t, "name")
@@ -418,11 +388,6 @@ func TestProperty_OpenAIToolSpecMapping(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 14: OpenAI TokenUsage population
-// **Validates: Requirements 7.4**
-// ---------------------------------------------------------------------------
 
 func TestProperty_OpenAITokenUsagePopulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -516,8 +481,7 @@ func TestProperty_OpenAIStreamTokenUsageExtraction(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildParams — InferenceConfig mapping (Task 8)
-// **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5**
+// buildParams — InferenceConfig mapping
 // ---------------------------------------------------------------------------
 
 func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults_OpenAI(t *testing.T) {
@@ -712,10 +676,6 @@ func TestBuildParams_PartialInferenceConfig_OnlyTemperature_OpenAI(t *testing.T)
 		t.Errorf("expected MaxCompletionTokens 4096, got %v", result.MaxCompletionTokens.Value)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Feature: image-input — OpenAI image translation (Task 7.1)
-// ---------------------------------------------------------------------------
 
 // TestToOpenAIUserMessages_ImageBlock_RawBytes verifies that raw bytes produce
 // the correct data URI: data:image/jpeg;base64,<encoded>.

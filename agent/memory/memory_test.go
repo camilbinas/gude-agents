@@ -12,7 +12,6 @@ import (
 // TestRemember_EmptyFact verifies that Remember returns an error when the fact
 // string is empty.
 //
-// Validates: Requirement 1.4
 func TestRemember_EmptyFact(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	err := store.Remember(context.Background(), "user-1", "", nil)
@@ -28,7 +27,6 @@ func TestRemember_EmptyFact(t *testing.T) {
 // TestRemember_EmptyUserID verifies that Remember returns an error when the
 // identifier is empty.
 //
-// Validates: Requirement 1.5
 func TestRemember_EmptyUserID(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	err := store.Remember(context.Background(), "", "some fact", nil)
@@ -44,7 +42,6 @@ func TestRemember_EmptyUserID(t *testing.T) {
 // TestRecall_EmptyUserID verifies that Recall returns an error when the
 // identifier is empty.
 //
-// Validates: Requirement 1.7
 func TestRecall_EmptyUserID(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	results, err := store.Recall(context.Background(), "", "query", 5)
@@ -63,7 +60,6 @@ func TestRecall_EmptyUserID(t *testing.T) {
 // TestRecall_InvalidLimit verifies that Recall returns an error when the limit
 // is less than 1.
 //
-// Validates: Requirement 1.6
 func TestRecall_InvalidLimit(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 
@@ -87,7 +83,6 @@ func TestRecall_InvalidLimit(t *testing.T) {
 // TestRecall_NoEntries verifies that Recall for a user with no stored entries
 // returns an empty non-nil slice and no error.
 //
-// Validates: Requirement 1.8
 func TestRecall_NoEntries(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	results, err := store.Recall(context.Background(), "unknown-user", "query", 5)
@@ -106,7 +101,6 @@ func TestRecall_NoEntries(t *testing.T) {
 // by multiple goroutines. It launches 10 goroutines each performing 100
 // Remember+Recall operations. Run with -race to detect data races.
 //
-// Validates: Requirement 2.6
 func TestStore_ConcurrentAccess(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	ctx := context.Background()
@@ -146,7 +140,6 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 // TestRememberTool_NoUserID verifies that RememberTool returns an error when
 // no identifier is present on the context.
 //
-// Validates: Requirement 5.3
 func TestRememberTool_NoUserID(t *testing.T) {
 	spy := &spyMemory{}
 	rt := RememberTool(spy)
@@ -168,7 +161,6 @@ func TestRememberTool_NoUserID(t *testing.T) {
 // TestRecallTool_NoUserID verifies that RecallTool returns an error when
 // no identifier is present on the context.
 //
-// Validates: Requirement 5.3
 func TestRecallTool_NoUserID(t *testing.T) {
 	spy := &spyMemory{}
 	ct := RecallTool(spy)
@@ -190,7 +182,6 @@ func TestRecallTool_NoUserID(t *testing.T) {
 // TestRecallTool_NoResults verifies that RecallTool returns "No relevant
 // memories found." when Recall returns an empty slice.
 //
-// Validates: Requirement 4.5
 func TestRecallTool_NoResults(t *testing.T) {
 	spy := &spyMemory{recallResult: []Entry{}}
 	ct := RecallTool(spy)
@@ -210,7 +201,6 @@ func TestRecallTool_NoResults(t *testing.T) {
 
 // TestRememberTool_Name verifies that RememberTool has the name "remember".
 //
-// Validates: Requirement 3.6
 func TestRememberTool_Name(t *testing.T) {
 	spy := &spyMemory{}
 	rt := RememberTool(spy)
@@ -223,7 +213,6 @@ func TestRememberTool_Name(t *testing.T) {
 
 // TestRecallTool_Name verifies that RecallTool has the name "recall".
 //
-// Validates: Requirement 4.7
 func TestRecallTool_Name(t *testing.T) {
 	spy := &spyMemory{}
 	ct := RecallTool(spy)

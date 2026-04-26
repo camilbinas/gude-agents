@@ -52,7 +52,6 @@ func genEmbedding(t *rapid.T, dim int) []float64 {
 	return emb
 }
 
-// Feature: redis-providers, Property 2: VectorStore Add/Search Round-Trip
 func TestProperty_VectorStoreAddSearchRoundTrip(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
@@ -96,7 +95,6 @@ func TestProperty_VectorStoreAddSearchRoundTrip(t *testing.T) {
 	})
 }
 
-// Feature: redis-providers, Property 3: VectorStore Add Rejects Mismatched Lengths
 func TestProperty_VectorStoreAddRejectsMismatchedLengths(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		n := rapid.IntRange(1, 10).Draw(t, "n")
@@ -208,8 +206,7 @@ func (dummyEmbedder) Embed(_ context.Context, _ string) ([]float64, error) {
 	return make([]float64, 64), nil
 }
 
-// --- ScopedSearch unit tests (Task 3.2) ---
-// Requirements: 9.1, 9.2, 9.4, 10.1, 10.2
+// --- ScopedSearch unit tests ---
 
 // TestScopedSearch_ReturnsOnlyScopedDocuments verifies that ScopedSearch
 // returns only documents matching the given scope value, not documents

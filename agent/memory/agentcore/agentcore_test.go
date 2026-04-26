@@ -136,7 +136,6 @@ func genError(t *rapid.T) error {
 // TestProperty_RememberCreateEventMapping verifies that Remember in CreateEvent
 // mode correctly maps all inputs to the CreateEvent request fields.
 //
-// **Validates: Requirements 3.1, 3.2, 3.4, 3.9**
 func TestProperty_RememberCreateEventMapping(t *testing.T) {
 	t.Helper()
 
@@ -171,22 +170,18 @@ func TestProperty_RememberCreateEventMapping(t *testing.T) {
 			rt.Fatal("CreateEvent was not called")
 		}
 
-		// Req 3.5: MemoryId matches the store's memory ID.
 		if aws.ToString(input.MemoryId) != memoryID {
 			rt.Fatalf("MemoryId: got %q, want %q", aws.ToString(input.MemoryId), memoryID)
 		}
 
-		// Req 3.2: ActorId equals the identifier.
 		if aws.ToString(input.ActorId) != identifier {
 			rt.Fatalf("ActorId: got %q, want %q", aws.ToString(input.ActorId), identifier)
 		}
 
-		// Req 3.3: SessionId matches the generated session ID.
 		if aws.ToString(input.SessionId) != sessionID {
 			rt.Fatalf("SessionId: got %q, want %q", aws.ToString(input.SessionId), sessionID)
 		}
 
-		// Req 3.4: Payload contains the fact as text content.
 		if len(input.Payload) != 1 {
 			rt.Fatalf("Payload length: got %d, want 1", len(input.Payload))
 		}
@@ -202,7 +197,6 @@ func TestProperty_RememberCreateEventMapping(t *testing.T) {
 			rt.Fatalf("Payload fact: got %q, want %q", textContent.Value, fact)
 		}
 
-		// Req 3.9: Metadata matches the input metadata.
 		if len(metadata) == 0 {
 			// When metadata is nil or empty, the request metadata should be nil or empty.
 			if len(input.Metadata) != 0 {
@@ -232,7 +226,6 @@ func TestProperty_RememberCreateEventMapping(t *testing.T) {
 // TestProperty_RememberBatchCreateMapping verifies that Remember in BatchCreate
 // mode correctly maps all inputs to the BatchCreateMemoryRecords request fields.
 //
-// **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.7**
 func TestProperty_RememberBatchCreateMapping(t *testing.T) {
 	t.Helper()
 
@@ -267,18 +260,15 @@ func TestProperty_RememberBatchCreateMapping(t *testing.T) {
 			rt.Fatal("BatchCreateMemoryRecords was not called")
 		}
 
-		// Req 4.5: MemoryId matches the store's memory ID.
 		if aws.ToString(input.MemoryId) != memoryID {
 			rt.Fatalf("MemoryId: got %q, want %q", aws.ToString(input.MemoryId), memoryID)
 		}
 
-		// Req 4.1: Exactly one record in the request.
 		if len(input.Records) != 1 {
 			rt.Fatalf("Records length: got %d, want 1", len(input.Records))
 		}
 		record := input.Records[0]
 
-		// Req 4.4: Content is MemoryContentMemberText with Value == fact.
 		textContent, ok := record.Content.(*types.MemoryContentMemberText)
 		if !ok {
 			rt.Fatalf("Content type: got %T, want *types.MemoryContentMemberText", record.Content)
@@ -287,7 +277,6 @@ func TestProperty_RememberBatchCreateMapping(t *testing.T) {
 			rt.Fatalf("Content text: got %q, want %q", textContent.Value, fact)
 		}
 
-		// Req 4.3: Namespaces contains the rendered namespace (default: /facts/{identifier}/).
 		expectedNS := "/facts/" + identifier + "/"
 		if len(record.Namespaces) != 1 {
 			rt.Fatalf("Namespaces length: got %d, want 1", len(record.Namespaces))
@@ -314,7 +303,6 @@ func TestProperty_RememberBatchCreateMapping(t *testing.T) {
 // TestProperty_RecallRequestMapping verifies that Recall correctly maps all
 // inputs to the RetrieveMemoryRecords request fields.
 //
-// **Validates: Requirements 5.1, 5.2, 5.4**
 func TestProperty_RecallRequestMapping(t *testing.T) {
 	t.Helper()
 
@@ -352,23 +340,19 @@ func TestProperty_RecallRequestMapping(t *testing.T) {
 			rt.Fatal("RetrieveMemoryRecords was not called")
 		}
 
-		// Req 5.3: MemoryId matches the store's memory ID.
 		if aws.ToString(input.MemoryId) != memoryID {
 			rt.Fatalf("MemoryId: got %q, want %q", aws.ToString(input.MemoryId), memoryID)
 		}
 
-		// Req 5.2: Namespace matches the rendered namespace (default: /facts/{identifier}/).
 		expectedNS := "/facts/" + identifier + "/"
 		if aws.ToString(input.Namespace) != expectedNS {
 			rt.Fatalf("Namespace: got %q, want %q", aws.ToString(input.Namespace), expectedNS)
 		}
 
-		// Req 5.4: MaxResults equals the limit.
 		if aws.ToInt32(input.MaxResults) != int32(limit) {
 			rt.Fatalf("MaxResults: got %d, want %d", aws.ToInt32(input.MaxResults), int32(limit))
 		}
 
-		// Req 5.1: SearchCriteria.SearchQuery equals the query.
 		if input.SearchCriteria == nil {
 			rt.Fatal("SearchCriteria: expected non-nil")
 		}
@@ -382,7 +366,6 @@ func TestProperty_RecallRequestMapping(t *testing.T) {
 // MemoryRecordSummary returned by the AgentCore API to a memory.Entry,
 // preserving all fields and the order provided by the backend.
 //
-// **Validates: Requirements 5.5, 5.6, 5.7, 5.8, 5.9**
 func TestProperty_RecallResponseMapping(t *testing.T) {
 	t.Helper()
 
@@ -414,7 +397,6 @@ func TestProperty_RecallResponseMapping(t *testing.T) {
 			rt.Fatalf("Recall() returned unexpected error: %v", err)
 		}
 
-		// Req 5.5: The number of returned entries matches the number of summaries.
 		if len(entries) != n {
 			rt.Fatalf("entries length: got %d, want %d", len(entries), n)
 		}
@@ -424,7 +406,6 @@ func TestProperty_RecallResponseMapping(t *testing.T) {
 		for i, entry := range entries {
 			summary := summaries[i]
 
-			// Req 5.5: Fact equals the summary content text.
 			textContent, ok := summary.Content.(*types.MemoryContentMemberText)
 			if !ok {
 				rt.Fatalf("summary[%d] content type: got %T, want *types.MemoryContentMemberText", i, summary.Content)
@@ -433,18 +414,15 @@ func TestProperty_RecallResponseMapping(t *testing.T) {
 				rt.Fatalf("entries[%d].Fact: got %q, want %q", i, entry.Fact, textContent.Value)
 			}
 
-			// Req 5.6: Score equals the summary score.
 			if entry.Score != aws.ToFloat64(summary.Score) {
 				rt.Fatalf("entries[%d].Score: got %f, want %f", i, entry.Score, aws.ToFloat64(summary.Score))
 			}
 
-			// Req 5.7: CreatedAt equals the summary timestamp.
 			expectedTime := aws.ToTime(summary.CreatedAt)
 			if !entry.CreatedAt.Equal(expectedTime) {
 				rt.Fatalf("entries[%d].CreatedAt: got %v, want %v", i, entry.CreatedAt, expectedTime)
 			}
 
-			// Req 5.8: Metadata matches the summary metadata (MetadataValue → map[string]string).
 			expectedMD := convertMetadataForTest(summary.Metadata)
 			if len(entry.Metadata) != len(expectedMD) {
 				rt.Fatalf("entries[%d].Metadata length: got %d, want %d", i, len(entry.Metadata), len(expectedMD))
@@ -482,7 +460,6 @@ func convertMetadataForTest(md map[string]types.MetadataValue) map[string]string
 // prefix, contain the operation-specific sub-prefix, and remain unwrappable
 // via errors.Is.
 //
-// **Validates: Requirements 3.6, 4.6, 5.13, 7.1, 7.2, 7.3**
 func TestProperty_ErrorWrapping(t *testing.T) {
 	t.Helper()
 
@@ -511,17 +488,14 @@ func TestProperty_ErrorWrapping(t *testing.T) {
 
 			errMsg := err.Error()
 
-			// Req 7.1: Error starts with "agentcore memory:".
 			if !strings.HasPrefix(errMsg, "agentcore memory:") {
 				rt.Fatalf("error prefix: got %q, want prefix \"agentcore memory:\"", errMsg)
 			}
 
-			// Req 7.3: Error contains operation sub-prefix "create event:".
 			if !strings.Contains(errMsg, "create event:") {
 				rt.Fatalf("error sub-prefix: got %q, want to contain \"create event:\"", errMsg)
 			}
 
-			// Req 7.2: Original error is unwrappable via errors.Is.
 			if !errors.Is(err, origErr) {
 				rt.Fatalf("errors.Is: wrapped error does not match original; got %v", err)
 			}
@@ -553,17 +527,14 @@ func TestProperty_ErrorWrapping(t *testing.T) {
 
 			errMsg := err.Error()
 
-			// Req 7.1: Error starts with "agentcore memory:".
 			if !strings.HasPrefix(errMsg, "agentcore memory:") {
 				rt.Fatalf("error prefix: got %q, want prefix \"agentcore memory:\"", errMsg)
 			}
 
-			// Req 7.3: Error contains operation sub-prefix "batch create:".
 			if !strings.Contains(errMsg, "batch create:") {
 				rt.Fatalf("error sub-prefix: got %q, want to contain \"batch create:\"", errMsg)
 			}
 
-			// Req 7.2: Original error is unwrappable via errors.Is.
 			if !errors.Is(err, origErr) {
 				rt.Fatalf("errors.Is: wrapped error does not match original; got %v", err)
 			}
@@ -596,17 +567,14 @@ func TestProperty_ErrorWrapping(t *testing.T) {
 
 			errMsg := err.Error()
 
-			// Req 7.1: Error starts with "agentcore memory:".
 			if !strings.HasPrefix(errMsg, "agentcore memory:") {
 				rt.Fatalf("error prefix: got %q, want prefix \"agentcore memory:\"", errMsg)
 			}
 
-			// Req 7.3: Error contains operation sub-prefix "retrieve:".
 			if !strings.Contains(errMsg, "retrieve:") {
 				rt.Fatalf("error sub-prefix: got %q, want to contain \"retrieve:\"", errMsg)
 			}
 
-			// Req 7.2: Original error is unwrappable via errors.Is.
 			if !errors.Is(err, origErr) {
 				rt.Fatalf("errors.Is: wrapped error does not match original; got %v", err)
 			}
@@ -619,7 +587,6 @@ func TestProperty_ErrorWrapping(t *testing.T) {
 // equals "/facts/{actorID}/", and with a custom template the actor ID is
 // interpolated into the correct position.
 //
-// **Validates: Requirements 2.6, 6.1, 6.4**
 func TestProperty_NamespaceTemplateRendering(t *testing.T) {
 	t.Helper()
 
@@ -700,7 +667,6 @@ func TestProperty_NamespaceTemplateRendering(t *testing.T) {
 
 // TestNew_NilClient verifies that New returns an error when the client is nil.
 //
-// Validates: Requirement 2.3
 func TestNew_NilClient(t *testing.T) {
 	_, err := New(nil, "some-memory-id")
 	if err == nil {
@@ -714,7 +680,6 @@ func TestNew_NilClient(t *testing.T) {
 // TestNew_EmptyMemoryID verifies that New returns an error when the memory ID
 // is empty.
 //
-// Validates: Requirement 2.4
 func TestNew_EmptyMemoryID(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	_, err := New(mock, "")
@@ -729,7 +694,6 @@ func TestNew_EmptyMemoryID(t *testing.T) {
 // TestNew_InvalidTemplate verifies that New returns an error when the namespace
 // template is invalid.
 //
-// Validates: Requirement 6.2
 func TestNew_InvalidTemplate(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	_, err := New(mock, "some-id", WithNamespaceTemplate("{{.Invalid"))
@@ -744,7 +708,6 @@ func TestNew_InvalidTemplate(t *testing.T) {
 // TestNew_Defaults verifies that New succeeds with valid inputs and applies
 // default configuration: CreateEventMode and the default namespace template.
 //
-// Validates: Requirements 2.6, 2.7, 2.8
 func TestNew_Defaults(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	store, err := New(mock, "test-memory-id")
@@ -770,7 +733,6 @@ func TestNew_Defaults(t *testing.T) {
 // TestRemember_EmptyIdentifier verifies that Remember returns an error when
 // the identifier is empty.
 //
-// Validates: Requirement 3.7
 func TestRemember_EmptyIdentifier(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	store, err := New(mock, "mem-id")
@@ -790,7 +752,6 @@ func TestRemember_EmptyIdentifier(t *testing.T) {
 // TestRemember_EmptyFact verifies that Remember returns an error when the fact
 // is empty.
 //
-// Validates: Requirement 3.8
 func TestRemember_EmptyFact(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	store, err := New(mock, "mem-id")
@@ -810,7 +771,6 @@ func TestRemember_EmptyFact(t *testing.T) {
 // TestRecall_EmptyIdentifier verifies that Recall returns an error when the
 // identifier is empty.
 //
-// Validates: Requirement 5.10
 func TestRecall_EmptyIdentifier(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	store, err := New(mock, "mem-id")
@@ -830,7 +790,6 @@ func TestRecall_EmptyIdentifier(t *testing.T) {
 // TestRecall_InvalidLimit verifies that Recall returns an error when the limit
 // is less than 1 (testing both 0 and -1).
 //
-// Validates: Requirement 5.11
 func TestRecall_InvalidLimit(t *testing.T) {
 	mock := &mockAgentCoreAPI{}
 	store, err := New(mock, "mem-id")
@@ -852,7 +811,6 @@ func TestRecall_InvalidLimit(t *testing.T) {
 // TestRecall_EmptyResults verifies that Recall returns an empty non-nil slice
 // when the API returns no records.
 //
-// Validates: Requirement 5.12
 func TestRecall_EmptyResults(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		retrieveMemoryRecordsOutput: &bedrockagentcore.RetrieveMemoryRecordsOutput{
@@ -879,7 +837,6 @@ func TestRecall_EmptyResults(t *testing.T) {
 // TestRemember_CreateEventMode_IncludesMemoryID verifies that the memoryID is
 // included in the CreateEvent request.
 //
-// Validates: Requirement 3.5
 func TestRemember_CreateEventMode_IncludesMemoryID(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		createEventOutput: &bedrockagentcore.CreateEventOutput{},
@@ -905,7 +862,6 @@ func TestRemember_CreateEventMode_IncludesMemoryID(t *testing.T) {
 // TestRemember_CreateEventMode_UsesSessionIDFunc verifies that a custom
 // sessionIDFunc is called and its value appears in the CreateEvent request.
 //
-// Validates: Requirement 3.3
 func TestRemember_CreateEventMode_UsesSessionIDFunc(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		createEventOutput: &bedrockagentcore.CreateEventOutput{},
@@ -943,7 +899,6 @@ func TestRemember_CreateEventMode_UsesSessionIDFunc(t *testing.T) {
 // TestRemember_BatchCreateMode_IncludesMemoryID verifies that the memoryID is
 // included in the BatchCreateMemoryRecords request.
 //
-// Validates: Requirement 4.5
 func TestRemember_BatchCreateMode_IncludesMemoryID(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		batchCreateMemoryRecOutput: &bedrockagentcore.BatchCreateMemoryRecordsOutput{},
@@ -969,7 +924,6 @@ func TestRemember_BatchCreateMode_IncludesMemoryID(t *testing.T) {
 // TestRecall_IncludesMemoryID verifies that the memoryID is included in the
 // RetrieveMemoryRecords request.
 //
-// Validates: Requirement 5.3
 func TestRecall_IncludesMemoryID(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		retrieveMemoryRecordsOutput: &bedrockagentcore.RetrieveMemoryRecordsOutput{
@@ -997,7 +951,6 @@ func TestRecall_IncludesMemoryID(t *testing.T) {
 // TestStoreMode_CreateEventDefault verifies that the default store mode calls
 // CreateEvent (not BatchCreateMemoryRecords).
 //
-// Validates: Requirement 2.8
 func TestStoreMode_CreateEventDefault(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		createEventOutput: &bedrockagentcore.CreateEventOutput{},
@@ -1024,7 +977,6 @@ func TestStoreMode_CreateEventDefault(t *testing.T) {
 // TestStoreMode_BatchCreate verifies that WithStoreMode(BatchCreateMode) causes
 // Remember to call BatchCreateMemoryRecords (not CreateEvent).
 //
-// Validates: Requirement 2.8
 func TestStoreMode_BatchCreate(t *testing.T) {
 	mock := &mockAgentCoreAPI{
 		batchCreateMemoryRecOutput: &bedrockagentcore.BatchCreateMemoryRecordsOutput{},

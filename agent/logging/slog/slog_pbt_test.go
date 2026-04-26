@@ -276,7 +276,6 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 // Property 1: Log level mapping correctness
 // ---------------------------------------------------------------------------
 
-// Feature: logging-hook, Property 1: Log level mapping correctness
 //
 // TestProperty_1_LogLevelMappingCorrectness verifies that for any random
 // lifecycle event with random error/nil outcomes, the slog implementation
@@ -288,7 +287,6 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 //   - Any event with err!=nil escalates to Error
 //   - SwarmHandoff always emits at Info
 //
-// **Validates: Requirements 4.6**
 func TestProperty_1_LogLevelMappingCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 30).Draw(rt, "numEvents")
@@ -330,14 +328,12 @@ func TestProperty_1_LogLevelMappingCorrectness(t *testing.T) {
 // Property 2: MinLevel filtering completeness
 // ---------------------------------------------------------------------------
 
-// Feature: logging-hook, Property 2: MinLevel filtering completeness
 //
 // TestProperty_2_MinLevelFilteringCompleteness verifies that for any random
 // minimum level and any random sequence of lifecycle events:
 //   - No log entry is emitted below the configured min level
 //   - All entries at or above the min level are emitted
 //
-// **Validates: Requirements 4.8**
 func TestProperty_2_MinLevelFilteringCompleteness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		minLevel := genSlogLevel(rt, "minLevel")
@@ -405,7 +401,6 @@ func TestProperty_2_MinLevelFilteringCompleteness(t *testing.T) {
 // Property 3: Structured attribute presence
 // ---------------------------------------------------------------------------
 
-// Feature: logging-hook, Property 3: Structured attribute presence
 //
 // TestProperty_3_StructuredAttributePresence verifies that for random
 // invoke/tool/provider events with random parameters, every log entry
@@ -419,7 +414,6 @@ func TestProperty_2_MinLevelFilteringCompleteness(t *testing.T) {
 //   - guardrail.complete contains "direction", "blocked"
 //   - max_iterations_exceeded contains "limit"
 //
-// **Validates: Requirements 4.7**
 func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		ch := &captureHandler{}

@@ -10,11 +10,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 15: Agent token accumulation
-// Validates: Requirements 8.1, 8.2
-// ---------------------------------------------------------------------------
-
 func TestProperty_AgentTokenAccumulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a random number of provider calls (1-5), each with random usage.
@@ -65,11 +60,6 @@ func TestProperty_AgentTokenAccumulation(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 16: Agent token reset between invocations
-// Validates: Requirements 8.3
-// ---------------------------------------------------------------------------
-
 func TestProperty_AgentTokenResetBetweenInvocations(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		input1 := rapid.IntRange(1, 500).Draw(t, "input1")
@@ -116,11 +106,6 @@ func TestProperty_AgentTokenResetBetweenInvocations(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Feature: agent-framework-v2, Property 17: Agent budget enforcement
-// Validates: Requirements 9.2, 9.3
-// ---------------------------------------------------------------------------
 
 func TestProperty_AgentBudgetEnforcement(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -175,11 +160,6 @@ func TestProperty_AgentBudgetEnforcement(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Task 5.9: Unit tests for no-budget-configured path
-// Validates: Requirements 9.4
-// ---------------------------------------------------------------------------
 
 func TestAgent_NoBudget_DoesNotAbort(t *testing.T) {
 	// Provider returns large token usage but no budget is set — should succeed.

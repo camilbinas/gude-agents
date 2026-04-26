@@ -32,7 +32,6 @@ func findMetric(rm metricdata.ResourceMetrics, name string) *metricdata.Metrics 
 // ---------------------------------------------------------------------------
 
 // TestWithMetrics_InstallsHook verifies WithMetrics sets MetricsHook on agent.
-// Validates: Requirement 2.5
 func TestWithMetrics_InstallsHook(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -50,7 +49,6 @@ func TestWithMetrics_InstallsHook(t *testing.T) {
 }
 
 // TestWithMetrics_CustomMeterProvider verifies custom MeterProvider receives metrics.
-// Validates: Requirement 2.3
 func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -80,7 +78,6 @@ func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 }
 
 // TestWithMetrics_NilMeterProvider verifies nil MeterProvider falls back to global.
-// Validates: Requirement 2.4
 func TestWithMetrics_NilMeterProvider(t *testing.T) {
 	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
 
@@ -96,7 +93,6 @@ func TestWithMetrics_NilMeterProvider(t *testing.T) {
 }
 
 // TestWithMetrics_WithNamespace verifies namespace option sets meter scope name.
-// Validates: Requirements 6.2, 6.3
 func TestWithMetrics_WithNamespace(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -151,7 +147,6 @@ func TestWithMetrics_WithNamespace(t *testing.T) {
 }
 
 // TestHistogramBuckets verifies histogram buckets match LLM latency spec.
-// Validates: Requirement 4.4
 func TestHistogramBuckets(t *testing.T) {
 	expected := []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0}
 
@@ -167,7 +162,6 @@ func TestHistogramBuckets(t *testing.T) {
 }
 
 // TestDurationRecording verifies histograms record non-negative durations.
-// Validates: Requirements 4.1, 4.2, 4.3
 func TestDurationRecording(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

@@ -37,12 +37,6 @@ func (p *structuredTestProvider) ConverseStream(_ context.Context, params Conver
 	return p.Converse(context.Background(), params)
 }
 
-// ---------------------------------------------------------------------------
-// Task 8.2 — Property 2: InvokeStructured sets up ConverseParams correctly
-// Feature: agent-framework-v2, Property 2: InvokeStructured sets up ConverseParams correctly
-// **Validates: Requirements 2.2, 2.3**
-// ---------------------------------------------------------------------------
-
 type SimpleStruct struct {
 	Name  string `json:"name" description:"A name" required:"true"`
 	Count int    `json:"count" description:"A count"`
@@ -115,12 +109,6 @@ func TestProperty2_InvokeStructured_ConverseParams(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Task 8.3 — Property 3: InvokeStructured deserialization round-trip
-// Feature: agent-framework-v2, Property 3: InvokeStructured deserialization round-trip
-// **Validates: Requirements 2.4**
-// ---------------------------------------------------------------------------
 
 type RoundTripStruct struct {
 	Title   string   `json:"title"`
@@ -205,11 +193,6 @@ func TestProperty3_InvokeStructured_DeserializationRoundTrip(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Task 8.4 — Unit tests for InvokeStructured error cases
-// Requirements: 2.5, 2.6
-// ---------------------------------------------------------------------------
 
 func TestInvokeStructured_NoToolCallReturned(t *testing.T) {
 	// Provider returns a text-only response with no tool calls.
@@ -323,12 +306,6 @@ func searchSubstring(s, substr string) bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
-// Task 8.5 — Property 1: Schema generation preserves struct metadata
-// Feature: agent-framework-v2, Property 1: Schema generation preserves struct metadata
-// **Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5**
-// ---------------------------------------------------------------------------
-
 // We test schema generation with a variety of struct configurations using rapid.
 // Since Go generics require compile-time types, we test with a fixed struct that
 // exercises all tag features, and use rapid to generate random field values to
@@ -350,7 +327,6 @@ func TestProperty1_SchemaGenerationPreservesStructMetadata(t *testing.T) {
 		// always be the same. We run this many times to confirm stability.
 		schema := tool.GenerateSchema[FullTagStruct]()
 
-		// Requirement 1.1: produces a valid JSON Schema object
 		if schema["type"] != "object" {
 			t.Fatalf("expected type=object, got %v", schema["type"])
 		}
@@ -360,7 +336,6 @@ func TestProperty1_SchemaGenerationPreservesStructMetadata(t *testing.T) {
 			t.Fatal("expected properties to be map[string]any")
 		}
 
-		// Requirement 1.2: json tag values used as property names
 		expectedFields := []string{"name", "status", "age", "score", "active", "tags", "priority"}
 		for _, f := range expectedFields {
 			if _, ok := props[f]; !ok {
@@ -368,7 +343,6 @@ func TestProperty1_SchemaGenerationPreservesStructMetadata(t *testing.T) {
 			}
 		}
 
-		// Requirement 1.3: description tags preserved
 		descChecks := map[string]string{
 			"name":   "The name",
 			"status": "Current status",
@@ -384,7 +358,6 @@ func TestProperty1_SchemaGenerationPreservesStructMetadata(t *testing.T) {
 			}
 		}
 
-		// Requirement 1.4: required:"true" fields appear in required array
 		reqSlice, ok := schema["required"].([]string)
 		if !ok {
 			t.Fatal("expected required to be []string")
@@ -404,7 +377,6 @@ func TestProperty1_SchemaGenerationPreservesStructMetadata(t *testing.T) {
 			t.Fatal("'age' should not be in required array")
 		}
 
-		// Requirement 1.5: enum tag values appear as enum constraints
 		statusProp := props["status"].(map[string]any)
 		statusEnum, ok := statusProp["enum"].([]any)
 		if !ok {
@@ -501,10 +473,6 @@ func TestProperty1_SchemaGeneration_SliceFields(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Task 11.1 — Unit tests for InvokeStructured lifecycle hooks
-// ---------------------------------------------------------------------------
 
 // trackingMemory records Load/Save calls for assertion.
 type trackingMemory struct {
@@ -673,12 +641,6 @@ func TestInvokeStructured_OutputGuardrailError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Task 11.2 — Property tests for guardrail ordering (Property 9 & 10)
-// ---------------------------------------------------------------------------
-
-// Feature: agent-framework-improvements, Property 9: InvokeStructured applies all input guardrails in order
-// Validates: Requirements 6.1
 func TestProperty9_InvokeStructured_InputGuardrailOrder(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 6).Draw(rt, "n")
@@ -733,8 +695,6 @@ func TestProperty9_InvokeStructured_InputGuardrailOrder(t *testing.T) {
 	})
 }
 
-// Feature: agent-framework-improvements, Property 10: InvokeStructured applies all output guardrails in order
-// Validates: Requirements 6.2
 func TestProperty10_InvokeStructured_OutputGuardrailOrder(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 6).Draw(rt, "n")

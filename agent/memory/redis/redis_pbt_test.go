@@ -115,12 +115,10 @@ func newTestStore(t *testing.T, addr string) *Store {
 // Property 1: Remember validation
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 1: Remember validation
 //
 // TestProperty_RememberValidation verifies that Remember returns an error when
 // the identifier or fact is empty, and succeeds for valid non-empty inputs.
 //
-// **Validates: Requirements 3.8, 3.9**
 func TestProperty_RememberValidation(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -161,12 +159,10 @@ func TestProperty_RememberValidation(t *testing.T) {
 // Property 2: Recall validation
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 2: Recall validation
 //
 // TestProperty_RecallValidation verifies that Recall returns an error when
 // the identifier is empty or the limit is less than 1.
 //
-// **Validates: Requirements 4.10, 4.11**
 func TestProperty_RecallValidation(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -202,13 +198,11 @@ func TestProperty_RecallValidation(t *testing.T) {
 // Property 3: Remember-then-Recall round-trip
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 3: Remember-then-Recall round-trip
 //
 // TestProperty_RememberThenRecall verifies that after storing a fact via
 // Remember, calling Recall with the same fact as query returns a non-empty
 // slice containing an Entry whose Fact field matches the stored fact.
 //
-// **Validates: Requirements 3.1, 3.2, 3.3, 4.1, 4.3, 4.5**
 func TestProperty_RememberThenRecall(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -250,13 +244,11 @@ func TestProperty_RememberThenRecall(t *testing.T) {
 // Property 4: Recall results ordered by descending score
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 4: Recall results ordered by descending score
 //
 // TestProperty_RecallOrderedByScore verifies that for any identifier with
 // multiple stored entries, the slice returned by Recall is ordered by
 // descending Score.
 //
-// **Validates: Requirements 4.7**
 func TestProperty_RecallOrderedByScore(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -299,13 +291,11 @@ func TestProperty_RecallOrderedByScore(t *testing.T) {
 // Property 5: Recall limit clamping
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 5: Recall limit clamping
 //
 // TestProperty_RecallLimitClamping verifies that for any identifier with N
 // stored entries and any positive limit L, Recall returns at most min(L, N)
 // entries.
 //
-// **Validates: Requirements 4.8, 4.11**
 func TestProperty_RecallLimitClamping(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -347,13 +337,11 @@ func TestProperty_RecallLimitClamping(t *testing.T) {
 // Property 6: Recall empty for unknown identifier
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 6: Recall empty for unknown identifier
 //
 // TestProperty_RecallEmptyForUnknownIdentifier verifies that Recall returns
 // a non-nil, length-0 slice when called with an identifier that has no stored
 // entries.
 //
-// **Validates: Requirements 4.9**
 func TestProperty_RecallEmptyForUnknownIdentifier(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -381,12 +369,10 @@ func TestProperty_RecallEmptyForUnknownIdentifier(t *testing.T) {
 // Property 7: Identifier isolation
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 7: Identifier isolation
 //
 // TestProperty_IdentifierIsolation verifies that entries stored under
 // identifier A are never returned by Recall for identifier B (where A ≠ B).
 //
-// **Validates: Requirements 4.4, 5.1**
 func TestProperty_IdentifierIsolation(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -427,13 +413,11 @@ func TestProperty_IdentifierIsolation(t *testing.T) {
 // Property 8: Metadata round-trip
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 8: Metadata round-trip
 //
 // TestProperty_MetadataRoundTrip verifies that metadata stored via Remember
 // is faithfully returned by Recall after serialization/deserialization,
 // including the nil metadata case.
 //
-// **Validates: Requirements 3.4, 3.5, 4.6**
 func TestProperty_MetadataRoundTrip(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -496,12 +480,10 @@ func TestProperty_MetadataRoundTrip(t *testing.T) {
 // Property 9: Embedder error propagation
 // ---------------------------------------------------------------------------
 
-// Feature: redis-episodic-memory, Property 9: Embedder error propagation
 //
 // TestProperty_EmbedderErrorPropagation verifies that when the embedder
 // returns an error, both Remember and Recall propagate the error.
 //
-// **Validates: Requirements 3.6, 4.12, 7.1, 7.2, 7.3**
 func TestProperty_EmbedderErrorPropagation(t *testing.T) {
 	addr := skipIfNoRedis(t)
 

@@ -14,8 +14,6 @@ import (
 
 func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
-// Feature: memory-drivers, Property 2: Blob Save/Load round-trip
-// **Validates: Requirements 4.1, 5.1, 5.4**
 func TestProperty_BlobSaveLoadRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
@@ -45,8 +43,6 @@ func TestProperty_BlobSaveLoadRoundTrip(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 3: Blob key formation
-// **Validates: Requirements 2.2, 2.3**
 func TestProperty_BlobKeyFormation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
@@ -77,8 +73,6 @@ func TestProperty_BlobKeyFormation(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 4: Blob overwrite
-// **Validates: Requirement 4.4**
 func TestProperty_BlobOverwrite(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
@@ -112,8 +106,6 @@ func TestProperty_BlobOverwrite(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 5: Blob List completeness
-// **Validates: Requirement 6.1**
 func TestProperty_BlobListCompleteness(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
@@ -172,8 +164,6 @@ func TestProperty_BlobListCompleteness(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 6: Blob Delete then Load returns empty
-// **Validates: Requirement 6.2**
 func TestProperty_BlobDeleteThenLoad(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()

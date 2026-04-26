@@ -177,7 +177,6 @@ func dummyTool(name, desc string) tool.Tool {
 }
 
 // ===========================================================================
-// Task 7: Unit Tests — Option Wiring and Zero-Overhead
 // ===========================================================================
 
 // 7.1 WithTracing option wiring
@@ -375,7 +374,6 @@ func TestWithTracing_AutoLoggerSelection(t *testing.T) {
 }
 
 // ===========================================================================
-// Task 8: Unit Tests — Span Lifecycle
 // ===========================================================================
 
 // 8.1 Agent invocation span
@@ -1221,7 +1219,6 @@ func TestMaxIterationsExceeded_EventRecorded(t *testing.T) {
 }
 
 // ===========================================================================
-// Task 9.3: Multi-Agent Composition Tracing
 // ===========================================================================
 
 func TestMultiAgentComposition_ChildSpansUnderParentToolSpan(t *testing.T) {
@@ -1298,7 +1295,6 @@ func TestMultiAgentComposition_ChildSpansUnderParentToolSpan(t *testing.T) {
 }
 
 // ===========================================================================
-// Task 9.4: Middleware Context Propagation
 // ===========================================================================
 
 func TestMiddleware_ContextPropagation_ChildSpanUnderToolSpan(t *testing.T) {

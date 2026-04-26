@@ -14,8 +14,6 @@ import (
 
 // ---------------------------------------------------------------------------
 // Property 1: Constructor configuration preservation
-// Feature: gemini-provider, Property 1: Constructor configuration preservation
-// **Validates: Requirements 1.5, 1.7, 8.4**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiConstructorConfigPreservation(t *testing.T) {
@@ -39,8 +37,6 @@ func TestProperty_GeminiConstructorConfigPreservation(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 2: Response text concatenation
-// Feature: gemini-provider, Property 2: Response text concatenation
-// **Validates: Requirements 2.4, 9.1**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiResponseTextConcatenation(t *testing.T) {
@@ -69,8 +65,6 @@ func TestProperty_GeminiResponseTextConcatenation(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 3: Response function call mapping
-// Feature: gemini-provider, Property 3: Response function call mapping
-// **Validates: Requirements 2.5, 9.2, 9.3**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiResponseFunctionCallMapping(t *testing.T) {
@@ -138,8 +132,6 @@ func TestProperty_GeminiResponseFunctionCallMapping(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 4: Token usage mapping
-// Feature: gemini-provider, Property 4: Token usage mapping
-// **Validates: Requirements 2.6, 3.4**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiTokenUsageMapping(t *testing.T) {
@@ -169,8 +161,6 @@ func TestProperty_GeminiTokenUsageMapping(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 5: Role mapping
-// Feature: gemini-provider, Property 5: Role mapping
-// **Validates: Requirements 4.1, 4.2**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiRoleMapping(t *testing.T) {
@@ -194,8 +184,6 @@ func TestProperty_GeminiRoleMapping(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 6: Content block mapping preserves content
-// Feature: gemini-provider, Property 6: Content block mapping preserves content
-// **Validates: Requirements 4.3, 4.4, 4.5**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiContentBlockMapping(t *testing.T) {
@@ -281,8 +269,6 @@ func TestProperty_GeminiContentBlockMapping(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 7: ToolChoice mapping
-// Feature: gemini-provider, Property 7: ToolChoice mapping
-// **Validates: Requirements 5.2, 5.3, 5.4**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiToolChoiceMapping(t *testing.T) {
@@ -330,8 +316,6 @@ func TestProperty_GeminiToolChoiceMapping(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 8: ToolSpec mapping
-// Feature: gemini-provider, Property 8: ToolSpec mapping
-// **Validates: Requirements 5.1**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiToolSpecMapping(t *testing.T) {
@@ -389,8 +373,6 @@ func TestProperty_GeminiToolSpecMapping(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 9: Stream text forwarding
-// Feature: gemini-provider, Property 9: Stream text forwarding
-// **Validates: Requirements 3.2**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiStreamTextForwarding(t *testing.T) {
@@ -441,8 +423,6 @@ func TestProperty_GeminiStreamTextForwarding(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Property 10: Thinking text storage
-// Feature: gemini-provider, Property 10: Thinking text storage
-// **Validates: Requirements 6.2**
 // ---------------------------------------------------------------------------
 
 func TestProperty_GeminiThinkingTextStorage(t *testing.T) {

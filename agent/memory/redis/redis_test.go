@@ -12,7 +12,6 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestNew_NilEmbedder verifies that New returns an error when embedder is nil.
-// Validates: Requirement 2.3
 func TestNew_NilEmbedder(t *testing.T) {
 	_, err := New(Options{}, nil, 128)
 	if err == nil {
@@ -24,7 +23,6 @@ func TestNew_NilEmbedder(t *testing.T) {
 }
 
 // TestNew_InvalidDim verifies that New returns an error when dim < 1.
-// Validates: Requirement 2.4
 func TestNew_InvalidDim(t *testing.T) {
 	emb := &hashEmbedder{dim: 8}
 
@@ -49,7 +47,6 @@ func TestNew_InvalidDim(t *testing.T) {
 
 // TestRemember_EmptyIdentifier verifies that Remember returns an error for
 // an empty identifier. Does not require Redis.
-// Validates: Requirement 3.8
 func TestRemember_EmptyIdentifier(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -65,7 +62,6 @@ func TestRemember_EmptyIdentifier(t *testing.T) {
 
 // TestRemember_EmptyFact verifies that Remember returns an error for
 // an empty fact. Does not require Redis.
-// Validates: Requirement 3.9
 func TestRemember_EmptyFact(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -81,7 +77,6 @@ func TestRemember_EmptyFact(t *testing.T) {
 
 // TestRecall_EmptyIdentifier verifies that Recall returns an error for
 // an empty identifier. Does not require Redis.
-// Validates: Requirement 4.10
 func TestRecall_EmptyIdentifier(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -97,7 +92,6 @@ func TestRecall_EmptyIdentifier(t *testing.T) {
 
 // TestRecall_InvalidLimit verifies that Recall returns an error for limit < 1.
 // Does not require Redis.
-// Validates: Requirement 4.11
 func TestRecall_InvalidLimit(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	store := newTestStore(t, addr)
@@ -123,7 +117,6 @@ func TestRecall_InvalidLimit(t *testing.T) {
 
 // TestInterfaceAssertion verifies at runtime that *Store satisfies the
 // memory.Memory interface.
-// Validates: Requirement 1.4
 func TestInterfaceAssertion(t *testing.T) {
 	// Compile-time check is already in redis.go; this is a runtime assertion.
 	var _ memory.Memory = (*Store)(nil)

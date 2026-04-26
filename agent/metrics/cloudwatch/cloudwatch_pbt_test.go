@@ -31,7 +31,6 @@ func bufferSnapshot(h *cloudwatchHook) []cwtypes.MetricDatum {
 // Property 6: CloudWatch invoke counter correctness with status mapping
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 6: CloudWatch invoke counter correctness with status mapping
 //
 // TestProperty_CWInvokeCounterCorrectness verifies that for any sequence of
 // N invocations with random success/error outcomes, the CloudWatch buffer
@@ -39,7 +38,6 @@ func bufferSnapshot(h *cloudwatchHook) []cwtypes.MetricDatum {
 // dimension on each is "success" when the error was nil and "error" when
 // non-nil.
 //
-// **Validates: Requirements 10.1, 12.3**
 func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -121,7 +119,6 @@ func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 // Property 7: CloudWatch provider metrics with model ID fallback
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 7: CloudWatch provider metrics with model ID fallback
 //
 // TestProperty_CWProviderMetricsModelIDFallback verifies that for any sequence
 // of provider call completions with random TokenUsage values (non-negative
@@ -134,7 +131,6 @@ func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 //   - The ModelId dimension equals the input string when non-empty and "unknown"
 //     when the input is empty
 //
-// **Validates: Requirements 10.2, 10.3, 12.1**
 func TestProperty_CWProviderMetricsModelIDFallback(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -329,14 +325,12 @@ func TestProperty_CWProviderMetricsModelIDFallback(t *testing.T) {
 // Property 8: CloudWatch tool call counter correctness
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 8: CloudWatch tool call counter correctness
 //
 // TestProperty_CWToolCallCounterCorrectness verifies that for any sequence of
 // tool executions with random tool names and random success/error outcomes,
 // the CloudWatch buffer contains one AgentToolCallTotal data point per call
 // with the correct ToolName and Status dimensions.
 //
-// **Validates: Requirements 10.4**
 func TestProperty_CWToolCallCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -427,7 +421,6 @@ func TestProperty_CWToolCallCounterCorrectness(t *testing.T) {
 // Property 9: CloudWatch guardrail block counter selectivity
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 9: CloudWatch guardrail block counter selectivity
 //
 // TestProperty_CWGuardrailBlockSelectivity verifies that for any sequence of
 // guardrail completions with random direction ("input"/"output") and random
@@ -435,7 +428,6 @@ func TestProperty_CWToolCallCounterCorrectness(t *testing.T) {
 // AgentGuardrailBlockTotal data points only for calls where blocked was true,
 // with the correct Direction dimension.
 //
-// **Validates: Requirements 10.5**
 func TestProperty_CWGuardrailBlockSelectivity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -525,13 +517,11 @@ func TestProperty_CWGuardrailBlockSelectivity(t *testing.T) {
 // Property 10: CloudWatch iteration counter monotonicity
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 10: CloudWatch iteration counter monotonicity
 //
 // TestProperty_CWIterationCounterMonotonicity verifies that for any
 // non-negative integer N, calling OnIterationStart exactly N times results
 // in exactly N AgentIterationTotal data points in the CloudWatch buffer.
 //
-// **Validates: Requirements 10.6**
 func TestProperty_CWIterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -579,14 +569,12 @@ func TestProperty_CWIterationCounterMonotonicity(t *testing.T) {
 // Property 11: CloudWatch batch splitting respects PutMetricData limit
 // ---------------------------------------------------------------------------
 
-// Feature: metrics-exporters, Property 11: CloudWatch batch splitting respects PutMetricData limit
 //
 // TestProperty_CWBatchSplitting verifies that for any buffer containing
 // between 1 and 3000 metric data points, when flushed, each PutMetricData
 // API call contains at most 1000 data points, and the total number of data
 // points across all calls equals the original buffer size.
 //
-// **Validates: Requirements 13.4**
 func TestProperty_CWBatchSplitting(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}

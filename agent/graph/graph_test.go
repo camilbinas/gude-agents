@@ -34,7 +34,6 @@ func isValidationError(err error) bool {
 	return errors.As(err, &ve)
 }
 
-// ── Task 6: builder and validation ───────────────────────────────────────────
 
 func TestGraphBuilder(t *testing.T) {
 	t.Run("6.1 AddNode rejects empty name", func(t *testing.T) {
@@ -198,7 +197,6 @@ func TestGraphValidation(t *testing.T) {
 	})
 }
 
-// ── Task 7: execution ─────────────────────────────────────────────────────────
 
 func TestGraphExecution(t *testing.T) {
 	t.Run("7.1 linear chain A→B→C", func(t *testing.T) {

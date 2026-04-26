@@ -70,14 +70,12 @@ func genEntry(t *rapid.T) Entry {
 // Property 1: Entry JSON serialization round-trip
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 1: Entry JSON serialization round-trip
 //
 // TestProperty_EntryJSONRoundTrip verifies that for any valid Entry value
 // (with arbitrary fact strings, metadata maps including nil, timestamps, and
 // scores), serializing to JSON via json.Marshal and deserializing back via
 // json.Unmarshal produces an Entry that is deeply equal to the original.
 //
-// **Validates: Requirements 7.1, 7.2, 7.3**
 func TestProperty_EntryJSONRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		original := genEntry(rt)
@@ -132,14 +130,12 @@ func (e *hashEmbedder) Embed(_ context.Context, text string) ([]float64, error) 
 // Property 2: Remember-then-Recall round-trip
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 2: Remember-then-Recall round-trip
 //
 // TestProperty_RememberThenRecall verifies that for any valid user ID and
 // non-empty fact string, after calling Remember(ctx, userID, fact, metadata),
 // calling Recall(ctx, userID, fact, 10) returns a non-empty slice containing
 // an Entry whose Fact field equals the stored fact.
 //
-// **Validates: Requirements 2.3, 1.4**
 func TestProperty_RememberThenRecall(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate random but valid inputs.
@@ -186,14 +182,12 @@ func TestProperty_RememberThenRecall(t *testing.T) {
 // Property 3: Recall results ordered by descending score
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 3: Recall results ordered by descending score
 //
 // TestProperty_RecallOrderedByScore verifies that for any user ID with one or
 // more stored entries and any query string, the slice returned by Recall has
 // its elements ordered by descending Score value, and every returned Entry
 // has a populated (non-zero) Score field.
 //
-// **Validates: Requirements 2.4, 2.5**
 func TestProperty_RecallOrderedByScore(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		userID := genNonEmptyString(rt, "userID")
@@ -240,13 +234,11 @@ func TestProperty_RecallOrderedByScore(t *testing.T) {
 // Property 4: Recall returns at most limit results, clamped to stored count
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 4: Recall returns at most limit results, clamped to stored count
 //
 // TestProperty_RecallLimitClamping verifies that for any user ID with N stored
 // entries and any positive limit L, Recall returns exactly min(L, N) entries.
 // When the user ID has no stored entries, Recall returns an empty non-nil slice.
 //
-// **Validates: Requirements 2.7, 1.8**
 func TestProperty_RecallLimitClamping(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		userID := genNonEmptyString(rt, "userID")
@@ -301,13 +293,11 @@ func TestProperty_RecallLimitClamping(t *testing.T) {
 // Property 5: WithIdentifier/GetIdentifier context round-trip
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 5: WithIdentifier/GetIdentifier context round-trip
 //
 // TestProperty_UserIDContextRoundTrip verifies that for any non-empty string
 // value, calling WithIdentifier(ctx, value) followed by GetIdentifier(ctx)
 // returns the original string value.
 //
-// **Validates: Requirements 5.1**
 func TestProperty_UserIDContextRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		id := genNonEmptyString(rt, "identifier")
@@ -361,13 +351,11 @@ func (s *spyMemory) Recall(_ context.Context, identifier, query string, limit in
 // Property 6: Tools extract user ID from context
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 6: Tools extract identifier from context
 //
 // TestProperty_ToolsExtractUserID verifies that for any non-empty identifier
 // set on the context via WithIdentifier, both RememberTool and RecallTool pass
 // that exact identifier to the underlying Memory method call.
 //
-// **Validates: Requirements 3.3, 4.3, 5.2**
 func TestProperty_ToolsExtractUserID(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		id := genNonEmptyString(rt, "identifier")
@@ -406,13 +394,11 @@ func TestProperty_ToolsExtractUserID(t *testing.T) {
 // Property 7: RecallTool default limit
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 7: RecallTool default limit
 //
 // TestProperty_RecallToolDefaultLimit verifies that when the JSON input omits
 // the limit field, the RecallTool calls Recall with a limit of 5. When the
 // JSON input includes a positive limit value, the tool uses that value.
 //
-// **Validates: Requirements 4.2**
 func TestProperty_RecallToolDefaultLimit(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		userID := genNonEmptyString(rt, "userID")
@@ -450,14 +436,12 @@ func TestProperty_RecallToolDefaultLimit(t *testing.T) {
 // Property 8: RecallTool output contains all entry fields
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 8: RecallTool output contains all entry fields
 //
 // TestProperty_RecallToolOutputContainsFields verifies that for any non-empty
 // slice of Entries returned by Recall, the formatted string output of
 // RecallTool contains each entry's fact text, each metadata key-value pair,
 // the creation timestamp, and the similarity score.
 //
-// **Validates: Requirements 4.4**
 func TestProperty_RecallToolOutputContainsFields(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		userID := genNonEmptyString(rt, "userID")
@@ -534,13 +518,11 @@ func searchSubstring(s, substr string) bool {
 // Property 9: Tool error propagation
 // ---------------------------------------------------------------------------
 
-// Feature: episodic-memory, Property 9: Tool error propagation
 //
 // TestProperty_ToolErrorPropagation verifies that errors returned by the
 // underlying Memory.Remember and Memory.Recall calls are
 // returned as non-nil errors from the tool handlers.
 //
-// **Validates: Requirements 3.5, 4.6**
 func TestProperty_ToolErrorPropagation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		userID := genNonEmptyString(rt, "userID")

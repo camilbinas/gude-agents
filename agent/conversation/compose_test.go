@@ -9,14 +9,12 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Feature: memory-strategies, Property 7: Composed Load applies all strategy transformations
 
 // TestComposedLoadAppliesAllTransformations verifies that for any valid message
 // slice containing mixed content block types, loading through a Filter(Window(Store))
 // composition returns at most N messages, each containing only TextBlock content,
 // equivalent to applying Window then Filter independently.
 //
-// **Validates: Requirements 7.2**
 func TestComposedLoadAppliesAllTransformations(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := genMessages(t)
@@ -56,14 +54,12 @@ func TestComposedLoadAppliesAllTransformations(t *testing.T) {
 	})
 }
 
-// Feature: memory-strategies, Property 8: Composed Save propagates unchanged to inner store
 
 // TestComposedSavePropagatesUnchanged verifies that for any valid message slice
 // and any composition of strategies (Window, Filter), saving through the
 // composed chain then loading directly from the innermost Store returns the
 // original messages unchanged.
 //
-// **Validates: Requirements 1.5, 4.5, 7.3**
 func TestComposedSavePropagatesUnchanged(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := genMessages(t)

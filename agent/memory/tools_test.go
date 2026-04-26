@@ -12,7 +12,6 @@ import (
 // TestNewRememberTool_MissingIdentifier verifies that NewRememberTool returns
 // a descriptive error when the agent context does not have an identifier set.
 //
-// Validates: Requirement 3.6
 func TestNewRememberTool_MissingIdentifier(t *testing.T) {
 	memStore := rag.NewMemoryStore()
 	scopedStore := rag.NewScopedStore(memStore)
@@ -40,7 +39,6 @@ func TestNewRememberTool_MissingIdentifier(t *testing.T) {
 // TestNewRecallTool_MissingIdentifier verifies that NewRecallTool returns
 // a descriptive error when the agent context does not have an identifier set.
 //
-// Validates: Requirement 3.7
 func TestNewRecallTool_MissingIdentifier(t *testing.T) {
 	memStore := rag.NewMemoryStore()
 	scopedStore := rag.NewScopedStore(memStore)
@@ -68,7 +66,6 @@ func TestNewRecallTool_MissingIdentifier(t *testing.T) {
 // TestNewRecallTool_NoResults verifies that NewRecallTool returns
 // "No relevant memories found." when the underlying store is empty.
 //
-// Validates: Requirement 3.5
 func TestNewRecallTool_NoResults(t *testing.T) {
 	memStore := rag.NewMemoryStore()
 	scopedStore := rag.NewScopedStore(memStore)
@@ -95,7 +92,6 @@ func TestNewRecallTool_NoResults(t *testing.T) {
 // TestMultipleToolInstances verifies that two tools with distinct names
 // can be created and coexist, each having a different Spec.Name.
 //
-// Validates: Requirement 3.12
 func TestMultipleToolInstances(t *testing.T) {
 	memStore := rag.NewMemoryStore()
 	scopedStore := rag.NewScopedStore(memStore)

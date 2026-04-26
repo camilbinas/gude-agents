@@ -26,8 +26,6 @@ func newTestMemory(mock *mockDynamoDBClient, keyPrefix string) *DynamoDBConversa
 	}
 }
 
-// Feature: memory-drivers, Property 7: DynamoDB Save/Load round-trip
-// **Validates: Requirements 9.1, 10.1, 10.4**
 func TestProperty_DynamoDBSaveLoadRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockDynamoDBClient()
@@ -53,8 +51,6 @@ func TestProperty_DynamoDBSaveLoadRoundTrip(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 8: DynamoDB key formation
-// **Validates: Requirements 8.2, 8.3**
 func TestProperty_DynamoDBKeyFormation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockDynamoDBClient()
@@ -81,8 +77,6 @@ func TestProperty_DynamoDBKeyFormation(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 9: DynamoDB overwrite
-// **Validates: Requirement 9.4**
 func TestProperty_DynamoDBOverwrite(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockDynamoDBClient()
@@ -112,8 +106,6 @@ func TestProperty_DynamoDBOverwrite(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 10: DynamoDB List completeness
-// **Validates: Requirement 11.1**
 func TestProperty_DynamoDBListCompleteness(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockDynamoDBClient()
@@ -167,8 +159,6 @@ func TestProperty_DynamoDBListCompleteness(t *testing.T) {
 	})
 }
 
-// Feature: memory-drivers, Property 11: DynamoDB Delete then Load returns empty
-// **Validates: Requirement 11.3**
 func TestProperty_DynamoDBDeleteThenLoad(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockDynamoDBClient()

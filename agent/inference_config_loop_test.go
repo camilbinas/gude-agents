@@ -8,10 +8,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
-// ---------------------------------------------------------------------------
-// Task 5.4 — Inference config wiring tests
-// ---------------------------------------------------------------------------
-
 func TestInvoke_AgentLevelInferenceConfigForwarded(t *testing.T) {
 	cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
 

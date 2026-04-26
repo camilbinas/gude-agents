@@ -11,7 +11,6 @@ import (
 // TestAdapter_ValidationErrors verifies that the Adapter returns descriptive
 // errors for invalid inputs: empty identifier, empty fact, and limit < 1.
 //
-// Validates: Requirements 6.1, 6.2
 func TestAdapter_ValidationErrors(t *testing.T) {
 	memStore := rag.NewMemoryStore()
 	scopedStore := rag.NewScopedStore(memStore)

@@ -14,7 +14,6 @@ import (
 // TestAgentAsTool_ChildReceivesMessageAndReturnsResult verifies that a child
 // agent wrapped via AgentAsTool receives the parent's tool input as a user
 // message and returns its final answer as the tool result.
-// Validates: Requirements 10.1, 10.2
 func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 	// Child agent: responds with a fixed answer on the first call.
 	childProvider := newScriptedProvider(
@@ -58,7 +57,6 @@ func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 
 // TestAgentAsTool_ChildErrorPropagatedAsIsError verifies that when the child agent
 // errors, the parent receives a ToolResultBlock with IsError=true (not a success string).
-// Validates: Requirements 4.1, 4.3
 func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 	// Child agent: provider always returns tool calls, causing max iterations
 	// to be exceeded (maxIterations=1 means it loops once then errors).
@@ -124,7 +122,6 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 
 // TestAgentAsTool_ChildErrorFromProvider verifies that a direct provider error
 // in the child agent propagates as IsError=true to the parent (not as success text).
-// Validates: Requirements 4.1, 4.2
 func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 	// Child agent: provider returns an error immediately.
 	errProvider := &erroringProvider{err: fmt.Errorf("provider exploded")}
@@ -182,7 +179,6 @@ func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 // TestAgentAsTool_ErrorIsToolError verifies that when a child agent errors,
 // the parent receives a ToolResultBlock with IsError=true whose content matches
 // a ToolError wrapping the child agent error.
-// Validates: Requirements 4.1, 4.2
 func TestAgentAsTool_ErrorIsToolError(t *testing.T) {
 	// Child agent: provider always errors.
 	childErr := fmt.Errorf("provider exploded")

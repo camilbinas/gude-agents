@@ -438,8 +438,6 @@ func TestParseConverseOutput_ToolUseWithNilInput(t *testing.T) {
 // Property-based tests (rapid)
 // ---------------------------------------------------------------------------
 
-// Feature: agent-framework-v2, Property 4: Bedrock ToolChoice mapping
-// **Validates: Requirements 3.2**
 func TestProperty_BedrockToolChoiceMapping(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mode := rapid.SampledFrom([]tool.ChoiceMode{
@@ -483,8 +481,6 @@ func TestProperty_BedrockToolChoiceMapping(t *testing.T) {
 	})
 }
 
-// Feature: agent-framework-v2, Property 12: Bedrock TokenUsage population
-// **Validates: Requirements 7.2**
 func TestProperty_BedrockTokenUsagePopulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		inputTokens := rapid.Int32Range(0, 1_000_000).Draw(t, "inputTokens")
