@@ -23,9 +23,9 @@ func skipIfNoRedis(t *testing.T) string {
 
 func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
-// Feature: redis-providers, Property 1: Memory Save/Load Round-Trip
+// Feature: redis-providers, Property 1: Conversation Save/Load Round-Trip
 // **Validates: Requirements 3.1, 3.5, 4.1, 5.1, 5.2, 5.3**
-func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
+func TestProperty_ConversationSaveLoadRoundTrip(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	mem, err := New(RedisOptions{Addr: addr})
@@ -199,7 +199,7 @@ func searchSubstr(s, substr string) bool {
 	return false
 }
 
-// TestRedisConversation_WithOption verifies that RedisConversation is accepted by agent.WithMemory.
+// TestRedisConversation_WithOption verifies that RedisConversation is accepted by agent.WithConversation.
 // Validates: Requirement 2.4
 func TestRedisConversation_WithOption(t *testing.T) {
 	addr := skipIfNoRedis(t)
@@ -209,11 +209,11 @@ func TestRedisConversation_WithOption(t *testing.T) {
 	}
 	defer mem.Close()
 
-	// This should compile and not panic — proves RedisConversation satisfies the Memory interface
-	// used by WithMemory.
-	opt := agent.WithMemory(mem, "test-conv")
+	// This should compile and not panic — proves RedisConversation satisfies the Conversation interface
+	// used by WithConversation.
+	opt := agent.WithConversation(mem, "test-conv")
 	if opt == nil {
-		t.Fatal("expected non-nil option from WithMemory")
+		t.Fatal("expected non-nil option from WithConversation")
 	}
 }
 

@@ -297,9 +297,9 @@ func TestDeleteLeavesOtherConversations(t *testing.T) {
 func TestWithMemoryOption(t *testing.T) {
 	m := newTestMemory(t)
 
-	opt := agent.WithMemory(m, "test-conv")
+	opt := agent.WithConversation(m, "test-conv")
 	if opt == nil {
-		t.Fatal("expected non-nil option from WithMemory")
+		t.Fatal("expected non-nil option from WithConversation")
 	}
 }
 

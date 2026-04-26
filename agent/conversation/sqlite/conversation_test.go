@@ -351,10 +351,10 @@ func TestWithOption(t *testing.T) {
 	}
 	defer m.Close()
 
-	// This should compile and not panic — proves SQLiteMemory satisfies the Memory interface.
-	opt := agent.WithMemory(m, "test-conv")
+	// This should compile and not panic — proves SQLiteMemory satisfies the Conversation interface.
+	opt := agent.WithConversation(m, "test-conv")
 	if opt == nil {
-		t.Fatal("expected non-nil option from WithMemory")
+		t.Fatal("expected non-nil option from WithConversation")
 	}
 }
 
