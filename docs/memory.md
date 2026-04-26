@@ -285,7 +285,7 @@ tools := []tool.Tool{
 }
 ```
 
-This is exactly what the built-in `memory.NewStore(embedder)` does internally — it creates a `MemoryStore`, wraps it in a `ScopedStore`, and creates an `Adapter`.
+This is exactly what the built-in `memory.NewInMemory(embedder)` does internally — it creates a `MemoryStore`, wraps it in a `ScopedStore`, and creates an `Adapter`.
 
 ## Core Types
 
@@ -355,7 +355,7 @@ if err != nil {
     log.Fatal(err)
 }
 
-store := memory.NewStore(embedder)
+store := memory.NewInMemory(embedder)
 ```
 
 Concurrency: reads use `sync.RWMutex` read locks, writes use exclusive locks. Safe for use from multiple goroutines.
@@ -750,7 +750,7 @@ func main() {
     }
 
     // 2. Create an in-memory store.
-    store := memory.NewStore(embedder)
+    store := memory.NewInMemory(embedder)
 
     // 3. Build the remember and recall tools.
     tools := []tool.Tool{

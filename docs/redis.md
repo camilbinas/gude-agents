@@ -25,10 +25,10 @@ If `Addr` is empty, it defaults to `"localhost:6379"`. Pass a `*tls.Config` to e
 
 Import: `github.com/camilbinas/gude-agents/agent/conversation/redis`
 
-### NewRedisConversation
+### New
 
 ```go
-func NewRedisConversation(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error)
+func New(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error)
 ```
 
 Creates a new `RedisConversation`. Pings Redis on creation to verify connectivity — returns an error if the connection fails. The default key prefix is `"gude:"` and TTL is 0 (no expiration).
@@ -237,7 +237,7 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	mem, err := redismemory.NewRedisConversation(
+	mem, err := redismemory.New(
 		redismemory.RedisOptions{Addr: redisAddr},
 		redismemory.WithTTL(1*time.Hour),
 		redismemory.WithKeyPrefix("example:"),

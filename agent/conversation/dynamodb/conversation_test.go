@@ -86,7 +86,7 @@ func (m *mockDynamoDBClient) Scan(_ context.Context, in *dynamodb.ScanInput, _ .
 // TestNewDynamoDBMemory_EmptyTable verifies that an empty table name returns an error.
 // Req 7.4
 func TestNewDynamoDBMemory_EmptyTable(t *testing.T) {
-	_, err := NewDynamoDBConversation(aws.Config{}, "")
+	_, err := New(aws.Config{}, "")
 	if err == nil {
 		t.Fatal("expected error for empty table, got nil")
 	}
@@ -99,7 +99,7 @@ func TestNewDynamoDBMemory_EmptyTable(t *testing.T) {
 // without making any network calls.
 // Req 7.3
 func TestNewDynamoDBMemory_LazyConstruction(t *testing.T) {
-	m, err := NewDynamoDBConversation(aws.Config{}, "my-table")
+	m, err := New(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestNewDynamoDBMemory_LazyConstruction(t *testing.T) {
 // TestDynamoDBMemory_DefaultKeyPrefix verifies that keyPrefix defaults to "gude:".
 // Req 8.1
 func TestDynamoDBMemory_DefaultKeyPrefix(t *testing.T) {
-	m, err := NewDynamoDBConversation(aws.Config{}, "my-table")
+	m, err := New(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestDynamoDBMemory_DefaultKeyPrefix(t *testing.T) {
 
 // TestDynamoDBMemory_DefaultPKAttribute verifies that pkAttribute defaults to "conversation_id".
 func TestDynamoDBMemory_DefaultPKAttribute(t *testing.T) {
-	m, err := NewDynamoDBConversation(aws.Config{}, "my-table")
+	m, err := New(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

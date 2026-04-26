@@ -147,11 +147,11 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		memCtx := ctx
 		var finishMemLoad func(error)
 		if a.tracingHook != nil {
-			memCtx, finishMemLoad = a.tracingHook.OnMemoryStart(ctx, "load", convID)
+			memCtx, finishMemLoad = a.tracingHook.OnConversationStart(ctx, "load", convID)
 		}
 
 		if a.loggingHook != nil {
-			a.loggingHook.OnMemoryStart("load", convID)
+			a.loggingHook.OnConversationStart("load", convID)
 		}
 
 		memLoadStart := time.Now()
@@ -161,7 +161,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			finishMemLoad(err)
 		}
 		if a.loggingHook != nil {
-			a.loggingHook.OnMemoryEnd("load", convID, err, len(history), time.Since(memLoadStart))
+			a.loggingHook.OnConversationEnd("load", convID, err, len(history), time.Since(memLoadStart))
 		}
 		if err != nil {
 			return cumulative, fmt.Errorf("conversation load: %w", err)
@@ -515,11 +515,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			memCtx := ctx
 			var finishMemSave func(error)
 			if a.tracingHook != nil {
-				memCtx, finishMemSave = a.tracingHook.OnMemoryStart(ctx, "save", convID)
+				memCtx, finishMemSave = a.tracingHook.OnConversationStart(ctx, "save", convID)
 			}
 
 			if a.loggingHook != nil {
-				a.loggingHook.OnMemoryStart("save", convID)
+				a.loggingHook.OnConversationStart("save", convID)
 			}
 
 			memSaveStart := time.Now()
@@ -529,7 +529,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				finishMemSave(err)
 			}
 			if a.loggingHook != nil {
-				a.loggingHook.OnMemoryEnd("save", convID, err, len(messages[ragOffset:]), time.Since(memSaveStart))
+				a.loggingHook.OnConversationEnd("save", convID, err, len(messages[ragOffset:]), time.Since(memSaveStart))
 			}
 			if err != nil {
 				return cumulative, fmt.Errorf("conversation save: %w", err)

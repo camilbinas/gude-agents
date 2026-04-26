@@ -68,7 +68,7 @@ func (h *mockTracingHook) OnGuardrailStart(ctx context.Context, _ string, _ stri
 	return ctx, func(_ error, _ string) {}
 }
 
-func (h *mockTracingHook) OnMemoryStart(ctx context.Context, _ string, _ string) (context.Context, func(error)) {
+func (h *mockTracingHook) OnConversationStart(ctx context.Context, _ string, _ string) (context.Context, func(error)) {
 	return ctx, func(_ error) {}
 }
 

@@ -46,7 +46,7 @@ import (
 func main() {
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
-	store := memory.NewStore(embedder)
+	store := memory.NewInMemory(embedder)
 
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),

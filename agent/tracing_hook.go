@@ -28,8 +28,8 @@ type TracingHook interface {
 	// input is the text being checked.
 	OnGuardrailStart(ctx context.Context, direction string, input string) (context.Context, func(err error, output string))
 
-	// OnMemoryStart is called before memory Load or Save.
-	OnMemoryStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error))
+	// OnConversationStart is called before conversation Load or Save.
+	OnConversationStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error))
 
 	// OnRetrieverStart is called before Retriever.Retrieve.
 	// query is the retrieval query text.

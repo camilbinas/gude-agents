@@ -24,7 +24,7 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	mem, err := redis.NewRedisConversation(
+	mem, err := redis.New(
 		redis.RedisOptions{Addr: redisAddr},
 		redis.WithTTL(1*time.Hour),
 		redis.WithKeyPrefix("example:memory:"),

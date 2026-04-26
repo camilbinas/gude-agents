@@ -7,28 +7,28 @@ import (
 	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
-// Store is an in-memory Memory backed by a rag.MemoryStore,
+// InMemory is an in-memory Memory backed by a rag.MemoryStore,
 // rag.ScopedStore, and Adapter. It provides the same public API as before
 // but delegates all storage and similarity logic to the unified RAG layer.
 // Documented in docs/memory.md — update when changing fields or behavior.
-type Store struct {
+type InMemory struct {
 	adapter *Adapter
 }
 
-// NewStore creates a new in-memory Store. The embedder is used to compute
+// NewInMemory creates a new in-memory Store. The embedder is used to compute
 // embedding vectors for Remember and Recall operations.
-func NewStore(embedder agent.Embedder) *Store {
+func NewInMemory(embedder agent.Embedder) *InMemory {
 	memStore := rag.NewMemoryStore()
 	scopedStore := rag.NewScopedStore(memStore)
 	adapter := NewAdapter(scopedStore, embedder)
-	return &Store{
+	return &InMemory{
 		adapter: adapter,
 	}
 }
 
 // Remember stores a fact for the given identifier. Metadata is optional.
 // Returns an error if identifier or fact is empty.
-func (s *Store) Remember(ctx context.Context, identifier, fact string, metadata map[string]string) error {
+func (s *InMemory) Remember(ctx context.Context, identifier, fact string, metadata map[string]string) error {
 	return s.adapter.Remember(ctx, identifier, fact, metadata)
 }
 
@@ -37,6 +37,6 @@ func (s *Store) Remember(ctx context.Context, identifier, fact string, metadata 
 // descending score.
 // Returns an error if identifier is empty or limit < 1.
 // Returns an empty non-nil slice (not nil) if no entries exist for the identifier.
-func (s *Store) Recall(ctx context.Context, identifier, query string, limit int) ([]Entry, error) {
+func (s *InMemory) Recall(ctx context.Context, identifier, query string, limit int) ([]Entry, error) {
 	return s.adapter.Recall(ctx, identifier, query, limit)
 }

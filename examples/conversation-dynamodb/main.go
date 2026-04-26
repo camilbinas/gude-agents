@@ -49,7 +49,7 @@ func main() {
 		log.Fatalf("load AWS config: %v", err)
 	}
 
-	mem, err := dynamodb.NewDynamoDBConversation(cfg, table,
+	mem, err := dynamodb.New(cfg, table,
 		dynamodb.WithKeyPrefix("example:memory:"),
 		dynamodb.WithTTL(8*time.Hour),
 	)

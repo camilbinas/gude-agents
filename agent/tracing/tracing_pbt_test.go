@@ -337,7 +337,7 @@ func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 		hook := &otelHook{tracer: tp.Tracer(instrumentationName)}
 
 		ctx := context.Background()
-		ctx, end := hook.OnMemoryStart(ctx, operation, conversationID)
+		ctx, end := hook.OnConversationStart(ctx, operation, conversationID)
 		_ = ctx
 		end(nil)
 

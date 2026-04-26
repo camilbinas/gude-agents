@@ -299,7 +299,7 @@ Import: `github.com/camilbinas/gude-agents/agent/conversation/redis`
 Stores conversation history as JSON in Redis string keys. Requires a running Redis instance.
 
 ```go
-mem, err := redismemory.NewRedisConversation(
+mem, err := redismemory.New(
     redismemory.RedisOptions{Addr: "localhost:6379"},
     redismemory.WithTTL(24*time.Hour),
     redismemory.WithKeyPrefix("myapp:"),
@@ -335,7 +335,7 @@ Stores conversation history as items in an Amazon DynamoDB table. The table must
 
 ```go
 cfg, _ := awsconfig.LoadDefaultConfig(ctx)
-mem, err := dynamomemory.NewDynamoDBConversation(cfg, "my-conversations-table",
+mem, err := dynamomemory.New(cfg, "my-conversations-table",
     dynamomemory.WithTTL(7*24*time.Hour),
     dynamomemory.WithKeyPrefix("prod:"),
 )

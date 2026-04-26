@@ -32,11 +32,11 @@ type LoggingHook interface {
 	// direction is "input" or "output". blocked is true if the guardrail rejected.
 	OnGuardrailComplete(direction string, blocked bool, err error)
 
-	// OnMemoryStart is called before memory Load or Save.
-	OnMemoryStart(operation string, conversationID string)
+	// OnConversationStart is called before conversation Load or Save.
+	OnConversationStart(operation string, conversationID string)
 
-	// OnMemoryEnd is called after memory Load or Save with the outcome.
-	OnMemoryEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration)
+	// OnConversationEnd is called after conversation Load or Save with the outcome.
+	OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration)
 
 	// OnRetrieverStart is called before Retriever.Retrieve.
 	OnRetrieverStart(query string)

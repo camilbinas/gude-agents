@@ -81,8 +81,8 @@ Each lifecycle point maps to a log level:
 
 | Lifecycle Point | Default Level | With Error |
 |---|---|---|
-| InvokeStart, IterationStart, ProviderCallStart, ToolStart, MemoryStart, RetrieverStart, ImagesAttached, DocumentsAttached | Debug | — |
-| InvokeEnd, ProviderCallEnd, ToolEnd, MemoryEnd, RetrieverEnd | Info | Error |
+| InvokeStart, IterationStart, ProviderCallStart, ToolStart, ConversationStart, RetrieverStart, ImagesAttached, DocumentsAttached | Debug | — |
+| InvokeEnd, ProviderCallEnd, ToolEnd, ConversationEnd, RetrieverEnd | Info | Error |
 | GuardrailComplete (not blocked) | Debug | Error |
 | GuardrailComplete (blocked) | Warn | Error |
 | MaxIterationsExceeded | Warn | — |
@@ -103,7 +103,7 @@ Each log entry includes relevant key-value attributes:
 |---|---|---|
 | `agent.name` | InvokeStart | Agent name (when set via `WithName`) |
 | `model.id` | InvokeStart, ProviderCallStart | Provider model ID |
-| `conversation_id` | InvokeStart, MemoryStart, MemoryEnd | Conversation ID |
+| `conversation_id` | InvokeStart, ConversationStart, ConversationEnd | Conversation ID |
 | `max_iterations` | InvokeStart | Configured max iterations |
 | `iteration` | IterationStart | 1-based iteration number |
 | `tool.name` | ToolStart, ToolEnd | Tool being executed |
@@ -116,8 +116,8 @@ Each log entry includes relevant key-value attributes:
 | `doc_count` | RetrieverEnd | Number of retrieved documents |
 | `image_count` | ImagesAttached | Number of images attached via `WithImages` |
 | `document_count` | DocumentsAttached | Number of documents attached via `WithDocuments` |
-| `operation` | MemoryStart, MemoryEnd | Conversation operation (`load` or `save`) |
-| `message_count` | MemoryEnd | Number of messages loaded or saved |
+| `operation` | ConversationStart, ConversationEnd | Conversation operation (`load` or `save`) |
+| `message_count` | ConversationEnd | Number of messages loaded or saved |
 | `direction` | GuardrailComplete | Guardrail direction (`input` or `output`) |
 | `blocked` | GuardrailComplete | Whether the guardrail blocked |
 | `initial_agent` / `member_count` / `max_handoffs` | SwarmRunStart | Swarm configuration |

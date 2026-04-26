@@ -174,7 +174,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "memory.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(h *slogHook) { h.OnMemoryStart(op, convID) },
+			fire:          func(h *slogHook) { h.OnConversationStart(op, convID) },
 		}
 	case 9: // MemoryEnd
 		op := rapid.SampledFrom([]string{"load", "save"}).Draw(t, prefix+"_op")
@@ -189,7 +189,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "memory.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(h *slogHook) { h.OnMemoryEnd(op, convID, err, 5, dur) },
+			fire:          func(h *slogHook) { h.OnConversationEnd(op, convID, err, 5, dur) },
 			err:           err,
 		}
 	case 10: // RetrieverStart
@@ -541,7 +541,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 		case 7: // MemoryStart
 			op := rapid.SampledFrom([]string{"load", "save"}).Draw(rt, "op")
 			convID := genString(rt, "convID")
-			h.OnMemoryStart(op, convID)
+			h.OnConversationStart(op, convID)
 			records := ch.getRecords()
 			if len(records) != 1 {
 				rt.Fatalf("expected 1 record, got %d", len(records))
@@ -556,7 +556,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			err := genError(rt, "err")
 			msgCount := rapid.IntRange(0, 100).Draw(rt, "msgCount")
 			dur := genDuration(rt, "dur")
-			h.OnMemoryEnd(op, convID, err, msgCount, dur)
+			h.OnConversationEnd(op, convID, err, msgCount, dur)
 			records := ch.getRecords()
 			if len(records) != 1 {
 				rt.Fatalf("expected 1 record, got %d", len(records))

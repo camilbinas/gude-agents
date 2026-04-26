@@ -227,7 +227,7 @@ func (h *otelHook) OnGuardrailStart(ctx context.Context, direction string, input
 	}
 }
 
-func (h *otelHook) OnMemoryStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error)) {
+func (h *otelHook) OnConversationStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error)) {
 	spanName := fmt.Sprintf("agent.conversation.%s", operation)
 	ctx, span := h.tracer.Start(ctx, spanName)
 	span.SetAttributes(attribute.String(AttrMemoryConversationID, conversationID))

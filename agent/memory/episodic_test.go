@@ -14,7 +14,7 @@ import (
 //
 // Validates: Requirement 1.4
 func TestRemember_EmptyFact(t *testing.T) {
-	store := NewStore(&hashEmbedder{dim: 8})
+	store := NewInMemory(&hashEmbedder{dim: 8})
 	err := store.Remember(context.Background(), "user-1", "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty fact, got nil")
@@ -30,7 +30,7 @@ func TestRemember_EmptyFact(t *testing.T) {
 //
 // Validates: Requirement 1.5
 func TestRemember_EmptyUserID(t *testing.T) {
-	store := NewStore(&hashEmbedder{dim: 8})
+	store := NewInMemory(&hashEmbedder{dim: 8})
 	err := store.Remember(context.Background(), "", "some fact", nil)
 	if err == nil {
 		t.Fatal("expected error for empty identifier, got nil")
@@ -46,7 +46,7 @@ func TestRemember_EmptyUserID(t *testing.T) {
 //
 // Validates: Requirement 1.7
 func TestRecall_EmptyUserID(t *testing.T) {
-	store := NewStore(&hashEmbedder{dim: 8})
+	store := NewInMemory(&hashEmbedder{dim: 8})
 	results, err := store.Recall(context.Background(), "", "query", 5)
 	if err == nil {
 		t.Fatal("expected error for empty identifier, got nil")
@@ -65,7 +65,7 @@ func TestRecall_EmptyUserID(t *testing.T) {
 //
 // Validates: Requirement 1.6
 func TestRecall_InvalidLimit(t *testing.T) {
-	store := NewStore(&hashEmbedder{dim: 8})
+	store := NewInMemory(&hashEmbedder{dim: 8})
 
 	for _, limit := range []int{0, -1, -100} {
 		t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
@@ -89,7 +89,7 @@ func TestRecall_InvalidLimit(t *testing.T) {
 //
 // Validates: Requirement 1.8
 func TestRecall_NoEntries(t *testing.T) {
-	store := NewStore(&hashEmbedder{dim: 8})
+	store := NewInMemory(&hashEmbedder{dim: 8})
 	results, err := store.Recall(context.Background(), "unknown-user", "query", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,7 +108,7 @@ func TestRecall_NoEntries(t *testing.T) {
 //
 // Validates: Requirement 2.6
 func TestStore_ConcurrentAccess(t *testing.T) {
-	store := NewStore(&hashEmbedder{dim: 8})
+	store := NewInMemory(&hashEmbedder{dim: 8})
 	ctx := context.Background()
 
 	const goroutines = 10

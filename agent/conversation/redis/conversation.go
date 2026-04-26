@@ -43,8 +43,8 @@ type RedisConversation struct {
 	keyPrefix string
 }
 
-// NewRedisConversation creates a new RedisMemory. Pings Redis to verify connectivity.
-func NewRedisConversation(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error) {
+// New creates a new RedisMemory. Pings Redis to verify connectivity.
+func New(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error) {
 	client := newClient(opts)
 
 	m := &RedisConversation{

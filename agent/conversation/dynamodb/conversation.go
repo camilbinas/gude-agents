@@ -61,11 +61,11 @@ type DynamoDBConversation struct {
 	pkAttribute  string
 }
 
-// NewDynamoDBConversation creates a new DynamoDBMemory. No network calls are made at
+// New creates a new DynamoDBMemory. No network calls are made at
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if table is empty.
-func NewDynamoDBConversation(cfg aws.Config, table string, opts ...DynamoDBConversationOption) (*DynamoDBConversation, error) {
+func New(cfg aws.Config, table string, opts ...DynamoDBConversationOption) (*DynamoDBConversation, error) {
 	if table == "" {
 		return nil, fmt.Errorf("dynamodb conversation: table name is required")
 	}

@@ -15,7 +15,7 @@ Two APIs solve this:
 Configures conversation persistence without a default conversation ID. Each request must provide one via context.
 
 ```go
-store := conversation.NewInMemory() // or redis.NewRedisConversation(...)
+store := conversation.NewInMemory() // or redis.New(...)
 
 a, err := agent.New(provider, instructions, tools,
     agent.WithSharedConversation(store),
@@ -145,7 +145,7 @@ All components are safe for concurrent use from multiple goroutines. A single `A
 
 ## Production Recommendations
 
-- Use `redis.NewRedisConversation` instead of `conversation.NewInMemory` for persistence across restarts and horizontal scaling
+- Use `redis.New` instead of `conversation.NewInMemory` for persistence across restarts and horizontal scaling
 - Set `WithTTL` on Redis conversation store to auto-expire idle conversations
 - Use `r.Context()` as the base context so request cancellation propagates to LLM calls
 - Set `WithTokenBudget` to prevent runaway costs from a single request

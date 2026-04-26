@@ -148,7 +148,7 @@ func TestProperty_RememberThenRecall(t *testing.T) {
 		metadata := genMetadata(rt)
 
 		// Create a fresh store with a deterministic embedder per iteration.
-		store := NewStore(&hashEmbedder{dim: 16})
+		store := NewInMemory(&hashEmbedder{dim: 16})
 		ctx := context.Background()
 
 		// Remember the fact.
@@ -201,7 +201,7 @@ func TestProperty_RecallOrderedByScore(t *testing.T) {
 
 		// Store between 2 and 20 distinct facts so ordering is meaningful.
 		n := rapid.IntRange(2, 20).Draw(rt, "num_facts")
-		store := NewStore(&hashEmbedder{dim: 16})
+		store := NewInMemory(&hashEmbedder{dim: 16})
 		ctx := context.Background()
 
 		for i := range n {
@@ -254,7 +254,7 @@ func TestProperty_RecallLimitClamping(t *testing.T) {
 
 		// Store between 1 and 20 facts.
 		n := rapid.IntRange(1, 20).Draw(rt, "num_facts")
-		store := NewStore(&hashEmbedder{dim: 16})
+		store := NewInMemory(&hashEmbedder{dim: 16})
 		ctx := context.Background()
 
 		for i := range n {

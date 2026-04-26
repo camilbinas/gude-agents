@@ -21,38 +21,38 @@ func NewInMemory() *InMemory {
 
 // Load retrieves messages for the given conversation ID.
 // Returns a deep copy to prevent mutation of the stored data.
-func (s *InMemory) Load(_ context.Context, id string) ([]agent.Message, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	msgs := s.data[id]
+func (m *InMemory) Load(_ context.Context, id string) ([]agent.Message, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	msgs := m.data[id]
 	return deepCopyMessages(msgs), nil
 }
 
 // Save persists messages for the given conversation ID.
 // Stores a deep copy to prevent mutation of the stored data.
-func (s *InMemory) Save(_ context.Context, id string, msgs []agent.Message) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data[id] = deepCopyMessages(msgs)
+func (m *InMemory) Save(_ context.Context, id string, msgs []agent.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data[id] = deepCopyMessages(msgs)
 	return nil
 }
 
 // List returns all conversation IDs in the store.
-func (s *InMemory) List(_ context.Context) ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ids := make([]string, 0, len(s.data))
-	for id := range s.data {
+func (m *InMemory) List(_ context.Context) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.data))
+	for id := range m.data {
 		ids = append(ids, id)
 	}
 	return ids, nil
 }
 
 // Delete removes a conversation by ID. Returns nil if not found.
-func (s *InMemory) Delete(_ context.Context, conversationID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.data, conversationID)
+func (m *InMemory) Delete(_ context.Context, conversationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.data, conversationID)
 	return nil
 }
 

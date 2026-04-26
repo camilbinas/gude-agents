@@ -119,14 +119,14 @@ func (h *slogHook) OnGuardrailComplete(direction string, blocked bool, err error
 	h.log(level, "guardrail.complete", attrs...)
 }
 
-func (h *slogHook) OnMemoryStart(operation string, conversationID string) {
+func (h *slogHook) OnConversationStart(operation string, conversationID string) {
 	h.log(slog.LevelDebug, "memory.start",
 		slog.String("operation", operation),
 		slog.String("conversation_id", conversationID),
 	)
 }
 
-func (h *slogHook) OnMemoryEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
+func (h *slogHook) OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
 	level := slog.LevelInfo
 	attrs := []slog.Attr{
 		slog.String("operation", operation),

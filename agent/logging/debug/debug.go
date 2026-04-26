@@ -134,11 +134,11 @@ func (h *debugHook) OnGuardrailComplete(direction string, blocked bool, err erro
 	}
 }
 
-func (h *debugHook) OnMemoryStart(operation, _ string) {
+func (h *debugHook) OnConversationStart(operation, _ string) {
 	h.p("%s⟳ memory %s %s", dim, operation, reset)
 }
 
-func (h *debugHook) OnMemoryEnd(operation, _ string, err error, messageCount int, duration time.Duration) {
+func (h *debugHook) OnConversationEnd(operation, _ string, err error, messageCount int, duration time.Duration) {
 	if err != nil {
 		h.p("%s✗ %s  %s%s\n", red, fmtDur(duration), fmtErr(err), reset)
 		return
