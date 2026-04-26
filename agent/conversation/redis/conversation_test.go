@@ -63,7 +63,7 @@ func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
 // TestNewRedisMemory_UnreachableAddr verifies that NewRedisMemory returns an error
 // containing "ping" when the Redis address is unreachable.
 // Validates: Requirement 2.3
-func TestNewRedisMemory_UnreachableAddr(t *testing.T) {
+func TestNew_UnreachableAddr(t *testing.T) {
 	_, err := New(RedisOptions{Addr: "localhost:1"})
 	if err == nil {
 		t.Fatal("expected error for unreachable address, got nil")
@@ -76,7 +76,7 @@ func TestNewRedisMemory_UnreachableAddr(t *testing.T) {
 // TestRedisMemory_LoadNonExistent verifies that Load for a non-existent conversation ID
 // returns an empty (non-nil) slice and nil error.
 // Validates: Requirement 4.2
-func TestRedisMemory_LoadNonExistent(t *testing.T) {
+func TestRedisConversation_LoadNonExistent(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	mem, err := New(RedisOptions{Addr: addr})
@@ -100,7 +100,7 @@ func TestRedisMemory_LoadNonExistent(t *testing.T) {
 // TestRedisMemory_DefaultKeyPrefix verifies that a newly created RedisMemory
 // has the default key prefix "gude:".
 // Validates: Requirement 2.7
-func TestRedisMemory_DefaultKeyPrefix(t *testing.T) {
+func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	mem, err := New(RedisOptions{Addr: addr})
@@ -117,7 +117,7 @@ func TestRedisMemory_DefaultKeyPrefix(t *testing.T) {
 // TestRedisMemory_TTLSet verifies that when WithTTL is configured, saved keys
 // have a TTL set in Redis.
 // Validates: Requirements 2.5, 3.2
-func TestRedisMemory_TTLSet(t *testing.T) {
+func TestRedisConversation_TTLSet(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	ttl := 10 * time.Minute
@@ -154,7 +154,7 @@ func TestRedisMemory_TTLSet(t *testing.T) {
 // TestRedisMemory_NoExpiration verifies that when no TTL is configured (default),
 // saved keys have no expiration (TTL returns -1 in Redis).
 // Validates: Requirements 2.6, 3.3
-func TestRedisMemory_NoExpiration(t *testing.T) {
+func TestRedisConversation_NoExpiration(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	mem, err := New(RedisOptions{Addr: addr})
@@ -201,7 +201,7 @@ func searchSubstr(s, substr string) bool {
 
 // TestRedisMemory_WithMemoryOption verifies that RedisMemory is accepted by agent.WithMemory.
 // Validates: Requirement 2.4
-func TestRedisMemory_WithMemoryOption(t *testing.T) {
+func TestRedisConversation_WithOption(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	mem, err := New(RedisOptions{Addr: addr})
 	if err != nil {
@@ -222,7 +222,7 @@ func TestRedisMemory_WithMemoryOption(t *testing.T) {
 // TestRedisMemory_ListReturnsSavedConversationIDs verifies that List returns
 // all conversation IDs that have been saved, using a unique key prefix.
 // Validates: Requirement 5.5
-func TestRedisMemory_ListReturnsSavedConversationIDs(t *testing.T) {
+func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	prefix := "test-list-delete:"
@@ -277,7 +277,7 @@ func TestRedisMemory_ListReturnsSavedConversationIDs(t *testing.T) {
 // TestRedisMemory_DeleteRemovesTargetKey verifies that Delete removes the target
 // conversation while leaving other conversations intact.
 // Validates: Requirement 6.5
-func TestRedisMemory_DeleteRemovesTargetKey(t *testing.T) {
+func TestRedisConversation_DeleteRemovesTargetKey(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	prefix := "test-del-target:"

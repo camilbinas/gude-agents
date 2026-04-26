@@ -95,7 +95,7 @@ func TestNew_EmptyTable(t *testing.T) {
 	}
 }
 
-// TestNew_LazyConstruction verifies that valid args return a non-nil DynamoDBMemory
+// TestNew_LazyConstruction verifies that valid args return a non-nil DynamoDBConversation
 // without making any network calls.
 // Req 7.3
 func TestNew_LazyConstruction(t *testing.T) {
@@ -104,7 +104,7 @@ func TestNew_LazyConstruction(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m == nil {
-		t.Fatal("expected non-nil DynamoDBMemory")
+		t.Fatal("expected non-nil DynamoDBConversation")
 	}
 }
 
