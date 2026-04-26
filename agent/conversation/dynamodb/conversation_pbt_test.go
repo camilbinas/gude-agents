@@ -16,8 +16,8 @@ import (
 func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
 // newTestMemory creates a DynamoDBMemory backed by the given mock with default test settings.
-func newTestMemory(mock *mockDynamoDBClient, keyPrefix string) *DynamoDBMemory {
-	return &DynamoDBMemory{
+func newTestMemory(mock *mockDynamoDBClient, keyPrefix string) *DynamoDBConversation {
+	return &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    keyPrefix,

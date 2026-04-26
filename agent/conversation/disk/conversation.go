@@ -24,31 +24,31 @@ import (
 )
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*DiskMemory)(nil)
-var _ conversation.ConversationManager = (*DiskMemory)(nil)
+var _ agent.Conversation = (*DiskConversation)(nil)
+var _ conversation.ConversationManager = (*DiskConversation)(nil)
 
-// DiskMemory implements agent.Conversation and conversation.ConversationManager using the
+// DiskConversation implements agent.Conversation and conversation.ConversationManager using the
 // local filesystem. Each conversation is stored as a JSON file.
-type DiskMemory struct {
+type DiskConversation struct {
 	dir string
 	mu  sync.RWMutex
 }
 
 // Option configures a DiskMemory instance.
-type Option func(*DiskMemory)
+type Option func(*DiskConversation)
 
 // New creates a new DiskMemory that stores conversations in the given directory.
 // The directory is created if it doesn't exist.
-func New(dir string, opts ...Option) (*DiskMemory, error) {
+func New(dir string, opts ...Option) (*DiskConversation, error) {
 	if dir == "" {
-		return nil, fmt.Errorf("disk memory: directory path is required")
+		return nil, fmt.Errorf("disk conversation: directory path is required")
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("disk memory: create directory: %w", err)
+		return nil, fmt.Errorf("disk conversation: create directory: %w", err)
 	}
 
-	m := &DiskMemory{dir: dir}
+	m := &DiskConversation{dir: dir}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -56,10 +56,10 @@ func New(dir string, opts ...Option) (*DiskMemory, error) {
 }
 
 // Save persists messages for the given conversation ID as a JSON file.
-func (m *DiskMemory) Save(_ context.Context, conversationID string, messages []agent.Message) error {
+func (m *DiskConversation) Save(_ context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("disk memory: marshal: %w", err)
+		return fmt.Errorf("disk conversation: marshal: %w", err)
 	}
 
 	path := m.path(conversationID)
@@ -70,11 +70,11 @@ func (m *DiskMemory) Save(_ context.Context, conversationID string, messages []a
 	// Write to a temp file first, then rename for atomicity.
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("disk memory: write: %w", err)
+		return fmt.Errorf("disk conversation: write: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp) // clean up on failure
-		return fmt.Errorf("disk memory: rename: %w", err)
+		return fmt.Errorf("disk conversation: rename: %w", err)
 	}
 
 	return nil
@@ -82,7 +82,7 @@ func (m *DiskMemory) Save(_ context.Context, conversationID string, messages []a
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty slice if the file does not exist.
-func (m *DiskMemory) Load(_ context.Context, conversationID string) ([]agent.Message, error) {
+func (m *DiskConversation) Load(_ context.Context, conversationID string) ([]agent.Message, error) {
 	path := m.path(conversationID)
 
 	m.mu.RLock()
@@ -93,25 +93,25 @@ func (m *DiskMemory) Load(_ context.Context, conversationID string) ([]agent.Mes
 		if os.IsNotExist(err) {
 			return []agent.Message{}, nil
 		}
-		return nil, fmt.Errorf("disk memory: read: %w", err)
+		return nil, fmt.Errorf("disk conversation: read: %w", err)
 	}
 
 	messages, err := conversation.UnmarshalMessages(data)
 	if err != nil {
-		return nil, fmt.Errorf("disk memory: unmarshal: %w", err)
+		return nil, fmt.Errorf("disk conversation: unmarshal: %w", err)
 	}
 
 	return messages, nil
 }
 
 // List returns all conversation IDs in the directory.
-func (m *DiskMemory) List(_ context.Context) ([]string, error) {
+func (m *DiskConversation) List(_ context.Context) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
-		return nil, fmt.Errorf("disk memory: list: %w", err)
+		return nil, fmt.Errorf("disk conversation: list: %w", err)
 	}
 
 	var ids []string
@@ -128,20 +128,20 @@ func (m *DiskMemory) List(_ context.Context) ([]string, error) {
 }
 
 // Delete removes the conversation file. Returns nil if the file doesn't exist.
-func (m *DiskMemory) Delete(_ context.Context, conversationID string) error {
+func (m *DiskConversation) Delete(_ context.Context, conversationID string) error {
 	path := m.path(conversationID)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("disk memory: delete: %w", err)
+		return fmt.Errorf("disk conversation: delete: %w", err)
 	}
 	return nil
 }
 
 // path returns the file path for a conversation ID.
-func (m *DiskMemory) path(conversationID string) string {
+func (m *DiskConversation) path(conversationID string) string {
 	// Sanitize the conversation ID to prevent path traversal.
 	safe := strings.ReplaceAll(conversationID, "/", "_")
 	safe = strings.ReplaceAll(safe, "..", "_")

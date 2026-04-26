@@ -45,13 +45,13 @@ import (
 )
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*PostgresMemory)(nil)
-var _ conversation.ConversationManager = (*PostgresMemory)(nil)
+var _ agent.Conversation = (*PostgresConversation)(nil)
+var _ conversation.ConversationManager = (*PostgresConversation)(nil)
 
-// PostgresMemory implements agent.Conversation and conversation.ConversationManager using a
+// PostgresConversation implements agent.Conversation and conversation.ConversationManager using a
 // PostgreSQL database. Each conversation is stored as a row with its messages
 // serialized as JSONB.
-type PostgresMemory struct {
+type PostgresConversation struct {
 	pool      *pgxpool.Pool
 	tableName string
 }
@@ -63,9 +63,9 @@ type PostgresMemory struct {
 //
 // Returns an error if the pool is nil or (with WithAutoMigrate) the schema
 // cannot be initialized.
-func New(pool *pgxpool.Pool, opts ...Option) (*PostgresMemory, error) {
+func New(pool *pgxpool.Pool, opts ...Option) (*PostgresConversation, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("postgres memory: pool is required")
+		return nil, fmt.Errorf("postgres conversation: pool is required")
 	}
 
 	cfg := &pgConfig{
@@ -84,11 +84,11 @@ func New(pool *pgxpool.Pool, opts ...Option) (*PostgresMemory, error) {
 			)
 		`, cfg.tableName)
 		if _, err := pool.Exec(context.Background(), ddl); err != nil {
-			return nil, fmt.Errorf("postgres memory: create table: %w", err)
+			return nil, fmt.Errorf("postgres conversation: create table: %w", err)
 		}
 	}
 
-	return &PostgresMemory{
+	return &PostgresConversation{
 		pool:      pool,
 		tableName: cfg.tableName,
 	}, nil
@@ -96,10 +96,10 @@ func New(pool *pgxpool.Pool, opts ...Option) (*PostgresMemory, error) {
 
 // Save persists messages for the given conversation ID. Uses an upsert so
 // that both new and existing conversations are handled in a single statement.
-func (m *PostgresMemory) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *PostgresConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("postgres memory: marshal: %w", err)
+		return fmt.Errorf("postgres conversation: marshal: %w", err)
 	}
 
 	query := fmt.Sprintf(`
@@ -111,14 +111,14 @@ func (m *PostgresMemory) Save(ctx context.Context, conversationID string, messag
 	`, m.tableName)
 
 	if _, err := m.pool.Exec(ctx, query, conversationID, data); err != nil {
-		return fmt.Errorf("postgres memory: save: %w", err)
+		return fmt.Errorf("postgres conversation: save: %w", err)
 	}
 	return nil
 }
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the conversation does not exist.
-func (m *PostgresMemory) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *PostgresConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	query := fmt.Sprintf(`SELECT messages FROM %s WHERE conversation_id = $1`, m.tableName)
 
 	var data []byte
@@ -127,24 +127,24 @@ func (m *PostgresMemory) Load(ctx context.Context, conversationID string) ([]age
 		if err == pgx.ErrNoRows {
 			return []agent.Message{}, nil
 		}
-		return nil, fmt.Errorf("postgres memory: load: %w", err)
+		return nil, fmt.Errorf("postgres conversation: load: %w", err)
 	}
 
 	messages, err := conversation.UnmarshalMessages(data)
 	if err != nil {
-		return nil, fmt.Errorf("postgres memory: unmarshal: %w", err)
+		return nil, fmt.Errorf("postgres conversation: unmarshal: %w", err)
 	}
 	return messages, nil
 }
 
 // List returns all conversation IDs in the database, ordered by most recently
 // updated first.
-func (m *PostgresMemory) List(ctx context.Context) ([]string, error) {
+func (m *PostgresConversation) List(ctx context.Context) ([]string, error) {
 	query := fmt.Sprintf(`SELECT conversation_id FROM %s ORDER BY updated_at DESC`, m.tableName)
 
 	rows, err := m.pool.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("postgres memory: list: %w", err)
+		return nil, fmt.Errorf("postgres conversation: list: %w", err)
 	}
 	defer rows.Close()
 
@@ -152,28 +152,28 @@ func (m *PostgresMemory) List(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("postgres memory: list scan: %w", err)
+			return nil, fmt.Errorf("postgres conversation: list scan: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("postgres memory: list rows: %w", err)
+		return nil, fmt.Errorf("postgres conversation: list rows: %w", err)
 	}
 	return ids, nil
 }
 
 // Delete removes a conversation by ID. Returns nil if the conversation
 // does not exist.
-func (m *PostgresMemory) Delete(ctx context.Context, conversationID string) error {
+func (m *PostgresConversation) Delete(ctx context.Context, conversationID string) error {
 	query := fmt.Sprintf(`DELETE FROM %s WHERE conversation_id = $1`, m.tableName)
 
 	if _, err := m.pool.Exec(ctx, query, conversationID); err != nil {
-		return fmt.Errorf("postgres memory: delete: %w", err)
+		return fmt.Errorf("postgres conversation: delete: %w", err)
 	}
 	return nil
 }
 
 // Close closes the underlying connection pool.
-func (m *PostgresMemory) Close() {
+func (m *PostgresConversation) Close() {
 	m.pool.Close()
 }

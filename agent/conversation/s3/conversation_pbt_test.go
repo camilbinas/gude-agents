@@ -19,7 +19,7 @@ func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10
 func TestProperty_BlobSaveLoadRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
-		m := &S3Memory{
+		m := &S3Conversation{
 			client:    mock,
 			bucket:    "test-bucket",
 			keyPrefix: "",
@@ -54,7 +54,7 @@ func TestProperty_BlobKeyFormation(t *testing.T) {
 		prefix := rapid.StringMatching(`[a-zA-Z0-9:_-]{1,20}`).Draw(t, "prefix")
 		convID := rapid.StringMatching(`[a-zA-Z0-9]{4,16}`).Draw(t, "convID")
 
-		m := &S3Memory{
+		m := &S3Conversation{
 			client:    mock,
 			bucket:    "test-bucket",
 			keyPrefix: prefix,
@@ -82,7 +82,7 @@ func TestProperty_BlobKeyFormation(t *testing.T) {
 func TestProperty_BlobOverwrite(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
-		m := &S3Memory{
+		m := &S3Conversation{
 			client:    mock,
 			bucket:    "test-bucket",
 			keyPrefix: "",
@@ -121,7 +121,7 @@ func TestProperty_BlobListCompleteness(t *testing.T) {
 		// Use a unique isolated prefix per iteration to avoid cross-contamination.
 		prefix := rapid.StringMatching(`pbt-[a-zA-Z0-9]{6,12}:`).Draw(t, "prefix")
 
-		m := &S3Memory{
+		m := &S3Conversation{
 			client:    mock,
 			bucket:    "test-bucket",
 			keyPrefix: prefix,
@@ -177,7 +177,7 @@ func TestProperty_BlobListCompleteness(t *testing.T) {
 func TestProperty_BlobDeleteThenLoad(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		mock := newMockS3Client()
-		m := &S3Memory{
+		m := &S3Conversation{
 			client:    mock,
 			bucket:    "test-bucket",
 			keyPrefix: "",

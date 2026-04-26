@@ -28,7 +28,7 @@ func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10
 func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr})
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
 // containing "ping" when the Redis address is unreachable.
 // Validates: Requirement 2.3
 func TestNewRedisMemory_UnreachableAddr(t *testing.T) {
-	_, err := NewRedisMemory(RedisOptions{Addr: "localhost:1"})
+	_, err := NewRedisConversation(RedisOptions{Addr: "localhost:1"})
 	if err == nil {
 		t.Fatal("expected error for unreachable address, got nil")
 	}
@@ -79,7 +79,7 @@ func TestNewRedisMemory_UnreachableAddr(t *testing.T) {
 func TestRedisMemory_LoadNonExistent(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr})
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRedisMemory_LoadNonExistent(t *testing.T) {
 func TestRedisMemory_DefaultKeyPrefix(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr})
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestRedisMemory_TTLSet(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	ttl := 10 * time.Minute
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr}, WithTTL(ttl))
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr}, WithTTL(ttl))
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestRedisMemory_TTLSet(t *testing.T) {
 func TestRedisMemory_NoExpiration(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr})
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -203,7 +203,7 @@ func searchSubstr(s, substr string) bool {
 // Validates: Requirement 2.4
 func TestRedisMemory_WithMemoryOption(t *testing.T) {
 	addr := skipIfNoRedis(t)
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr})
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr})
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestRedisMemory_ListReturnsSavedConversationIDs(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	prefix := "test-list-delete:"
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestRedisMemory_DeleteRemovesTargetKey(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	prefix := "test-del-target:"
-	mem, err := NewRedisMemory(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
+	mem, err := NewRedisConversation(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
 	if err != nil {
 		t.Fatalf("failed to create RedisMemory: %v", err)
 	}

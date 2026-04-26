@@ -145,13 +145,13 @@ func TestS3Memory_WithPathStyle(t *testing.T) {
 
 // --- Error wrapping tests ---
 
-// TestS3Memory_Save_ErrorWrapping verifies that a PutObject error is wrapped with "blob memory: save".
+// TestS3Memory_Save_ErrorWrapping verifies that a PutObject error is wrapped with "s3 conversation: save".
 // Req 4.3
 func TestS3Memory_Save_ErrorWrapping(t *testing.T) {
 	mock := newMockS3Client()
 	mock.putErr = errors.New("s3 unavailable")
 
-	m := &S3Memory{
+	m := &S3Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -161,18 +161,18 @@ func TestS3Memory_Save_ErrorWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "blob memory: save") {
-		t.Errorf("expected error to contain %q, got %q", "blob memory: save", err.Error())
+	if !strings.Contains(err.Error(), "s3 conversation: save") {
+		t.Errorf("expected error to contain %q, got %q", "s3 conversation: save", err.Error())
 	}
 }
 
-// TestS3Memory_Load_ErrorWrapping verifies that a non-404 GetObject error is wrapped with "blob memory: load".
+// TestS3Memory_Load_ErrorWrapping verifies that a non-404 GetObject error is wrapped with "s3 conversation: load".
 // Req 5.3
 func TestS3Memory_Load_ErrorWrapping(t *testing.T) {
 	mock := newMockS3Client()
 	mock.getErr = errors.New("s3 internal error")
 
-	m := &S3Memory{
+	m := &S3Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -182,18 +182,18 @@ func TestS3Memory_Load_ErrorWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "blob memory: load") {
-		t.Errorf("expected error to contain %q, got %q", "blob memory: load", err.Error())
+	if !strings.Contains(err.Error(), "s3 conversation: load") {
+		t.Errorf("expected error to contain %q, got %q", "s3 conversation: load", err.Error())
 	}
 }
 
-// TestS3Memory_Delete_ErrorWrapping verifies that a DeleteObject error is wrapped with "blob memory: delete".
+// TestS3Memory_Delete_ErrorWrapping verifies that a DeleteObject error is wrapped with "s3 conversation: delete".
 // Req 6.4
 func TestS3Memory_Delete_ErrorWrapping(t *testing.T) {
 	mock := newMockS3Client()
 	mock.deleteErr = errors.New("s3 delete error")
 
-	m := &S3Memory{
+	m := &S3Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -203,8 +203,8 @@ func TestS3Memory_Delete_ErrorWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "blob memory: delete") {
-		t.Errorf("expected error to contain %q, got %q", "blob memory: delete", err.Error())
+	if !strings.Contains(err.Error(), "s3 conversation: delete") {
+		t.Errorf("expected error to contain %q, got %q", "s3 conversation: delete", err.Error())
 	}
 }
 
@@ -216,7 +216,7 @@ func TestS3Memory_Load_NotFound(t *testing.T) {
 	mock := newMockS3Client()
 	// No objects stored — GetObject will return NoSuchKey.
 
-	m := &S3Memory{
+	m := &S3Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -239,7 +239,7 @@ func TestS3Memory_Load_NotFound(t *testing.T) {
 func TestS3Memory_Save_EmptySlice(t *testing.T) {
 	mock := newMockS3Client()
 
-	m := &S3Memory{
+	m := &S3Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -265,7 +265,7 @@ func TestS3Memory_Save_EmptySlice(t *testing.T) {
 func TestS3Memory_Delete_NonExistent(t *testing.T) {
 	mock := newMockS3Client()
 
-	m := &S3Memory{
+	m := &S3Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",

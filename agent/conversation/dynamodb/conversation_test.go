@@ -86,7 +86,7 @@ func (m *mockDynamoDBClient) Scan(_ context.Context, in *dynamodb.ScanInput, _ .
 // TestNewDynamoDBMemory_EmptyTable verifies that an empty table name returns an error.
 // Req 7.4
 func TestNewDynamoDBMemory_EmptyTable(t *testing.T) {
-	_, err := NewDynamoDBMemory(aws.Config{}, "")
+	_, err := NewDynamoDBConversation(aws.Config{}, "")
 	if err == nil {
 		t.Fatal("expected error for empty table, got nil")
 	}
@@ -99,7 +99,7 @@ func TestNewDynamoDBMemory_EmptyTable(t *testing.T) {
 // without making any network calls.
 // Req 7.3
 func TestNewDynamoDBMemory_LazyConstruction(t *testing.T) {
-	m, err := NewDynamoDBMemory(aws.Config{}, "my-table")
+	m, err := NewDynamoDBConversation(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestNewDynamoDBMemory_LazyConstruction(t *testing.T) {
 // TestDynamoDBMemory_DefaultKeyPrefix verifies that keyPrefix defaults to "gude:".
 // Req 8.1
 func TestDynamoDBMemory_DefaultKeyPrefix(t *testing.T) {
-	m, err := NewDynamoDBMemory(aws.Config{}, "my-table")
+	m, err := NewDynamoDBConversation(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestDynamoDBMemory_DefaultKeyPrefix(t *testing.T) {
 
 // TestDynamoDBMemory_DefaultPKAttribute verifies that pkAttribute defaults to "conversation_id".
 func TestDynamoDBMemory_DefaultPKAttribute(t *testing.T) {
-	m, err := NewDynamoDBMemory(aws.Config{}, "my-table")
+	m, err := NewDynamoDBConversation(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestDynamoDBMemory_DefaultPKAttribute(t *testing.T) {
 func TestDynamoDBMemory_WithPartitionKey(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.pkAttr = "id"
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -164,7 +164,7 @@ func TestDynamoDBMemory_WithPartitionKey(t *testing.T) {
 // Req 8.4
 func TestDynamoDBMemory_WithTTL(t *testing.T) {
 	mock := newMockDynamoDBClient()
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -191,7 +191,7 @@ func TestDynamoDBMemory_WithTTL(t *testing.T) {
 // Req 8.5
 func TestDynamoDBMemory_NoTTL(t *testing.T) {
 	mock := newMockDynamoDBClient()
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -218,7 +218,7 @@ func TestDynamoDBMemory_NoTTL(t *testing.T) {
 // Req 8.6
 func TestDynamoDBMemory_WithTTLAttribute(t *testing.T) {
 	mock := newMockDynamoDBClient()
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -246,13 +246,13 @@ func TestDynamoDBMemory_WithTTLAttribute(t *testing.T) {
 
 // --- Error wrapping tests ---
 
-// TestDynamoDBMemory_Save_ErrorWrapping verifies that a generic PutItem error is wrapped with "dynamodb memory: save".
+// TestDynamoDBMemory_Save_ErrorWrapping verifies that a generic PutItem error is wrapped with "dynamodb conversation: save".
 // Req 9.3
 func TestDynamoDBMemory_Save_ErrorWrapping(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.putErr = errors.New("dynamodb unavailable")
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -264,18 +264,18 @@ func TestDynamoDBMemory_Save_ErrorWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "dynamodb memory: save") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb memory: save", err.Error())
+	if !strings.Contains(err.Error(), "dynamodb conversation: save") {
+		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: save", err.Error())
 	}
 }
 
-// TestDynamoDBMemory_Load_ErrorWrapping verifies that a GetItem error is wrapped with "dynamodb memory: load".
+// TestDynamoDBMemory_Load_ErrorWrapping verifies that a GetItem error is wrapped with "dynamodb conversation: load".
 // Req 10.3
 func TestDynamoDBMemory_Load_ErrorWrapping(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.getErr = errors.New("dynamodb internal error")
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -287,18 +287,18 @@ func TestDynamoDBMemory_Load_ErrorWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "dynamodb memory: load") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb memory: load", err.Error())
+	if !strings.Contains(err.Error(), "dynamodb conversation: load") {
+		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: load", err.Error())
 	}
 }
 
-// TestDynamoDBMemory_Delete_ErrorWrapping verifies that a DeleteItem error is wrapped with "dynamodb memory: delete".
+// TestDynamoDBMemory_Delete_ErrorWrapping verifies that a DeleteItem error is wrapped with "dynamodb conversation: delete".
 // Req 11.5
 func TestDynamoDBMemory_Delete_ErrorWrapping(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.deleteErr = errors.New("dynamodb delete error")
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -310,8 +310,8 @@ func TestDynamoDBMemory_Delete_ErrorWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "dynamodb memory: delete") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb memory: delete", err.Error())
+	if !strings.Contains(err.Error(), "dynamodb conversation: delete") {
+		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: delete", err.Error())
 	}
 }
 
@@ -322,7 +322,7 @@ func TestDynamoDBMemory_Delete_ErrorWrapping(t *testing.T) {
 func TestDynamoDBMemory_Load_NotFound(t *testing.T) {
 	mock := newMockDynamoDBClient()
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -347,7 +347,7 @@ func TestDynamoDBMemory_Load_NotFound(t *testing.T) {
 func TestDynamoDBMemory_Save_EmptySlice(t *testing.T) {
 	mock := newMockDynamoDBClient()
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -382,7 +382,7 @@ func TestDynamoDBMemory_Save_EmptySlice(t *testing.T) {
 func TestDynamoDBMemory_Delete_NonExistent(t *testing.T) {
 	mock := newMockDynamoDBClient()
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -414,7 +414,7 @@ func (e *validationError) ErrorFault() smithy.ErrorFault {
 var _ smithy.APIError = (*validationError)(nil)
 
 // TestDynamoDBMemory_ItemTooLarge verifies that a ValidationException with the size message
-// is wrapped with "dynamodb memory: item too large".
+// is wrapped with "dynamodb conversation: item too large".
 // Req 12.2, 12.3
 func TestDynamoDBMemory_ItemTooLarge(t *testing.T) {
 	mock := newMockDynamoDBClient()
@@ -423,7 +423,7 @@ func TestDynamoDBMemory_ItemTooLarge(t *testing.T) {
 		message: "Item size has exceeded the maximum allowed size",
 	}
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -435,13 +435,13 @@ func TestDynamoDBMemory_ItemTooLarge(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "dynamodb memory: item too large") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb memory: item too large", err.Error())
+	if !strings.Contains(err.Error(), "dynamodb conversation: item too large") {
+		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: item too large", err.Error())
 	}
 }
 
 // TestDynamoDBMemory_OtherValidationException verifies that a ValidationException with a different
-// message is wrapped with "dynamodb memory: save" (not item-too-large).
+// message is wrapped with "dynamodb conversation: save" (not item-too-large).
 // Req 12.3
 func TestDynamoDBMemory_OtherValidationException(t *testing.T) {
 	mock := newMockDynamoDBClient()
@@ -450,7 +450,7 @@ func TestDynamoDBMemory_OtherValidationException(t *testing.T) {
 		message: "One or more parameter values were invalid",
 	}
 
-	m := &DynamoDBMemory{
+	m := &DynamoDBConversation{
 		client:       mock,
 		table:        "test-table",
 		keyPrefix:    "gude:",
@@ -465,7 +465,7 @@ func TestDynamoDBMemory_OtherValidationException(t *testing.T) {
 	if strings.Contains(err.Error(), "item too large") {
 		t.Errorf("expected generic save error, but got item-too-large: %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "dynamodb memory: save") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb memory: save", err.Error())
+	if !strings.Contains(err.Error(), "dynamodb conversation: save") {
+		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: save", err.Error())
 	}
 }

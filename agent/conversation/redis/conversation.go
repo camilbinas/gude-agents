@@ -13,41 +13,41 @@ import (
 )
 
 // Compile-time check: RedisMemory implements agent.Conversation.
-var _ agent.Conversation = (*RedisMemory)(nil)
+var _ agent.Conversation = (*RedisConversation)(nil)
 
 // Compile-time check: RedisMemory implements conversation.ConversationManager.
-var _ conversation.ConversationManager = (*RedisMemory)(nil)
+var _ conversation.ConversationManager = (*RedisConversation)(nil)
 
-// RedisMemoryOption configures a RedisMemory instance.
-type RedisMemoryOption func(*RedisMemory)
+// RedisConversationOption configures a RedisMemory instance.
+type RedisConversationOption func(*RedisConversation)
 
 // WithTTL sets the TTL for conversation keys. 0 means no expiration.
-func WithTTL(d time.Duration) RedisMemoryOption {
-	return func(m *RedisMemory) {
+func WithTTL(d time.Duration) RedisConversationOption {
+	return func(m *RedisConversation) {
 		m.ttl = d
 	}
 }
 
 // WithKeyPrefix sets the key prefix. Default: "gude:"
-func WithKeyPrefix(prefix string) RedisMemoryOption {
-	return func(m *RedisMemory) {
+func WithKeyPrefix(prefix string) RedisConversationOption {
+	return func(m *RedisConversation) {
 		m.keyPrefix = prefix
 	}
 }
 
-// RedisMemory implements agent.Conversation using Redis.
+// RedisConversation implements agent.Conversation using Redis.
 // Documented in docs/redis.md — update when changing constructor, options, or methods.
-type RedisMemory struct {
+type RedisConversation struct {
 	client    *goredis.Client
 	ttl       time.Duration
 	keyPrefix string
 }
 
-// NewRedisMemory creates a new RedisMemory. Pings Redis to verify connectivity.
-func NewRedisMemory(opts RedisOptions, mopts ...RedisMemoryOption) (*RedisMemory, error) {
+// NewRedisConversation creates a new RedisMemory. Pings Redis to verify connectivity.
+func NewRedisConversation(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error) {
 	client := newClient(opts)
 
-	m := &RedisMemory{
+	m := &RedisConversation{
 		client:    client,
 		ttl:       0,
 		keyPrefix: "gude:",
@@ -59,44 +59,44 @@ func NewRedisMemory(opts RedisOptions, mopts ...RedisMemoryOption) (*RedisMemory
 
 	if err := client.Ping(context.Background()).Err(); err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("redis memory: ping: %w", err)
+		return nil, fmt.Errorf("redis conversation: ping: %w", err)
 	}
 
 	return m, nil
 }
 
 // Save persists messages for the given conversation ID.
-func (m *RedisMemory) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *RedisConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("redis memory: marshal: %w", err)
+		return fmt.Errorf("redis conversation: marshal: %w", err)
 	}
 	key := m.keyPrefix + conversationID
 	if err := m.client.Set(ctx, key, data, m.ttl).Err(); err != nil {
-		return fmt.Errorf("redis memory: save: %w", err)
+		return fmt.Errorf("redis conversation: save: %w", err)
 	}
 	return nil
 }
 
 // Load retrieves messages for the given conversation ID.
-func (m *RedisMemory) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *RedisConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	key := m.keyPrefix + conversationID
 	data, err := m.client.Get(ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, goredis.Nil) {
 			return []agent.Message{}, nil
 		}
-		return nil, fmt.Errorf("redis memory: load: %w", err)
+		return nil, fmt.Errorf("redis conversation: load: %w", err)
 	}
 	messages, err := conversation.UnmarshalMessages(data)
 	if err != nil {
-		return nil, fmt.Errorf("redis memory: unmarshal: %w", err)
+		return nil, fmt.Errorf("redis conversation: unmarshal: %w", err)
 	}
 	return messages, nil
 }
 
 // List returns all conversation IDs by scanning keys with the configured prefix.
-func (m *RedisMemory) List(ctx context.Context) ([]string, error) {
+func (m *RedisConversation) List(ctx context.Context) ([]string, error) {
 	pattern := m.keyPrefix + "*"
 	var ids []string
 	var cursor uint64
@@ -104,7 +104,7 @@ func (m *RedisMemory) List(ctx context.Context) ([]string, error) {
 	for {
 		keys, next, err := m.client.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
-			return nil, fmt.Errorf("redis memory: list: %w", err)
+			return nil, fmt.Errorf("redis conversation: list: %w", err)
 		}
 		for _, key := range keys {
 			ids = append(ids, strings.TrimPrefix(key, m.keyPrefix))
@@ -119,15 +119,15 @@ func (m *RedisMemory) List(ctx context.Context) ([]string, error) {
 }
 
 // Delete removes a conversation key from Redis.
-func (m *RedisMemory) Delete(ctx context.Context, conversationID string) error {
+func (m *RedisConversation) Delete(ctx context.Context, conversationID string) error {
 	key := m.keyPrefix + conversationID
 	if err := m.client.Del(ctx, key).Err(); err != nil {
-		return fmt.Errorf("redis memory: delete: %w", err)
+		return fmt.Errorf("redis conversation: delete: %w", err)
 	}
 	return nil
 }
 
 // Close closes the underlying Redis client.
-func (m *RedisMemory) Close() error {
+func (m *RedisConversation) Close() error {
 	return m.client.Close()
 }

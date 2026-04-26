@@ -36,7 +36,7 @@ func uniqueTable(t *testing.T) string {
 }
 
 // newTestMemory creates a PostgresMemory with a unique table and registers cleanup.
-func newTestMemory(t *testing.T) *PostgresMemory {
+func newTestMemory(t *testing.T) *PostgresConversation {
 	t.Helper()
 	pool := skipIfNoPostgres(t)
 	table := uniqueTable(t)

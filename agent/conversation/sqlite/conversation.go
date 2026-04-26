@@ -32,13 +32,13 @@ import (
 )
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*SQLiteMemory)(nil)
-var _ conversation.ConversationManager = (*SQLiteMemory)(nil)
+var _ agent.Conversation = (*SQLiteConversation)(nil)
+var _ conversation.ConversationManager = (*SQLiteConversation)(nil)
 
-// SQLiteMemory implements agent.Conversation and conversation.ConversationManager using a
+// SQLiteConversation implements agent.Conversation and conversation.ConversationManager using a
 // SQLite database. Each conversation is stored as a row with its messages
 // serialized as JSON.
-type SQLiteMemory struct {
+type SQLiteConversation struct {
 	db        *sql.DB
 	tableName string
 }
@@ -50,9 +50,9 @@ type SQLiteMemory struct {
 // The conversations table is created automatically if it doesn't exist.
 // Returns an error if the database cannot be opened or the schema cannot
 // be initialized.
-func New(dsn string, opts ...Option) (*SQLiteMemory, error) {
+func New(dsn string, opts ...Option) (*SQLiteConversation, error) {
 	if dsn == "" {
-		return nil, fmt.Errorf("sqlite memory: dsn is required")
+		return nil, fmt.Errorf("sqlite conversation: dsn is required")
 	}
 
 	cfg := &sqliteConfig{
@@ -65,7 +65,7 @@ func New(dsn string, opts ...Option) (*SQLiteMemory, error) {
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite memory: open: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: open: %w", err)
 	}
 
 	// Set pragmas for reliability and performance.
@@ -76,7 +76,7 @@ func New(dsn string, opts ...Option) (*SQLiteMemory, error) {
 	`, cfg.busyTimeout.Milliseconds())
 	if _, err := db.Exec(pragmas); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("sqlite memory: pragmas: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: pragmas: %w", err)
 	}
 
 	// Create the conversations table if it doesn't exist.
@@ -89,10 +89,10 @@ func New(dsn string, opts ...Option) (*SQLiteMemory, error) {
 	`, cfg.tableName)
 	if _, err := db.Exec(ddl); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("sqlite memory: create table: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: create table: %w", err)
 	}
 
-	return &SQLiteMemory{
+	return &SQLiteConversation{
 		db:        db,
 		tableName: cfg.tableName,
 	}, nil
@@ -100,10 +100,10 @@ func New(dsn string, opts ...Option) (*SQLiteMemory, error) {
 
 // Save persists messages for the given conversation ID. Uses an upsert so
 // that both new and existing conversations are handled in a single statement.
-func (m *SQLiteMemory) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *SQLiteConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("sqlite memory: marshal: %w", err)
+		return fmt.Errorf("sqlite conversation: marshal: %w", err)
 	}
 
 	query := fmt.Sprintf(`
@@ -115,14 +115,14 @@ func (m *SQLiteMemory) Save(ctx context.Context, conversationID string, messages
 	`, m.tableName)
 
 	if _, err := m.db.ExecContext(ctx, query, conversationID, string(data)); err != nil {
-		return fmt.Errorf("sqlite memory: save: %w", err)
+		return fmt.Errorf("sqlite conversation: save: %w", err)
 	}
 	return nil
 }
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the conversation does not exist.
-func (m *SQLiteMemory) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *SQLiteConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	query := fmt.Sprintf(`SELECT messages FROM %s WHERE conversation_id = ?`, m.tableName)
 
 	var data string
@@ -131,24 +131,24 @@ func (m *SQLiteMemory) Load(ctx context.Context, conversationID string) ([]agent
 		if err == sql.ErrNoRows {
 			return []agent.Message{}, nil
 		}
-		return nil, fmt.Errorf("sqlite memory: load: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: load: %w", err)
 	}
 
 	messages, err := conversation.UnmarshalMessages([]byte(data))
 	if err != nil {
-		return nil, fmt.Errorf("sqlite memory: unmarshal: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: unmarshal: %w", err)
 	}
 	return messages, nil
 }
 
 // List returns all conversation IDs in the database, ordered by most recently
 // updated first.
-func (m *SQLiteMemory) List(ctx context.Context) ([]string, error) {
+func (m *SQLiteConversation) List(ctx context.Context) ([]string, error) {
 	query := fmt.Sprintf(`SELECT conversation_id FROM %s ORDER BY updated_at DESC`, m.tableName)
 
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite memory: list: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: list: %w", err)
 	}
 	defer rows.Close()
 
@@ -156,28 +156,28 @@ func (m *SQLiteMemory) List(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("sqlite memory: list scan: %w", err)
+			return nil, fmt.Errorf("sqlite conversation: list scan: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite memory: list rows: %w", err)
+		return nil, fmt.Errorf("sqlite conversation: list rows: %w", err)
 	}
 	return ids, nil
 }
 
 // Delete removes a conversation by ID. Returns nil if the conversation
 // does not exist.
-func (m *SQLiteMemory) Delete(ctx context.Context, conversationID string) error {
+func (m *SQLiteConversation) Delete(ctx context.Context, conversationID string) error {
 	query := fmt.Sprintf(`DELETE FROM %s WHERE conversation_id = ?`, m.tableName)
 
 	if _, err := m.db.ExecContext(ctx, query, conversationID); err != nil {
-		return fmt.Errorf("sqlite memory: delete: %w", err)
+		return fmt.Errorf("sqlite conversation: delete: %w", err)
 	}
 	return nil
 }
 
 // Close closes the underlying database connection.
-func (m *SQLiteMemory) Close() error {
+func (m *SQLiteConversation) Close() error {
 	return m.db.Close()
 }

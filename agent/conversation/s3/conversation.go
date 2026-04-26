@@ -30,12 +30,12 @@ type s3Client interface {
 }
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*S3Memory)(nil)
-var _ conversation.ConversationManager = (*S3Memory)(nil)
+var _ agent.Conversation = (*S3Conversation)(nil)
+var _ conversation.ConversationManager = (*S3Conversation)(nil)
 
-// S3Memory implements agent.Conversation and conversation.ConversationManager using an
+// S3Conversation implements agent.Conversation and conversation.ConversationManager using an
 // S3-compatible object store.
-type S3Memory struct {
+type S3Conversation struct {
 	client    s3Client
 	bucket    string
 	keyPrefix string
@@ -45,12 +45,12 @@ type S3Memory struct {
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if bucket is empty.
-func New(cfg aws.Config, bucket string, opts ...S3MemoryOption) (*S3Memory, error) {
+func New(cfg aws.Config, bucket string, opts ...S3ConversationOption) (*S3Conversation, error) {
 	if bucket == "" {
-		return nil, fmt.Errorf("blob memory: bucket name is required")
+		return nil, fmt.Errorf("s3 conversation: bucket name is required")
 	}
 
-	c := &blobMemoryConfig{
+	c := &s3ConversationConfig{
 		keyPrefix: "",
 	}
 	for _, o := range opts {
@@ -75,7 +75,7 @@ func New(cfg aws.Config, bucket string, opts ...S3MemoryOption) (*S3Memory, erro
 		}
 	})
 
-	return &S3Memory{
+	return &S3Conversation{
 		client:    client,
 		bucket:    bucket,
 		keyPrefix: c.keyPrefix,
@@ -83,10 +83,10 @@ func New(cfg aws.Config, bucket string, opts ...S3MemoryOption) (*S3Memory, erro
 }
 
 // Save persists messages for the given conversation ID as a JSON object in S3.
-func (m *S3Memory) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *S3Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("blob memory: save: %w", err)
+		return fmt.Errorf("s3 conversation: save: %w", err)
 	}
 
 	_, err = m.client.PutObject(ctx, &s3.PutObjectInput{
@@ -96,7 +96,7 @@ func (m *S3Memory) Save(ctx context.Context, conversationID string, messages []a
 		ContentType: aws.String("application/json"),
 	})
 	if err != nil {
-		return fmt.Errorf("blob memory: save: %w", err)
+		return fmt.Errorf("s3 conversation: save: %w", err)
 	}
 
 	return nil
@@ -104,7 +104,7 @@ func (m *S3Memory) Save(ctx context.Context, conversationID string, messages []a
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the object does not exist.
-func (m *S3Memory) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *S3Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	out, err := m.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(m.keyPrefix + conversationID),
@@ -114,25 +114,25 @@ func (m *S3Memory) Load(ctx context.Context, conversationID string) ([]agent.Mes
 		if errors.As(err, &noSuchKey) {
 			return []agent.Message{}, nil
 		}
-		return nil, fmt.Errorf("blob memory: load: %w", err)
+		return nil, fmt.Errorf("s3 conversation: load: %w", err)
 	}
 	defer out.Body.Close()
 
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
-		return nil, fmt.Errorf("blob memory: load: %w", err)
+		return nil, fmt.Errorf("s3 conversation: load: %w", err)
 	}
 
 	messages, err := conversation.UnmarshalMessages(data)
 	if err != nil {
-		return nil, fmt.Errorf("blob memory: load: %w", err)
+		return nil, fmt.Errorf("s3 conversation: load: %w", err)
 	}
 
 	return messages, nil
 }
 
 // List returns all conversation IDs whose objects share the configured key prefix.
-func (m *S3Memory) List(ctx context.Context) ([]string, error) {
+func (m *S3Conversation) List(ctx context.Context) ([]string, error) {
 	var ids []string
 	var continuationToken *string
 
@@ -143,7 +143,7 @@ func (m *S3Memory) List(ctx context.Context) ([]string, error) {
 			ContinuationToken: continuationToken,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("blob memory: list: %w", err)
+			return nil, fmt.Errorf("s3 conversation: list: %w", err)
 		}
 
 		for _, obj := range out.Contents {
@@ -163,13 +163,13 @@ func (m *S3Memory) List(ctx context.Context) ([]string, error) {
 
 // Delete removes the object for the given conversation ID.
 // A not-found response is not treated as an error.
-func (m *S3Memory) Delete(ctx context.Context, conversationID string) error {
+func (m *S3Conversation) Delete(ctx context.Context, conversationID string) error {
 	_, err := m.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(m.keyPrefix + conversationID),
 	})
 	if err != nil {
-		return fmt.Errorf("blob memory: delete: %w", err)
+		return fmt.Errorf("s3 conversation: delete: %w", err)
 	}
 
 	return nil

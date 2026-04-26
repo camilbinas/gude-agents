@@ -48,11 +48,11 @@ type dynamoDBClient interface {
 }
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*DynamoDBMemory)(nil)
-var _ conversation.ConversationManager = (*DynamoDBMemory)(nil)
+var _ agent.Conversation = (*DynamoDBConversation)(nil)
+var _ conversation.ConversationManager = (*DynamoDBConversation)(nil)
 
-// DynamoDBMemory implements agent.Conversation and conversation.ConversationManager using Amazon DynamoDB.
-type DynamoDBMemory struct {
+// DynamoDBConversation implements agent.Conversation and conversation.ConversationManager using Amazon DynamoDB.
+type DynamoDBConversation struct {
 	client       dynamoDBClient
 	table        string
 	keyPrefix    string
@@ -61,16 +61,16 @@ type DynamoDBMemory struct {
 	pkAttribute  string
 }
 
-// NewDynamoDBMemory creates a new DynamoDBMemory. No network calls are made at
+// NewDynamoDBConversation creates a new DynamoDBMemory. No network calls are made at
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if table is empty.
-func NewDynamoDBMemory(cfg aws.Config, table string, opts ...DynamoDBMemoryOption) (*DynamoDBMemory, error) {
+func NewDynamoDBConversation(cfg aws.Config, table string, opts ...DynamoDBConversationOption) (*DynamoDBConversation, error) {
 	if table == "" {
-		return nil, fmt.Errorf("dynamodb memory: table name is required")
+		return nil, fmt.Errorf("dynamodb conversation: table name is required")
 	}
 
-	c := &dynamoDBMemoryConfig{
+	c := &dynamoDBConversationConfig{
 		keyPrefix:    "gude:",
 		ttlAttribute: "ttl",
 		pkAttribute:  "conversation_id",
@@ -85,7 +85,7 @@ func NewDynamoDBMemory(cfg aws.Config, table string, opts ...DynamoDBMemoryOptio
 		}
 	})
 
-	return &DynamoDBMemory{
+	return &DynamoDBConversation{
 		client:       client,
 		table:        table,
 		keyPrefix:    c.keyPrefix,
@@ -97,10 +97,10 @@ func NewDynamoDBMemory(cfg aws.Config, table string, opts ...DynamoDBMemoryOptio
 
 // Save persists messages for the given conversation ID as a DynamoDB item.
 // When TTL is configured, a numeric Unix-epoch TTL attribute is also written.
-func (m *DynamoDBMemory) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *DynamoDBConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("dynamodb memory: save: %w", err)
+		return fmt.Errorf("dynamodb conversation: save: %w", err)
 	}
 
 	pk := m.keyPrefix + conversationID
@@ -123,9 +123,9 @@ func (m *DynamoDBMemory) Save(ctx context.Context, conversationID string, messag
 		if errors.As(err, &apiErr) &&
 			apiErr.ErrorCode() == "ValidationException" &&
 			strings.Contains(apiErr.ErrorMessage(), "Item size has exceeded the maximum allowed size") {
-			return fmt.Errorf("dynamodb memory: item too large: conversation exceeds DynamoDB's 400 KB item size limit; consider using conversation.NewWindow or conversation.NewSummary to bound conversation size: %w", err)
+			return fmt.Errorf("dynamodb conversation: item too large: conversation exceeds DynamoDB's 400 KB item size limit; consider using conversation.NewWindow or conversation.NewSummary to bound conversation size: %w", err)
 		}
-		return fmt.Errorf("dynamodb memory: save: %w", err)
+		return fmt.Errorf("dynamodb conversation: save: %w", err)
 	}
 
 	return nil
@@ -133,7 +133,7 @@ func (m *DynamoDBMemory) Save(ctx context.Context, conversationID string, messag
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the item does not exist.
-func (m *DynamoDBMemory) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *DynamoDBConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	pk := m.keyPrefix + conversationID
 
 	out, err := m.client.GetItem(ctx, &dynamodb.GetItemInput{
@@ -143,7 +143,7 @@ func (m *DynamoDBMemory) Load(ctx context.Context, conversationID string) ([]age
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("dynamodb memory: load: %w", err)
+		return nil, fmt.Errorf("dynamodb conversation: load: %w", err)
 	}
 
 	if len(out.Item) == 0 {
@@ -157,12 +157,12 @@ func (m *DynamoDBMemory) Load(ctx context.Context, conversationID string) ([]age
 
 	sv, ok := attr.(*dbtypes.AttributeValueMemberS)
 	if !ok {
-		return nil, fmt.Errorf("dynamodb memory: load: unexpected attribute type for messages")
+		return nil, fmt.Errorf("dynamodb conversation: load: unexpected attribute type for messages")
 	}
 
 	messages, err := conversation.UnmarshalMessages([]byte(sv.Value))
 	if err != nil {
-		return nil, fmt.Errorf("dynamodb memory: load: %w", err)
+		return nil, fmt.Errorf("dynamodb conversation: load: %w", err)
 	}
 
 	return messages, nil
@@ -170,7 +170,7 @@ func (m *DynamoDBMemory) Load(ctx context.Context, conversationID string) ([]age
 
 // List returns all conversation IDs whose items share the configured key prefix.
 // This method performs a full-table Scan — see package documentation for cost implications.
-func (m *DynamoDBMemory) List(ctx context.Context) ([]string, error) {
+func (m *DynamoDBConversation) List(ctx context.Context) ([]string, error) {
 	var ids []string
 	var lastKey map[string]dbtypes.AttributeValue
 
@@ -187,7 +187,7 @@ func (m *DynamoDBMemory) List(ctx context.Context) ([]string, error) {
 			ExclusiveStartKey: lastKey,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("dynamodb memory: list: %w", err)
+			return nil, fmt.Errorf("dynamodb conversation: list: %w", err)
 		}
 
 		for _, item := range out.Items {
@@ -214,7 +214,7 @@ func (m *DynamoDBMemory) List(ctx context.Context) ([]string, error) {
 
 // Delete removes the item for the given conversation ID.
 // A not-found response is not treated as an error.
-func (m *DynamoDBMemory) Delete(ctx context.Context, conversationID string) error {
+func (m *DynamoDBConversation) Delete(ctx context.Context, conversationID string) error {
 	pk := m.keyPrefix + conversationID
 
 	_, err := m.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
@@ -224,7 +224,7 @@ func (m *DynamoDBMemory) Delete(ctx context.Context, conversationID string) erro
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("dynamodb memory: delete: %w", err)
+		return fmt.Errorf("dynamodb conversation: delete: %w", err)
 	}
 
 	return nil
