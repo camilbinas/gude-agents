@@ -208,6 +208,166 @@ func (dummyEmbedder) Embed(_ context.Context, _ string) ([]float64, error) {
 	return make([]float64, 64), nil
 }
 
+// --- ScopedSearch unit tests (Task 3.2) ---
+// Requirements: 9.1, 9.2, 9.4, 10.1, 10.2
+
+// TestScopedSearch_ReturnsOnlyScopedDocuments verifies that ScopedSearch
+// returns only documents matching the given scope value, not documents
+// stored under a different scope or without a scope.
+func TestScopedSearch_ReturnsOnlyScopedDocuments(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	const dim = 64
+	indexName := "testidx-scopedsearch-filter"
+
+	store, err := New(Options{Addr: addr}, indexName, dim, WithDropExisting())
+	if err != nil {
+		t.Fatalf("failed to create VectorStore: %v", err)
+	}
+	defer store.Close()
+	defer store.client.Do(context.Background(), "FT.DROPINDEX", indexName, "DD").Err()
+
+	ctx := context.Background()
+
+	// Create a deterministic embedding (all ones, normalised).
+	baseEmb := make([]float64, dim)
+	for i := range baseEmb {
+		baseEmb[i] = 1.0 / math.Sqrt(float64(dim))
+	}
+
+	// Store two documents under scope "userA".
+	docsA := []agent.Document{
+		{Content: "fact for user A first", Metadata: map[string]string{"_scope_id": "userA", "key": "a1"}},
+		{Content: "fact for user A second", Metadata: map[string]string{"_scope_id": "userA", "key": "a2"}},
+	}
+	embsA := [][]float64{baseEmb, baseEmb}
+	if err := store.Add(ctx, docsA, embsA); err != nil {
+		t.Fatalf("Add for userA failed: %v", err)
+	}
+
+	// Store one document under scope "userB".
+	docsB := []agent.Document{
+		{Content: "fact for user B", Metadata: map[string]string{"_scope_id": "userB", "key": "b1"}},
+	}
+	embsB := [][]float64{baseEmb}
+	if err := store.Add(ctx, docsB, embsB); err != nil {
+		t.Fatalf("Add for userB failed: %v", err)
+	}
+
+	// ScopedSearch for "userA" should return only userA's documents.
+	results, err := store.ScopedSearch(ctx, "_scope_id", "userA", baseEmb, 10)
+	if err != nil {
+		t.Fatalf("ScopedSearch failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for userA, got %d", len(results))
+	}
+
+	for _, r := range results {
+		scopeVal := r.Document.Metadata["_scope_id"]
+		if scopeVal != "userA" {
+			t.Errorf("expected _scope_id=userA in result, got %q (content=%q)", scopeVal, r.Document.Content)
+		}
+	}
+
+	// ScopedSearch for "userB" should return only userB's document.
+	resultsB, err := store.ScopedSearch(ctx, "_scope_id", "userB", baseEmb, 10)
+	if err != nil {
+		t.Fatalf("ScopedSearch for userB failed: %v", err)
+	}
+
+	if len(resultsB) != 1 {
+		t.Fatalf("expected 1 result for userB, got %d", len(resultsB))
+	}
+
+	if resultsB[0].Document.Content != "fact for user B" {
+		t.Errorf("expected content 'fact for user B', got %q", resultsB[0].Document.Content)
+	}
+}
+
+// TestScopedSearch_EmptyScopeValueReturnsError verifies that ScopedSearch
+// returns a descriptive error when called with an empty scopeValue.
+func TestScopedSearch_EmptyScopeValueReturnsError(t *testing.T) {
+	store := &VectorStore{}
+	_, err := store.ScopedSearch(context.Background(), "_scope_id", "", []float64{1.0}, 1)
+	if err == nil {
+		t.Fatal("expected error for empty scopeValue, got nil")
+	}
+	if !contains(err.Error(), "scopeValue") {
+		t.Fatalf("expected error to mention 'scopeValue', got: %v", err)
+	}
+}
+
+// TestScopedSearch_TopKLessThanOneReturnsError verifies that ScopedSearch
+// returns a descriptive error when topK < 1.
+func TestScopedSearch_TopKLessThanOneReturnsError(t *testing.T) {
+	store := &VectorStore{}
+	_, err := store.ScopedSearch(context.Background(), "_scope_id", "user1", []float64{1.0}, 0)
+	if err == nil {
+		t.Fatal("expected error for topK=0, got nil")
+	}
+	if !contains(err.Error(), "topK") {
+		t.Fatalf("expected error to mention 'topK', got: %v", err)
+	}
+}
+
+// TestBackwardCompat_AddSearchWithoutScopeID verifies that the existing
+// non-scoped Add/Search workflow continues to work when documents do not
+// contain a _scope_id metadata key. This ensures the TAG field addition
+// does not break backward compatibility.
+func TestBackwardCompat_AddSearchWithoutScopeID(t *testing.T) {
+	addr := skipIfNoRedis(t)
+
+	const dim = 64
+	indexName := "testidx-backcompat-noscope"
+
+	store, err := New(Options{Addr: addr}, indexName, dim, WithDropExisting())
+	if err != nil {
+		t.Fatalf("failed to create VectorStore: %v", err)
+	}
+	defer store.Close()
+	defer store.client.Do(context.Background(), "FT.DROPINDEX", indexName, "DD").Err()
+
+	ctx := context.Background()
+
+	// Create a deterministic embedding.
+	emb := make([]float64, dim)
+	for i := range emb {
+		emb[i] = 1.0 / math.Sqrt(float64(dim))
+	}
+
+	// Store a document WITHOUT _scope_id — plain RAG usage.
+	doc := agent.Document{
+		Content:  "plain rag document without scope",
+		Metadata: map[string]string{"source": "test"},
+	}
+	if err := store.Add(ctx, []agent.Document{doc}, [][]float64{emb}); err != nil {
+		t.Fatalf("Add without _scope_id failed: %v", err)
+	}
+
+	// Standard Search should still find the document.
+	results, err := store.Search(ctx, emb, 1)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result from non-scoped Search, got none")
+	}
+	if results[0].Document.Content != doc.Content {
+		t.Errorf("content mismatch: expected %q, got %q", doc.Content, results[0].Document.Content)
+	}
+	if results[0].Document.Metadata["source"] != "test" {
+		t.Errorf("metadata[source] mismatch: expected 'test', got %q", results[0].Document.Metadata["source"])
+	}
+}
+
+// TestVectorStore_ImplementsScopedSearcher verifies at test time that
+// *VectorStore satisfies the rag.ScopedSearcher interface.
+func TestVectorStore_ImplementsScopedSearcher(t *testing.T) {
+	var _ rag.ScopedSearcher = (*VectorStore)(nil)
+}
+
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
