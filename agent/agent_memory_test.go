@@ -104,7 +104,7 @@ func TestAgent_LoadsHistoryOnSecondInvocation(t *testing.T) {
 	}
 }
 
-func TestAgent_WorksWithoutMemory(t *testing.T) {
+func TestAgent_WorksWithoutConversation(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "no memory response"})
 	a, err := New(sp, prompt.Text("sys"), nil)
 	if err != nil {
@@ -130,7 +130,7 @@ func (failingMemory) Save(_ context.Context, _ string, _ []Message) error {
 	return nil
 }
 
-func TestAgent_MemoryLoadFailureReturnsError(t *testing.T) {
+func TestAgent_ConversationLoadFailureReturnsError(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "should not reach"})
 	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(failingMemory{}, "conv-1"))
 	if err != nil {

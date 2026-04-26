@@ -344,7 +344,7 @@ func TestFilePersistence(t *testing.T) {
 	}
 }
 
-func TestWithMemoryOption(t *testing.T) {
+func TestWithOption(t *testing.T) {
 	m, err := New(":memory:")
 	if err != nil {
 		t.Fatal(err)

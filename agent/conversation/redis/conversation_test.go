@@ -30,7 +30,7 @@ func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
 
 	mem, err := New(RedisOptions{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -58,9 +58,9 @@ func TestProperty_MemorySaveLoadRoundTrip(t *testing.T) {
 	})
 }
 
-// --- Unit Tests for RedisMemory (Task 2.5) ---
+// --- Unit Tests for RedisConversation (Task 2.5) ---
 
-// TestNewRedisMemory_UnreachableAddr verifies that NewRedisMemory returns an error
+// TestNew_UnreachableAddr verifies that NewRedisConversation returns an error
 // containing "ping" when the Redis address is unreachable.
 // Validates: Requirement 2.3
 func TestNew_UnreachableAddr(t *testing.T) {
@@ -73,7 +73,7 @@ func TestNew_UnreachableAddr(t *testing.T) {
 	}
 }
 
-// TestRedisMemory_LoadNonExistent verifies that Load for a non-existent conversation ID
+// TestRedisConversation_LoadNonExistent verifies that Load for a non-existent conversation ID
 // returns an empty (non-nil) slice and nil error.
 // Validates: Requirement 4.2
 func TestRedisConversation_LoadNonExistent(t *testing.T) {
@@ -81,7 +81,7 @@ func TestRedisConversation_LoadNonExistent(t *testing.T) {
 
 	mem, err := New(RedisOptions{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -97,7 +97,7 @@ func TestRedisConversation_LoadNonExistent(t *testing.T) {
 	}
 }
 
-// TestRedisMemory_DefaultKeyPrefix verifies that a newly created RedisMemory
+// TestRedisConversation_DefaultKeyPrefix verifies that a newly created RedisConversation
 // has the default key prefix "gude:".
 // Validates: Requirement 2.7
 func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
@@ -105,7 +105,7 @@ func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
 
 	mem, err := New(RedisOptions{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -114,7 +114,7 @@ func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
 	}
 }
 
-// TestRedisMemory_TTLSet verifies that when WithTTL is configured, saved keys
+// TestRedisConversation_TTLSet verifies that when WithTTL is configured, saved keys
 // have a TTL set in Redis.
 // Validates: Requirements 2.5, 3.2
 func TestRedisConversation_TTLSet(t *testing.T) {
@@ -123,7 +123,7 @@ func TestRedisConversation_TTLSet(t *testing.T) {
 	ttl := 10 * time.Minute
 	mem, err := New(RedisOptions{Addr: addr}, WithTTL(ttl))
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -151,7 +151,7 @@ func TestRedisConversation_TTLSet(t *testing.T) {
 	}
 }
 
-// TestRedisMemory_NoExpiration verifies that when no TTL is configured (default),
+// TestRedisConversation_NoExpiration verifies that when no TTL is configured (default),
 // saved keys have no expiration (TTL returns -1 in Redis).
 // Validates: Requirements 2.6, 3.3
 func TestRedisConversation_NoExpiration(t *testing.T) {
@@ -159,7 +159,7 @@ func TestRedisConversation_NoExpiration(t *testing.T) {
 
 	mem, err := New(RedisOptions{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -199,17 +199,17 @@ func searchSubstr(s, substr string) bool {
 	return false
 }
 
-// TestRedisMemory_WithMemoryOption verifies that RedisMemory is accepted by agent.WithMemory.
+// TestRedisConversation_WithOption verifies that RedisConversation is accepted by agent.WithMemory.
 // Validates: Requirement 2.4
 func TestRedisConversation_WithOption(t *testing.T) {
 	addr := skipIfNoRedis(t)
 	mem, err := New(RedisOptions{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
-	// This should compile and not panic — proves RedisMemory satisfies the Memory interface
+	// This should compile and not panic — proves RedisConversation satisfies the Memory interface
 	// used by WithMemory.
 	opt := agent.WithMemory(mem, "test-conv")
 	if opt == nil {
@@ -217,9 +217,9 @@ func TestRedisConversation_WithOption(t *testing.T) {
 	}
 }
 
-// --- Integration Tests for RedisMemory List and Delete (Task 8.4) ---
+// --- Integration Tests for RedisConversation List and Delete (Task 8.4) ---
 
-// TestRedisMemory_ListReturnsSavedConversationIDs verifies that List returns
+// TestRedisConversation_ListReturnsSavedConversationIDs verifies that List returns
 // all conversation IDs that have been saved, using a unique key prefix.
 // Validates: Requirement 5.5
 func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
@@ -228,7 +228,7 @@ func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 	prefix := "test-list-delete:"
 	mem, err := New(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -274,7 +274,7 @@ func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 	}
 }
 
-// TestRedisMemory_DeleteRemovesTargetKey verifies that Delete removes the target
+// TestRedisConversation_DeleteRemovesTargetKey verifies that Delete removes the target
 // conversation while leaving other conversations intact.
 // Validates: Requirement 6.5
 func TestRedisConversation_DeleteRemovesTargetKey(t *testing.T) {
@@ -283,7 +283,7 @@ func TestRedisConversation_DeleteRemovesTargetKey(t *testing.T) {
 	prefix := "test-del-target:"
 	mem, err := New(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
 	if err != nil {
-		t.Fatalf("failed to create RedisMemory: %v", err)
+		t.Fatalf("failed to create RedisConversation: %v", err)
 	}
 	defer mem.Close()
 
