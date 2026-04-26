@@ -83,9 +83,9 @@ func (m *mockDynamoDBClient) Scan(_ context.Context, in *dynamodb.ScanInput, _ .
 
 // --- Constructor tests ---
 
-// TestNewDynamoDBMemory_EmptyTable verifies that an empty table name returns an error.
+// TestNew_EmptyTable verifies that an empty table name returns an error.
 // Req 7.4
-func TestNewDynamoDBMemory_EmptyTable(t *testing.T) {
+func TestNew_EmptyTable(t *testing.T) {
 	_, err := New(aws.Config{}, "")
 	if err == nil {
 		t.Fatal("expected error for empty table, got nil")
@@ -95,10 +95,10 @@ func TestNewDynamoDBMemory_EmptyTable(t *testing.T) {
 	}
 }
 
-// TestNewDynamoDBMemory_LazyConstruction verifies that valid args return a non-nil DynamoDBMemory
+// TestNew_LazyConstruction verifies that valid args return a non-nil DynamoDBMemory
 // without making any network calls.
 // Req 7.3
-func TestNewDynamoDBMemory_LazyConstruction(t *testing.T) {
+func TestNew_LazyConstruction(t *testing.T) {
 	m, err := New(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,9 +108,9 @@ func TestNewDynamoDBMemory_LazyConstruction(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_DefaultKeyPrefix verifies that keyPrefix defaults to "gude:".
+// TestDynamoDBConversation_DefaultKeyPrefix verifies that keyPrefix defaults to "gude:".
 // Req 8.1
-func TestDynamoDBMemory_DefaultKeyPrefix(t *testing.T) {
+func TestDynamoDBConversation_DefaultKeyPrefix(t *testing.T) {
 	m, err := New(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -120,8 +120,8 @@ func TestDynamoDBMemory_DefaultKeyPrefix(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_DefaultPKAttribute verifies that pkAttribute defaults to "conversation_id".
-func TestDynamoDBMemory_DefaultPKAttribute(t *testing.T) {
+// TestDynamoDBConversation_DefaultPKAttribute verifies that pkAttribute defaults to "conversation_id".
+func TestDynamoDBConversation_DefaultPKAttribute(t *testing.T) {
 	m, err := New(aws.Config{}, "my-table")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -131,8 +131,8 @@ func TestDynamoDBMemory_DefaultPKAttribute(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_WithPartitionKey verifies that a custom partition key attribute name is used in PutItem.
-func TestDynamoDBMemory_WithPartitionKey(t *testing.T) {
+// TestDynamoDBConversation_WithPartitionKey verifies that a custom partition key attribute name is used in PutItem.
+func TestDynamoDBConversation_WithPartitionKey(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.pkAttr = "id"
 	m := &DynamoDBConversation{
@@ -160,9 +160,9 @@ func TestDynamoDBMemory_WithPartitionKey(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_WithTTL verifies that when TTL is set, PutItem includes the TTL attribute.
+// TestDynamoDBConversation_WithTTL verifies that when TTL is set, PutItem includes the TTL attribute.
 // Req 8.4
-func TestDynamoDBMemory_WithTTL(t *testing.T) {
+func TestDynamoDBConversation_WithTTL(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	m := &DynamoDBConversation{
 		client:       mock,
@@ -187,9 +187,9 @@ func TestDynamoDBMemory_WithTTL(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_NoTTL verifies that when no TTL is set, PutItem omits the TTL attribute.
+// TestDynamoDBConversation_NoTTL verifies that when no TTL is set, PutItem omits the TTL attribute.
 // Req 8.5
-func TestDynamoDBMemory_NoTTL(t *testing.T) {
+func TestDynamoDBConversation_NoTTL(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	m := &DynamoDBConversation{
 		client:       mock,
@@ -214,9 +214,9 @@ func TestDynamoDBMemory_NoTTL(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_WithTTLAttribute verifies that a custom TTL attribute name is used in PutItem.
+// TestDynamoDBConversation_WithTTLAttribute verifies that a custom TTL attribute name is used in PutItem.
 // Req 8.6
-func TestDynamoDBMemory_WithTTLAttribute(t *testing.T) {
+func TestDynamoDBConversation_WithTTLAttribute(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	m := &DynamoDBConversation{
 		client:       mock,
@@ -246,9 +246,9 @@ func TestDynamoDBMemory_WithTTLAttribute(t *testing.T) {
 
 // --- Error wrapping tests ---
 
-// TestDynamoDBMemory_Save_ErrorWrapping verifies that a generic PutItem error is wrapped with "dynamodb conversation: save".
+// TestDynamoDBConversation_Save_ErrorWrapping verifies that a generic PutItem error is wrapped with "dynamodb conversation: save".
 // Req 9.3
-func TestDynamoDBMemory_Save_ErrorWrapping(t *testing.T) {
+func TestDynamoDBConversation_Save_ErrorWrapping(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.putErr = errors.New("dynamodb unavailable")
 
@@ -269,9 +269,9 @@ func TestDynamoDBMemory_Save_ErrorWrapping(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_Load_ErrorWrapping verifies that a GetItem error is wrapped with "dynamodb conversation: load".
+// TestDynamoDBConversation_Load_ErrorWrapping verifies that a GetItem error is wrapped with "dynamodb conversation: load".
 // Req 10.3
-func TestDynamoDBMemory_Load_ErrorWrapping(t *testing.T) {
+func TestDynamoDBConversation_Load_ErrorWrapping(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.getErr = errors.New("dynamodb internal error")
 
@@ -292,9 +292,9 @@ func TestDynamoDBMemory_Load_ErrorWrapping(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_Delete_ErrorWrapping verifies that a DeleteItem error is wrapped with "dynamodb conversation: delete".
+// TestDynamoDBConversation_Delete_ErrorWrapping verifies that a DeleteItem error is wrapped with "dynamodb conversation: delete".
 // Req 11.5
-func TestDynamoDBMemory_Delete_ErrorWrapping(t *testing.T) {
+func TestDynamoDBConversation_Delete_ErrorWrapping(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.deleteErr = errors.New("dynamodb delete error")
 
@@ -317,9 +317,9 @@ func TestDynamoDBMemory_Delete_ErrorWrapping(t *testing.T) {
 
 // --- Not-found and edge case tests ---
 
-// TestDynamoDBMemory_Load_NotFound verifies that a missing item returns an empty slice and nil error.
+// TestDynamoDBConversation_Load_NotFound verifies that a missing item returns an empty slice and nil error.
 // Req 10.2
-func TestDynamoDBMemory_Load_NotFound(t *testing.T) {
+func TestDynamoDBConversation_Load_NotFound(t *testing.T) {
 	mock := newMockDynamoDBClient()
 
 	m := &DynamoDBConversation{
@@ -342,9 +342,9 @@ func TestDynamoDBMemory_Load_NotFound(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_Save_EmptySlice verifies that saving an empty slice writes "[]" in the messages attribute.
+// TestDynamoDBConversation_Save_EmptySlice verifies that saving an empty slice writes "[]" in the messages attribute.
 // Req 9.2
-func TestDynamoDBMemory_Save_EmptySlice(t *testing.T) {
+func TestDynamoDBConversation_Save_EmptySlice(t *testing.T) {
 	mock := newMockDynamoDBClient()
 
 	m := &DynamoDBConversation{
@@ -377,9 +377,9 @@ func TestDynamoDBMemory_Save_EmptySlice(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_Delete_NonExistent verifies that deleting a key that was never saved returns nil error.
+// TestDynamoDBConversation_Delete_NonExistent verifies that deleting a key that was never saved returns nil error.
 // Req 11.4
-func TestDynamoDBMemory_Delete_NonExistent(t *testing.T) {
+func TestDynamoDBConversation_Delete_NonExistent(t *testing.T) {
 	mock := newMockDynamoDBClient()
 
 	m := &DynamoDBConversation{
@@ -413,10 +413,10 @@ func (e *validationError) ErrorFault() smithy.ErrorFault {
 
 var _ smithy.APIError = (*validationError)(nil)
 
-// TestDynamoDBMemory_ItemTooLarge verifies that a ValidationException with the size message
+// TestDynamoDBConversation_ItemTooLarge verifies that a ValidationException with the size message
 // is wrapped with "dynamodb conversation: item too large".
 // Req 12.2, 12.3
-func TestDynamoDBMemory_ItemTooLarge(t *testing.T) {
+func TestDynamoDBConversation_ItemTooLarge(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.putErr = &validationError{
 		code:    "ValidationException",
@@ -440,10 +440,10 @@ func TestDynamoDBMemory_ItemTooLarge(t *testing.T) {
 	}
 }
 
-// TestDynamoDBMemory_OtherValidationException verifies that a ValidationException with a different
+// TestDynamoDBConversation_OtherValidationException verifies that a ValidationException with a different
 // message is wrapped with "dynamodb conversation: save" (not item-too-large).
 // Req 12.3
-func TestDynamoDBMemory_OtherValidationException(t *testing.T) {
+func TestDynamoDBConversation_OtherValidationException(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.putErr = &validationError{
 		code:    "ValidationException",
