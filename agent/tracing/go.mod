@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/tracing
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.22.0
+	github.com/camilbinas/gude-agents v0.23.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.35.0
 	go.opentelemetry.io/otel/sdk v1.43.0

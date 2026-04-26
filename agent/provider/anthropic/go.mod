@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.33.0
-	github.com/camilbinas/gude-agents v0.22.0
+	github.com/camilbinas/gude-agents v0.23.0
 	pgregory.net/rapid v1.2.0
 )
 
