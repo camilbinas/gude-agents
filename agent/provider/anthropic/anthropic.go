@@ -345,7 +345,7 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []an
 							OfImage: &anthropicsdk.ImageBlockParam{
 								Source: anthropicsdk.ImageBlockParamSourceUnion{
 									OfBase64: &anthropicsdk.Base64ImageSourceParam{
-										MediaType: anthropicsdk.Base64ImageSourceParamMediaType(img.Source.MIMEType),
+										MediaType: anthropicsdk.Base64ImageSourceMediaType(img.Source.MIMEType),
 										Data:      encoded,
 									},
 								},
