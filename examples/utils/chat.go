@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 )
 
 // ChatOptions configures the interactive chat loop.
@@ -90,7 +90,7 @@ func SwarmChat(ctx context.Context, sw *agent.Swarm) {
 
 // ClearMemory returns a ClearFunc that deletes a conversation from a MemoryManager.
 // Use with ChatOptions.ClearFunc for memory-backed examples.
-func ClearMemory(m memory.MemoryManager, conversationID string) func(ctx context.Context) error {
+func ClearMemory(m conversation.ConversationManager, conversationID string) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		return m.Delete(ctx, conversationID)
 	}

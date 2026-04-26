@@ -1,6 +1,6 @@
 // Run:
 //
-//	go run ./memory-strategies
+//	go run ./conversation-strategies
 
 package main
 
@@ -10,7 +10,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -19,17 +19,17 @@ func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
 	// In-memory store as the base layer.
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	// Compose strategies: Filter strips tool blocks, Window keeps last 20 messages.
-	windowed := memory.NewWindow(store, 20)
-	filtered := memory.NewFilter(windowed)
+	windowed := conversation.NewWindow(store, 20)
+	filtered := conversation.NewFilter(windowed)
 
 	a, err := agent.Default(
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithMemory(filtered, "demo-conversation"),
+		agent.WithConversation(filtered, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)

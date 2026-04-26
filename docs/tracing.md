@@ -2,7 +2,7 @@
 
 The `agent/tracing` module adds OpenTelemetry distributed tracing to gude-agents. It lives in a separate Go module with its own `go.mod`, keeping the core `agent/` package free of OTEL dependencies. You opt in by importing the tracing submodule and passing `tracing.WithTracing(tp)` as an `agent.Option`.
 
-The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, memory operations, RAG retrieval, graph workflows, and multi-agent composition.
+The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, graph workflows, and multi-agent composition.
 
 ## Enabling Tracing
 
@@ -83,13 +83,13 @@ A traced agent invocation produces the following span tree:
 ```
 agent.invoke
 ├── agent.guardrail.input          (per input guardrail)
-├── agent.memory.load              (if memory configured)
+├── agent.conversation.load        (if conversation configured)
 ├── agent.retriever.retrieve       (if RAG configured)
 ├── agent.iteration                (per loop iteration)
 │   ├── agent.provider.call
 │   ├── agent.tool.<tool_name>     (per tool call, may be concurrent)
 │   └── agent.guardrail.output     (per output guardrail, on final iteration)
-└── agent.memory.save              (if memory configured)
+└── agent.conversation.save        (if conversation configured)
 ```
 
 ## Attribute Reference
@@ -101,7 +101,7 @@ All attribute key constants are exported from the `tracing` package for use in c
 | `AttrGenAISystem` | `gen_ai.system` | Always `"gude-agents"` on the root invoke span |
 | `AttrAgentMaxIterations` | `agent.max_iterations` | Configured max iterations for the agent |
 | `AttrAgentModelID` | `agent.model_id` | Model ID (if provider implements `ModelIdentifier`) |
-| `AttrAgentConversationID` | `agent.conversation_id` | Conversation ID (if memory configured) |
+| `AttrAgentConversationID` | `agent.conversation_id` | Conversation ID (if conversation configured) |
 | `AttrAgentImageCount` | `agent.image_count` | Number of images attached via `WithImages` (only set when > 0) |
 | `AttrAgentDocumentCount` | `agent.document_count` | Number of documents attached via `WithDocuments` (only set when > 0) |
 | `AttrAgentTokenUsageInput` | `agent.token_usage.input` | Cumulative input tokens on successful invocation |
@@ -343,6 +343,6 @@ sentrytrace.WithSentry(tracing.WithContentCapture())
 - [Prometheus Metrics](metrics.md) — counters and histograms for agent lifecycle events
 - [Middleware](middleware.md) — wrapping tool execution with cross-cutting behavior
 - [Multi-Agent](multi-agent.md) — composing agents with `AgentAsTool`
-- [Memory](memory.md) — memory backends that produce `agent.memory.*` spans
+- [Conversation System](conversation.md) — conversation backends that produce `agent.conversation.*` spans
 - [RAG](rag.md) — retriever integration that produces `agent.retriever.retrieve` spans
 - [Guardrails](guardrails.md) — input/output guardrails that produce guardrail spans

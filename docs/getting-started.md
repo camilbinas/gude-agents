@@ -19,12 +19,12 @@ go get github.com/camilbinas/gude-agents/agent/provider/anthropic   # Anthropic
 go get github.com/camilbinas/gude-agents/agent/provider/openai      # OpenAI
 go get github.com/camilbinas/gude-agents/agent/provider/gemini      # Google Gemini
 
-# Optional: memory drivers (in-memory and disk are included in the core)
-go get github.com/camilbinas/gude-agents/agent/memory/redis         # Redis memory
-go get github.com/camilbinas/gude-agents/agent/memory/dynamodb      # DynamoDB memory
-go get github.com/camilbinas/gude-agents/agent/memory/s3            # S3 memory
-go get github.com/camilbinas/gude-agents/agent/memory/sqlite        # SQLite memory
-go get github.com/camilbinas/gude-agents/agent/memory/postgres      # PostgreSQL memory
+# Optional: conversation drivers (in-memory and disk are included in the core)
+go get github.com/camilbinas/gude-agents/agent/conversation/redis         # Redis conversation
+go get github.com/camilbinas/gude-agents/agent/conversation/dynamodb      # DynamoDB conversation
+go get github.com/camilbinas/gude-agents/agent/conversation/s3            # S3 conversation
+go get github.com/camilbinas/gude-agents/agent/conversation/sqlite        # SQLite conversation
+go get github.com/camilbinas/gude-agents/agent/conversation/postgres      # PostgreSQL conversation
 
 # Optional: RAG embedders and vector stores
 go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock knowledge bases + embedders

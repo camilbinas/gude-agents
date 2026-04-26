@@ -2,7 +2,7 @@
 
 The `agent/logging/slog` module adds structured logging to gude-agents using the standard library's `log/slog` package. It lives in a separate Go module with its own `go.mod`, keeping the core `agent/` package free of logging implementation dependencies. You opt in by importing the logging submodule and passing `slog.WithLogging()` as an `agent.Option`.
 
-The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, memory operations, RAG retrieval, graph workflows, and swarm coordination.
+The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, graph workflows, and swarm coordination.
 
 ## Enabling Logging
 
@@ -103,7 +103,7 @@ Each log entry includes relevant key-value attributes:
 |---|---|---|
 | `agent.name` | InvokeStart | Agent name (when set via `WithName`) |
 | `model.id` | InvokeStart, ProviderCallStart | Provider model ID |
-| `conversation_id` | InvokeStart, MemoryStart, MemoryEnd | Memory conversation ID |
+| `conversation_id` | InvokeStart, MemoryStart, MemoryEnd | Conversation ID |
 | `max_iterations` | InvokeStart | Configured max iterations |
 | `iteration` | IterationStart | 1-based iteration number |
 | `tool.name` | ToolStart, ToolEnd | Tool being executed |
@@ -116,7 +116,7 @@ Each log entry includes relevant key-value attributes:
 | `doc_count` | RetrieverEnd | Number of retrieved documents |
 | `image_count` | ImagesAttached | Number of images attached via `WithImages` |
 | `document_count` | DocumentsAttached | Number of documents attached via `WithDocuments` |
-| `operation` | MemoryStart, MemoryEnd | Memory operation (`load` or `save`) |
+| `operation` | MemoryStart, MemoryEnd | Conversation operation (`load` or `save`) |
 | `message_count` | MemoryEnd | Number of messages loaded or saved |
 | `direction` | GuardrailComplete | Guardrail direction (`input` or `output`) |
 | `blocked` | GuardrailComplete | Whether the guardrail blocked |

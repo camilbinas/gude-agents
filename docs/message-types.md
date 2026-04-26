@@ -1,6 +1,6 @@
 # Message Types
 
-Reference for the conversation data model used throughout gude-agents. These types are relevant when working with memory, custom providers, or middleware.
+Reference for the conversation data model used throughout gude-agents. These types are relevant when working with conversation persistence, custom providers, or middleware.
 
 All types below live in the `agent` package (`github.com/camilbinas/gude-agents/agent`) unless otherwise noted.
 
@@ -339,5 +339,5 @@ Pairs a `Document` with its similarity score. Returned by `VectorStore.Search` t
 - [Agent API Reference](agent-api.md) — `Agent` constructor, options, `WithImages`/`GetImages`, and methods
 - [Tool System](tools.md) — `Tool`, `Spec`, `Call`, and `Choice` types
 - [RAG Pipeline](rag.md) — `Embedder`, `VectorStore`, `Retriever` interfaces
-- [Memory System](memory.md) — storing and loading `Message` history
+- [Conversation System](conversation.md) — storing and loading `Message` history
 - [Providers](providers.md) — `Provider` interface

@@ -1,6 +1,6 @@
 // Run:
 //
-//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./postgres-memory
+//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./conversation-postgres
 
 package main
 
@@ -11,7 +11,7 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory/postgres"
+	"github.com/camilbinas/gude-agents/agent/conversation/postgres"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -51,7 +51,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithMemory(mem, "demo-conversation"),
+		agent.WithConversation(mem, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)

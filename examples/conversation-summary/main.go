@@ -1,6 +1,6 @@
 // Run:
 //
-//	go run ./memory-summary
+//	go run ./conversation-summary
 
 package main
 
@@ -10,7 +10,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -23,11 +23,11 @@ func main() {
 	// Threshold of 10 turns — summarization triggers at 80% (16 messages).
 	// WithPreserveRecentMessages(1) keeps the last turn out of the
 	// SummaryFunc, so it always appears verbatim after the summary.
-	store := memory.NewStore()
-	summarized, err := memory.NewSummary(
-		store, 10, memory.DefaultSummaryFunc(provider),
-		memory.WithSummaryLogger(log.Default()),
-		memory.WithPreserveRecentMessages(1),
+	store := conversation.NewInMemory()
+	summarized, err := conversation.NewSummary(
+		store, 10, conversation.DefaultSummaryFunc(provider),
+		conversation.WithSummaryLogger(log.Default()),
+		conversation.WithPreserveRecentMessages(1),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -37,8 +37,8 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithMemory(summarized, "summary-demo"),
-		agent.WithSynchronousMemory(),
+		agent.WithConversation(summarized, "summary-demo"),
+		agent.WithSynchronousConversation(),
 	)
 	if err != nil {
 		log.Fatal(err)

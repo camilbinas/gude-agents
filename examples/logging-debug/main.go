@@ -31,8 +31,8 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -50,7 +50,7 @@ func main() {
 		[]tool.Tool{utils.WeatherTool(), utils.TimeTool()},
 		debug.WithLogging(),
 		agent.WithName("friendly-agent"),
-		agent.WithMemory(memory.NewStore(), "debug-session"),
+		agent.WithConversation(conversation.NewInMemory(), "debug-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

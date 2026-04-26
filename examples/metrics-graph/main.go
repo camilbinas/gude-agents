@@ -24,8 +24,8 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/graph"
-	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/metrics/prometheus"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -85,13 +85,13 @@ func main() {
 	}
 
 	// Summarise agent — has memory.
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 	summariser, err := agent.Minimal(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
 	), nil,
 		agent.WithName("summariser"),
 		prometheus.WithMetrics(),
-		agent.WithMemory(store, "summarise-session"),
+		agent.WithConversation(store, "summarise-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

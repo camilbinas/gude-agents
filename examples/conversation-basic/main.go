@@ -1,0 +1,49 @@
+// Run:
+//
+//	go run ./conversation-basic
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
+	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+)
+
+func main() {
+	provider := bedrock.Must(bedrock.Standard())
+
+	store := conversation.NewInMemory()
+
+	a, err := agent.Default(
+		provider,
+		prompt.Text("You are a friendly assistant. Remember details the user shares."),
+		nil,
+		agent.WithConversation(store, "chat-session-1"),
+		agent.WithMaxIterations(10),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	turns := []string{
+		"Hi, my name is Alice and I love hiking.",
+		"What's a good trail for beginners?",
+		"What's my name and what do I enjoy?",
+	}
+
+	for i, msg := range turns {
+		result, _, err := a.Invoke(ctx, msg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Turn %d: %s\n\n", i+1, result)
+	}
+}

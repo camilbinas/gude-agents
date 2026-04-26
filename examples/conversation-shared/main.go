@@ -5,13 +5,13 @@
 // so their histories are stored and retrieved independently.
 //
 // Key concepts demonstrated:
-//   - agent.WithSharedMemory  — shared store, no default conversation ID
-//   - agent.WithConversationID — per-invocation conversation scoping
-//   - memory.NewStore          — in-memory conversation store
+//   - agent.WithSharedConversation — shared store, no default conversation ID
+//   - agent.WithConversationID     — per-invocation conversation scoping
+//   - conversation.NewStore        — in-memory conversation store
 //
 // Run:
 //
-//	go run ./memory-shared
+//	go run ./conversation-shared
 
 package main
 
@@ -21,7 +21,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -29,14 +29,14 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
-	// WithSharedMemory: no default conversation ID — each call must supply one.
+	// WithSharedConversation: no default conversation ID — each call must supply one.
 	a, err := agent.Default(
 		provider,
 		prompt.Text("You are a friendly assistant. Remember details the user shares."),
 		nil,
-		agent.WithSharedMemory(store),
+		agent.WithSharedConversation(store),
 	)
 	if err != nil {
 		log.Fatal(err)

@@ -40,7 +40,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -119,7 +119,7 @@ func main() {
 	},
 		tracing.WithSwarmTracing(nil),
 		agent.WithSwarmMaxHandoffs(5),
-		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
+		agent.WithSwarmConversation(conversation.NewInMemory(), "support-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

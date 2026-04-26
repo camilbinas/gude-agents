@@ -4,21 +4,21 @@ This guide covers how to use gude-agents in HTTP servers where a single process 
 
 ## The Problem
 
-By default, `WithMemory(store, "conversation-123")` binds a conversation ID to the agent at construction time. This means one Agent instance = one conversation. In an HTTP server, you'd need to create a new Agent per request, which wastes resources since the provider, tools, instructions, and middleware are identical across conversations.
+By default, `WithConversation(store, "conversation-123")` binds a conversation ID to the agent at construction time. This means one Agent instance = one conversation. In an HTTP server, you'd need to create a new Agent per request, which wastes resources since the provider, tools, instructions, and middleware are identical across conversations.
 
 ## The Solution: Per-Request Conversation IDs
 
 Two APIs solve this:
 
-### `WithSharedMemory(m Memory)`
+### `WithSharedConversation(c Conversation)`
 
-Configures memory without a default conversation ID. Each request must provide one via context.
+Configures conversation persistence without a default conversation ID. Each request must provide one via context.
 
 ```go
-store := memory.NewStore() // or redis.NewRedisMemory(...)
+store := conversation.NewInMemory() // or redis.NewRedisConversation(...)
 
 a, err := agent.New(provider, instructions, tools,
-    agent.WithSharedMemory(store),
+    agent.WithSharedConversation(store),
 )
 ```
 
@@ -31,20 +31,20 @@ ctx := agent.WithConversationID(r.Context(), req.ConversationID)
 result, _, err := a.Invoke(ctx, req.Message)
 ```
 
-The agent resolves the conversation ID at invocation time: context override first, then the construction-time default. If neither is set and memory is configured, the conversation ID is an empty string (which still works but all requests share one conversation — probably not what you want).
+The agent resolves the conversation ID at invocation time: context override first, then the construction-time default. If neither is set and conversation persistence is configured, the conversation ID is an empty string (which still works but all requests share one conversation — probably not what you want).
 
 ## HTTP Server Pattern
 
 ```go
 func main() {
     provider, _ := bedrock.Standard()
-    store := memory.NewStore()
+    store := conversation.NewInMemory()
 
     // One agent instance for the entire server.
     a, _ := agent.New(provider,
         prompt.Text("You are a helpful assistant."),
         tools,
-        agent.WithSharedMemory(store),
+        agent.WithSharedConversation(store),
         agent.WithMaxIterations(10),
     )
 
@@ -73,11 +73,11 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
 
 ## Swarm in HTTP
 
-Swarms also support per-request conversation IDs. The `WithSwarmMemory` default is overridden by `WithConversationID` on the context:
+Swarms also support per-request conversation IDs. The `WithSwarmConversation` default is overridden by `WithConversationID` on the context:
 
 ```go
 swarm, _ := agent.NewSwarm(members,
-    agent.WithSwarmMemory(store, ""), // empty default, override per-request
+    agent.WithSwarmConversation(store, ""), // empty default, override per-request
 )
 
 // In handler:
@@ -126,12 +126,12 @@ func handleResume(a *agent.Agent) http.HandlerFunc {
 
 ## Backward Compatibility
 
-The original `WithMemory(store, "conv-id")` still works exactly as before. `WithConversationID` on the context overrides it, so you can migrate incrementally:
+The original `WithConversation(store, "conv-id")` still works exactly as before. `WithConversationID` on the context overrides it, so you can migrate incrementally:
 
 ```go
 // Old pattern — still works, single conversation per agent.
 a, _ := agent.New(provider, instructions, tools,
-    agent.WithMemory(store, "session-1"),
+    agent.WithConversation(store, "session-1"),
 )
 
 // New pattern — same agent, multiple conversations.
@@ -141,12 +141,12 @@ a.Invoke(ctx, msg)
 
 ## Thread Safety
 
-All components are safe for concurrent use from multiple goroutines. A single `Agent`, `Swarm`, or memory store can handle many simultaneous requests — conversation isolation comes from the per-request conversation ID, not from separate instances.
+All components are safe for concurrent use from multiple goroutines. A single `Agent`, `Swarm`, or conversation store can handle many simultaneous requests — conversation isolation comes from the per-request conversation ID, not from separate instances.
 
 ## Production Recommendations
 
-- Use `redis.NewRedisMemory` instead of `memory.NewStore` for persistence across restarts and horizontal scaling
-- Set `WithTTL` on Redis memory to auto-expire idle conversations
+- Use `redis.NewRedisConversation` instead of `conversation.NewInMemory` for persistence across restarts and horizontal scaling
+- Set `WithTTL` on Redis conversation store to auto-expire idle conversations
 - Use `r.Context()` as the base context so request cancellation propagates to LLM calls
 - Set `WithTokenBudget` to prevent runaway costs from a single request
 

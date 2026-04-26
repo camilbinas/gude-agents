@@ -5,24 +5,25 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/camilbinas/gude-agents v0.22.0
-	github.com/camilbinas/gude-agents/agent/mcp v0.22.0 
-	github.com/camilbinas/gude-agents/agent/memory/dynamodb v0.22.0 
-	github.com/camilbinas/gude-agents/agent/memory/postgres v0.22.0 
-	github.com/camilbinas/gude-agents/agent/memory/redis v0.22.0 
-	github.com/camilbinas/gude-agents/agent/memory/s3 v0.22.0 
-	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.22.0 
-	github.com/camilbinas/gude-agents/agent/metrics/otel v0.22.0 
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.22.0 
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.22.0 
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.22.0 
-	github.com/camilbinas/gude-agents/agent/provider/fallback v0.22.0 
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.22.0 
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.22.0 
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.22.0 
-	github.com/camilbinas/gude-agents/agent/rag/postgres v0.22.0 
-	github.com/camilbinas/gude-agents/agent/rag/redis v0.22.0 
-	github.com/camilbinas/gude-agents/agent/tracing v0.22.0 
-	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.22.0 
+	github.com/camilbinas/gude-agents/agent/logging/debug v0.22.0
+	github.com/camilbinas/gude-agents/agent/logging/slog v0.22.0
+	github.com/camilbinas/gude-agents/agent/mcp v0.22.0
+	github.com/camilbinas/gude-agents/agent/memory/redis v0.22.0
+	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.22.0
+	github.com/camilbinas/gude-agents/agent/metrics/otel v0.22.0
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.22.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.22.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.22.0
+	github.com/camilbinas/gude-agents/agent/provider/fallback v0.22.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.22.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.22.0
+	github.com/camilbinas/gude-agents/agent/rag/document/pdf v0.22.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.22.0
+	github.com/camilbinas/gude-agents/agent/rag/postgres v0.22.0
+	github.com/camilbinas/gude-agents/agent/rag/redis v0.22.0
+	github.com/camilbinas/gude-agents/agent/tool/webfetch/markdown v0.22.0
+	github.com/camilbinas/gude-agents/agent/tracing v0.22.0
+	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.22.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
@@ -36,24 +37,26 @@ require (
 )
 
 require (
+	github.com/JohannesKaufmann/dom v0.2.0 // indirect
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.1 // indirect
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 // indirect
+)
+
+require (
 	github.com/anthropics/anthropic-sdk-go v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.6 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.9 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.23 // indirect
+	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.22.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime v1.51.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.8 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.22 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.20 // indirect
@@ -76,7 +79,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
-	github.com/pgvector/pgvector-go v0.2.1 // indirect
+	github.com/pgvector/pgvector-go v0.3.0 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
@@ -107,4 +110,3 @@ require (
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-

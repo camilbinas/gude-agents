@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -52,13 +52,13 @@ func main() {
 		"You can check the current time and look up orders.",
 	}, " "))
 
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	a, err := agent.Default(
 		provider,
 		instructions,
 		[]tool.Tool{timeTool, lookupTool},
-		agent.WithMemory(store, "tool-presets-session"),
+		agent.WithConversation(store, "tool-presets-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

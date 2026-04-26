@@ -59,26 +59,26 @@ func WithParallelToolExecution() Option
 
 Enables concurrent execution of tool calls within a single iteration. When the LLM returns multiple tool calls, they run in parallel goroutines instead of sequentially. Results are returned in the same order as the input calls.
 
-### `WithMemory`
+### `WithConversation`
 
 ```go
-func WithMemory(m Memory, conversationID string) Option
+func WithConversation(c Conversation, conversationID string) Option
 ```
 
-Attaches a `Memory` implementation and a default conversation ID for multi-turn support. On each invocation the agent loads history before the provider call and saves the full conversation (including the new exchange) after a successful response.
+Attaches a `Conversation` implementation and a default conversation ID for multi-turn support. On each invocation the agent loads history before the provider call and saves the full conversation (including the new exchange) after a successful response.
 
 The conversation ID can be overridden per-invocation using `WithConversationID` on the context — see [HTTP & Multi-Tenant Environments](http.md).
 
-### `WithSharedMemory`
+### `WithSharedConversation`
 
 ```go
-func WithSharedMemory(m Memory) Option
+func WithSharedConversation(c Conversation) Option
 ```
 
-Attaches a `Memory` implementation without a default conversation ID. Each invocation must provide a conversation ID via `WithConversationID` on the context. This is the recommended pattern for HTTP servers where a single Agent instance serves multiple concurrent conversations.
+Attaches a `Conversation` implementation without a default conversation ID. Each invocation must provide a conversation ID via `WithConversationID` on the context. This is the recommended pattern for HTTP servers where a single Agent instance serves multiple concurrent conversations.
 
 ```go
-a, _ := agent.New(provider, instructions, tools, agent.WithSharedMemory(store))
+a, _ := agent.New(provider, instructions, tools, agent.WithSharedConversation(store))
 
 ctx := agent.WithConversationID(r.Context(), req.ConversationID)
 result, _, err := a.Invoke(ctx, req.Message)
@@ -405,6 +405,29 @@ func GetDocuments(ctx context.Context) []DocumentBlock
 
 Retrieves the document slice from a context. Returns `nil` if no documents are attached or if an empty slice was stored.
 
+### `WithIdentifier`
+
+```go
+func WithIdentifier(ctx context.Context, id string) context.Context
+```
+
+Returns a context that attaches an identifier for the current invocation. This is used by long-term memory tools (`RememberTool`, `RecallTool`) to scope storage and retrieval to a specific entity — a user, team, project, tenant, or any other scope. The tools extract the identifier automatically — the LLM never needs to know or fabricate identifiers.
+
+```go
+ctx := agent.WithIdentifier(context.Background(), "user-123")
+result, _, err := a.Invoke(ctx, "Remember that I prefer dark mode.")
+```
+
+See [Long-Term Memory](memory.md) for the full long-term memory system.
+
+### `GetIdentifier`
+
+```go
+func GetIdentifier(ctx context.Context) string
+```
+
+Retrieves the identifier from a context. Returns an empty string if no identifier is attached.
+
 ### `Invoke`
 
 ```go
@@ -462,13 +485,13 @@ See [Handoffs](handoff.md) for the full handoff workflow.
 func (a *Agent) Close()
 ```
 
-Performs graceful cleanup. If the agent's memory implements `MemoryWaiter` (e.g. the `Summary` strategy with background summarization), `Close` blocks until all background work is complete. Safe to call multiple times. No-op if no cleanup is needed.
+Performs graceful cleanup. If the agent's conversation implements `ConversationWaiter` (e.g. the `Summary` strategy with background summarization), `Close` blocks until all background work is complete. Safe to call multiple times. No-op if no cleanup is needed.
 
 Call `Close` before process exit to ensure pending summarizations are flushed:
 
 ```go
 a, _ := agent.Default(provider, instructions, tools,
-    agent.WithMemory(summaryMemory, "conv-1"),
+    agent.WithConversation(summaryConversation, "conv-1"),
 )
 defer a.Close()
 ```
@@ -481,12 +504,12 @@ Both `Invoke` and `InvokeStream` can return errors for:
 - **Inference config validation failure**: a per-invocation `InferenceConfig` contains invalid values (e.g., temperature outside [0.0, 1.0])
 - **Invalid image MIME type**: an `ImageBlock` attached via `WithImages` has an unsupported `MIMEType`
 - **Invalid document MIME type**: a `DocumentBlock` attached via `WithDocuments` has an unsupported `MIMEType`
-- **Memory load failure**: the configured `Memory` failed to load conversation history
+- **Conversation load failure**: the configured `Conversation` failed to load conversation history
 - **Retriever failure**: the configured `Retriever` returned an error
 - **Provider error**: the LLM backend returned an error
 - **Token budget exceeded**: cumulative usage exceeded the configured budget (`ErrTokenBudgetExceeded`)
 - **Output guardrail failure**: a guardrail returned an error on the final response
-- **Memory save failure**: the configured `Memory` failed to persist the conversation
+- **Conversation save failure**: the configured `Conversation` failed to persist the conversation
 - **Max iterations exceeded**: the agent reached `maxIterations` without producing a text-only response
 - **Handoff requested**: the agent called the handoff tool (`ErrHandoffRequested`) — see [Handoffs](handoff.md)
 
@@ -525,7 +548,7 @@ if errors.Is(err, agent.ErrTokenBudgetExceeded) {
 Each call to `Invoke` or `InvokeStream` runs the following steps:
 
 1. **Input guardrails** — the user message passes through all configured `InputGuardrail` functions in order. Any error aborts the invocation.
-2. **Memory load** — if `WithMemory` is configured, conversation history is loaded.
+2. **Conversation load** — if `WithConversation` is configured, conversation history is loaded.
 3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved and injected as context before the user message.
 4. **Image injection** — if `WithImages` was called on the context, each `ImageBlock`'s MIME type is validated and the images are prepended to the first user message's content slice. An invalid MIME type returns an error before the provider is called.
 5. **Document injection** — if `WithDocuments` was called on the context, each `DocumentBlock`'s MIME type is validated and the documents are prepended before images in the first user message. An invalid MIME type returns an error before the provider is called.
@@ -535,18 +558,19 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
    - If the provider returns a **text response**: the loop exits.
    - If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
 7. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
-8. **Memory save** — if `WithMemory` is configured, the full conversation (including any `ImageBlock` and `DocumentBlock` values) is saved.
+8. **Conversation save** — if `WithConversation` is configured, the full conversation (including any `ImageBlock` and `DocumentBlock` values) is saved.
 
 If the loop reaches `maxIterations` without a text response, an error is returned.
 
 ## See Also
 
 - [Getting Started](getting-started.md) — installation and first agent
-- [HTTP & Multi-Tenant Environments](http.md) — `WithSharedMemory`, `WithConversationID`, and HTTP server patterns
+- [HTTP & Multi-Tenant Environments](http.md) — `WithSharedConversation`, `WithConversationID`, and HTTP server patterns
 - [Handoffs](handoff.md) — human handoff workflow, `Resume`, `ResumeInvoke`
 - [Prompt System](prompts.md) — `Text`, `RISEN`, `COSTAR` prompt types
 - [Tool System](tools.md) — defining tools for the agent
-- [Memory System](memory.md) — conversation persistence and strategies
+- [Conversation System](conversation.md) — conversation persistence and strategies
+- [Long-Term Memory](memory.md) — long-term user-scoped knowledge storage and retrieval
 - [Guardrails](guardrails.md) — input and output validation
 - [Middleware](middleware.md) — wrapping tool execution
 - [RAG Pipeline](rag.md) — retrieval-augmented generation

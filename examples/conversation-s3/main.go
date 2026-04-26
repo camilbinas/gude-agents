@@ -13,7 +13,7 @@
 //
 // Run:
 //
-//	AWS_BUCKET=my-bucket go run ./aws-s3-memory
+//	AWS_BUCKET=my-bucket go run ./conversation-s3
 
 package main
 
@@ -25,7 +25,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/camilbinas/gude-agents/agent"
-	s3mem "github.com/camilbinas/gude-agents/agent/memory/s3"
+	s3mem "github.com/camilbinas/gude-agents/agent/conversation/s3"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -57,7 +57,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithMemory(mem, "demo-conversation"),
+		agent.WithConversation(mem, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)

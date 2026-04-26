@@ -19,7 +19,7 @@
 //
 // Run:
 //
-//	go run ./disk-memory
+//	go run ./conversation-disk
 
 package main
 
@@ -29,7 +29,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory/disk"
+	"github.com/camilbinas/gude-agents/agent/conversation/disk"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -48,7 +48,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Remember what the user tells you. Be concise."),
 		nil,
-		agent.WithMemory(store, "default-session"),
+		agent.WithConversation(store, "default-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

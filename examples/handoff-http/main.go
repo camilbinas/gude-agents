@@ -26,7 +26,7 @@ import (
 	"sync"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -42,7 +42,7 @@ var (
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	// Single agent instance shared across all requests.
 	// WithSharedMemory means no hardcoded conversationID — each request
@@ -55,7 +55,7 @@ func main() {
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return `{"found": true}`, nil
 			}),
-	}, agent.WithSharedMemory(store), agent.WithMaxIterations(10))
+	}, agent.WithSharedConversation(store), agent.WithMaxIterations(10))
 	if err != nil {
 		log.Fatal(err)
 	}

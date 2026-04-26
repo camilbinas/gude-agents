@@ -2,7 +2,7 @@
 
 This guide walks through building a production-ready multi-user agent server using [Fiber v3](https://docs.gofiber.io/) and the orchestrator + worker pattern. A single set of agents serves all users concurrently, with per-request conversation IDs and streaming responses.
 
-If you haven't read [HTTP & Multi-Tenant Environments](http.md) yet, start there for the core concepts (`WithSharedMemory`, `WithConversationID`). This guide builds on those patterns with Fiber-specific implementation details.
+If you haven't read [HTTP & Multi-Tenant Environments](http.md) yet, start there for the core concepts (`WithSharedConversation`, `WithConversationID`). This guide builds on those patterns with Fiber-specific implementation details.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	// --- Shared memory ---
-	store := memory.NewStore() // Use redis for production
+	store := conversation.NewInMemory() // Use redis for production
 
 	// --- Orchestrator (single instance, shared across all requests) ---
 	orchestrator, err := agent.Orchestrator(sonnet,
@@ -86,7 +86,7 @@ func main() {
 			agent.AgentAsTool("ask_projects", "Ask about project details and statuses.", projectWorker),
 			agent.AgentAsTool("ask_finance", "Ask about revenue and financial data.", financeWorker),
 		},
-		agent.WithSharedMemory(store),
+		agent.WithSharedConversation(store),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -219,33 +219,33 @@ Note the use of `tool.NewString` — for tools with a single string parameter, t
 
 ## Adding Redis for Production
 
-Replace `memory.NewStore()` with Redis so conversations persist across restarts and scale horizontally:
+Replace `conversation.NewInMemory()` with Redis so conversations persist across restarts and scale horizontally:
 
 ```go
-import redismemory "github.com/camilbinas/gude-agents/agent/memory/redis"
+import redismemory "github.com/camilbinas/gude-agents/agent/conversation/redis"
 
-store, err := redismemory.NewRedisMemory(
+store, err := redismemory.NewRedisConversation(
     redismemory.RedisOptions{Addr: "127.0.0.1:6379"},
     redismemory.WithTTL(1 * time.Hour),
-    redismemory.WithKeyPrefix("agency:memory:"),
+    redismemory.WithKeyPrefix("agency:conv:"),
 )
 if err != nil {
     log.Fatal(err)
 }
 ```
 
-Then wrap it with summary memory to keep long conversations manageable:
+Then wrap it with summary conversation to keep long conversations manageable:
 
 ```go
-summary, err := memory.NewSummary(store, 10, memory.DefaultSummaryFunc(sonnet),
-    memory.WithPreserveRecentMessages(2),
+summary, err := conversation.NewSummary(store, 10, conversation.DefaultSummaryFunc(sonnet),
+    conversation.WithPreserveRecentMessages(2),
 )
 if err != nil {
     log.Fatal(err)
 }
 
 orchestrator, err := agent.Orchestrator(sonnet, instructions, tools,
-    agent.WithSharedMemory(summary),
+    agent.WithSharedConversation(summary),
 )
 ```
 
@@ -254,15 +254,15 @@ orchestrator, err := agent.Orchestrator(sonnet, instructions, tools,
 All of these are safe for concurrent use from multiple Fiber handlers:
 
 - `Agent.Invoke` / `InvokeStream` — conversation ID resolved from context, no shared mutable state
-- `memory.Store` — mutex-protected
-- `redismemory.RedisMemory` — stateless, delegates to Redis
-- `memory.Summary` — per-conversation summarization locks
+- `conversation.InMemory` — mutex-protected
+- `redismemory.RedisConversation` — stateless, delegates to Redis
+- `conversation.Summary` — per-conversation summarization locks
 - `AgentAsTool` — child agents are invoked independently per tool call
 
 ## See Also
 
 - [HTTP & Multi-Tenant Environments](http.md) — core concepts for multi-user agents
 - [Multi-Agent Composition](multi-agent.md) — orchestrator + worker pattern details
-- [Memory](memory.md) — memory strategies and summary memory
-- [Redis](redis.md) — Redis memory and connection configuration
+- [Conversation System](conversation.md) — conversation strategies and summary
+- [Redis](redis.md) — Redis conversation store and connection configuration
 - [Providers](providers.md) — using different models for orchestrator vs workers

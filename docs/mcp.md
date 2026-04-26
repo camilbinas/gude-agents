@@ -386,11 +386,11 @@ import (
     "sync"
 
     "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/memory"
+    "github.com/camilbinas/gude-agents/agent/conversation"
     "github.com/camilbinas/gude-agents/agent/prompt"
     "github.com/camilbinas/gude-agents/agent/provider/bedrock"
     "github.com/camilbinas/gude-agents/agent/mcp"
-    "github.com/camilbinas/gude-agents/agent/memory/redis"
+    "github.com/camilbinas/gude-agents/agent/conversation/redis"
 )
 
 func main() {
@@ -426,14 +426,14 @@ func main() {
 
             conversationID := fmt.Sprintf("user-%d", userID)
 
-            // Each user gets their own agent with their own memory,
+            // Each user gets their own agent with their own conversation store,
             // but they all share the same pooled MCP tools.
-            store := memory.NewStore()
+            store := conversation.NewInMemory()
             a, err := agent.Default(
                 provider,
                 prompt.Text("You are a helpful assistant with filesystem access."),
                 mcpTools,
-                agent.WithMemory(store, conversationID),
+                agent.WithConversation(store, conversationID),
             )
             if err != nil {
                 log.Printf("user %d: agent error: %v", userID, err)

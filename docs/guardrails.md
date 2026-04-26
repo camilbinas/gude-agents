@@ -14,7 +14,7 @@ An `InputGuardrail` receives the user's message before it is sent to the provide
 - Return a modified message (content transformation, sanitization)
 - Return an error to abort the invocation immediately
 
-Input guardrails run at the very start of `InvokeStream`, before conversation history is loaded from memory and before any provider call is made.
+Input guardrails run at the very start of `InvokeStream`, before conversation history is loaded and before any provider call is made.
 
 Register input guardrails with the `WithInputGuardrail` option:
 

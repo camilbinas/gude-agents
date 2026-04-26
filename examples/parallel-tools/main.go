@@ -33,7 +33,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -96,13 +96,13 @@ func main() {
 		"The CRM and email tools are fire-and-forget — just confirm they were queued.",
 	}, " "))
 
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	a, err := agent.Default(
 		provider,
 		instructions,
 		[]tool.Tool{lookupTool, logCRMTool, emailTool},
-		agent.WithMemory(store, "fire-and-forget-session"),
+		agent.WithConversation(store, "fire-and-forget-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

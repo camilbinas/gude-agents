@@ -24,7 +24,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/metrics/prometheus"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -102,7 +102,7 @@ func main() {
 	},
 		prometheus.WithSwarmMetrics(),
 		agent.WithSwarmMaxHandoffs(5),
-		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
+		agent.WithSwarmConversation(conversation.NewInMemory(), "support-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

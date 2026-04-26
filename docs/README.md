@@ -47,8 +47,9 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Components
 
-- [Memory System](memory.md) — Strategies (Window, Token, Filter, Summary) and composable middleware
-- [Redis Providers](redis.md) — Redis-backed memory and vector store
+- [Conversation System](conversation.md) — Strategies (Window, Token, Filter, Summary) and composable middleware
+- [Long-Term Memory](memory.md) — Long-term knowledge storage with Remember/Recall tools
+- [Redis Providers](redis.md) — Redis-backed conversation store and vector store
 - [Tool System](tools.md) — Typed tools, schema generation, and tool choice
 - [RAG Pipeline](rag.md) — Embedders, vector stores, retrieval, and ingestion
 - [Guardrails](guardrails.md) — Input and output validation
@@ -63,7 +64,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 - [OTEL Metrics](metrics-otel.md) — OpenTelemetry metrics exporter for OTLP-compatible backends
 - [CloudWatch Metrics](metrics-cloudwatch.md) — AWS CloudWatch metrics exporter with buffered flush
 - [Graph Workflows](graph.md) — DAG-based state machines with fork/join, conditional routing, and typed state
-- [HTTP & Multi-Tenant Environments](http.md) — `WithSharedMemory`, `WithConversationID`, and serving multiple users
+- [HTTP & Multi-Tenant Environments](http.md) — `WithSharedConversation`, `WithConversationID`, and serving multiple users
 - [Multi-Agent HTTP Server with Fiber v3](fiber-multi-agent.md) — Streaming multi-agent server with per-user conversations
 - [Handoffs](handoff.md) — Pausing agents for human input and resuming
 - [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern

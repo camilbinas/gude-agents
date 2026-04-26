@@ -29,7 +29,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -127,8 +127,8 @@ func main() {
 				teamLookup,
 			),
 		},
-		agent.WithMemory(
-			memory.NewWindow(memory.NewStore(), 20),
+		agent.WithConversation(
+			conversation.NewWindow(conversation.NewInMemory(), 20),
 			"dev-team-session",
 		),
 	)

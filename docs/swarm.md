@@ -103,13 +103,13 @@ Use an orchestrator when one agent needs to coordinate multiple specialists and 
 |---|---|---|
 | `WithSwarmMaxHandoffs(n)` | 10 | Max agent-to-agent transfers per invocation. Returns an error if n < 1. |
 | `WithSwarmMiddleware(mws...)` | none | Middleware applied to all tool executions across the swarm |
-| `WithSwarmMemory(m, id)` | nil | Enables conversation memory — persists messages and active agent across calls |
+| `WithSwarmConversation(c, id)` | nil | Enables conversation persistence — persists messages and active agent across calls |
 
 All options return errors on invalid input, which surfaces through `NewSwarm`.
 
 ## Conversation Memory
 
-Without memory, each `Run`/`Invoke` call is stateless — the swarm starts fresh from the first member with no history. With `WithSwarmMemory`, the swarm:
+Without memory, each `Run`/`Invoke` call is stateless — the swarm starts fresh from the first member with no history. With `WithSwarmConversation`, the swarm:
 
 1. Loads previous messages at the start of each call
 2. Remembers which agent was last active and resumes there
@@ -119,7 +119,7 @@ This means follow-up messages go to the right agent automatically. If billing wa
 
 ```go
 swarm, err := agent.NewSwarm(members,
-    agent.WithSwarmMemory(memory.NewStore(), "session-123"),
+    agent.WithSwarmConversation(conversation.NewInMemory(), "session-123"),
 )
 
 // Turn 1: triage → billing
@@ -133,7 +133,7 @@ For HTTP servers, use `WithConversationID` on the context to serve multiple conv
 
 ```go
 swarm, _ := agent.NewSwarm(members,
-    agent.WithSwarmMemory(store, ""),
+    agent.WithSwarmConversation(store, ""),
 )
 
 // Each request provides its own conversation ID.
@@ -143,4 +143,4 @@ result, err := swarm.Invoke(ctx, req.Message)
 
 See [HTTP & Multi-Tenant Environments](http.md) for the full pattern.
 
-Any `Memory` implementation works — in-memory (`memory.NewStore()`), Redis, or your own.
+Any `Conversation` implementation works — in-memory (`conversation.NewInMemory()`), Redis, or your own.

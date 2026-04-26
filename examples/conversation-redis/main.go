@@ -1,6 +1,6 @@
 // Run:
 //
-//	REDIS_ADDR=localhost:6379 go run ./redis-memory
+//	REDIS_ADDR=localhost:6379 go run ./conversation-redis
 
 package main
 
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory/redis"
+	"github.com/camilbinas/gude-agents/agent/conversation/redis"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -24,7 +24,7 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	mem, err := redis.NewRedisMemory(
+	mem, err := redis.NewRedisConversation(
 		redis.RedisOptions{Addr: redisAddr},
 		redis.WithTTL(1*time.Hour),
 		redis.WithKeyPrefix("example:memory:"),
@@ -40,7 +40,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithMemory(mem, "demo-conversation"),
+		agent.WithConversation(mem, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)

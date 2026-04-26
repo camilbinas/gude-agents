@@ -10,8 +10,8 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -85,7 +85,7 @@ func main() {
 		{Name: "technical", Description: "Handles bugs, errors, and technical how-to questions", Agent: techAgent},
 	},
 		agent.WithSwarmMaxHandoffs(5),
-		agent.WithSwarmMemory(memory.NewStore(), "support-session"),
+		agent.WithSwarmConversation(conversation.NewInMemory(), "support-session"),
 		debug.WithSwarmLogging(),
 	)
 	if err != nil {

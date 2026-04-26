@@ -10,7 +10,7 @@
 //   - graph.run / graph.node.* spans for the graph workflow
 //   - agent.invoke / agent.iteration / agent.provider.call for each agent
 //   - agent.tool.word_count for the enrich agent's tool call
-//   - agent.memory.load / agent.memory.save for the summarise agent's memory
+//   - agent.conversation.load / agent.conversation.save for the summarise agent's memory
 //
 // Run:
 //
@@ -29,8 +29,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/graph"
-	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -90,13 +90,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Summarise agent — has memory. Produces agent.memory.load / agent.memory.save spans.
-	store := memory.NewStore()
+	// Summarise agent — has memory. Produces agent.conversation.load / agent.conversation.save spans.
+	store := conversation.NewInMemory()
 	summariser, err := agent.Minimal(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
 	), nil,
 		tracing.WithTracing(nil),
-		agent.WithMemory(store, "summarise-session"),
+		agent.WithConversation(store, "summarise-session"),
 	)
 	if err != nil {
 		log.Fatal(err)

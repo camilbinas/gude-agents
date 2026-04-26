@@ -16,7 +16,7 @@
 //
 // Run:
 //
-//	AWS_DYNAMODB_TABLE=gude-memory go run ./aws-dynamodb-memory
+//	AWS_DYNAMODB_TABLE=gude-memory go run ./conversation-dynamodb
 
 package main
 
@@ -29,8 +29,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation/dynamodb"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/memory/dynamodb"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -49,7 +49,7 @@ func main() {
 		log.Fatalf("load AWS config: %v", err)
 	}
 
-	mem, err := dynamodb.NewDynamoDBMemory(cfg, table,
+	mem, err := dynamodb.NewDynamoDBConversation(cfg, table,
 		dynamodb.WithKeyPrefix("example:memory:"),
 		dynamodb.WithTTL(8*time.Hour),
 	)
@@ -63,7 +63,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithMemory(mem, "demo-conversation"),
+		agent.WithConversation(mem, "demo-conversation"),
 		agent.WithName("helpful-agent"),
 		debug.WithLogging(),
 	)

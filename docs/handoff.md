@@ -113,6 +113,6 @@ if errors.Is(err, agent.ErrHandoffRequested) {
 
 ### Async (queues, email, Slack)
 
-Same pattern — persist the `HandoffRequest.Messages` to your store, and call `Resume` whenever the human responds, even hours or days later. If using `Memory`, the conversation is already saved automatically on handoff.
+Same pattern — persist the `HandoffRequest.Messages` to your store, and call `Resume` whenever the human responds, even hours or days later. If using `Conversation`, the conversation is already saved automatically on handoff.
 
 See `examples/handoff-cli/` and `examples/handoff-http/` for complete working examples.
