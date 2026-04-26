@@ -262,7 +262,7 @@ func TestZeroOverhead_NoTracingNoSpans(t *testing.T) {
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "echoed", nil })
 
 	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool},
-		agent.WithMemory(mem, "conv-1"),
+		agent.WithConversation(mem, "conv-1"),
 		agent.WithInputGuardrail(func(_ context.Context, msg string) (string, error) { return msg, nil }),
 		agent.WithOutputGuardrail(func(_ context.Context, resp string) (string, error) { return resp, nil }),
 	)
@@ -413,7 +413,7 @@ func TestInvokeSpan_Attributes(t *testing.T) {
 
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
 		agent.WithMaxIterations(7),
-		agent.WithMemory(mem, "conv-123"),
+		agent.WithConversation(mem, "conv-123"),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1016,7 +1016,7 @@ func TestMemorySpan_LoadAndSave(t *testing.T) {
 	mem := newMockMemory()
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithMemory(mem, "conv-42"),
+		agent.WithConversation(mem, "conv-42"),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1030,17 +1030,17 @@ func TestMemorySpan_LoadAndSave(t *testing.T) {
 
 	spans := exp.GetSpans()
 
-	loadSpan := findSpan(spans, "agent.memory.load")
+	loadSpan := findSpan(spans, "agent.conversation.load")
 	if loadSpan == nil {
-		t.Fatal("expected agent.memory.load span")
+		t.Fatal("expected agent.conversation.load span")
 	}
 	if v := getAttr(*loadSpan, AttrMemoryConversationID); v.AsString() != "conv-42" {
 		t.Errorf("expected memory.conversation_id=%q, got %q", "conv-42", v.AsString())
 	}
 
-	saveSpan := findSpan(spans, "agent.memory.save")
+	saveSpan := findSpan(spans, "agent.conversation.save")
 	if saveSpan == nil {
-		t.Fatal("expected agent.memory.save span")
+		t.Fatal("expected agent.conversation.save span")
 	}
 	if v := getAttr(*saveSpan, AttrMemoryConversationID); v.AsString() != "conv-42" {
 		t.Errorf("expected memory.conversation_id=%q, got %q", "conv-42", v.AsString())
@@ -1057,7 +1057,7 @@ func TestMemorySpan_LoadErrorStatus(t *testing.T) {
 	}
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithMemory(mem, "conv-1"),
+		agent.WithConversation(mem, "conv-1"),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1067,9 +1067,9 @@ func TestMemorySpan_LoadErrorStatus(t *testing.T) {
 	_, _, _ = a.Invoke(context.Background(), "hi")
 
 	spans := exp.GetSpans()
-	loadSpan := findSpan(spans, "agent.memory.load")
+	loadSpan := findSpan(spans, "agent.conversation.load")
 	if loadSpan == nil {
-		t.Fatal("expected agent.memory.load span")
+		t.Fatal("expected agent.conversation.load span")
 	}
 
 	if loadSpan.Status.Code != codes.Error {
@@ -1087,7 +1087,7 @@ func TestMemorySpan_SaveErrorStatus(t *testing.T) {
 	}
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithMemory(mem, "conv-1"),
+		agent.WithConversation(mem, "conv-1"),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1100,9 +1100,9 @@ func TestMemorySpan_SaveErrorStatus(t *testing.T) {
 	}
 
 	spans := exp.GetSpans()
-	saveSpan := findSpan(spans, "agent.memory.save")
+	saveSpan := findSpan(spans, "agent.conversation.save")
 	if saveSpan == nil {
-		t.Fatal("expected agent.memory.save span")
+		t.Fatal("expected agent.conversation.save span")
 	}
 
 	if saveSpan.Status.Code != codes.Error {

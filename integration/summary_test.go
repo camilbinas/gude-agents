@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
@@ -20,7 +20,7 @@ func TestIntegration_Summary_DefaultSummaryFunc(t *testing.T) {
 	p := newTestProvider(t)
 
 	// Use the provider-backed DefaultSummaryFunc.
-	summaryFn := memory.DefaultSummaryFunc(p)
+	summaryFn := conversation.DefaultSummaryFunc(p)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -65,18 +65,18 @@ func TestIntegration_Summary_DefaultSummaryFunc(t *testing.T) {
 
 func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	p := newTestProvider(t)
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	// Use a custom summary function that explicitly preserves names.
-	summaryFn := memory.NewSummaryFunc(p,
+	summaryFn := conversation.NewSummaryFunc(p,
 		"Summarize this conversation into a concise paragraph. "+
 			"You MUST preserve the user's name, location, occupation, and any other personal details they shared. "+
 			"Start the summary with the user's name.",
 	)
 
-	summaryStore, err := memory.NewSummary(store, 4, summaryFn,
-		memory.WithSummaryLogger(testLogger(t)),
-		memory.WithPreserveRecentMessages(2),
+	summaryStore, err := conversation.NewSummary(store, 4, summaryFn,
+		conversation.WithSummaryLogger(testLogger(t)),
+		conversation.WithPreserveRecentMessages(2),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	a, err := agent.New(p,
 		prompt.Text("You are a helpful assistant. Be very brief — one sentence max."),
 		nil,
-		agent.WithMemory(summaryStore, "summary-conv"),
+		agent.WithConversation(summaryStore, "summary-conv"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -143,16 +143,16 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 
 func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	p := newTestProvider(t)
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
-	summaryFn := memory.NewSummaryFunc(p,
+	summaryFn := conversation.NewSummaryFunc(p,
 		"Summarize this conversation into a concise paragraph. "+
 			"You MUST preserve the user's name and any hobbies or interests they mentioned. "+
 			"Start the summary with the user's name.",
 	)
 
-	summaryStore, err := memory.NewSummary(store, 3, summaryFn,
-		memory.WithSummaryLogger(testLogger(t)),
+	summaryStore, err := conversation.NewSummary(store, 3, summaryFn,
+		conversation.WithSummaryLogger(testLogger(t)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	a, err := agent.New(p,
 		prompt.Text("You are a helpful assistant. Be very brief."),
 		nil,
-		agent.WithSharedMemory(summaryStore),
+		agent.WithSharedConversation(summaryStore),
 	)
 	if err != nil {
 		t.Fatal(err)

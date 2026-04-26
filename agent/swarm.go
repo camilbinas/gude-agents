@@ -33,11 +33,11 @@ type SwarmMember struct {
 type Swarm struct {
 	mu             sync.Mutex // protects activeAgent
 	members        map[string]*swarmEntry
-	initialAgent   string // first member — used when no memory or fresh conversation
-	activeAgent    string // default active agent; overridden per-call via memory or context
+	initialAgent   string // first member — used when no conversation history
+	activeAgent    string // default active agent; overridden per-call via conversation or context
 	maxHandoffs    int
 	middlewares    []Middleware
-	memory         Memory
+	conversation   Conversation
 	conversationID string
 	tracingHook    SwarmTracingHook // nil = no tracing
 	metricsHook    SwarmMetricsHook // nil = no metrics
@@ -73,11 +73,11 @@ func WithSwarmMiddleware(mws ...Middleware) SwarmOption {
 	}
 }
 
-// WithSwarmMemory enables conversation memory so the swarm persists messages and
+// WithSwarmConversation enables conversation so the swarm persists messages and
 // the active agent across calls. Without this, each Run/Invoke is stateless.
-func WithSwarmMemory(m Memory, conversationID string) SwarmOption {
+func WithSwarmConversation(c Conversation, conversationID string) SwarmOption {
 	return func(s *Swarm) error {
-		s.memory = m
+		s.conversation = c
 		s.conversationID = conversationID
 		return nil
 	}
@@ -169,7 +169,7 @@ func (s *Swarm) makeHandoffTool(targetName, targetDescription string) tool.Tool 
 
 // Run executes the swarm starting from the active agent. When an agent hands off,
 // the conversation context transfers to the new agent which continues the loop.
-// If memory is configured, conversation history and the active agent are persisted
+// If conversation is configured, conversation history and the active agent are persisted
 // across calls.
 // Documented in docs/swarm.md — update when changing loop behavior.
 func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) (SwarmResult, error) {
@@ -209,10 +209,10 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 		s.loggingHook.OnSwarmRunStart(currentAgent, len(s.members), s.maxHandoffs)
 	}
 
-	// Load conversation history and active agent from memory.
+	// Load conversation history and active agent from conversation store.
 	var messages []Message
-	if s.memory != nil {
-		history, err := s.memory.Load(ctx, convID)
+	if s.conversation != nil {
+		history, err := s.conversation.Load(ctx, convID)
 		if err != nil {
 			if finishSwarmRun != nil {
 				finishSwarmRun(err, result)
@@ -223,14 +223,14 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			if s.loggingHook != nil {
 				s.loggingHook.OnSwarmRunEnd(err, result, time.Since(swarmRunStart))
 			}
-			return result, fmt.Errorf("swarm memory load: %w", err)
+			return result, fmt.Errorf("swarm conversation load: %w", err)
 		}
 		messages = history
 
 		// Restore which agent was last active from the metadata conversation.
 		// Uses a "meta:" prefix to separate internal metadata from user conversations,
 		// and to allow future metadata keys without collision.
-		agentHistory, err := s.memory.Load(ctx, "meta:"+convID+":swarm_active")
+		agentHistory, err := s.conversation.Load(ctx, "meta:"+convID+":swarm_active")
 		if err == nil && len(agentHistory) > 0 {
 			last := agentHistory[len(agentHistory)-1]
 			if len(last.Content) > 0 {
@@ -404,15 +404,15 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 			s.loggingHook.OnSwarmAgentEnd(currentAgent, nil, time.Since(agentTurnStart))
 		}
 
-		// Append assistant response to messages for memory.
+		// Append assistant response to messages for conversation persistence.
 		messages = append(messages, Message{
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: finalText}},
 		})
 
 		// Persist conversation and active agent.
-		if s.memory != nil {
-			if err := s.memory.Save(ctx, convID, messages); err != nil {
+		if s.conversation != nil {
+			if err := s.conversation.Save(ctx, convID, messages); err != nil {
 				if finishSwarmRun != nil {
 					finishSwarmRun(err, result)
 				}
@@ -422,10 +422,10 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 				if s.loggingHook != nil {
 					s.loggingHook.OnSwarmRunEnd(err, result, time.Since(swarmRunStart))
 				}
-				return result, fmt.Errorf("swarm memory save: %w", err)
+				return result, fmt.Errorf("swarm conversation save: %w", err)
 			}
 			// Store which agent is active so the next call resumes there.
-			if err := s.memory.Save(ctx, "meta:"+convID+":swarm_active", []Message{
+			if err := s.conversation.Save(ctx, "meta:"+convID+":swarm_active", []Message{
 				{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: currentAgent}}},
 			}); err != nil {
 				// Non-critical: active agent metadata failed to save.

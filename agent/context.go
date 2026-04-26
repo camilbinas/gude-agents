@@ -102,3 +102,20 @@ func GetDocuments(ctx context.Context) []DocumentBlock {
 	}
 	return docs
 }
+
+// identifierKey is the context key for per-invocation scoping identity.
+type identifierKey struct{}
+
+// WithIdentifier attaches an identifier to the context. This is used by
+// memory tools to scope Remember and Recall operations to a specific
+// entity (user, team, project, tenant, etc.).
+func WithIdentifier(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, identifierKey{}, id)
+}
+
+// GetIdentifier retrieves the identifier from the context.
+// Returns an empty string if no identifier is attached.
+func GetIdentifier(ctx context.Context) string {
+	id, _ := ctx.Value(identifierKey{}).(string)
+	return id
+}

@@ -47,7 +47,7 @@ func TestProperty_InvokeSpanAttributes(t *testing.T) {
 
 		a, err := agent.New(prov, prompt.Text("sys"), nil,
 			agent.WithMaxIterations(maxIter),
-			agent.WithMemory(mem, convID),
+			agent.WithConversation(mem, convID),
 			WithTracing(tp),
 		)
 		if err != nil {
@@ -312,6 +312,56 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 
 		if v := getAttr(*toolSpan, AttrToolName); v.AsString() != toolName {
 			t.Fatalf("tool.name: expected %q, got %q", toolName, v.AsString())
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Property 5: Tracing span name consistency (memory-package-rename)
+// ---------------------------------------------------------------------------
+
+// Feature: memory-package-rename, Property 5: Tracing span name consistency
+//
+// For any memory operation string ("load" or "save"), the tracing hook SHALL
+// produce a span name of the form "agent.conversation.{operation}".
+//
+// **Validates: Requirements 15.1, 15.2**
+func TestProperty_TracingSpanNameConsistency(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		operation := rapid.SampledFrom([]string{"load", "save"}).Draw(t, "operation")
+		conversationID := rapid.StringMatching("[a-z][a-z0-9-]{0,20}").Draw(t, "conversation_id")
+
+		exp, tp := newTestTracerProvider()
+		defer tp.Shutdown(context.Background())
+
+		hook := &otelHook{tracer: tp.Tracer(instrumentationName)}
+
+		ctx := context.Background()
+		ctx, end := hook.OnMemoryStart(ctx, operation, conversationID)
+		_ = ctx
+		end(nil)
+
+		spans := exp.GetSpans()
+		expectedSpanName := "agent.conversation." + operation
+		span := findSpan(spans, expectedSpanName)
+		if span == nil {
+			// Collect actual span names for debugging.
+			var names []string
+			for _, s := range spans {
+				names = append(names, s.Name)
+			}
+			t.Fatalf("expected span named %q, got spans: %v", expectedSpanName, names)
+		}
+
+		// Verify the span name does NOT use the old "agent.memory." prefix.
+		oldSpanName := "agent.memory." + operation
+		if oldSpan := findSpan(spans, oldSpanName); oldSpan != nil {
+			t.Fatalf("found old span name %q; expected new name %q", oldSpanName, expectedSpanName)
+		}
+
+		// Verify the conversation ID attribute is set.
+		if v := getAttr(*span, AttrMemoryConversationID); v.AsString() != conversationID {
+			t.Fatalf("memory.conversation_id: expected %q, got %q", conversationID, v.AsString())
 		}
 	})
 }

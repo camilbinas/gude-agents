@@ -25,4 +25,4 @@ type Swarm = agent.Swarm
 var New = agent.NewSwarm
 var WithMaxHandoffs = agent.WithSwarmMaxHandoffs
 var WithMiddleware = agent.WithSwarmMiddleware
-var WithMemory = agent.WithSwarmMemory
+var WithConversation = agent.WithSwarmConversation

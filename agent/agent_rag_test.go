@@ -410,7 +410,7 @@ func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
 	originalSystem := "base system prompt"
 	a, err := New(provider, prompt.Text(originalSystem), nil,
 		WithRetriever(retriever),
-		WithMemory(mem, "conv-1"),
+		WithConversation(mem, "conv-1"),
 	)
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)

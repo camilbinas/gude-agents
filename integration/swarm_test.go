@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/swarm"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -97,13 +97,12 @@ func TestIntegration_Swarm_MemoryAcrossTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 	sw, err := swarm.New([]swarm.Member{
 		{Name: "greeter", Description: "Greets users and handles general questions", Agent: greeter},
 		{Name: "technical", Description: "Handles technical support questions", Agent: technical},
 	},
-		swarm.WithMemory(store, "swarm-conv-1"),
-		
+		swarm.WithConversation(store, "swarm-conv-1"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -157,13 +156,12 @@ func TestIntegration_Swarm_WithPerRequestConversationID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 	sw, err := swarm.New([]swarm.Member{
 		{Name: "alpha", Description: "General assistant", Agent: alpha},
 		{Name: "beta", Description: "Secondary assistant", Agent: beta},
 	},
-		swarm.WithMemory(store, ""),
-		
+		swarm.WithConversation(store, ""),
 	)
 	if err != nil {
 		t.Fatal(err)

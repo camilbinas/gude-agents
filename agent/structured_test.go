@@ -535,7 +535,7 @@ func TestInvokeStructured_MemoryLoadAndSaveCalled(t *testing.T) {
 	}
 
 	mem := &trackingMemory{}
-	a, err := New(sp, prompt.Text("sys"), nil, WithMemory(mem, "conv1"))
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(mem, "conv1"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -88,7 +88,7 @@ func TestConcurrentInvocations_DifferentConversations(t *testing.T) {
 	}
 
 	store := newTestMemoryStore()
-	a, err := New(provider, prompt.Text("sys"), nil, WithSharedMemory(store))
+	a, err := New(provider, prompt.Text("sys"), nil, WithSharedConversation(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,9 +152,9 @@ func (f *funcProvider) ConverseStream(ctx context.Context, params ConverseParams
 	return resp, nil
 }
 
-// TestMultiTurn_WithSharedMemory verifies that multi-turn conversations work
-// correctly when using WithSharedMemory with per-request conversation IDs.
-func TestMultiTurn_WithSharedMemory(t *testing.T) {
+// TestMultiTurn_WithSharedConversation verifies that multi-turn conversations work
+// correctly when using WithSharedConversation with per-request conversation IDs.
+func TestMultiTurn_WithSharedConversation(t *testing.T) {
 	callIndex := 0
 	var mu sync.Mutex
 
@@ -179,7 +179,7 @@ func TestMultiTurn_WithSharedMemory(t *testing.T) {
 	}
 
 	store := newTestMemoryStore()
-	a, err := New(provider, prompt.Text("sys"), nil, WithSharedMemory(store))
+	a, err := New(provider, prompt.Text("sys"), nil, WithSharedConversation(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 
 	store := newTestMemoryStore()
 	a, err := New(provider, prompt.Text("sys"), []tool.Tool{NewHandoffTool("request_human_input", "")},
-		WithSharedMemory(store))
+		WithSharedConversation(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestSwarm_WithPerInvocationConversationID(t *testing.T) {
 	sw, _ := NewSwarm([]SwarmMember{
 		{Name: "alpha", Description: "first", Agent: a1},
 		{Name: "beta", Description: "second", Agent: a2},
-	}, WithSwarmMemory(mem, "default"))
+	}, WithSwarmConversation(mem, "default"))
 
 	// Two different conversations on the same swarm.
 	ctxX := WithConversationID(context.Background(), "conv-X")

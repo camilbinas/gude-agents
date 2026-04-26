@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -90,13 +90,13 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 
 func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 	p := newTestProvider(t)
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	a, err := agent.New(p, prompt.Text(
 		"You are a support agent. When the user asks to delete their account, "+
 			"use request_human_input to get confirmation from a supervisor. Be brief.",
 	), []tool.Tool{agent.NewHandoffTool("request_human_input", "Use when the user asks to delete their account to get supervisor confirmation.")},
-		agent.WithSharedMemory(store),
+		agent.WithSharedConversation(store),
 		agent.WithMaxIterations(5),
 	)
 	if err != nil {

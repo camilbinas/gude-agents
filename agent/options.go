@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Logger is an optional interface for logging. Used by memory strategies
+// Logger is an optional interface for logging. Used by conversation strategies
 // for error reporting during background operations.
 type Logger interface {
 	Printf(format string, v ...any)
@@ -41,24 +41,24 @@ func WithParallelToolExecution() Option {
 	}
 }
 
-// WithMemory configures conversation memory for multi-turn support.
+// WithConversation configures conversation history for multi-turn support.
 // The conversationID is used as the default; it can be overridden per-invocation
 // using WithConversationID on the context.
-func WithMemory(m Memory, conversationID string) Option {
+func WithConversation(c Conversation, conversationID string) Option {
 	return func(a *Agent) error {
-		a.memory = m
+		a.conversation = c
 		a.conversationID = conversationID
 		return nil
 	}
 }
 
-// WithSharedMemory configures conversation memory without a default conversationID.
+// WithSharedConversation configures conversation history without a default conversationID.
 // Each invocation must provide a conversationID via WithConversationID on the context.
 // This is the recommended pattern for HTTP servers where a single Agent instance
 // serves multiple concurrent conversations.
-func WithSharedMemory(m Memory) Option {
+func WithSharedConversation(c Conversation) Option {
 	return func(a *Agent) error {
-		a.memory = m
+		a.conversation = c
 		return nil
 	}
 }
@@ -124,12 +124,12 @@ func WithThinkingCallback(cb ThinkingCallback) Option {
 	}
 }
 
-// WithSynchronousMemory makes the agent call Wait() on the memory after each Save,
+// WithSynchronousConversation makes the agent call Wait() on the conversation after each Save,
 // blocking until any background work (e.g. summarization) is complete before
-// returning from Invoke. Only has an effect if the memory implements MemoryWaiter.
-func WithSynchronousMemory() Option {
+// returning from Invoke. Only has an effect if the conversation implements ConversationWaiter.
+func WithSynchronousConversation() Option {
 	return func(a *Agent) error {
-		a.syncMemory = true
+		a.syncConversation = true
 		return nil
 	}
 }

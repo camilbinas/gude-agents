@@ -11,7 +11,7 @@ import (
 const structuredOutputToolName = "structured_output"
 
 // InvokeStructured forces the LLM to return a JSON response conforming to T.
-// It applies input guardrails, loads/saves memory, and applies output guardrails
+// It applies input guardrails, loads/saves conversation, and applies output guardrails
 // in the same way as InvokeStream.
 // Documented in docs/structured-output.md — update when changing signature or mechanism.
 func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, TokenUsage, error) {
@@ -27,13 +27,13 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 		}
 	}
 
-	// 2. Load conversation history from memory if configured.
+	// 2. Load conversation history from conversation if configured.
 	convID := ResolveConversationID(ctx, a.conversationID)
 	var messages []Message
-	if a.memory != nil {
-		history, err := a.memory.Load(ctx, convID)
+	if a.conversation != nil {
+		history, err := a.conversation.Load(ctx, convID)
 		if err != nil {
-			return zero, TokenUsage{}, fmt.Errorf("structured output: memory load: %w", err)
+			return zero, TokenUsage{}, fmt.Errorf("structured output: conversation load: %w", err)
 		}
 		messages = history
 	}
@@ -117,13 +117,13 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 		return zero, usage, fmt.Errorf("structured output: failed to deserialize response: %w", err)
 	}
 
-	// 7. Save the exchange to memory if configured.
-	if a.memory != nil {
+	// 7. Save the exchange to conversation if configured.
+	if a.conversation != nil {
 		assistantMsg := Message{
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: rawText}},
 		}
-		_ = a.memory.Save(ctx, convID, append(messages, assistantMsg))
+		_ = a.conversation.Save(ctx, convID, append(messages, assistantMsg))
 	}
 
 	return result, usage, nil

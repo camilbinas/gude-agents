@@ -24,7 +24,7 @@ type Agent struct {
 	instructions     string
 	maxIterations    int
 	parallelTools    bool
-	memory           Memory
+	conversation     Conversation
 	conversationID   string
 	middlewares      []Middleware
 	inputGuardrails  []InputGuardrail
@@ -33,7 +33,7 @@ type Agent struct {
 	retriever        Retriever        // nil = no RAG
 	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
 	thinkingCallback ThinkingCallback // nil = discard thinking chunks
-	syncMemory       bool             // if true, call Wait() on memory after each Save
+	syncConversation bool             // if true, call Wait() on conversation after each Save
 	normStrategy     *NormStrategy    // nil = use default (Merge); pointer to distinguish "not set" from "set to Merge"
 	normDisabled     bool             // true = skip normalization entirely
 	tracingHook      TracingHook      // nil = no tracing
@@ -107,14 +107,14 @@ func (a *Agent) ToolSpecs() []tool.Spec {
 	return cp
 }
 
-// Close performs graceful cleanup. If the agent's memory implements MemoryWaiter
+// Close performs graceful cleanup. If the agent's conversation implements ConversationWaiter
 // (e.g. the Summary strategy), Close blocks until all background work is complete.
 // Safe to call multiple times. No-op if no cleanup is needed.
 func (a *Agent) Close() {
-	if a.memory == nil {
+	if a.conversation == nil {
 		return
 	}
-	if w, ok := a.memory.(MemoryWaiter); ok {
+	if w, ok := a.conversation.(ConversationWaiter); ok {
 		w.Wait()
 	}
 }

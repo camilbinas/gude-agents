@@ -141,9 +141,9 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		}
 	}
 
-	// Load conversation history if memory is configured.
+	// Load conversation history if conversation is configured.
 	var messages []Message
-	if a.memory != nil {
+	if a.conversation != nil {
 		memCtx := ctx
 		var finishMemLoad func(error)
 		if a.tracingHook != nil {
@@ -155,7 +155,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 		}
 
 		memLoadStart := time.Now()
-		history, err := a.memory.Load(memCtx, convID)
+		history, err := a.conversation.Load(memCtx, convID)
 
 		if finishMemLoad != nil {
 			finishMemLoad(err)
@@ -164,7 +164,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 			a.loggingHook.OnMemoryEnd("load", convID, err, len(history), time.Since(memLoadStart))
 		}
 		if err != nil {
-			return cumulative, fmt.Errorf("memory load: %w", err)
+			return cumulative, fmt.Errorf("conversation load: %w", err)
 		}
 		messages = history
 	}
@@ -438,10 +438,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 						hr.ConversationID = convID
 					}
 				}
-				if a.memory != nil {
-					_ = a.memory.Save(ctx, convID, messages[ragOffset:])
-					if a.syncMemory {
-						if w, ok := a.memory.(MemoryWaiter); ok {
+				if a.conversation != nil {
+					_ = a.conversation.Save(ctx, convID, messages[ragOffset:])
+					if a.syncConversation {
+						if w, ok := a.conversation.(ConversationWaiter); ok {
 							w.Wait()
 						}
 					}
@@ -511,7 +511,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			finishIteration(0, true)
 		}
 
-		if a.memory != nil {
+		if a.conversation != nil {
 			memCtx := ctx
 			var finishMemSave func(error)
 			if a.tracingHook != nil {
@@ -523,7 +523,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			}
 
 			memSaveStart := time.Now()
-			err := a.memory.Save(memCtx, convID, messages[ragOffset:])
+			err := a.conversation.Save(memCtx, convID, messages[ragOffset:])
 
 			if finishMemSave != nil {
 				finishMemSave(err)
@@ -532,10 +532,10 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				a.loggingHook.OnMemoryEnd("save", convID, err, len(messages[ragOffset:]), time.Since(memSaveStart))
 			}
 			if err != nil {
-				return cumulative, fmt.Errorf("memory save: %w", err)
+				return cumulative, fmt.Errorf("conversation save: %w", err)
 			}
-			if a.syncMemory {
-				if w, ok := a.memory.(MemoryWaiter); ok {
+			if a.syncConversation {
+				if w, ok := a.conversation.(ConversationWaiter); ok {
 					w.Wait()
 				}
 			}

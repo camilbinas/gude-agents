@@ -248,7 +248,7 @@ func TestSwarm_MemoryPersistsConversation(t *testing.T) {
 	sw, _ := swarm.New([]swarm.Member{
 		{Name: "alpha", Description: "first", Agent: a1},
 		{Name: "beta", Description: "second", Agent: a2},
-	}, swarm.WithMemory(mem, "conv1"))
+	}, swarm.WithConversation(mem, "conv1"))
 
 	r1, err := sw.Invoke(context.Background(), "hi")
 	if err != nil {
@@ -295,7 +295,7 @@ func TestSwarm_MemoryPersistsActiveAgent(t *testing.T) {
 	sw, _ := swarm.New([]swarm.Member{
 		{Name: "alpha", Description: "first", Agent: a1},
 		{Name: "beta", Description: "second", Agent: a2},
-	}, swarm.WithMemory(mem, "conv2"))
+	}, swarm.WithConversation(mem, "conv2"))
 
 	r1, err := sw.Invoke(context.Background(), "help")
 	if err != nil {

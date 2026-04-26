@@ -2,12 +2,16 @@ go 1.25.0
 
 use (
 	.
+	./agent/conversation/dynamodb
+	./agent/conversation/postgres
+	./agent/conversation/redis
+	./agent/conversation/s3
+	./agent/conversation/sqlite
+	./agent/logging/debug
+	./agent/logging/slog
 	./agent/mcp
-	./agent/memory/dynamodb
-	./agent/memory/postgres
+	./agent/memory/agentcore
 	./agent/memory/redis
-	./agent/memory/s3
-	./agent/memory/sqlite
 	./agent/metrics/cloudwatch
 	./agent/metrics/otel
 	./agent/metrics/prometheus
@@ -25,8 +29,6 @@ use (
 	./agent/rag/openai
 	./agent/rag/postgres
 	./agent/rag/redis
-	./agent/logging/slog
-	./agent/logging/debug
 	./agent/tool/webfetch/markdown
 	./agent/tracing
 	./agent/tracing/sentry

@@ -226,7 +226,7 @@ func TestProperty_LoopWithImagesPersistsImageBlocksInMemory(t *testing.T) {
 		store := newInMemoryStore()
 		sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
 
-		a, err := New(sp, prompt.Text("sys"), nil, WithMemory(store, "conv-pbt"))
+		a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "conv-pbt"))
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}

@@ -2,70 +2,32 @@ package memory
 
 import (
 	"context"
-	"sync"
-
-	"github.com/camilbinas/gude-agents/agent"
+	"time"
 )
 
-// Store is a simple in-process Memory backed by a map.
-// Documented in docs/memory.md — update when changing methods or thread-safety guarantees.
-type Store struct {
-	mu   sync.RWMutex
-	data map[string][]agent.Message
+// Memory stores and retrieves discrete facts (entries) keyed by an identifier.
+// The identifier can represent a user, team, project, tenant, or any other entity.
+// Unlike agent.Conversation which stores conversation message history, Memory
+// stores long-lived knowledge retrieved by semantic similarity.
+// Documented in docs/memory.md — update when changing interface.
+type Memory interface {
+	// Remember stores a fact for the given identifier. Metadata is optional.
+	// Returns an error if identifier or fact is empty.
+	Remember(ctx context.Context, identifier, fact string, metadata map[string]string) error
+
+	// Recall retrieves the top entries for the given identifier by semantic
+	// similarity to the query. Returns at most limit results, ordered by
+	// descending score.
+	// Returns an error if identifier is empty or limit < 1.
+	// Returns an empty non-nil slice (not nil) if no entries exist for the identifier.
+	Recall(ctx context.Context, identifier, query string, limit int) ([]Entry, error)
 }
 
-// NewStore creates a new empty Store.
-func NewStore() *Store {
-	return &Store{data: make(map[string][]agent.Message)}
-}
-
-// Load retrieves messages for the given conversation ID.
-// Returns a deep copy to prevent mutation of the stored data.
-func (s *Store) Load(_ context.Context, id string) ([]agent.Message, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	msgs := s.data[id]
-	return deepCopyMessages(msgs), nil
-}
-
-// Save persists messages for the given conversation ID.
-// Stores a deep copy to prevent mutation of the stored data.
-func (s *Store) Save(_ context.Context, id string, msgs []agent.Message) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data[id] = deepCopyMessages(msgs)
-	return nil
-}
-
-// List returns all conversation IDs in the store.
-func (s *Store) List(_ context.Context) ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ids := make([]string, 0, len(s.data))
-	for id := range s.data {
-		ids = append(ids, id)
-	}
-	return ids, nil
-}
-
-// Delete removes a conversation by ID. Returns nil if not found.
-func (s *Store) Delete(_ context.Context, conversationID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.data, conversationID)
-	return nil
-}
-
-// deepCopyMessages returns a deep copy of a message slice.
-func deepCopyMessages(msgs []agent.Message) []agent.Message {
-	cp := make([]agent.Message, len(msgs))
-	for i, m := range msgs {
-		content := make([]agent.ContentBlock, len(m.Content))
-		copy(content, m.Content)
-		cp[i] = agent.Message{
-			Role:    m.Role,
-			Content: content,
-		}
-	}
-	return cp
+// Entry is a single unit of stored knowledge.
+// Documented in docs/memory.md — update when changing fields or JSON tags.
+type Entry struct {
+	Fact      string            `json:"fact"`
+	Metadata  map[string]string `json:"metadata"`
+	CreatedAt time.Time         `json:"created_at"`
+	Score     float64           `json:"score"`
 }

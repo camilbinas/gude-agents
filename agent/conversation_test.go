@@ -14,7 +14,7 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 	)
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithMemory(store, "default-conv"))
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "default-conv"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestWithConversationID_FallsBackToDefault(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "reply"})
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithMemory(store, "fallback"))
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "fallback"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +76,14 @@ func TestWithConversationID_FallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestWithSharedMemory_RequiresContextConversationID(t *testing.T) {
+func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
 	sp := newScriptedProvider(
 		&ProviderResponse{Text: "user-1 reply"},
 		&ProviderResponse{Text: "user-2 reply"},
 	)
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithSharedMemory(store))
+	a, err := New(sp, prompt.Text("sys"), nil, WithSharedConversation(store))
 	if err != nil {
 		t.Fatal(err)
 	}

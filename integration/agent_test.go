@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -74,12 +74,12 @@ func TestIntegration_Streaming(t *testing.T) {
 
 func TestIntegration_StreamingWithMemory(t *testing.T) {
 	p := newTestProvider(t)
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	a, err := agent.New(p,
 		prompt.Text("You are a helpful assistant. Be very brief."),
 		nil,
-		agent.WithMemory(store, "stream-conv"),
+		agent.WithConversation(store, "stream-conv"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -194,12 +194,12 @@ func TestIntegration_MultiToolCalls(t *testing.T) {
 
 func TestIntegration_MemoryMultiTurn(t *testing.T) {
 	p := newTestProvider(t)
-	store := memory.NewStore()
+	store := conversation.NewInMemory()
 
 	a, err := agent.New(p,
 		prompt.Text("You are a helpful assistant. Be very brief."),
 		nil,
-		agent.WithMemory(store, "test-conv"),
+		agent.WithConversation(store, "test-conv"),
 	)
 	if err != nil {
 		t.Fatal(err)

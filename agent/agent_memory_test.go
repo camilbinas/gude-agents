@@ -53,7 +53,7 @@ func TestAgent_LoadsHistoryOnSecondInvocation(t *testing.T) {
 	)
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithMemory(store, "conv-1"))
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "conv-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func (failingMemory) Save(_ context.Context, _ string, _ []Message) error {
 
 func TestAgent_MemoryLoadFailureReturnsError(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "should not reach"})
-	a, err := New(sp, prompt.Text("sys"), nil, WithMemory(failingMemory{}, "conv-1"))
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(failingMemory{}, "conv-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestAgent_MemoryLoadFailureReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from memory load failure, got nil")
 	}
-	if !strings.Contains(err.Error(), "memory load") {
-		t.Errorf("expected error to contain 'memory load', got: %v", err)
+	if !strings.Contains(err.Error(), "conversation load") {
+		t.Errorf("expected error to contain 'conversation load', got: %v", err)
 	}
 }
