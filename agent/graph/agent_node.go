@@ -8,13 +8,11 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// Invoker is the interface required by AgentNode and LLMRouter.
-// *agent.Agent satisfies this interface.
-type Invoker interface {
-	Invoke(ctx context.Context, userMessage string) (string, agent.TokenUsage, error)
-}
+// Invoker is an alias for agent.Invoker, kept for backward compatibility.
+// Prefer agent.Invoker in new code.
+type Invoker = agent.Invoker
 
-// AgentNode wraps an Invoker (typically *agent.Agent) as a NodeFunc.
+// AgentNode wraps an agent.Invoker (typically *agent.Agent) as a NodeFunc.
 // inputKey is the state key to read the user message from.
 // outputKey is the state key to write the agent response to.
 func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc {

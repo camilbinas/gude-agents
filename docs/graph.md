@@ -131,7 +131,7 @@ g, err := graph.NewGraph(
 
 ## AgentNode
 
-Wrap an agent as a graph node. The node reads the user message from `inputKey` in state and writes the agent's response to `outputKey`:
+Wrap an `agent.Invoker` as a graph node. The node reads the user message from `inputKey` in state and writes the agent's response to `outputKey`. Any type that implements `agent.Invoker` works — `*agent.Agent` satisfies it out of the box:
 
 ```go
 import "github.com/camilbinas/gude-agents/agent/graph"

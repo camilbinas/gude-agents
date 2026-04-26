@@ -117,3 +117,14 @@ type Provider interface {
 type ModelIdentifier interface {
 	ModelID() string
 }
+
+// Invoker abstracts anything that can handle a user message and return a
+// text response with token usage. *Agent satisfies this interface.
+// Used by graph.AgentNode, graph.LLMRouter, and useful for testing.
+// Documented in docs/graph.md — update when changing signature.
+type Invoker interface {
+	Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error)
+}
+
+// compile-time check: *Agent implements Invoker.
+var _ Invoker = (*Agent)(nil)
