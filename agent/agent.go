@@ -97,26 +97,21 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 // to agent internals without touching unexported fields.
 // ---------------------------------------------------------------------------
 
-// Instructions returns the agent's system prompt string.
-func (a *Agent) Instructions() string { return a.instructions }
-
-// MaxIterations returns the configured maximum iterations per invocation.
-func (a *Agent) MaxIterations() int { return a.maxIterations }
-
 // Name returns the agent's name, or empty if not set.
 func (a *Agent) Name() string { return a.name }
 
 // Provider returns the agent's LLM provider.
 func (a *Agent) Provider() Provider { return a.provider }
 
-// ToolSpecs returns a snapshot of the tool specifications registered on this agent.
-func (a *Agent) ToolSpecs() []tool.Spec {
-	a.toolsMu.RLock()
-	defer a.toolsMu.RUnlock()
-	cp := make([]tool.Spec, len(a.toolSpecs))
-	copy(cp, a.toolSpecs)
-	return cp
+// CallProvider calls the agent's provider with timeout and retry applied.
+// Used by the swarm to ensure swarm agents benefit from WithTimeout and
+// WithRetry without duplicating the retry logic.
+func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	return a.callProviderWithRetry(ctx, params, cb)
 }
+
+// Instructions returns the agent's system prompt string.
+func (a *Agent) Instructions() string { return a.instructions }
 
 // Close performs graceful cleanup. If the agent's conversation implements ConversationWaiter
 // (e.g. the Summary strategy), Close blocks until all background work is complete.
@@ -130,23 +125,13 @@ func (a *Agent) Close() {
 	}
 }
 
-// OutputGuardrails returns the agent's output guardrails.
-func (a *Agent) OutputGuardrails() []OutputGuardrail { return a.outputGuardrails }
-
-// TokenBudget returns the configured token budget (0 = no budget).
-func (a *Agent) TokenBudget() int { return a.tokenBudget }
-
-// ParallelTools returns whether parallel tool execution is enabled.
-func (a *Agent) ParallelTools() bool { return a.parallelTools }
-
-// Middlewares returns the agent's middleware chain.
-func (a *Agent) Middlewares() []Middleware { return a.middlewares }
-
-// CallProvider calls the agent's provider with timeout and retry applied.
-// Used by the swarm to ensure swarm agents benefit from WithTimeout and
-// WithRetry without duplicating the retry logic.
-func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
-	return a.callProviderWithRetry(ctx, params, cb)
+// ToolSpecs returns a snapshot of the tool specifications registered on this agent.
+func (a *Agent) ToolSpecs() []tool.Spec {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
+	cp := make([]tool.Spec, len(a.toolSpecs))
+	copy(cp, a.toolSpecs)
+	return cp
 }
 
 // HasTool reports whether a tool with the given name is registered.
@@ -156,9 +141,6 @@ func (a *Agent) HasTool(name string) bool {
 	_, ok := a.tools[name]
 	return ok
 }
-
-// InferenceConfig returns the agent's inference config, or nil if none is set.
-func (a *Agent) InferenceConfig() *InferenceConfig { return a.inferenceConfig }
 
 // LookupTool returns the tool with the given name and true, or a zero Tool and false.
 func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
@@ -180,3 +162,24 @@ func (a *Agent) RegisterTool(t tool.Tool) error {
 	a.toolSpecs = append(a.toolSpecs, t.Spec)
 	return nil
 }
+
+// InferenceConfig returns the agent's inference config, or nil if none is set.
+func (a *Agent) InferenceConfig() *InferenceConfig { return a.inferenceConfig }
+
+// MaxIterations returns the configured maximum iterations per invocation.
+func (a *Agent) MaxIterations() int { return a.maxIterations }
+
+// ParallelTools returns whether parallel tool execution is enabled.
+func (a *Agent) ParallelTools() bool { return a.parallelTools }
+
+// TokenBudget returns the configured token budget (0 = no budget).
+func (a *Agent) TokenBudget() int { return a.tokenBudget }
+
+// Middlewares returns the agent's middleware chain.
+func (a *Agent) Middlewares() []Middleware { return a.middlewares }
+
+// InputGuardrails returns the agent's input guardrails.
+func (a *Agent) InputGuardrails() []InputGuardrail { return a.inputGuardrails }
+
+// OutputGuardrails returns the agent's output guardrails.
+func (a *Agent) OutputGuardrails() []OutputGuardrail { return a.outputGuardrails }
