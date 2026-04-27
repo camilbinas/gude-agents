@@ -1,100 +1,10 @@
 # RAG Pipeline
 
-The RAG (Retrieval-Augmented Generation) system lets agents ground their responses in external knowledge. You ingest documents into a vector store, then attach a retriever to your agent — either automatically (the agent retrieves on every call) or as a tool (the LLM decides when to retrieve). The framework provides core interfaces, an in-memory vector store, a text splitting and ingestion pipeline, and embedder implementations for Bedrock and OpenAI.
-
-## Core Interfaces
-
-All RAG components are defined as interfaces in the `agent` package, so you can swap implementations without changing agent code.
-
-### Embedder
-
-Converts text into a float vector:
-
-```go
-type Embedder interface {
-    Embed(ctx context.Context, text string) ([]float64, error)
-}
-```
-
-### VectorStore
-
-Stores document embeddings and performs similarity search:
-
-```go
-type VectorStore interface {
-    Add(ctx context.Context, docs []Document, embeddings [][]float64) error
-    Search(ctx context.Context, queryEmbedding []float64, topK int) ([]ScoredDocument, error)
-}
-```
-
-### Retriever
-
-Retrieves relevant documents for a query string:
-
-```go
-type Retriever interface {
-    Retrieve(ctx context.Context, query string) ([]Document, error)
-}
-```
-
-### Reranker
-
-Re-scores a candidate set of documents after initial retrieval:
-
-```go
-type Reranker interface {
-    Rerank(ctx context.Context, query string, docs []Document) ([]Document, error)
-}
-```
-
-### ContextFormatter
-
-Formats retrieved documents into a string for injection into the conversation. It's a function type, not an interface:
-
-```go
-type ContextFormatter func(docs []Document) string
-```
-
-`DefaultContextFormatter` formats documents as numbered items wrapped in `<retrieved_context>` XML tags:
-
-```
-<retrieved_context>
-[1] First document content
-[2] Second document content
-</retrieved_context>
-```
-
-### Document Types
-
-```go
-type Document struct {
-    Content  string
-    Metadata map[string]string
-}
-
-type ScoredDocument struct {
-    Document Document
-    Score    float64
-}
-```
+The RAG (Retrieval-Augmented Generation) system lets agents ground their responses in external knowledge. You ingest documents into a vector store, then attach a retriever to your agent — either automatically (the agent retrieves on every call) or as a tool (the LLM decides when to retrieve). The framework provides an in-memory vector store, a text splitting and ingestion pipeline, and embedder implementations for Bedrock, OpenAI, and Gemini.
 
 ## rag.NewRetriever
 
 `NewRetriever` creates a `Retriever` that embeds the query, searches the vector store, filters by score threshold, and optionally reranks results.
-
-```go
-func NewRetriever(embedder agent.Embedder, store agent.VectorStore, opts ...RetrieverOption) *Retriever
-```
-
-Defaults: `topK=4`, `scoreThreshold=0.0`, no reranker.
-
-### RetrieverOption
-
-| Option | Description |
-|--------|-------------|
-| `WithMaxResults(k int)` | Maximum number of documents to retrieve (default: 4) |
-| `WithScoreThreshold(t float64)` | Minimum cosine similarity score for returned documents (default: 0.0) |
-| `WithReranker(rr agent.Reranker)` | Attaches a reranker that re-scores candidates after retrieval |
 
 ```go
 retriever := rag.NewRetriever(embedder, store,
@@ -103,28 +13,31 @@ retriever := rag.NewRetriever(embedder, store,
 )
 ```
 
+Defaults: `topK=4`, `scoreThreshold=0.0`, no reranker.
+
+| Option | Description |
+|--------|-------------|
+| `WithMaxResults(k int)` | Maximum number of documents to retrieve (default: 4) |
+| `WithScoreThreshold(t float64)` | Minimum cosine similarity score for returned documents (default: 0.0) |
+| `WithReranker(rr agent.Reranker)` | Attaches a reranker that re-scores candidates after retrieval |
+
 The retrieval pipeline runs in order: embed query → vector search → score threshold filter → rerank (if configured).
 
 ## Vector Store Implementations
 
 ### rag.MemoryStore
 
-`MemoryStore` is a brute-force cosine similarity vector store backed by a Go slice. It's safe for concurrent use via `sync.RWMutex`. Good for prototyping and tests — for production, use a persistent vector store.
+In-memory brute-force cosine similarity vector store. Good for prototyping and tests — for production, use a persistent vector store.
 
 ```go
 store := rag.NewMemoryStore()
 ```
 
-It implements `agent.VectorStore`:
-
-- `Add(ctx, docs, embeddings)` — appends documents and their embeddings. Returns an error if `docs` and `embeddings` have different lengths.
-- `Search(ctx, queryEmbedding, topK)` — returns the top-K documents by cosine similarity. Returns an error if `topK < 1`.
-
-### PostgreSQL + pgvector — agent/rag/postgres
+### PostgreSQL + pgvector
 
 Import: `github.com/camilbinas/gude-agents/agent/rag/postgres`
 
-Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search. Supports HNSW and IVFFlat indexes with cosine, L2, or inner product distance.
+Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search.
 
 ```go
 pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
@@ -153,7 +66,7 @@ store, err := ragpg.New(pool, 1536,
 
 By default, the table must already exist. `WithColumns` lets you point the store at any existing table — for example, a `users` table with a `bio` column and an `embedding` column. Pass `""` for the metadata column if the table doesn't have one.
 
-### Redis Stack — agent/rag/redis
+### Redis Stack
 
 Import: `github.com/camilbinas/gude-agents/agent/rag/redis`
 
@@ -170,35 +83,11 @@ See [Redis Providers](redis.md) for full documentation.
 
 ## Identifier-Scoped Storage (Moved)
 
-Identifier-scoped storage — partitioning documents by user, tenant, or session — has moved to the [`agent/memory`](memory.md) package. Memory backends now implement the `MemoryStore` interface directly, using native capabilities (SQL `WHERE` clauses, Redis TAG filters, in-memory map partitioning) instead of wrapping a `VectorStore`.
-
-If you were using `ScopedStore`, `ScopedSearcher`, or `ScopeMetadataKey` from this package, see the [Long-Term Memory](memory.md) docs for the replacement APIs.
+Identifier-scoped storage — partitioning documents by user, tenant, or session — has moved to the [`agent/memory`](memory.md) package. If you were using `ScopedStore`, `ScopedSearcher`, or `ScopeMetadataKey` from this package, see the [Long-Term Memory](memory.md) docs for the replacement APIs.
 
 ## rag.Ingest
 
-`Ingest` is a convenience pipeline that splits texts into chunks, embeds each chunk, and stores the results in a vector store.
-
-```go
-func Ingest(
-    ctx context.Context,
-    store agent.VectorStore,
-    embedder agent.Embedder,
-    texts []string,
-    metadata []map[string]string,
-    opts ...IngestOption,
-) error
-```
-
-- `texts` — the source documents to ingest
-- `metadata` — optional per-text metadata (matched by index). Each chunk inherits its source text's metadata plus auto-generated `source_index` and `chunk_index` keys.
-
-### IngestOption
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `WithChunkSize(n int)` | 512 | Maximum chunk size in runes |
-| `WithChunkOverlap(n int)` | 64 | Overlap between consecutive chunks in runes |
-| `WithConcurrency(n int)` | 1 | Number of parallel embedding calls. Higher values speed up ingestion but increase API request rate. |
+`Ingest` splits texts into chunks, embeds each chunk, and stores the results in a vector store.
 
 ```go
 err := rag.Ingest(ctx, store, embedder, texts, metadata,
@@ -208,41 +97,41 @@ err := rag.Ingest(ctx, store, embedder, texts, metadata,
 )
 ```
 
+- `texts` — the source documents to ingest
+- `metadata` — optional per-text metadata (matched by index). Each chunk inherits its source text's metadata plus auto-generated `source_index` and `chunk_index` keys.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithChunkSize(n int)` | 512 | Maximum chunk size in runes |
+| `WithChunkOverlap(n int)` | 64 | Overlap between consecutive chunks in runes |
+| `WithConcurrency(n int)` | 1 | Number of parallel embedding calls. Higher values speed up ingestion but increase API request rate. |
+
 ### SplitText / SplitTextE
 
 The ingestion pipeline uses `SplitText` internally, but you can call the text splitters directly:
 
 ```go
-// SplitText silently clamps invalid parameters.
-chunks := rag.SplitText(text, 512, 64)
-
-// SplitTextE returns an error for invalid parameters.
-chunks, err := rag.SplitTextE(text, 512, 64)
+chunks := rag.SplitText(text, 512, 64)          // silently clamps invalid parameters
+chunks, err := rag.SplitTextE(text, 512, 64)     // returns error for invalid parameters
 ```
-
-Both split text into chunks of at most `chunkSize` runes with `chunkOverlap` runes of overlap between consecutive chunks. `SplitTextE` returns an error if `chunkSize < 1` or `chunkOverlap >= chunkSize`. `SplitText` silently clamps invalid values instead.
 
 ## Embedder Implementations
 
 ### Bedrock — Titan Embed V2
 
-Import: `github.com/camilbinas/gude-agents/agent/provider/bedrock"`
+Import: `github.com/camilbinas/gude-agents/agent/provider/bedrock`
 
 ```go
 embedder, err := bedrock.TitanEmbedV2()
 ```
 
-Uses the `amazon.titan-embed-text-v2:0` model via the Bedrock InvokeModel API. Produces 1024-dimensional normalized vectors.
+Uses `amazon.titan-embed-text-v2:0` (1024 dimensions). Uses the default AWS credential chain.
 
 | Option | Description |
 |--------|-------------|
 | `WithRegion(region string)` | AWS region (defaults to `AWS_REGION` env var, then `us-east-1`) |
 
-Uses the default AWS credential chain.
-
-Other convenience constructors: `bedrock.CohereEmbedEnglishV3()`, `bedrock.CohereEmbedMultilingualV3()`, `bedrock.CohereEmbedV4()`.
-
-For a custom model ID use `ragbedrock.NewEmbedder(modelID, opts...)`.
+Other convenience constructors: `bedrock.CohereEmbedEnglishV3()`, `bedrock.CohereEmbedMultilingualV3()`, `bedrock.CohereEmbedV4()`. For a custom model ID use `ragbedrock.NewEmbedder(modelID, opts...)`.
 
 ### OpenAI — EmbeddingSmall / EmbeddingLarge
 
@@ -253,7 +142,7 @@ small, err := ragopenai.EmbeddingSmall()
 large, err := ragopenai.EmbeddingLarge()
 ```
 
-These are convenience constructors for `text-embedding-3-small` and `text-embedding-3-large` respectively.
+Convenience constructors for `text-embedding-3-small` and `text-embedding-3-large`.
 
 | Option | Description |
 |--------|-------------|
@@ -263,22 +152,19 @@ These are convenience constructors for `text-embedding-3-small` and `text-embedd
 
 For a custom model use `ragopenai.NewEmbedder(opts...)` with `WithEmbedderModel`.
 
-### Gemini — gemini-embedding-001
+### Gemini
 
 Import: `raggemini "github.com/camilbinas/gude-agents/agent/rag/gemini"`
 
 ```go
 embedder, err := raggemini.GeminiEmbedding001()
-// or:
-embedder, err := raggemini.GeminiEmbedding002()
+embedder, err := raggemini.GeminiEmbedding002()  // newer multimodal model
 ```
-
-Uses `gemini-embedding-001` by default (768 dimensions). `gemini-embedding-002` is the newer multimodal model. Reads the API key from `GEMINI_API_KEY` or `GOOGLE_API_KEY` environment variables.
 
 | Option | Description |
 |--------|-------------|
 | `WithAPIKey(key string)` | Gemini API key (defaults to `GEMINI_API_KEY` → `GOOGLE_API_KEY` env vars) |
-| `WithModel(model string)` | Override the model name (default: `"gemini-embedding-001"`) |
+| `WithModel(model string)` | Override the model name |
 
 For a custom model use `raggemini.NewEmbedder(raggemini.WithModel("my-model"))`.
 
@@ -289,8 +175,6 @@ Managed retrievers wrap cloud-hosted vector search services directly — no embe
 ### Bedrock Knowledge Base Retriever
 
 Import: `rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"`
-
-Wraps the AWS Bedrock Knowledge Bases `Retrieve` API:
 
 ```go
 retriever, err := rag.NewKnowledgeBaseRetriever("kb-xxxx",
@@ -305,16 +189,11 @@ retriever, err := rag.NewKnowledgeBaseRetriever("kb-xxxx",
 | `WithKnowledgeBaseTopK(k int)` | 5 | Max results to fetch |
 | `WithKnowledgeBaseScoreThreshold(t float64)` | 0.0 | Min relevance score |
 
-Each returned `Document` has:
-- `Content` — the retrieved text chunk
-- `Metadata["score"]` — relevance score as a decimal string
-- `Metadata["source"]` — S3 URI of the source document (when available)
+Each returned `Document` has `Content` (the text chunk), `Metadata["score"]` (relevance score), and `Metadata["source"]` (S3 URI when available).
 
 ### OpenAI Vector Store Retriever
 
 Import: `ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"`
-
-Wraps the OpenAI Vector Store Search API:
 
 ```go
 retriever, err := ragopenai.NewVectorStoreRetriever("vs-xxxx",
@@ -330,11 +209,7 @@ retriever, err := ragopenai.NewVectorStoreRetriever("vs-xxxx",
 | `WithVectorStoreTopK(k int)` | 5 | Max results to fetch |
 | `WithVectorStoreScoreThreshold(t float64)` | 0.0 | Min relevance score |
 
-Each returned `Document` has:
-- `Content` — concatenated text content blocks
-- `Metadata["score"]` — relevance score as a decimal string
-- `Metadata["filename"]` — source file name
-- `Metadata["file_id"]` — source file ID
+Each returned `Document` has `Content` (concatenated text blocks), `Metadata["score"]`, `Metadata["filename"]`, and `Metadata["file_id"]`.
 
 ## Integration Patterns
 
@@ -342,7 +217,7 @@ There are two ways to wire RAG into an agent:
 
 ### Automatic Retrieval — WithRetriever
 
-Attach a retriever to the agent with the `WithRetriever` option. The agent calls `Retrieve` once per invocation (before the first provider call) and injects the formatted documents as a user/assistant message turn in the conversation.
+Attach a retriever to the agent. The agent calls `Retrieve` once per invocation (before the first provider call) and injects the formatted documents as context.
 
 ```go
 retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(3))
@@ -371,11 +246,7 @@ agent.WithContextFormatter(func(docs []agent.Document) string {
 
 ### Manual Retrieval — NewRetrieverTool
 
-Wrap a retriever as a tool so the LLM decides when to search. The tool exposes a single `query` string parameter.
-
-```go
-func NewRetrieverTool(name, description string, r Retriever, formatter ...ContextFormatter) tool.Tool
-```
+Wrap a retriever as a tool so the LLM decides when to search:
 
 ```go
 searchTool := agent.NewRetrieverTool("search_docs", "Search the knowledge base", retriever)
@@ -387,7 +258,7 @@ a, err := agent.Default(
 )
 ```
 
-When the LLM calls this tool, it receives the formatted document content as the tool result. If no documents are found, the result is `"No relevant documents found."`. An optional `ContextFormatter` argument overrides `DefaultContextFormatter`.
+When the LLM calls this tool, it receives the formatted document content as the tool result. An optional `ContextFormatter` argument overrides the default.
 
 ### Choosing Between the Two
 
@@ -399,7 +270,7 @@ When the LLM calls this tool, it receives the formatted document content as the 
 | **Token cost** | Always pays retrieval cost | Only when LLM calls the tool |
 | **Best for** | Document Q&A where context is always needed | Agents with multiple tools where search is optional |
 
-Use `WithRetriever` when every question needs document context (e.g. a PDF assistant). Use `NewRetrieverTool` when the agent has other tools and retrieval is just one option — the LLM can also formulate a better search query than the raw user message.
+Use `WithRetriever` when every question needs document context (e.g. a PDF assistant). Use `NewRetrieverTool` when the agent has other tools and retrieval is just one option.
 
 ## Document Loaders
 
@@ -541,7 +412,7 @@ func main() {
 
 ## See Also
 
-- [Agent API Reference](agent-api.md) — `WithRetriever` and `WithContextFormatter` options
+- [Agent API](agent-api.md) — `WithRetriever` and `WithContextFormatter` options
 - [Redis Providers](redis.md) — `VectorStore` (`agent/rag/redis`) for production vector search with Redis Stack
 - [Long-Term Memory](memory.md) — identifier-scoped fact storage with composable `RememberTool` / `RecallTool`
 - [Providers](providers.md) — Bedrock and OpenAI provider setup
