@@ -28,7 +28,6 @@ type SwarmMember struct {
 // The active agent runs until it either produces a final response or hands off
 // to another agent via a transfer_to_<name> tool. Handoffs carry the full
 // conversation context so the receiving agent can continue seamlessly.
-//
 type Swarm struct {
 	mu             sync.Mutex // protects activeAgent
 	members        map[string]*swarmEntry
@@ -132,7 +131,9 @@ func NewSwarm(members []SwarmMember, opts ...SwarmOption) (*Swarm, error) {
 			entry.handoffTools = append(entry.handoffTools, handoffTool)
 
 			// Register the tool on the agent.
-			entry.member.Agent.RegisterTool(handoffTool)
+			if err := entry.member.Agent.RegisterTool(handoffTool); err != nil {
+				return nil, fmt.Errorf("swarm: register handoff tool %q on %q: %w", toolName, name, err)
+			}
 		}
 	}
 
@@ -667,6 +668,42 @@ func (s *Swarm) executeToolsWithHandoff(ctx context.Context, a *Agent, calls []t
 				Content:   toolErr.Error(),
 				IsError:   true,
 			}
+			return
+		}
+
+		// Rich handlers (returning images) take precedence.
+		if t.RichHandler != nil {
+			richOut, err := t.RichHandler(toolCtx, tc.Input)
+			if err != nil {
+				if finishTool != nil {
+					finishTool(err, "")
+				}
+				if lh != nil {
+					lh.OnToolEnd(tc.Name, err, time.Since(toolStart))
+				}
+				results[i] = ToolResultBlock{
+					ToolUseID: tc.ToolUseID,
+					Content:   err.Error(),
+					IsError:   true,
+				}
+				return
+			}
+			if finishTool != nil {
+				finishTool(nil, richOut.Text)
+			}
+			if lh != nil {
+				lh.OnToolEnd(tc.Name, nil, time.Since(toolStart))
+			}
+			result := ToolResultBlock{ToolUseID: tc.ToolUseID, Content: richOut.Text}
+			for _, img := range richOut.Images {
+				result.Images = append(result.Images, ImageBlock{
+					Source: ImageSource{
+						Data: img.Data, Base64: img.Base64,
+						URL: img.URL, MIMEType: img.MIMEType,
+					},
+				})
+			}
+			results[i] = result
 			return
 		}
 

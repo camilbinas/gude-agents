@@ -372,6 +372,7 @@ func (e *runExec) checkJoins(ctx context.Context, nodeName string) error {
 		}
 		e.mu.Lock()
 		allDone := true
+		alreadyFired := e.completed[joinNode]
 		for _, p := range preds {
 			if !e.completed[p] {
 				allDone = false
@@ -379,7 +380,7 @@ func (e *runExec) checkJoins(ctx context.Context, nodeName string) error {
 			}
 		}
 		e.mu.Unlock()
-		if allDone {
+		if allDone && !alreadyFired {
 			if err := e.step(ctx, joinNode); err != nil {
 				return err
 			}
@@ -404,8 +405,9 @@ func (e *runExec) forkStep(ctx context.Context, targets []string) error {
 	sort.Strings(sorted)
 
 	type branchResult struct {
-		state State
-		err   error
+		state  State
+		branch *runExec
+		err    error
 	}
 	branchResults := make([]branchResult, len(sorted))
 
@@ -442,17 +444,7 @@ func (e *runExec) forkStep(ctx context.Context, targets []string) error {
 			}
 			errMu.Unlock()
 
-			branchResults[idx] = branchResult{state: branch.state, err: err}
-
-			// Merge branch metadata (completed, usage, iterations) into parent.
-			e.mu.Lock()
-			for k, v := range branch.completed {
-				e.completed[k] = v
-			}
-			e.usage.InputTokens += branch.usage.InputTokens
-			e.usage.OutputTokens += branch.usage.OutputTokens
-			e.iterations += branch.iterations
-			e.mu.Unlock()
+			branchResults[idx] = branchResult{state: branch.state, branch: branch, err: err}
 		}(i, target)
 	}
 
@@ -462,12 +454,19 @@ func (e *runExec) forkStep(ctx context.Context, targets []string) error {
 		return firstErr
 	}
 
-	// Merge branch states into parent in sorted order.
+	// Merge branch metadata (completed, usage, iterations) and states into parent.
 	e.mu.Lock()
 	for _, br := range branchResults {
-		if br.err == nil {
-			mergeState(e.state, br.state)
+		if br.err != nil {
+			continue
 		}
+		mergeState(e.state, br.state)
+		for k, v := range br.branch.completed {
+			e.completed[k] = v
+		}
+		e.usage.InputTokens += br.branch.usage.InputTokens
+		e.usage.OutputTokens += br.branch.usage.OutputTokens
+		e.iterations += br.branch.iterations
 	}
 	e.mu.Unlock()
 

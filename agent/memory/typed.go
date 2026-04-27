@@ -92,6 +92,9 @@ func NewTypedScopedStore[T any](store MemoryStore) *TypedMemoryStore[T] {
 // Add serializes values via the codec, sets Document.Content from contentFunc,
 // and delegates to MemoryStore.Add.
 func (s *TypedMemoryStore[T]) Add(ctx context.Context, identifier string, values []T, contentFunc func(T) string, embeddings [][]float64) error {
+	if len(values) != len(embeddings) {
+		return fmt.Errorf("typed memory store: values and embeddings length mismatch: %d vs %d", len(values), len(embeddings))
+	}
 	docs := make([]agent.Document, len(values))
 	for i, v := range values {
 		meta, err := encodeTypedValue(v)
