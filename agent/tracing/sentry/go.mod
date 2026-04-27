@@ -3,8 +3,8 @@ module github.com/camilbinas/gude-agents/agent/tracing/sentry
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.26.0
-	github.com/camilbinas/gude-agents/agent/tracing v0.26.0
+	github.com/camilbinas/gude-agents v0.26.1
+	github.com/camilbinas/gude-agents/agent/tracing v0.26.1
 	github.com/getsentry/sentry-go v0.45.1
 	github.com/getsentry/sentry-go/otel v0.45.1
 	go.opentelemetry.io/otel v1.43.0
