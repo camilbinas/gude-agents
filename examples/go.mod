@@ -4,32 +4,32 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
-	github.com/camilbinas/gude-agents v0.25.3
-	github.com/camilbinas/gude-agents/agent/conversation/dynamodb v0.25.3
-	github.com/camilbinas/gude-agents/agent/conversation/postgres v0.25.3
-	github.com/camilbinas/gude-agents/agent/conversation/redis v0.25.3
-	github.com/camilbinas/gude-agents/agent/conversation/s3 v0.25.3
-	github.com/camilbinas/gude-agents/agent/logging/debug v0.25.3
-	github.com/camilbinas/gude-agents/agent/logging/slog v0.25.3
-	github.com/camilbinas/gude-agents/agent/mcp v0.25.3
-	github.com/camilbinas/gude-agents/agent/memory/postgres v0.25.3
-	github.com/camilbinas/gude-agents/agent/memory/redis v0.25.3
-	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.25.3
-	github.com/camilbinas/gude-agents/agent/metrics/otel v0.25.3
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.25.3
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.25.3
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.25.3
-	github.com/camilbinas/gude-agents/agent/provider/fallback v0.25.3
-	github.com/camilbinas/gude-agents/agent/provider/gemini v0.25.3
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.25.3
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.25.3
-	github.com/camilbinas/gude-agents/agent/rag/document/pdf v0.25.3
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.25.3
-	github.com/camilbinas/gude-agents/agent/rag/postgres v0.25.3
-	github.com/camilbinas/gude-agents/agent/rag/redis v0.25.3
-	github.com/camilbinas/gude-agents/agent/tool/webfetch/markdown v0.25.3
-	github.com/camilbinas/gude-agents/agent/tracing v0.25.3
-	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.25.3
+	github.com/camilbinas/gude-agents v0.26.0
+	github.com/camilbinas/gude-agents/agent/conversation/dynamodb v0.26.0
+	github.com/camilbinas/gude-agents/agent/conversation/postgres v0.26.0
+	github.com/camilbinas/gude-agents/agent/conversation/redis v0.26.0
+	github.com/camilbinas/gude-agents/agent/conversation/s3 v0.26.0
+	github.com/camilbinas/gude-agents/agent/logging/debug v0.26.0
+	github.com/camilbinas/gude-agents/agent/logging/slog v0.26.0
+	github.com/camilbinas/gude-agents/agent/mcp v0.26.0
+	github.com/camilbinas/gude-agents/agent/memory/postgres v0.26.0
+	github.com/camilbinas/gude-agents/agent/memory/redis v0.26.0
+	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.26.0
+	github.com/camilbinas/gude-agents/agent/metrics/otel v0.26.0
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.26.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.26.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.26.0
+	github.com/camilbinas/gude-agents/agent/provider/fallback v0.26.0
+	github.com/camilbinas/gude-agents/agent/provider/gemini v0.26.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.26.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.26.0
+	github.com/camilbinas/gude-agents/agent/rag/document/pdf v0.26.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.26.0
+	github.com/camilbinas/gude-agents/agent/rag/postgres v0.26.0
+	github.com/camilbinas/gude-agents/agent/rag/redis v0.26.0
+	github.com/camilbinas/gude-agents/agent/tool/webfetch/markdown v0.26.0
+	github.com/camilbinas/gude-agents/agent/tracing v0.26.0
+	github.com/camilbinas/gude-agents/agent/tracing/sentry v0.26.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
@@ -53,7 +53,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/gemini v0.25.3 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/gemini v0.26.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
