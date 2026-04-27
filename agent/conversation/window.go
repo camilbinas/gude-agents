@@ -10,7 +10,6 @@ import (
 var _ agent.Conversation = (*Window)(nil)
 
 // Window wraps a Conversation and returns only the last N messages on Load.
-// Documented in docs/conversation.md — update when changing behavior.
 type Window struct {
 	inner agent.Conversation
 	n     int

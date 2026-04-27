@@ -1,6 +1,5 @@
 // Package bedrock implements the agent.Provider interface using the
 // AWS Bedrock ConverseStream / Converse APIs.
-// Documented in docs/providers.md — update when changing constructor, options, or capabilities.
 package bedrock
 
 import (

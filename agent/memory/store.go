@@ -109,7 +109,6 @@ func cosineSimilarity(a, b []float64) float64 {
 // InMemory is an in-memory Memory backed by an InMemoryStore and Adapter.
 // It provides the same public API as before but delegates all storage and
 // similarity logic to the InMemoryStore.
-// Documented in docs/memory.md — update when changing fields or behavior.
 type InMemory struct {
 	adapter *Adapter
 }

@@ -14,7 +14,6 @@ import (
 // NewTypedRememberTool creates a composable tool that stores typed values.
 // The schemaFunc returns the JSON Schema for the LLM input shape, enabling
 // the LLM to understand the structure of type T when calling the tool.
-// Documented in docs/memory.md — update when changing behavior.
 func NewTypedRememberTool[T any](
 	store *TypedMemoryStore[T],
 	embedder agent.Embedder,
@@ -65,7 +64,6 @@ func NewTypedRememberTool[T any](
 
 // NewTypedRecallTool creates a composable tool that retrieves typed values.
 // Results are formatted as a human-readable list with JSON-marshaled values.
-// Documented in docs/memory.md — update when changing behavior.
 func NewTypedRecallTool[T any](
 	store *TypedMemoryStore[T],
 	embedder agent.Embedder,

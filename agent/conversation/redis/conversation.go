@@ -36,7 +36,6 @@ func WithKeyPrefix(prefix string) RedisConversationOption {
 }
 
 // RedisConversation implements agent.Conversation using Redis.
-// Documented in docs/redis.md — update when changing constructor, options, or methods.
 type RedisConversation struct {
 	client    *goredis.Client
 	ttl       time.Duration

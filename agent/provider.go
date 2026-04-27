@@ -8,7 +8,6 @@ import (
 )
 
 // Role identifies the sender of a message.
-// Documented in docs/message-types.md — update when changing constants or type.
 type Role string
 
 const (
@@ -17,14 +16,12 @@ const (
 )
 
 // Message is a single turn in the conversation.
-// Documented in docs/message-types.md — update when changing fields.
 type Message struct {
 	Role    Role
 	Content []ContentBlock
 }
 
 // ContentBlock is a sealed union type for message content.
-// Documented in docs/message-types.md — update when adding implementations.
 type ContentBlock interface {
 	contentBlock() // sealed marker
 }
@@ -55,7 +52,6 @@ func (ToolUseBlock) contentBlock()    {}
 func (ToolResultBlock) contentBlock() {}
 
 // TokenUsage records token consumption for a single Provider call.
-// Documented in docs/agent-api.md and docs/message-types.md — update when changing fields.
 type TokenUsage struct {
 	InputTokens  int
 	OutputTokens int
@@ -77,7 +73,6 @@ type InferenceConfig struct {
 }
 
 // ConverseParams holds the inputs for a Provider call.
-// Documented in docs/message-types.md — update when changing fields.
 type ConverseParams struct {
 	Messages         []Message
 	System           string
@@ -88,7 +83,6 @@ type ConverseParams struct {
 }
 
 // ProviderResponse is the result of an LLM call.
-// Documented in docs/message-types.md — update when changing fields.
 type ProviderResponse struct {
 	Text      string
 	ToolCalls []tool.Call
@@ -97,7 +91,6 @@ type ProviderResponse struct {
 }
 
 // StreamCallback receives incremental text chunks during streaming.
-// Documented in docs/message-types.md — update when changing signature.
 type StreamCallback func(chunk string)
 
 // ThinkingCallback receives incremental thinking/reasoning chunks during streaming.
@@ -106,7 +99,6 @@ type StreamCallback func(chunk string)
 type ThinkingCallback func(chunk string)
 
 // Provider abstracts an LLM backend.
-// Documented in docs/providers.md — update when changing interface methods.
 type Provider interface {
 	Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error)
 	ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
@@ -121,7 +113,6 @@ type ModelIdentifier interface {
 // Invoker abstracts anything that can handle a user message and return a
 // text response with token usage. *Agent satisfies this interface.
 // Used by graph.AgentNode, graph.LLMRouter, and useful for testing.
-// Documented in docs/graph.md — update when changing signature.
 type Invoker interface {
 	Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error)
 }

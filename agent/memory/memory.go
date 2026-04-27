@@ -11,7 +11,6 @@ import (
 // The identifier can represent a user, team, project, tenant, or any other entity.
 // Unlike agent.Conversation which stores conversation message history, Memory
 // stores long-lived knowledge retrieved by semantic similarity.
-// Documented in docs/memory.md — update when changing interface.
 type Memory interface {
 	// Remember stores a fact for the given identifier. Metadata is optional.
 	// Returns an error if identifier or fact is empty.
@@ -26,7 +25,6 @@ type Memory interface {
 }
 
 // Entry is a single unit of stored knowledge.
-// Documented in docs/memory.md — update when changing fields or JSON tags.
 type Entry struct {
 	Fact      string            `json:"fact"`
 	Metadata  map[string]string `json:"metadata"`
@@ -44,7 +42,6 @@ type Entry struct {
 // across the library. These types are defined in the agent package, not the
 // rag package, so importing them creates no coupling to RAG.
 //
-// Documented in docs/memory.md — update when changing interface.
 type MemoryStore interface {
 	// Add stores documents and their embeddings scoped to the given identifier.
 	// Returns an error if identifier is empty.

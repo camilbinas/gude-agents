@@ -7,7 +7,6 @@ import (
 
 // Default creates an agent with standard defaults: 5 max iterations.
 // Additional options can be appended to override or extend.
-// Documented in docs/getting-started.md — update when changing defaults.
 func Default(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(5),
@@ -36,7 +35,6 @@ func Minimal(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ..
 
 // Worker creates a lightweight agent optimized for tool execution: 3 max iterations.
 // Ideal for child agents in a multi-agent setup.
-// Documented in docs/getting-started.md — update when changing defaults.
 func Worker(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(3),
@@ -46,7 +44,6 @@ func Worker(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...
 
 // Orchestrator creates an agent optimized for routing to other agents:
 // 5 max iterations, parallel tool execution.
-// Documented in docs/getting-started.md — update when changing defaults.
 func Orchestrator(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(5),
@@ -57,7 +54,6 @@ func Orchestrator(prov Provider, inst prompt.Instructions, tools []tool.Tool, op
 
 // SwarmAgent creates an agent optimized for participation in a Swarm:
 // 5 max iterations. Handoff tools are injected automatically by NewSwarm.
-// Documented in docs/swarm.md — update when changing defaults.
 func SwarmAgent(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(5),

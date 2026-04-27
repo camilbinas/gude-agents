@@ -15,7 +15,6 @@ var _ Memory = (*Adapter)(nil)
 // Adapter implements Memory using a MemoryStore and Embedder.
 // It bridges the composable building blocks (MemoryStore + Embedder) into
 // the existing Memory interface for backward compatibility.
-// Documented in docs/memory.md — update when changing behavior.
 type Adapter struct {
 	store    MemoryStore
 	embedder agent.Embedder

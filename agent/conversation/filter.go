@@ -11,7 +11,6 @@ var _ agent.Conversation = (*Filter)(nil)
 
 // Filter wraps a Conversation and strips ToolUseBlock and ToolResultBlock
 // from messages on Load, returning only TextBlock content.
-// Documented in docs/conversation.md — update when changing behavior.
 type Filter struct {
 	inner agent.Conversation
 }

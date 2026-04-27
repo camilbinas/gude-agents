@@ -11,11 +11,9 @@ import (
 )
 
 // ErrTokenBudgetExceeded is returned when cumulative token usage exceeds the configured budget.
-// Documented in docs/agent-api.md — update when changing error text or behavior.
 var ErrTokenBudgetExceeded = fmt.Errorf("token budget exceeded")
 
 // Agent orchestrates LLM calls and tool execution.
-// Documented in docs/agent-api.md — update when changing fields, constructor, or loop behavior.
 type Agent struct {
 	provider         Provider
 	toolsMu          sync.RWMutex // protects tools and toolSpecs for safe runtime registration (unlikely but possible)
@@ -47,7 +45,6 @@ type Agent struct {
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
-// Documented in docs/agent-api.md — update when changing signature or validation logic.
 func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("provider is required")

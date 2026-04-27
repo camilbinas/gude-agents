@@ -3,7 +3,6 @@ package gemini
 import rag "github.com/camilbinas/gude-agents/agent/rag/gemini"
 
 // Gemini models (Google GenAI API).
-// Documented in docs/providers.md — update when adding or removing models.
 func Gemini25Pro(opts ...Option) (*GeminiProvider, error)   { return New("gemini-2.5-pro", opts...) }
 func Gemini25Flash(opts ...Option) (*GeminiProvider, error) { return New("gemini-2.5-flash", opts...) }
 func Gemini25FlashLite(opts ...Option) (*GeminiProvider, error) {

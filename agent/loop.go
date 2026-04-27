@@ -16,7 +16,6 @@ import (
 // It returns cumulative TokenUsage and nil on success, or an error on failure.
 // If the agent calls the handoff tool, it returns ErrHandoffRequested — use
 // GetHandoffRequest to retrieve the request and Agent.Resume to continue.
-// Documented in docs/agent-api.md — update when changing signature, loop steps, or error conditions.
 func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) (TokenUsage, error) {
 	var cumulative TokenUsage
 
@@ -95,7 +94,6 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 
 // Invoke is a convenience wrapper over InvokeStream that collects all
 // streamed chunks into a single string and returns it along with cumulative TokenUsage.
-// Documented in docs/agent-api.md — update when changing signature or return values.
 func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error) {
 	var sb strings.Builder
 	usage, err := a.InvokeStream(ctx, userMessage, func(chunk string) {

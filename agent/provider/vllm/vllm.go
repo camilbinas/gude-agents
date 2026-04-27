@@ -8,7 +8,6 @@
 //	provider, err := vllm.New("mistralai/Mistral-7B-Instruct-v0.2")
 //	provider, err := vllm.New("meta-llama/Llama-3-8B-Instruct", vllm.WithBaseURL("http://10.0.0.5:8000/v1"))
 //
-// Documented in docs/providers/vllm.md — update when changing constructor, options, or behavior.
 package vllm
 
 import (

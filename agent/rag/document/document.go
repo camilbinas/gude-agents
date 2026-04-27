@@ -14,7 +14,6 @@
 //	if err != nil { ... }
 //	err = rag.Ingest(ctx, store, embedder, texts, metadata)
 //
-// Documented in docs/rag.md — update when changing public API.
 package document
 
 import (

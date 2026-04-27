@@ -13,7 +13,6 @@ const structuredOutputToolName = "structured_output"
 // InvokeStructured forces the LLM to return a JSON response conforming to T.
 // It applies input guardrails, loads/saves conversation, and applies output guardrails
 // in the same way as InvokeStream.
-// Documented in docs/structured-output.md — update when changing signature or mechanism.
 func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, TokenUsage, error) {
 	var zero T
 

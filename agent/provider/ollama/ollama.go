@@ -9,7 +9,6 @@
 //	provider, err := ollama.New("qwen2.5")
 //	provider, err := ollama.New("llama3.2", ollama.WithBaseURL("http://10.0.0.5:11434/v1"))
 //
-// Documented in docs/providers/ollama.md — update when changing constructor, options, or behavior.
 package ollama
 
 import (

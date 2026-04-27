@@ -3,7 +3,6 @@ package agent
 import "context"
 
 // Conversation persists conversation history across invocations.
-// Documented in docs/conversation.md — update when changing interface methods.
 type Conversation interface {
 	// Load retrieves messages for the given conversation ID.
 	Load(ctx context.Context, conversationID string) ([]Message, error)

@@ -32,7 +32,6 @@ var (
 // column with a SQL WHERE clause for scoping instead of metadata-based
 // filtering.
 //
-// Documented in docs/memory.md
 type Store struct {
 	pool       *pgxpool.Pool
 	tableName  string

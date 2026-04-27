@@ -33,7 +33,6 @@ var (
 // Stack (RediSearch) for vector similarity search. It uses a native Redis
 // TAG field for identifier-based filtering instead of metadata post-filtering.
 //
-// Documented in docs/memory.md
 type Store struct {
 	client    *goredis.Client
 	indexName string

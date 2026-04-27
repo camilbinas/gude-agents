@@ -1,6 +1,5 @@
 // Package openai implements the agent.Provider interface using the
 // OpenAI Chat Completions API via the official openai-go SDK.
-// Documented in docs/providers.md — update when changing constructor, options, or capabilities.
 package openai
 
 import (

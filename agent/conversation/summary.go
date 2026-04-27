@@ -67,7 +67,6 @@ type summaryState struct {
 // Summary wraps a Conversation and triggers background summarization when the
 // summarizable message count (total minus preserved) reaches the configured
 // trigger percentage of the threshold.
-// Documented in docs/conversation.md — update when changing threshold, behavior, or options.
 type Summary struct {
 	inner          agent.Conversation
 	threshold      int
@@ -160,7 +159,6 @@ func NewSummaryFunc(provider agent.Provider, systemPrompt string) SummaryFunc {
 // DefaultSummaryFunc returns a SummaryFunc that uses the given Provider to
 // condense messages into a single summary. This is the batteries-included
 // default — pass it to NewSummary so you don't have to write your own.
-// Documented in docs/conversation.md — update when changing behavior.
 func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
 	return NewSummaryFunc(provider,
 		"Summarize the following conversation into a single concise paragraph. "+

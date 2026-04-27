@@ -10,7 +10,6 @@ import (
 )
 
 // ChoiceMode controls how the LLM selects tools.
-// Documented in docs/tools.md — update when changing constants.
 type ChoiceMode string
 
 const (
@@ -20,14 +19,12 @@ const (
 )
 
 // Choice directs the LLM's tool selection behavior.
-// Documented in docs/tools.md — update when changing fields.
 type Choice struct {
 	Mode ChoiceMode
 	Name string // Only used when Mode == ChoiceTool
 }
 
 // Spec is the schema sent to the Provider so the LLM knows about the tool.
-// Documented in docs/tools.md — update when changing fields.
 type Spec struct {
 	Name        string
 	Description string
@@ -42,7 +39,6 @@ type Call struct {
 }
 
 // Handler is the function signature for typed tool execution.
-// Documented in docs/tools.md — update when changing signature.
 type Handler[T any] func(ctx context.Context, input T) (string, error)
 
 // Output is a rich tool result that can include text and images.
@@ -65,7 +61,6 @@ type Image struct {
 type RichHandler[T any] func(ctx context.Context, input T) (*Output, error)
 
 // Tool pairs a spec with a raw handler.
-// Documented in docs/tools.md — update when changing struct fields.
 type Tool struct {
 	Spec        Spec
 	Handler     func(ctx context.Context, input json.RawMessage) (string, error)
@@ -74,7 +69,6 @@ type Tool struct {
 
 // New creates a Tool from a typed handler function.
 // It generates the JSON Schema from T's struct tags.
-// Documented in docs/tools.md — update when changing schema generation or struct tag support.
 func New[T any](name, description string, handler Handler[T]) Tool {
 	schema := GenerateSchema[T]()
 	return Tool{
@@ -95,7 +89,6 @@ func New[T any](name, description string, handler Handler[T]) Tool {
 
 // NewSimple creates a Tool that takes no input parameters.
 // It uses an empty object schema and a handler that receives no input.
-// Documented in docs/tools.md — update when changing signature.
 func NewSimple(name, description string, handler func(ctx context.Context) (string, error)) Tool {
 	return Tool{
 		Spec: Spec{
@@ -112,7 +105,6 @@ func NewSimple(name, description string, handler func(ctx context.Context) (stri
 // NewString creates a Tool that takes a single required string parameter.
 // paramName and paramDesc control the JSON property name and its description
 // in the schema. The handler receives the extracted string directly.
-// Documented in docs/tools.md — update when changing signature.
 func NewString(name, description, paramName, paramDesc string, handler func(ctx context.Context, value string) (string, error)) Tool {
 	return Tool{
 		Spec: Spec{
@@ -141,7 +133,6 @@ func NewString(name, description, paramName, paramDesc string, handler func(ctx 
 
 // NewRaw creates a Tool with a raw JSON handler (no auto-deserialization).
 // If schema is nil, it defaults to {"type": "object"} (no input parameters).
-// Documented in docs/tools.md — update when changing signature.
 func NewRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
@@ -211,7 +202,6 @@ type AsyncHandler[T any] func(ctx context.Context, input T)
 // isn't cancelled when the HTTP request or agent invocation finishes.
 //
 // If errLogger is nil, handler panics are silently recovered.
-// Documented in docs/tools.md — update when changing signature.
 func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger) Tool {
 	schema := GenerateSchema[T]()
 	return Tool{
@@ -245,7 +235,6 @@ func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], err
 // NewAsyncRaw creates an async Tool with a raw JSON handler.
 // Like NewAsync but without automatic deserialization.
 // If schema is nil, it defaults to {"type": "object"}.
-// Documented in docs/tools.md — update when changing signature.
 func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger) Tool {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
@@ -275,7 +264,6 @@ func NewAsyncRaw(name, description, ack string, schema map[string]any, handler f
 }
 
 // GenerateSchema uses reflection to produce a JSON Schema from a Go struct.
-// Documented in docs/tools.md and docs/structured-output.md — update when changing tag support.
 func GenerateSchema[T any]() map[string]any {
 	t := reflect.TypeOf((*T)(nil)).Elem()
 	return buildObjectSchema(t)

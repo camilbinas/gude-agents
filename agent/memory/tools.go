@@ -42,7 +42,6 @@ const defaultRecallDescription = "Retrieve previously stored facts, preferences,
 // NewRememberTool creates a composable RememberTool backed by a MemoryStore
 // and Embedder. The tool extracts the identifier from the agent context via
 // agent.GetIdentifier, embeds the fact, and stores it in the memory store.
-// Documented in docs/memory.md — update when changing behavior.
 func NewRememberTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool {
 	cfg := &toolConfig{
 		name:        "remember",
@@ -111,7 +110,6 @@ func NewRememberTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOpt
 // NewRecallTool creates a composable RecallTool backed by a MemoryStore
 // and Embedder. The tool extracts the identifier from the agent context via
 // agent.GetIdentifier, embeds the query, and searches the memory store.
-// Documented in docs/memory.md — update when changing behavior.
 func NewRecallTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool {
 	cfg := &toolConfig{
 		name:        "recall",
@@ -208,7 +206,6 @@ func formatScoredDocuments(results []agent.ScoredDocument) string {
 
 // RememberTool returns a tool.Tool that stores facts into memory.
 // The tool extracts the identifier from the agent context via agent.GetIdentifier.
-// Documented in docs/memory.md — update when changing behavior.
 func RememberTool(m Memory) tool.Tool {
 	schema := map[string]any{
 		"type": "object",
@@ -255,7 +252,6 @@ func RememberTool(m Memory) tool.Tool {
 
 // RecallTool returns a tool.Tool that retrieves facts from memory.
 // The tool extracts the identifier from the agent context via agent.GetIdentifier.
-// Documented in docs/memory.md — update when changing behavior.
 func RecallTool(m Memory) tool.Tool {
 	schema := map[string]any{
 		"type": "object",

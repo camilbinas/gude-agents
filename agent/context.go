@@ -7,7 +7,6 @@ import (
 
 // InvocationContext is a concurrency-safe typed key-value store
 // scoped to a single agent invocation.
-// Documented in docs/invocation-context.md — update when changing API or concurrency model.
 type InvocationContext struct {
 	mu   sync.RWMutex
 	data map[any]any

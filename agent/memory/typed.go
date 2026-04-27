@@ -12,7 +12,6 @@ import (
 // TypedMemory is the generic memory interface for user-defined struct types.
 // Instead of flattening domain data into Entry{Fact, Metadata}, developers
 // define their own Go structs and get full type safety through TypedMemory[T].
-// Documented in docs/memory.md — update when changing interface.
 type TypedMemory[T any] interface {
 	// Remember stores a value for the given identifier.
 	// Returns an error if identifier is empty or the content extracted from
@@ -134,7 +133,6 @@ var _ TypedMemory[struct{}] = (*TypedAdapter[struct{}])(nil)
 
 // TypedAdapter implements TypedMemory[T] by composing a TypedMemoryStore,
 // Embedder, and content extraction function.
-// Documented in docs/memory.md — update when changing behavior.
 type TypedAdapter[T any] struct {
 	store       *TypedMemoryStore[T]
 	embedder    agent.Embedder

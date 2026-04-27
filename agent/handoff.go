@@ -12,7 +12,6 @@ import (
 // ErrHandoffRequested is returned when an agent calls the handoff tool.
 // The caller should inspect the HandoffRequest via GetHandoffRequest,
 // collect the needed input, then call Agent.Resume to continue.
-// Documented in docs/handoff.md — update when changing behavior.
 var ErrHandoffRequested = errors.New("handoff requested")
 
 // handoffKey is the InvocationContext key for storing the HandoffRequest.

@@ -9,7 +9,6 @@ import (
 )
 
 // AgentAsTool wraps a child Agent as a tool.Tool that a parent Agent can invoke.
-// Documented in docs/multi-agent.md — update when changing signature or error handling.
 func AgentAsTool(name, description string, child *Agent) tool.Tool {
 	return tool.NewRaw(name, description, map[string]any{
 		"type": "object",

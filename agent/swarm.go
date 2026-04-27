@@ -29,7 +29,6 @@ type SwarmMember struct {
 // to another agent via a transfer_to_<name> tool. Handoffs carry the full
 // conversation context so the receiving agent can continue seamlessly.
 //
-// Documented in docs/swarm.md — update when changing fields or behavior.
 type Swarm struct {
 	mu             sync.Mutex // protects activeAgent
 	members        map[string]*swarmEntry
@@ -88,7 +87,6 @@ const handoffSentinel = "__swarm_handoff__"
 
 // NewSwarm creates a Swarm from the given members. The first member is the initial active agent.
 // Each agent receives transfer_to_<name> tools for every other agent in the swarm.
-// Documented in docs/swarm.md — update when changing signature or validation.
 func NewSwarm(members []SwarmMember, opts ...SwarmOption) (*Swarm, error) {
 	if len(members) < 2 {
 		return nil, fmt.Errorf("swarm requires at least 2 members, got %d", len(members))
@@ -171,7 +169,6 @@ func (s *Swarm) makeHandoffTool(targetName, targetDescription string) tool.Tool 
 // the conversation context transfers to the new agent which continues the loop.
 // If conversation is configured, conversation history and the active agent are persisted
 // across calls.
-// Documented in docs/swarm.md — update when changing loop behavior.
 func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) (SwarmResult, error) {
 	var result SwarmResult
 	result.HandoffHistory = make([]Handoff, 0)

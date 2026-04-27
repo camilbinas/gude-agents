@@ -7,7 +7,6 @@ import (
 )
 
 // RedisOptions holds Redis connection configuration.
-// Documented in docs/redis.md — update when changing fields.
 type RedisOptions struct {
 	Addr      string // Default: "127.0.0.1:6379"
 	Password  string

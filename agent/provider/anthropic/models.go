@@ -1,7 +1,6 @@
 package anthropic
 
 // Claude models (direct Anthropic API).
-// Documented in docs/providers.md — update when adding or removing models.
 func ClaudeHaiku4_5(opts ...Option) (*AnthropicProvider, error) {
 	return New("claude-haiku-4-5", opts...)
 }

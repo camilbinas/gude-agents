@@ -1,6 +1,5 @@
 // Package gemini implements the agent.Provider interface using the
 // Google GenAI SDK (google.golang.org/genai) for Gemini models.
-// Documented in docs/providers.md — update when changing constructor, options, or capabilities.
 package gemini
 
 import (

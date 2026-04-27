@@ -62,7 +62,6 @@ type vsEntry struct {
 
 // MemoryStore is a brute-force cosine similarity vector store
 // backed by a Go slice. Safe for concurrent use.
-// Documented in docs/rag.md — update when changing methods or behavior.
 type MemoryStore struct {
 	mu      sync.RWMutex
 	entries []vsEntry
@@ -152,7 +151,6 @@ type Retriever struct {
 
 // NewRetriever creates a new Retriever with the given embedder and store.
 // Defaults: topK=4, scoreThreshold=0.0, no reranker.
-// Documented in docs/rag.md — update when changing defaults or options.
 func NewRetriever(embedder agent.Embedder, store agent.VectorStore, opts ...RetrieverOption) *Retriever {
 	r := &Retriever{
 		embedder:       embedder,
@@ -253,7 +251,6 @@ func WithConcurrency(n int) IngestOption {
 // Ingest splits each text into chunks, embeds each chunk, and stores the
 // resulting documents and embeddings in the VectorStore.
 // Use WithConcurrency to parallelize embedding calls.
-// Documented in docs/rag.md — update when changing signature, defaults, or chunking behavior.
 func Ingest(
 	ctx context.Context,
 	store agent.VectorStore,

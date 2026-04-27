@@ -8,7 +8,6 @@ import (
 )
 
 // InMemory is a simple in-process Conversation store backed by a map.
-// Documented in docs/conversation.md — update when changing methods or thread-safety guarantees.
 type InMemory struct {
 	mu   sync.RWMutex
 	data map[string][]agent.Message

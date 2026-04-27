@@ -4,7 +4,6 @@ import (
 	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 )
 
-// Documented in docs/providers/bedrock.md — update when adding or removing models.
 
 // Anthropic Claude models (Global cross-region inference).
 func GlobalClaudeHaiku4_5(opts ...Option) (*BedrockProvider, error) {

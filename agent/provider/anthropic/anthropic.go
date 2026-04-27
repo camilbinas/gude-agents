@@ -1,6 +1,5 @@
 // Package anthropic implements the agent.Provider interface using the
 // Anthropic Messages API via the official anthropic-sdk-go.
-// Documented in docs/providers.md — update when changing constructor, options, or capabilities.
 package anthropic
 
 import (

@@ -12,7 +12,6 @@ type Logger interface {
 }
 
 // Option configures the Agent.
-// Documented in docs/agent-api.md — update when adding or changing options.
 type Option func(*Agent) error
 
 // WithName sets an optional name for the agent. The name is used as a

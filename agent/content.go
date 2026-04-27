@@ -56,7 +56,6 @@ func ImageMIMEFromExt(ext string) (string, error) {
 }
 
 // ImageBlock is a ContentBlock that carries image data.
-// Documented in docs/message-types.md — update when changing fields.
 type ImageBlock struct {
 	Source ImageSource
 }
@@ -129,7 +128,6 @@ func DocumentMIMEFromExt(ext string) (string, error) {
 }
 
 // DocumentBlock is a ContentBlock that carries an inline document (PDF, etc.).
-// Documented in docs/message-types.md — update when changing fields.
 type DocumentBlock struct {
 	Source DocumentSource
 }

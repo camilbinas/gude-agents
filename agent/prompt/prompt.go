@@ -5,20 +5,17 @@ import "strings"
 // Instructions is the interface for anything that can produce a system prompt string.
 // Text, RISEN, COSTAR, APE, and TRACE all implement this interface.
 // Implement it yourself for custom prompt frameworks.
-// Documented in docs/prompts.md — update when changing interface or implementations.
 type Instructions interface {
 	String() string
 }
 
 // Text is a plain-string system prompt. It implements Instructions.
-// Documented in docs/prompts.md — update when changing behavior.
 type Text string
 
 func (t Text) String() string { return string(t) }
 
 // APE builds a system prompt using the APE framework.
 // Action, Purpose, Expectation — a concise format for tool-heavy agents.
-// Documented in docs/prompts.md — update when changing fields or output format.
 type APE struct {
 	Action      string
 	Purpose     string
@@ -44,7 +41,6 @@ func (a APE) String() string {
 
 // RISEN builds a system prompt using the RISEN framework.
 // Role, Instructions, Steps, End goal, Narrowing.
-// Documented in docs/prompts.md — update when changing fields or output format.
 type RISEN struct {
 	Role         string
 	Instructions string
@@ -80,7 +76,6 @@ func (r RISEN) String() string {
 
 // COSTAR builds a system prompt using the CO-STAR framework.
 // Context, Objective, Style, Tone, Audience, Response format.
-// Documented in docs/prompts.md — update when changing fields or output format.
 type COSTAR struct {
 	Context   string
 	Objective string
@@ -122,7 +117,6 @@ func (c COSTAR) String() string {
 // TRACE builds a system prompt using the TRACE framework.
 // Task, Request, Action, Context, Example — useful when you want to show
 // the model what good output looks like.
-// Documented in docs/prompts.md — update when changing fields or output format.
 type TRACE struct {
 	Task    string
 	Request string

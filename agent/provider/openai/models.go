@@ -3,7 +3,6 @@ package openai
 import rag "github.com/camilbinas/gude-agents/agent/rag/openai"
 
 // GPT models.
-// Documented in docs/providers.md — update when adding or removing models.
 func GPT4o(opts ...Option) (*OpenAIProvider, error)      { return New("gpt-4o", opts...) }
 func GPT4oMini(opts ...Option) (*OpenAIProvider, error)  { return New("gpt-4o-mini", opts...) }
 func GPT4_1(opts ...Option) (*OpenAIProvider, error)     { return New("gpt-4.1", opts...) }
