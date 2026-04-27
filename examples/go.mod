@@ -12,7 +12,6 @@ require (
 	github.com/camilbinas/gude-agents/agent/logging/debug v0.24.0
 	github.com/camilbinas/gude-agents/agent/logging/slog v0.24.0
 	github.com/camilbinas/gude-agents/agent/mcp v0.24.0
-	github.com/camilbinas/gude-agents/agent/memory/agentcore v0.24.0
 	github.com/camilbinas/gude-agents/agent/memory/postgres v0.24.0
 	github.com/camilbinas/gude-agents/agent/memory/redis v0.24.0
 	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.24.0
