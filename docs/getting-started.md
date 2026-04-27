@@ -194,26 +194,6 @@ Configures: logging enabled, 5 max iterations, parallel tool execution.
 
 Use `Orchestrator` for a parent agent that routes work to other agents. Parallel tool execution lets it dispatch to multiple child agents concurrently, which is critical when the orchestrator delegates to several specialists in a single turn.
 
-### Testing
-
-```go
-func Testing(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error)
-```
-
-Configures: logging enabled, 3 max iterations, 4096 token budget.
-
-Use `Testing` during development and testing. Logging is on so you can see what's happening, the low iteration limit and token budget prevent runaway costs, and the whole thing is easy to spin up in a test file or scratch script.
-
-### Minimal
-
-```go
-func Minimal(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error)
-```
-
-Configures: 3 max iterations, no logging.
-
-Use `Minimal` when you want the least opinionated agent possible. No logging, low iteration count, nothing extra. Good for embedding agents inside larger systems, quick scripts, or unit tests where you don't want any noise.
-
 ### RAGAgent
 
 ```go

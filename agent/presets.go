@@ -14,25 +14,6 @@ func Default(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ..
 	return New(prov, inst, tools, append(defaults, opts...)...)
 }
 
-// Testing creates an agent for development and testing: 3 max iterations,
-// low token budget. Useful for quick iteration during development without runaway costs.
-func Testing(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
-	defaults := []Option{
-		WithMaxIterations(3),
-		WithTokenBudget(4096),
-	}
-	return New(prov, inst, tools, append(defaults, opts...)...)
-}
-
-// Minimal creates a bare-bones agent with 3 max iterations.
-// Ideal for embedding, scripting, or tests where you want zero overhead.
-func Minimal(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
-	defaults := []Option{
-		WithMaxIterations(3),
-	}
-	return New(prov, inst, tools, append(defaults, opts...)...)
-}
-
 // Worker creates a lightweight agent optimized for tool execution: 3 max iterations.
 // Ideal for child agents in a multi-agent setup.
 func Worker(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
