@@ -282,7 +282,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			}
 		}
 
-		messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
+		messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
 		iterF.finish(0, true)
 
 		if err := a.saveConversation(ctx, convID, messages[ragOffset:], h); err != nil {

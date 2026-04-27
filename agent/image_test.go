@@ -20,7 +20,7 @@ func TestImageSourceValidate_ValidMIMETypes(t *testing.T) {
 	}
 	for _, mime := range validTypes {
 		t.Run(mime, func(t *testing.T) {
-			src := ImageSource{MIMEType: mime}
+			src := ImageSource{Data: []byte{0xFF}, MIMEType: mime}
 			if err := src.Validate(); err != nil {
 				t.Errorf("Validate() returned unexpected error for %q: %v", mime, err)
 			}
@@ -42,7 +42,7 @@ func TestImageSourceValidate_InvalidMIMEType(t *testing.T) {
 	}
 	for _, mime := range invalidTypes {
 		t.Run(mime, func(t *testing.T) {
-			src := ImageSource{MIMEType: mime}
+			src := ImageSource{Data: []byte{0xFF}, MIMEType: mime}
 			err := src.Validate()
 			if err == nil {
 				t.Errorf("Validate() returned nil for invalid MIME type %q, expected error", mime)

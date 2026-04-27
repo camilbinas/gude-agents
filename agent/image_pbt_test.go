@@ -11,15 +11,13 @@ import (
 	"pgregory.net/rapid"
 )
 
-//
 // TestProperty_MIMETypeValidationExact verifies that for any string s,
 // ImageSource{MIMEType: s}.Validate() returns nil if and only if s is one of
 // "image/jpeg", "image/png", "image/gif", or "image/webp".
-//
 func TestProperty_MIMETypeValidationExact(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		s := rapid.String().Draw(rt, "mimeType")
-		err := ImageSource{MIMEType: s}.Validate()
+		err := ImageSource{Data: []byte{0xFF}, MIMEType: s}.Validate()
 
 		isValid := validMIMETypes[s]
 		if isValid && err != nil {
@@ -31,18 +29,16 @@ func TestProperty_MIMETypeValidationExact(t *testing.T) {
 	})
 }
 
-//
 // TestProperty_InvalidMIMETypeErrorContainsValue verifies that for any string s
 // that is not a valid MIME type, the error returned by Validate() contains s as
 // a substring.
-//
 func TestProperty_InvalidMIMETypeErrorContainsValue(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		s := rapid.String().Filter(func(s string) bool {
 			return !validMIMETypes[s]
 		}).Draw(rt, "invalidMIMEType")
 
-		err := ImageSource{MIMEType: s}.Validate()
+		err := ImageSource{Data: []byte{0xFF}, MIMEType: s}.Validate()
 		if err == nil {
 			rt.Fatalf("Validate() returned nil for invalid MIME type %q", s)
 		}
@@ -72,16 +68,14 @@ func containsString(s, substr string) bool {
 func genValidImageBlock(t *rapid.T, name string) ImageBlock {
 	mimeTypes := []string{"image/jpeg", "image/png", "image/gif", "image/webp"}
 	mime := mimeTypes[rapid.IntRange(0, 3).Draw(t, name+"_mime")]
-	data := rapid.SliceOf(rapid.Byte()).Draw(t, name+"_data")
+	data := rapid.SliceOfN(rapid.Byte(), 1, 100).Draw(t, name+"_data")
 	return ImageBlock{Source: ImageSource{MIMEType: mime, Data: data}}
 }
 
-//
 // TestProperty_LoopPrependsImagesToFirstUserMessage verifies that for any non-empty
 // []ImageBlock slice attached via WithImages, after the agent loop builds the first
 // user Message, the Content slice starts with those ImageBlock values in the same
 // order, followed by the TextBlock.
-//
 func TestProperty_LoopPrependsImagesToFirstUserMessage(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a non-empty slice of valid ImageBlocks.
@@ -144,11 +138,9 @@ func TestProperty_LoopPrependsImagesToFirstUserMessage(t *testing.T) {
 	})
 }
 
-//
 // TestProperty_ImageBytesRoundTripThroughBase64 verifies that for any byte slice b,
 // base64-encoding b to produce a string s, then base64-decoding s, produces a byte
 // slice equal to b.
-//
 func TestProperty_ImageBytesRoundTripThroughBase64(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		b := rapid.SliceOf(rapid.Byte()).Draw(rt, "bytes")
@@ -169,11 +161,9 @@ func TestProperty_ImageBytesRoundTripThroughBase64(t *testing.T) {
 	})
 }
 
-//
 // TestProperty_Base64StringRoundTrip verifies that for any valid base64 string s
 // (produced by encoding some byte slice), decoding s to bytes and re-encoding to
 // base64 produces a string equal to s.
-//
 func TestProperty_Base64StringRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a valid base64 string by encoding an arbitrary byte slice.
@@ -195,12 +185,10 @@ func TestProperty_Base64StringRoundTrip(t *testing.T) {
 	})
 }
 
-//
 // TestProperty_LoopWithImagesPersistsImageBlocksInMemory verifies that for any
 // non-empty []ImageBlock slice attached via WithImages, when the agent loop
 // completes successfully with memory enabled, the saved conversation history
 // contains a user message whose Content slice includes those ImageBlock values.
-//
 func TestProperty_LoopWithImagesPersistsImageBlocksInMemory(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a non-empty slice of valid ImageBlocks.

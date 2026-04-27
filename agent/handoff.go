@@ -106,6 +106,10 @@ func NewHandoffTool(name, description string) tool.Tool {
 // It restores the conversation from the HandoffRequest and appends the
 // human's response as a new user message before re-entering the agent loop.
 func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) (TokenUsage, error) {
+	if GetInvocationContext(ctx) == nil {
+		ctx = WithInvocationContext(ctx, NewInvocationContext())
+	}
+
 	messages := make([]Message, len(hr.Messages))
 	copy(messages, hr.Messages)
 

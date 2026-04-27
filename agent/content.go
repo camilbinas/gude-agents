@@ -28,6 +28,22 @@ var validMIMETypes = map[string]bool{
 // For Data/Base64 sources, MIMEType must be one of the four supported values.
 // For URL sources, MIMEType validation is skipped (the provider resolves it).
 func (s ImageSource) Validate() error {
+	sources := 0
+	if len(s.Data) > 0 {
+		sources++
+	}
+	if s.Base64 != "" {
+		sources++
+	}
+	if s.URL != "" {
+		sources++
+	}
+	if sources == 0 {
+		return fmt.Errorf("image source: one of Data, Base64, or URL must be set")
+	}
+	if sources > 1 {
+		return fmt.Errorf("image source: only one of Data, Base64, or URL may be set")
+	}
 	if s.URL != "" {
 		return nil
 	}
@@ -90,6 +106,22 @@ var validDocMIMETypes = map[string]bool{
 // For Data/Base64 sources, MIMEType must be a supported document type.
 // For URL sources, MIMEType validation is skipped.
 func (s DocumentSource) Validate() error {
+	sources := 0
+	if len(s.Data) > 0 {
+		sources++
+	}
+	if s.Base64 != "" {
+		sources++
+	}
+	if s.URL != "" {
+		sources++
+	}
+	if sources == 0 {
+		return fmt.Errorf("document source: one of Data, Base64, or URL must be set")
+	}
+	if sources > 1 {
+		return fmt.Errorf("document source: only one of Data, Base64, or URL may be set")
+	}
 	if s.URL != "" {
 		return nil
 	}

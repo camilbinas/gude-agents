@@ -27,6 +27,9 @@ func WithName(name string) Option {
 // WithMaxIterations sets the maximum number of call-execute-respond iterations.
 func WithMaxIterations(n int) Option {
 	return func(a *Agent) error {
+		if n < 1 {
+			return fmt.Errorf("maxIterations must be >= 1, got %d", n)
+		}
 		a.maxIterations = n
 		return nil
 	}
@@ -91,6 +94,9 @@ func WithOutputGuardrail(g ...OutputGuardrail) Option {
 // with ErrTokenBudgetExceeded. A value of 0 means no budget (default).
 func WithTokenBudget(maxTokens int) Option {
 	return func(a *Agent) error {
+		if maxTokens < 0 {
+			return fmt.Errorf("token budget must be >= 0, got %d", maxTokens)
+		}
 		a.tokenBudget = maxTokens
 		return nil
 	}

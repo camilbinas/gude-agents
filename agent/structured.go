@@ -122,7 +122,9 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: rawText}},
 		}
-		_ = a.conversation.Save(ctx, convID, append(messages, assistantMsg))
+		if err := a.conversation.Save(ctx, convID, append(messages, assistantMsg)); err != nil {
+			return zero, usage, fmt.Errorf("structured output: conversation save: %w", err)
+		}
 	}
 
 	return result, usage, nil
