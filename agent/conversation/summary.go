@@ -77,7 +77,7 @@ type Summary struct {
 
 	mu             sync.Mutex
 	summarizing    map[string]bool // per-conversation summarization lock
-	summarized     map[string]bool // set after summarization completes; cleared when count drops below threshold
+	summarizedAt   map[string]int  // message count after last summarization; re-triggers when exceeded
 	pendingSummary map[string]*summaryState
 	wg             sync.WaitGroup // tracks all in-flight summarization goroutines
 }
@@ -88,6 +88,12 @@ type Summary struct {
 // (user+assistant exchanges). Preserved messages are excluded from the trigger
 // count — only the summarizable portion is compared against the threshold.
 func NewSummary(inner agent.Conversation, threshold int, fn SummaryFunc, opts ...SummaryOption) (*Summary, error) {
+	if inner == nil {
+		return nil, fmt.Errorf("inner conversation must not be nil")
+	}
+	if fn == nil {
+		return nil, fmt.Errorf("summary function must not be nil")
+	}
 	if threshold < 1 {
 		return nil, fmt.Errorf("threshold must be at least 1 turn, got %d", threshold)
 	}
@@ -97,7 +103,7 @@ func NewSummary(inner agent.Conversation, threshold int, fn SummaryFunc, opts ..
 		triggerPct:     80,
 		summarize:      fn,
 		summarizing:    make(map[string]bool),
-		summarized:     make(map[string]bool),
+		summarizedAt:   make(map[string]int),
 		pendingSummary: make(map[string]*summaryState),
 	}
 	for _, opt := range opts {
@@ -192,12 +198,18 @@ func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.
 
 	s.mu.Lock()
 	if summarizable < trigger {
-		delete(s.summarized, conversationID)
+		delete(s.summarizedAt, conversationID)
 		s.mu.Unlock()
 		return nil
 	}
 
-	if s.summarized[conversationID] || s.summarizing[conversationID] {
+	if s.summarizing[conversationID] {
+		s.mu.Unlock()
+		return nil
+	}
+
+	// Skip if the conversation hasn't grown since the last summarization.
+	if lastCount, ok := s.summarizedAt[conversationID]; ok && len(msgs) <= lastCount {
 		s.mu.Unlock()
 		return nil
 	}
@@ -227,7 +239,7 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		}
 		delete(s.pendingSummary, conversationID)
 		if success && !reTriggered {
-			s.summarized[conversationID] = true
+			s.summarizedAt[conversationID] = cutoff
 		}
 		s.mu.Unlock()
 	}()

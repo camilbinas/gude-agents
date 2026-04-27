@@ -17,6 +17,9 @@ type Window struct {
 
 // NewWindow creates a Window that retains the last n messages on Load.
 func NewWindow(inner agent.Conversation, n int) *Window {
+	if n < 1 {
+		panic("conversation: window size must be >= 1")
+	}
 	return &Window{inner: inner, n: n}
 }
 

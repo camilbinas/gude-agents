@@ -365,7 +365,7 @@ func TestSummary_NoRetriggerAfterCompletion(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
-		done := s.summarized["conv"]
+		done := s.summarizedAt["conv"] > 0
 		s.mu.Unlock()
 		if done {
 			close(summaryDone)
@@ -450,7 +450,7 @@ func TestSummary_MessageArrivingDuringSummarizationIsPreserved(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
-		done := s.summarized["conv"]
+		done := s.summarizedAt["conv"] > 0
 		s.mu.Unlock()
 		if done {
 			break

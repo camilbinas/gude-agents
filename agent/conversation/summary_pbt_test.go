@@ -16,8 +16,6 @@ import (
 // TestProperty3_SummaryNoRetriggerAfterCompletion verifies that once summarization
 // completes for a conversation, subsequent Save calls at the same threshold do not
 // launch another summarization goroutine.
-//
-//
 func TestProperty3_SummaryNoRetriggerAfterCompletion(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a threshold in turns between 3 and 10 (6–20 messages internally)
@@ -60,7 +58,7 @@ func TestProperty3_SummaryNoRetriggerAfterCompletion(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			s.mu.Lock()
-			done := s.summarized["conv"]
+			done := s.summarizedAt["conv"] > 0
 			s.mu.Unlock()
 			if done {
 				summaryDone <- struct{}{}
@@ -91,8 +89,6 @@ func TestProperty3_SummaryNoRetriggerAfterCompletion(t *testing.T) {
 
 // TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization verifies that
 // concurrent Save calls for the same conversation trigger at most one summarization.
-//
-//
 func TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate N concurrent callers between 2 and 20
@@ -180,7 +176,6 @@ func TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization(t *testing.T) {
 // This test captures the baseline preservation behavior on UNFIXED code. It must PASS
 // on both unfixed and fixed code, confirming that the fix does not regress below-threshold
 // behavior.
-//
 func TestProperty2_Preservation_BelowThresholdUnchanged(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a random threshold in turns between 3 and 25 (6–50 messages internally)
@@ -295,7 +290,6 @@ func TestProperty2_Preservation_BelowThresholdUnchanged(t *testing.T) {
 // The bug is that runSummarize stores the raw SummaryFunc result (an assistant message)
 // as the first message, violating user-first and potentially creating consecutive
 // same-role messages when preserveRecent is odd.
-//
 func TestProperty1_BugCondition_SummaryMessageRoleViolation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate random threshold in turns (3–25, i.e. 6–50 messages internally)
