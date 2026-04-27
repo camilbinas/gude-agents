@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.22.0
-	github.com/camilbinas/gude-agents v0.23.1
+	github.com/camilbinas/gude-agents v0.24.0
 	github.com/google/uuid v1.6.0
 	pgregory.net/rapid v1.2.0
 )
