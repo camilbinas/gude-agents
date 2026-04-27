@@ -1,19 +1,7 @@
 // Example: Message normalizer strategies.
 //
-// The message normalizer repairs invalid message sequences before they reach
-// LLM providers. Different providers enforce different constraints — Anthropic
-// and Bedrock reject non-alternating user/assistant turns, Gemini auto-merges
-// them, and OpenAI accepts anything. The normalizer catches violations from
-// any source (summarization, RAG injection, custom memory) and applies a
-// configurable repair strategy.
-//
-// Three strategies are available:
-//   - Merge (default): combines consecutive same-role messages into one
-//   - Fill: inserts synthetic opposite-role messages to restore alternation
-//   - Remove: keeps only the last message in each same-role run
-//
-// Normalization is enabled by default (Merge). Use WithMessageNormalizer to
-// pick a different strategy, or WithoutMessageNormalizer to disable it.
+// Shows the three normalization strategies (Merge, Fill, Remove) that repair
+// invalid message sequences before they reach LLM providers.
 //
 // Run:
 //

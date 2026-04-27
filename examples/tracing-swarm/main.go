@@ -1,32 +1,11 @@
 // Example: OpenTelemetry tracing for a multi-agent swarm.
 //
-// Demonstrates swarm-level tracing where every handoff, agent turn, and tool
-// execution produces OTEL spans under a single swarm.run root span.
-//
-// The swarm has three agents:
-//   - triage: routes requests to the right specialist
-//   - billing: handles payment and invoice questions
-//   - technical: handles bugs and how-to questions
-//
-// Spans are printed to stderr as a formatted tree after each invocation.
+// A triage → billing / technical swarm where every handoff, agent turn, and
+// tool call produces OTEL spans printed as a tree to stderr.
 //
 // Run:
 //
 //	go run ./tracing-swarm
-//
-// Sample trace tree:
-//
-//   swarm.run  (3.08s) ✓  total_in=1909 total_out=222  ⚡swarm.handoff
-//    ├─ swarm.agent.triage  (1.12s) ·
-//    │  └─ agent.iteration  (1.12s) ·  iteration=1 tools=1
-//    │     ├─ agent.provider.call  (1.12s) ·  in=564 out=68 tool_calls=1
-//    │     └─ agent.tool.transfer_to_billing  (18.0µs) ·
-//    └─ swarm.agent.billing  (1.96s) ·
-//       ├─ agent.iteration  (841.3ms) ·  iteration=1 tools=1
-//       │  ├─ agent.provider.call  (841.1ms) ·  in=609 out=56 tool_calls=1
-//       │  └─ agent.tool.check_balance  (63.0µs) ·
-//       └─ agent.iteration  (1.12s) ·  iteration=2 final
-//          └─ agent.provider.call  (1.12s) ·  in=736 out=98
 
 package main
 

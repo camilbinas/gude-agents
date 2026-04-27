@@ -132,84 +132,27 @@ func (s *VectorStore) Close() error
 
 Closes the underlying Redis client.
 
-## ScopedSearch Optimization
+## Identifier-Scoped Memory (Moved)
 
-When you wrap a Redis `VectorStore` in a [`ScopedStore`](rag.md#scopedstore), scoped searches use native Redis TAG filtering instead of post-search metadata filtering. This happens automatically — no extra configuration required.
+Identifier-scoped storage for long-term memory (per-user, per-tenant fact storage) has moved to the [`agent/memory/redis`](memory.md#redis-backend) package. The memory Redis backend now implements `memory.MemoryStore` directly using native TAG filtering — it no longer wraps the RAG `VectorStore`.
 
-### How It Works
+If you need identifier-scoped memory with Redis, see the [Long-Term Memory — Redis Backend](memory.md#redis-backend) docs.
 
-The Redis `VectorStore` index schema includes a `_scope_id` TAG field alongside the standard `content`, `metadata`, and `embedding` fields. When `ScopedStore.Add` is called, it injects `_scope_id` into each document's metadata. The Redis `VectorStore.Add` method detects this key and stores it as a top-level TAG field in the Redis hash, making it available for native RediSearch filtering.
-
-At construction time, `NewScopedStore` checks whether the underlying store implements the `ScopedSearcher` interface:
-
-```go
-type ScopedSearcher interface {
-    ScopedSearch(ctx context.Context, scopeKey, scopeValue string,
-        queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error)
-}
-```
-
-The Redis `VectorStore` implements `ScopedSearcher`. When `ScopedStore.Search` is called, it delegates to `ScopedSearch` which constructs an `FT.SEARCH` query with a TAG pre-filter:
-
-```
-@_scope_id:{escapedValue}=>[KNN topK @embedding $BLOB AS score]
-```
-
-This filters documents at the index level before the KNN search runs, so Redis only considers vectors that belong to the requested scope.
-
-### Why This Matters
-
-Without the optimization, `ScopedStore` falls back to over-fetching 3× the requested `topK` from the underlying store and post-filtering results by metadata. This works correctly but has two drawbacks at scale:
-
-1. **Wasted computation** — Redis computes similarity scores for documents that will be discarded.
-2. **Missed results** — if fewer than `topK` documents survive filtering from the 3× over-fetch, you get fewer results than requested.
-
-With TAG filtering, Redis narrows the candidate set before running KNN, so every returned result belongs to the correct scope and no computation is wasted. The `escapeTag` helper ensures special characters in scope identifiers are properly escaped for RediSearch query syntax.
-
-### Usage
-
-No special setup is needed. Wrap a Redis `VectorStore` in a `ScopedStore` and the optimization is active:
-
-```go
-import (
-    "github.com/camilbinas/gude-agents/agent/rag"
-    ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
-)
-
-store, err := ragredis.New(
-    ragredis.Options{Addr: "localhost:6379"},
-    "my-index", 1024,
-)
-if err != nil {
-    log.Fatal(err)
-}
-defer store.Close()
-
-// ScopedStore detects ScopedSearcher and uses native TAG filtering.
-scoped := rag.NewScopedStore(store)
-
-// All Add/Search calls through scoped use the Redis TAG optimization.
-```
-
-This is the same pattern used by the [long-term memory Redis backend](memory.md#redis-backend) and the [composable memory tools](memory.md#composable-building-blocks) when backed by Redis.
+The RAG Redis `VectorStore` is now purely for document retrieval (RAG pipelines). It does not include scoped search functionality.
 
 ### FT.CREATE Schema
 
-For reference, the full index schema created by `ragredis.New`:
+For reference, the index schema created by `ragredis.New`:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `content` | TEXT | Document content |
 | `metadata` | TEXT | JSON-serialized metadata map |
-| `_scope_id` | TAG | Scope identifier for native filtering (populated when documents are added via `ScopedStore`) |
 | `embedding` | VECTOR (HNSW) | Float32 binary blob with configurable dimension, M, and EF_CONSTRUCTION |
-
-Documents added without `ScopedStore` (standard RAG usage) simply have no `_scope_id` TAG value. Existing non-scoped `Add` and `Search` operations are unaffected.
 
 ### See Also
 
-- [RAG Pipeline — ScopedStore](rag.md#scopedstore) — full `ScopedStore` API reference and the `ScopedSearcher` interface
-- [Long-Term Memory](memory.md) — composable `RememberTool` / `RecallTool` built on `ScopedStore`
+- [Long-Term Memory](memory.md) — identifier-scoped fact storage with composable `RememberTool` / `RecallTool`
 
 ## Code Example: Redis-Backed Conversation
 

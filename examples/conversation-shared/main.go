@@ -1,6 +1,6 @@
 // Example: Two independent conversations sharing a single agent instance.
 //
-// A single Agent is created with WithSharedMemory — no default conversation ID.
+// A single Agent is created with WithSharedConversation — no default conversation ID.
 // Each conversation supplies its own ID per invocation via WithConversationID,
 // so their histories are stored and retrieved independently.
 //

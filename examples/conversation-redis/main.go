@@ -24,15 +24,15 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	mem, err := redis.New(
+	store, err := redis.New(
 		redis.RedisOptions{Addr: redisAddr},
 		redis.WithTTL(1*time.Hour),
-		redis.WithKeyPrefix("example:memory:"),
+		redis.WithKeyPrefix("example:comnversation:"),
 	)
 	if err != nil {
-		log.Fatalf("redis memory: %v", err)
+		log.Fatalf("redis store: %v", err)
 	}
-	defer mem.Close()
+	defer store.Close()
 
 	provider := bedrock.Must(bedrock.Standard())
 
@@ -40,15 +40,15 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithConversation(mem, "demo-conversation"),
+		agent.WithConversation(store, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Redis memory chat (type 'quit' to exit, 'clear' to reset)")
+	fmt.Println("Redis chat (type 'quit' to exit, 'clear' to reset)")
 
 	utils.Chat(context.Background(), a, utils.ChatOptions{
-		ClearFunc: utils.ClearMemory(mem, "demo-conversation"),
+		ClearFunc: utils.ClearConversation(store, "demo-conversation"),
 	})
 }

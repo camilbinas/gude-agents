@@ -5,7 +5,6 @@
 // decides when to call the retriever based on the user's question.
 //
 // Prerequisites:
-//   - AWS credentials configured (env vars, ~/.aws/credentials, or IAM role)
 //   - A Bedrock Knowledge Base already created and synced
 //   - KNOWLEDGE_BASE_ID env var set to your Knowledge Base ID
 //   - AWS_REGION env var set (defaults to us-east-1)
@@ -17,18 +16,18 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -63,37 +62,16 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Use the search_knowledge_base tool to find relevant information before answering."),
 		[]tool.Tool{kbTool},
+		debug.WithLogging(),
 	)
 	if err != nil {
 		log.Fatalf("agent: %v", err)
 	}
 
 	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
 
 	fmt.Printf("Knowledge Base agent ready (KB: %s)\n", kbID)
 	fmt.Println("Ask a question (or type 'quit' to exit):")
 
-	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
-		}
-		q := strings.TrimSpace(scanner.Text())
-		if q == "" {
-			continue
-		}
-		if strings.EqualFold(q, "quit") || strings.EqualFold(q, "exit") {
-			break
-		}
-
-		result, usage, err := a.Invoke(ctx, q)
-		if err != nil {
-			log.Printf("error: %v\n\n", err)
-			continue
-		}
-
-		fmt.Printf("\n%s\n", result)
-		fmt.Printf("(tokens: %d in / %d out)\n\n", usage.InputTokens, usage.OutputTokens)
-	}
+	utils.Chat(ctx, a)
 }

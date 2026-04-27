@@ -1,27 +1,11 @@
 // Example: Colored debug logging for local development.
 //
 // Uses the agent/logging/debug package to emit human-readable, ANSI-colored
-// log entries alongside the agent's streamed responses. Zero-config for local
-// development.
+// log entries alongside the agent's streamed responses.
 //
-// Output looks like:
-//
-//	▸ invoke  logging-demo  claude-sonnet-4-6  max_iter=5
-//
-//	  iteration 1
-//	    ⚙ get_weather  ✓ <1ms
-//	    ⚙ get_time     ✓ 1ms
-//
-//	  provider  2.3s  679→103 tokens  2 tool(s)
-//
-//	✓ invoke  4.3s  1572 in  149 out
-//	────────────────────────────────────────────────
-//
-// To run:
+// Run:
 //
 //	go run ./logging-debug
-//
-// Requires: go get github.com/camilbinas/gude-agents/agent/logging/debug
 
 package main
 

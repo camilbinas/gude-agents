@@ -9,7 +9,6 @@
 //
 // Prerequisites:
 //   - Node.js / npx installed
-//   - AWS credentials configured (for Bedrock) or set PROVIDER env var
 //
 // Run:
 //

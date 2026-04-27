@@ -16,18 +16,17 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
 	ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -61,7 +60,7 @@ func main() {
 
 	provider := openai.Must(openai.Standard())
 
-	a, err := agent.New(
+	a, err := agent.Default(
 		provider,
 		prompt.Text("You are a helpful assistant. "+
 			"You MUST call the search_knowledge_base tool before answering any question. "+
@@ -74,34 +73,10 @@ func main() {
 		log.Fatalf("agent: %v", err)
 	}
 
-	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
-
-	fmt.Printf("Vector Store agent ready (vector store: %s)\n\n", vsID)
+	fmt.Printf("Vector Store agent ready (vector store: %s)\n", vsID)
 	fmt.Println("Ask a question (or type 'quit' to exit):")
 
-	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
-		}
-		q := strings.TrimSpace(scanner.Text())
-		if q == "" {
-			continue
-		}
-		if strings.EqualFold(q, "quit") || strings.EqualFold(q, "exit") {
-			break
-		}
-
-		result, usage, err := a.Invoke(ctx, q)
-		if err != nil {
-			log.Printf("error: %v\n\n", err)
-			continue
-		}
-
-		fmt.Printf("\n%s\n", result)
-		fmt.Printf("(tokens: %d in / %d out)\n\n", usage.InputTokens, usage.OutputTokens)
-	}
+	utils.Chat(context.Background(), a)
 }
 
 // loggingRetriever wraps any agent.Retriever and prints each result to stdout.

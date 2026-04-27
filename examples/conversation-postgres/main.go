@@ -36,14 +36,14 @@ func main() {
 		log.Fatalf("postgres connect: %v", err)
 	}
 
-	mem, err := postgres.New(pool,
+	store, err := postgres.New(pool,
 		postgres.WithTableName("agent_conversations"),
 		postgres.WithAutoMigrate(),
 	)
 	if err != nil {
-		log.Fatalf("postgres memory: %v", err)
+		log.Fatalf("postgres store: %v", err)
 	}
-	defer mem.Close()
+	defer store.Close()
 
 	provider := bedrock.Must(bedrock.Standard())
 
@@ -51,15 +51,15 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithConversation(mem, "demo-conversation"),
+		agent.WithConversation(store, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Postgres memory chat (type 'quit' to exit, 'clear' to reset)")
+	fmt.Println("Postgres chat (type 'quit' to exit, 'clear' to reset)")
 
 	utils.Chat(ctx, a, utils.ChatOptions{
-		ClearFunc: utils.ClearMemory(mem, "demo-conversation"),
+		ClearFunc: utils.ClearConversation(store, "demo-conversation"),
 	})
 }

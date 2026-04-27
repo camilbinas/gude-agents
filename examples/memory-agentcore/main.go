@@ -1,35 +1,12 @@
-// Example: AgentCore episodic memory for persistent long-term knowledge.
+// Example: AgentCore memory for persistent long-term knowledge.
 //
-// Demonstrates episodic memory backed by AWS Bedrock AgentCore Memory. Unlike
-// the in-memory store, facts persist across process restarts because they are
-// stored in AgentCore's managed memory service with built-in semantic search —
-// no embedder setup required.
-//
-// The agent receives two tools:
-//   - remember: stores a fact into AgentCore long-term memory
-//   - recall: retrieves relevant facts by semantic search
-//
-// The identifier is set on the context via agent.WithIdentifier so the tools
-// automatically scope storage and retrieval to the correct entity.
+// Memory backed by AWS Bedrock AgentCore with built-in semantic search —
+// no embedder setup required. Set AGENTCORE_STORE_MODE=batch for direct
+// storage instead of the default automatic extraction.
 //
 // Prerequisites:
-//   - AWS credentials configured (env vars, ~/.aws/credentials, or IAM role)
 //   - An AgentCore Memory resource created in your AWS account
 //   - AGENTCORE_MEMORY_ID env var set to your Memory resource ID
-//
-// Store modes:
-//   - CreateEvent (default): facts are sent as conversational events; AgentCore's
-//     long-term memory strategies automatically extract and store insights.
-//   - BatchCreate: facts are written directly as memory records, bypassing
-//     automatic extraction. Set AGENTCORE_STORE_MODE=batch to use this mode.
-//
-// Sample session:
-//
-//	You: Remember that I prefer dark mode and use Go as my primary language.
-//	Agent: I've stored those preferences for you.
-//
-//	You: What do you know about my preferences?
-//	Agent: You prefer dark mode and use Go as your primary language.
 //
 // Run:
 //
@@ -104,7 +81,7 @@ func main() {
 	ctx := agent.WithIdentifier(context.Background(), "user-123")
 
 	fmt.Println()
-	fmt.Println("Chat agent with AgentCore episodic memory. Type 'quit' to exit.")
+	fmt.Println("Chat agent with AgentCore memory. Type 'quit' to exit.")
 	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")
 	fmt.Println()
 

@@ -21,18 +21,16 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -141,28 +139,5 @@ func main() {
 	fmt.Println("Try: 'What Go repos do we have?' or 'Show me Tom's open PRs' or 'Who are the backend engineers?'")
 	fmt.Println("Type 'quit' to exit.")
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if input == "quit" {
-			break
-		}
-
-		fmt.Println()
-		usage, err := orchestrator.InvokeStream(context.Background(), input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		if err != nil {
-			fmt.Printf("\nError: %v\n", err)
-			continue
-		}
-		fmt.Printf("\n\n[tokens: %d in / %d out]\n", usage.InputTokens, usage.OutputTokens)
-	}
+	utils.Chat(context.Background(), orchestrator)
 }

@@ -37,7 +37,7 @@ func main() {
 
 	ctx := context.Background()
 
-	// Multi-turn conversation through the composed memory pipeline.
+	// Multi-turn conversation through the composed pipeline.
 	result, _, err := a.Invoke(ctx, "My name is Alice. Remember that.")
 	if err != nil {
 		log.Fatal(err)
@@ -50,7 +50,6 @@ func main() {
 	}
 	fmt.Println("Turn 2:", result)
 
-	// MemoryManager: list and delete conversations.
 	ids, _ := store.List(ctx)
 	fmt.Printf("\nConversations in store: %v\n", ids)
 

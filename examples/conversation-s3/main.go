@@ -25,7 +25,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/camilbinas/gude-agents/agent"
-	s3mem "github.com/camilbinas/gude-agents/agent/conversation/s3"
+	s3conv "github.com/camilbinas/gude-agents/agent/conversation/s3"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -44,11 +44,11 @@ func main() {
 		log.Fatalf("load AWS config: %v", err)
 	}
 
-	mem, err := s3mem.New(cfg, bucket,
-		s3mem.WithKeyPrefix("example/memory/"),
+	store, err := s3conv.New(cfg, bucket,
+		s3conv.WithKeyPrefix("example/conversation/"),
 	)
 	if err != nil {
-		log.Fatalf("s3 memory: %v", err)
+		log.Fatalf("s3 conversation: %v", err)
 	}
 
 	provider := bedrock.Must(bedrock.Cheapest())
@@ -57,15 +57,15 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithConversation(mem, "demo-conversation"),
+		agent.WithConversation(store, "demo-conversation"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("S3 memory chat (type 'quit' to exit, 'clear' to reset)")
+	fmt.Println("S3 chat (type 'quit' to exit, 'clear' to reset)")
 
 	utils.Chat(ctx, a, utils.ChatOptions{
-		ClearFunc: utils.ClearMemory(mem, "demo-conversation"),
+		ClearFunc: utils.ClearConversation(store, "demo-conversation"),
 	})
 }

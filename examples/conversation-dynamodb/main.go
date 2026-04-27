@@ -49,12 +49,12 @@ func main() {
 		log.Fatalf("load AWS config: %v", err)
 	}
 
-	mem, err := dynamodb.New(cfg, table,
-		dynamodb.WithKeyPrefix("example:memory:"),
+	conv, err := dynamodb.New(cfg, table,
+		dynamodb.WithKeyPrefix("example:conversation:"),
 		dynamodb.WithTTL(8*time.Hour),
 	)
 	if err != nil {
-		log.Fatalf("dynamodb memory: %v", err)
+		log.Fatalf("dynamodb conversation: %v", err)
 	}
 
 	provider := bedrock.Must(bedrock.Standard())
@@ -63,7 +63,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		agent.WithConversation(mem, "demo-conversation"),
+		agent.WithConversation(conv, "demo-conversation"),
 		agent.WithName("helpful-agent"),
 		debug.WithLogging(),
 	)
@@ -71,9 +71,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("DynamoDB memory chat (type 'quit' to exit, 'clear' to reset)")
+	fmt.Println("DynamoDB chat (type 'quit' to exit, 'clear' to reset)")
 
 	utils.Chat(ctx, a, utils.ChatOptions{
-		ClearFunc: utils.ClearMemory(mem, "demo-conversation"),
+		ClearFunc: utils.ClearConversation(conv, "demo-conversation"),
 	})
 }

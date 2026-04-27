@@ -13,10 +13,6 @@
 //
 // To run with Jaeger:
 //
-//	docker run -d --name jaeger \
-//	  -p 16686:16686 \
-//	  -p 4317:4317 \
-//	  jaegertracing/all-in-one:latest
 //	go run ./tracing
 //	# open http://localhost:16686
 //
@@ -29,7 +25,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,7 +32,6 @@ import (
 	"math/rand/v2"
 	"net"
 	"os"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -118,41 +112,19 @@ func main() {
 	}
 
 	// 5. Interactive loop — each invocation produces a full trace.
-	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Traced agent ready. Type 'quit' to exit.")
 	fmt.Println("Try: What's the weather in Tokyo and the time in America/New_York?")
 	fmt.Println()
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") {
-			break
-		}
-
-		fmt.Print("Agent: ")
-		usage, err := a.InvokeStream(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		fmt.Println()
-		if err != nil {
-			log.Printf("Error: %v", err)
-		}
-		fmt.Printf("  [tokens: %d in, %d out]\n", usage.InputTokens, usage.OutputTokens)
-
-		// Flush the tree exporter after each invocation so the trace
-		// prints immediately (only relevant for console mode).
-		if treeExp != nil {
-			treeExp.Flush()
-		}
-		fmt.Println()
-	}
+	utils.Chat(ctx, a, utils.ChatOptions{
+		AfterInvoke: func(_ context.Context, _ agent.TokenUsage, _ error) {
+			// Flush the tree exporter after each invocation so the trace
+			// prints immediately (only relevant for console mode).
+			if treeExp != nil {
+				treeExp.Flush()
+			}
+		},
+	})
 
 	fmt.Println("Flushing traces...")
 }

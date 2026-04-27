@@ -3,11 +3,7 @@
 // Requires Redis Stack (NOT standard Redis) — the vector store uses RediSearch
 // commands (FT.CREATE, FT.SEARCH) that are only available in Redis Stack.
 //
-// Run Redis Stack locally:
-//
-//	docker run -p 6379:6379 redis/redis-stack-server:latest
-//
-// Then run this example:
+// Run this example:
 //
 //	REDIS_ADDR=localhost:6379 go run ./rag-redis
 

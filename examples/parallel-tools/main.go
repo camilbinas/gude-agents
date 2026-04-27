@@ -1,23 +1,7 @@
 // Example: Fire-and-forget tools for async side effects.
 //
-// Demonstrates NewFireAndForget — a tool constructor where the handler
-// runs in a background goroutine and the LLM gets an instant acknowledgment.
-// The agent loop never blocks on the side effect.
-//
-// This example simulates a support agent that can:
-//
-//   - look up a customer (synchronous — the LLM needs the data)
-//   - log an interaction to the CRM (fire-and-forget — just a side effect)
-//   - send a follow-up email (fire-and-forget — just a side effect)
-//
-// Sample session:
-//
-//	You: Look up customer C-42 and log that I spoke with them about a billing issue
-//	Agent: Customer C-42 is Acme Corp (active, enterprise tier). I've queued the
-//	       CRM note about your billing conversation.
-//
-//	You: Send them a follow-up email summarizing our chat
-//	Agent: Follow-up email queued for customer C-42.
+// Uses NewAsync to run CRM logging and email sending in background goroutines
+// while the agent loop continues without blocking.
 //
 // Run:
 //

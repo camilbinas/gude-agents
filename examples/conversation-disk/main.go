@@ -1,6 +1,6 @@
-// Example: Disk-based memory for persistent conversations.
+// Example: Disk-based persistent conversations.
 //
-// Demonstrates the disk memory driver — conversations are stored as JSON files
+// Demonstrates the disk driver — conversations are stored as JSON files
 // on the local filesystem. Messages survive restarts without any external
 // infrastructure (no Redis, no database).
 //
@@ -54,11 +54,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Chat agent with disk memory. Type 'quit' to exit, 'clear' to reset.")
+	fmt.Println("Chat agent with disk based conversations. Type 'quit' to exit, 'clear' to reset.")
 	fmt.Println("Conversations are saved to ./tmp/conversations/")
 	fmt.Println()
 
 	utils.Chat(context.Background(), a, utils.ChatOptions{
-		ClearFunc: utils.ClearMemory(store, "default-session"),
+		ClearFunc: utils.ClearConversation(store, "default-session"),
 	})
 }

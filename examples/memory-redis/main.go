@@ -1,35 +1,9 @@
-// Example: Redis-backed episodic memory for persistent long-term knowledge.
+// Example: Redis-backed memory for persistent long-term knowledge.
 //
-// Demonstrates episodic memory backed by Redis Stack (RediSearch). Unlike the
-// in-memory store, facts persist across process restarts because they are stored
-// in Redis with HNSW-indexed embedding vectors for semantic similarity search.
-//
-// The agent receives two tools:
-//   - remember: stores a fact into Redis long-term memory
-//   - recall: retrieves relevant facts by semantic search
-//
-// The identifier is set on the context via agent.WithIdentifier so the tools
-// automatically scope storage and retrieval to the correct entity.
+// Memory backed by Redis Stack (RediSearch) with HNSW-indexed semantic search.
 //
 // Prerequisites:
-//   - AWS credentials configured (env vars, ~/.aws/credentials, or IAM role)
-//     for the Bedrock embedder
 //   - Redis Stack running locally (NOT standard Redis — requires RediSearch)
-//
-// Start Redis Stack:
-//
-//	docker run -p 6379:6379 redis/redis-stack-server:latest
-//
-// Optional env vars:
-//   - REDIS_ADDR: Redis address (default: 127.0.0.1:6379)
-//
-// Sample session:
-//
-//	You: Remember that I prefer dark mode and use Go as my primary language.
-//	Agent: I've stored those preferences for you.
-//
-//	You: What do you know about my preferences?
-//	Agent: You prefer dark mode and use Go as your primary language.
 //
 // Run:
 //
@@ -90,7 +64,7 @@ func main() {
 			memory.RecallTool(store),
 		},
 		debug.WithLogging(),
-		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "redis-episodic-session"),
+		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "redis-memory-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -99,7 +73,7 @@ func main() {
 	ctx := agent.WithIdentifier(context.Background(), "user-123")
 
 	fmt.Println()
-	fmt.Println("Chat agent with Redis episodic memory. Type 'quit' to exit.")
+	fmt.Println("Chat agent with Redis memory. Type 'quit' to exit.")
 	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")
 	fmt.Println()
 

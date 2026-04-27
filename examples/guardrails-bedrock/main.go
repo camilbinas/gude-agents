@@ -10,7 +10,6 @@
 //
 // Prerequisites:
 //
-//   - AWS credentials configured (env vars, ~/.aws/credentials, or IAM role)
 //   - A Bedrock Guardrail created in the AWS console
 //   - Set BEDROCK_GUARDRAIL_ID and optionally BEDROCK_GUARDRAIL_VERSION
 //

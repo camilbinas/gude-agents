@@ -10,7 +10,6 @@
 //   - Comparing latency and token usage across providers
 //
 // Prerequisites:
-//   - AWS credentials configured
 //   - OPENAI_API_KEY env var set
 //
 // Run:
