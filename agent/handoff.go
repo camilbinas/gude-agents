@@ -113,9 +113,19 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 	messages := make([]Message, len(hr.Messages))
 	copy(messages, hr.Messages)
 
+	// Apply input guardrails to the human response.
+	msg := humanResponse
+	for _, g := range a.inputGuardrails {
+		var err error
+		msg, err = g(ctx, msg)
+		if err != nil {
+			return TokenUsage{}, &GuardrailError{Direction: "input", Cause: err}
+		}
+	}
+
 	messages = append(messages, Message{
 		Role:    RoleUser,
-		Content: []ContentBlock{TextBlock{Text: humanResponse}},
+		Content: []ContentBlock{TextBlock{Text: msg}},
 	})
 
 	// Use the conversation ID from the handoff request so Resume targets
