@@ -4,7 +4,6 @@ import (
 	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 )
 
-
 // Anthropic Claude models (Global cross-region inference).
 func GlobalClaudeHaiku4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-haiku-4-5-20251001-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
@@ -166,6 +165,22 @@ func CohereEmbedMultilingualV3(opts ...rag.EmbedderOption) (*rag.Embedder, error
 }
 func CohereEmbedV4(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 	return rag.CohereEmbedV4(opts...)
+}
+
+// MustReranker is a helper that wraps a (*rag.Reranker, error) call and panics on error.
+// Forwards to agent/rag/bedrock.MustReranker.
+func MustReranker(r *rag.Reranker, err error) *rag.Reranker {
+	return rag.MustReranker(r, err)
+}
+
+// Cohere and Amazon reranker models.
+// These forward to agent/rag/bedrock — import that package directly for
+// access to RerankerOption and the Reranker type.
+func CohereRerank35(opts ...rag.RerankerOption) (*rag.Reranker, error) {
+	return rag.CohereRerank35(opts...)
+}
+func AmazonRerank10(opts ...rag.RerankerOption) (*rag.Reranker, error) {
+	return rag.AmazonRerank10(opts...)
 }
 
 // Tier aliases — provider-agnostic shortcuts for common use cases.

@@ -211,6 +211,29 @@ retriever, err := ragopenai.NewVectorStoreRetriever("vs-xxxx",
 
 Each returned `Document` has `Content` (concatenated text blocks), `Metadata["score"]`, `Metadata["filename"]`, and `Metadata["file_id"]`.
 
+## Reranker Implementations
+
+### Bedrock — Cohere Rerank 3.5 / Amazon Rerank 1.0
+
+Import: `github.com/camilbinas/gude-agents/agent/provider/bedrock` (re-exported) or `ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"` (direct)
+
+```go
+reranker := bedrock.MustReranker(bedrock.AmazonRerank10())
+
+retriever := rag.NewRetriever(embedder, store,
+    rag.WithTopK(20),
+    rag.WithScoreThreshold(0.3),
+    rag.WithReranker(reranker),
+)
+```
+
+Convenience constructors: `CohereRerank35()`, `AmazonRerank10()`. For a custom model ID use `ragbedrock.NewReranker(modelID, opts...)`.
+
+| Option | Description |
+|--------|-------------|
+| `WithRerankerRegion(region string)` | AWS region (defaults to `AWS_REGION` env var, then `us-east-1`) |
+| `WithRerankerTopN(n int)` | Max documents to return after reranking (default: 0 = all) |
+
 ## Integration Patterns
 
 There are two ways to wire RAG into an agent:
