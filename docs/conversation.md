@@ -196,6 +196,14 @@ if err != nil {
 }
 ```
 
+#### WithSummaryTimeout
+
+```go
+func WithSummaryTimeout(d time.Duration) SummaryOption
+```
+
+Sets a per-summarization timeout. Each background goroutine gets a context with this deadline. If the LLM call doesn't complete in time, the summarization is cancelled. Default: no timeout.
+
 ## Composable Middleware Pattern
 
 Strategies wrap each other like middleware. Each strategy takes an `inner Conversation` as its first argument, so you build a pipeline by nesting constructors:

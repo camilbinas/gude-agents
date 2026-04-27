@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 )
@@ -59,6 +60,20 @@ func WithTriggerThreshold(pct int) SummaryOption {
 	}
 }
 
+// WithSummaryTimeout sets a per-summarization timeout. Each background
+// summarization goroutine gets a context with this deadline. If the LLM
+// call doesn't complete in time, the summarization is cancelled and the
+// conversation is left unsummarized until the next trigger. Default: no timeout.
+func WithSummaryTimeout(d time.Duration) SummaryOption {
+	return func(s *Summary) error {
+		if d <= 0 {
+			return fmt.Errorf("summary timeout must be positive, got %s", d)
+		}
+		s.timeout = d
+		return nil
+	}
+}
+
 // summaryState tracks per-conversation summarization progress.
 type summaryState struct {
 	cutoffIndex int
@@ -73,7 +88,11 @@ type Summary struct {
 	triggerPct     int // percentage of threshold at which to trigger (default 80)
 	summarize      SummaryFunc
 	logger         agent.Logger
-	preserveRecent int // number of recent messages to always keep out of summarization
+	preserveRecent int           // number of recent messages to always keep out of summarization
+	timeout        time.Duration // per-summarization timeout; 0 = no timeout
+
+	ctx    context.Context // cancelled by Close to stop in-flight summarization
+	cancel context.CancelFunc
 
 	mu             sync.Mutex
 	summarizing    map[string]bool // per-conversation summarization lock
@@ -97,11 +116,14 @@ func NewSummary(inner agent.Conversation, threshold int, fn SummaryFunc, opts ..
 	if threshold < 1 {
 		return nil, fmt.Errorf("threshold must be at least 1 turn, got %d", threshold)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Summary{
 		inner:          inner,
 		threshold:      threshold * 2, // convert turns to individual messages
 		triggerPct:     80,
 		summarize:      fn,
+		ctx:            ctx,
+		cancel:         cancel,
 		summarizing:    make(map[string]bool),
 		summarizedAt:   make(map[string]int),
 		pendingSummary: make(map[string]*summaryState),
@@ -193,6 +215,11 @@ func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.
 		return err
 	}
 
+	// Don't trigger summarization if closed.
+	if s.ctx.Err() != nil {
+		return nil
+	}
+
 	trigger := s.triggerThreshold()
 	summarizable := len(msgs) - s.preserveRecent
 
@@ -227,7 +254,12 @@ func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.
 // runSummarize performs background summarization for a conversation.
 func (s *Summary) runSummarize(conversationID string, cutoff int) {
 	defer s.wg.Done()
-	ctx := context.Background()
+	ctx := s.ctx
+	if s.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
 	success := false
 	reTriggered := false
 
@@ -347,9 +379,16 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 	}
 }
 
+// Close cancels in-flight summarization goroutines and waits for them to finish.
+// After Close returns, no new summarization will be triggered. Safe to call
+// multiple times.
+func (s *Summary) Close() {
+	s.cancel()
+	s.wg.Wait()
+}
+
 // Wait blocks until all in-flight background summarization goroutines have
-// finished. Useful in tests and CLI tools where you want to inspect the store
-// immediately after the last Save.
+// finished. Unlike Close, it does not cancel them — it just waits.
 func (s *Summary) Wait() {
 	s.wg.Wait()
 }
