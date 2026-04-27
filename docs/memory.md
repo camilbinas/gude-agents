@@ -17,7 +17,6 @@ The memory system is self-contained — it has no dependency on the RAG package.
 agent/memory          → agent (for Document, ScoredDocument, Embedder)
 agent/memory/redis    → agent/memory (for MemoryStore), go-redis
 agent/memory/postgres → agent/memory (for MemoryStore), pgx, pgvector
-agent/memory/agentcore → agent/memory (for Memory interface only), AWS SDK
 agent/rag             → agent (for VectorStore, Document, etc.) — no memory concepts
 ```
 
@@ -44,7 +43,6 @@ graph TD
     subgraph "memory backends"
         Redis[memory/redis.Store]
         PG[memory/postgres.Store]
-        AC[memory/agentcore.Store]
     end
 
     MSI -->|uses| Doc
@@ -52,7 +50,6 @@ graph TD
     IMS -->|implements| MSI
     Redis -->|implements| MSI
     PG -->|implements| MSI
-    AC -->|implements| MI
     Adp -->|wraps| MSI
     Adp -->|uses| Emb
     Adp -->|implements| MI
@@ -72,7 +69,6 @@ Each backend handles identifier scoping natively:
 | InMemoryStore | Map partitioning | `map[string][]vsEntry` keyed by identifier — O(1) partition lookup |
 | Redis | TAG field filter | `@identifier:{value}` in FT.SEARCH queries — native RediSearch filtering |
 | Postgres | SQL WHERE clause | `WHERE identifier = $1` on a dedicated indexed column |
-| AgentCore | Managed service | Implements `Memory` directly — scoping handled by AWS |
 
 ## Composable Building Blocks
 
@@ -560,7 +556,7 @@ Validation rules (all implementations must follow these):
 
 Import: `github.com/camilbinas/gude-agents/agent/memory`
 
-`InMemory` is a thread-safe in-memory `Memory` backed by an `agent.Embedder` for cosine similarity search. Good for prototyping and tests — for production, use a persistent backend like the [AgentCore Backend](#agentcore-backend), [Redis Backend](#redis-backend), or [Postgres Backend](#postgres-backend).
+`InMemory` is a thread-safe in-memory `Memory` backed by an `agent.Embedder` for cosine similarity search. Good for prototyping and tests — for production, use a persistent backend like the [Redis Backend](#redis-backend) or [Postgres Backend](#postgres-backend).
 
 ```go
 func NewInMemory(embedder agent.Embedder) *InMemory
@@ -669,7 +665,6 @@ The memory system supports multiple storage backends. Each backend implements `M
 | [InMemoryStore](#inmemorystore) | `agent/memory` | Map partitioning | None |
 | [Redis](#redis-backend) | `agent/memory/redis` | TAG field filter | Redis Stack |
 | [Postgres](#postgres-backend) | `agent/memory/postgres` | SQL WHERE clause | PostgreSQL + pgvector |
-| [AgentCore](#agentcore-backend) | `agent/memory/agentcore` | Managed service | AWS SDK |
 
 ### Redis Backend
 
@@ -827,132 +822,3 @@ entries, err := store.Recall(ctx, "user-123", "theme preferences", 5)
 | dim < 1 | `"postgres memory: dim must be at least 1"` |
 | DDL failure | `"postgres memory: create table: <wrapped>"` |
 | Empty identifier (Add/Search) | `"postgres memory: identifier must not be empty"` |
-
-### AgentCore Backend
-
-Import: `github.com/camilbinas/gude-agents/agent/memory/agentcore`
-
-`Store` is a persistent `Memory` backed by [AWS Bedrock AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/). It stores and retrieves facts using AgentCore's managed memory service with built-in semantic search — no embedder setup required. The backend lives in its own Go sub-module, so you only pull in AWS SDK dependencies when you use it.
-
-AgentCore is a standalone managed-service backend. It implements `Memory` directly and does not use `MemoryStore` — AgentCore manages its own storage, embeddings, and search internally.
-
-```go
-import (
-    "github.com/aws/aws-sdk-go-v2/config"
-    "github.com/aws/aws-sdk-go-v2/service/bedrockagentcore"
-    "github.com/camilbinas/gude-agents/agent/memory/agentcore"
-)
-
-cfg, _ := config.LoadDefaultConfig(ctx)
-client := bedrockagentcore.NewFromConfig(cfg)
-store, err := agentcore.New(client, "your-memory-id")
-```
-
-#### Store Modes
-
-The backend supports two storage modes, selected via `WithStoreMode`:
-
-| Mode | Constant | Description |
-|------|----------|-------------|
-| CreateEvent (default) | `CreateEventMode` | Sends facts as conversational events. AgentCore's long-term memory strategies automatically extract and store insights. |
-| BatchCreate | `BatchCreateMode` | Writes facts directly as memory records, bypassing automatic extraction. Use when you want precise control over what is stored. |
-
-```go
-// Default — CreateEvent mode (automatic extraction)
-store, err := agentcore.New(client, "my-memory-id")
-
-// Explicit — BatchCreate mode (direct storage)
-store, err := agentcore.New(client, "my-memory-id",
-    agentcore.WithStoreMode(agentcore.BatchCreateMode),
-)
-```
-
-#### AgentCore Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `WithStoreMode(mode)` | `CreateEventMode` | Select between `CreateEventMode` and `BatchCreateMode`. |
-| `WithNamespaceTemplate(tmpl)` | `"/facts/{{.ActorID}}/"` | Go `text/template` string for generating the namespace from the actor ID. The template receives a struct with an `ActorID` field. |
-| `WithSessionIDFunc(fn)` | `uuid.NewString` | Function for generating session IDs used in CreateEvent mode. |
-
-#### AgentCore Error Wrapping
-
-AgentCore API errors are wrapped with context, following the same pattern as the in-memory store:
-
-- `Remember` (CreateEvent): `fmt.Errorf("agentcore memory: create event: %w", err)`
-- `Remember` (BatchCreate): `fmt.Errorf("agentcore memory: batch create: %w", err)`
-- `Recall`: `fmt.Errorf("agentcore memory: retrieve: %w", err)`
-
-All errors use `%w` so callers can use `errors.Is` and `errors.As`.
-
-#### AgentCore Full Example
-
-Create an AgentCore store, wire the tools into an agent, and run it with an identifier:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/aws/aws-sdk-go-v2/config"
-    "github.com/aws/aws-sdk-go-v2/service/bedrockagentcore"
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/memory"
-    "github.com/camilbinas/gude-agents/agent/memory/agentcore"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/tool"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // 1. Create a provider.
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 2. Create an AgentCore memory store.
-    cfg, err := config.LoadDefaultConfig(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
-    client := bedrockagentcore.NewFromConfig(cfg)
-
-    store, err := agentcore.New(client, "your-memory-id")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 3. Build the remember and recall tools.
-    tools := []tool.Tool{
-        memory.RememberTool(store),
-        memory.RecallTool(store),
-    }
-
-    // 4. Create the agent with memory tools.
-    a, err := agent.Default(
-        provider,
-        prompt.Text("You are a helpful assistant with long-term memory. "+
-            "Use the remember tool to store important facts the user shares. "+
-            "Use the recall tool to retrieve relevant context from past conversations."),
-        tools,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 5. Set the identifier and invoke.
-    ctx = agent.WithIdentifier(ctx, "user-123")
-
-    result, _, err := a.Invoke(ctx, "I prefer dark mode and use PostgreSQL 16 for all my projects.")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(result)
-}
-```

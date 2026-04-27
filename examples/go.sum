@@ -30,8 +30,6 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22 h1:dY4kWZiSaXIzxnKlj1
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22/go.mod h1:KIpEUx0JuRZLO7U6cbV204cWAEco2iC3l061IxlwLtI=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.23 h1:FPXsW9+gMuIeKmz7j6ENWcWtBGTe1kH8r9thNt5Uxx4=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.23/go.mod h1:7J8iGMdRKk6lw2C+cMIphgAnT8uTwBwNOsGkyOCm80U=
-github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.22.0 h1:SM7a/QS+HaS7cOEMiyDy3gkqkeY/r2LVPXZFdyLDGEM=
-github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.22.0/go.mod h1:UA3W/iRdUajqHyMWwi7ZXh4/Mzy4HC2fRnqxx+m8OwE=
 github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime v1.51.8 h1:xqN00ytUYbtyZybHvWjHpen994RRcWDdTKXzOd3wY2A=
 github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime v1.51.8/go.mod h1:ud1dBWtckt2MEA4Jqv8wQ0Yy5a9csy8KZt8Hf8t9gY4=
 github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4 h1:W6tKfa/s37faUnwJ71pGqsBO7/wfUX1L7tVprupQGo4=
@@ -84,8 +82,6 @@ github.com/camilbinas/gude-agents/agent/logging/slog v0.23.1 h1:mGSl71kRwnO0evm0
 github.com/camilbinas/gude-agents/agent/logging/slog v0.23.1/go.mod h1:xt6mI86asG1G98uRDPMHO/nC5PrfGe6WGCB/uayeMm8=
 github.com/camilbinas/gude-agents/agent/mcp v0.23.1 h1:2fsW51e5c3QGWzJNiytHTe9B4bh3MAHy0G43uEDNHYc=
 github.com/camilbinas/gude-agents/agent/mcp v0.23.1/go.mod h1:bUK3w6iGH+v8HD3T1/66TJkItfazHOTSl2BwO1oD/7I=
-github.com/camilbinas/gude-agents/agent/memory/agentcore v0.23.1 h1:6c8Ee0axuSi+ojtg7OLmVTbeJRJVvo5frtYi1wJ5ZpQ=
-github.com/camilbinas/gude-agents/agent/memory/agentcore v0.23.1/go.mod h1:yOR5OExfniAAZk5VIOKW/0w6ptDFw3oxUA8NVKg/cmc=
 github.com/camilbinas/gude-agents/agent/memory/postgres v0.22.0 h1:YCmH3iqNBE/OX2QlSvzZYJ1XPOxjN/cFnGQTnlXj9w4=
 github.com/camilbinas/gude-agents/agent/memory/postgres v0.22.0/go.mod h1:QunbMOL/NKLoDWVdNL07awIkwXiSJ2LBUz8oOdEyhu0=
 github.com/camilbinas/gude-agents/agent/memory/redis v0.23.1 h1:iseL6h5/eubfwaSyoCW5QsEruKucs3fuyhoIORbGgRo=

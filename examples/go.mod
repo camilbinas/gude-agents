@@ -12,7 +12,6 @@ require (
 	github.com/camilbinas/gude-agents/agent/logging/debug v0.23.1
 	github.com/camilbinas/gude-agents/agent/logging/slog v0.23.1
 	github.com/camilbinas/gude-agents/agent/mcp v0.23.1
-	github.com/camilbinas/gude-agents/agent/memory/agentcore v0.23.1
 	github.com/camilbinas/gude-agents/agent/memory/postgres v0.22.0
 	github.com/camilbinas/gude-agents/agent/memory/redis v0.23.1
 	github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.23.1
@@ -74,7 +73,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.22.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime v1.51.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2 // indirect

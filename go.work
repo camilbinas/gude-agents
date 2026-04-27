@@ -10,7 +10,6 @@ use (
 	./agent/logging/debug
 	./agent/logging/slog
 	./agent/mcp
-	./agent/memory/agentcore
 	./agent/memory/postgres
 	./agent/memory/redis
 	./agent/metrics/cloudwatch
