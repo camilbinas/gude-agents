@@ -6,18 +6,27 @@ For Redis-backed vector search, see `agent/rag/redis` — it provides `VectorSto
 
 ## RedisOptions
 
-Both packages share a common connection configuration struct from `github.com/camilbinas/gude-agents/agent/redis`:
+Both packages define their own connection configuration struct with the same fields. The conversation package uses `RedisOptions` and the RAG package uses `Options`:
 
 ```go
+// agent/conversation/redis
+type RedisOptions struct {
+    Addr      string      // Redis address. Default: "127.0.0.1:6379"
+    Password  string      // AUTH password. Empty string means no auth.
+    DB        int         // Database number. Default: 0
+    TLSConfig *tls.Config // Optional TLS configuration for encrypted connections.
+}
+
+// agent/rag/redis
 type Options struct {
-    Addr      string      // Redis address. Default: "localhost:6379"
+    Addr      string      // Redis address. Default: "127.0.0.1:6379"
     Password  string      // AUTH password. Empty string means no auth.
     DB        int         // Database number. Default: 0
     TLSConfig *tls.Config // Optional TLS configuration for encrypted connections.
 }
 ```
 
-If `Addr` is empty, it defaults to `"localhost:6379"`. Pass a `*tls.Config` to enable TLS — leave it `nil` for unencrypted connections.
+If `Addr` is empty, it defaults to `"127.0.0.1:6379"`. Pass a `*tls.Config` to enable TLS — leave it `nil` for unencrypted connections.
 
 ## RedisConversation
 
@@ -86,7 +95,7 @@ func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*
 
 Creates a new `VectorStore`. Pings Redis, then creates an HNSW index via `FT.CREATE` if it doesn't already exist. Parameters:
 
-- `opts` — Redis connection configuration (`ragredis.Options`, which is an alias for `agent/redis.Options`)
+- `opts` — Redis connection configuration (`ragredis.Options`)
 - `indexName` — name of the RediSearch index. Also used as the hash key prefix (`indexName + ":"`)
 - `dim` — embedding dimension (must match your embedder's output, e.g. 1024 for Titan Embed V2)
 - `vopts` — optional HNSW tuning parameters

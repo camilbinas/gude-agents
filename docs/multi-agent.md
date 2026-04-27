@@ -65,17 +65,16 @@ Key design points:
 
 ## Child Error Handling
 
-When a child agent encounters an error during execution, `AgentAsTool` returns the error message as text to the parent — it does **not** propagate it as a Go error. This means:
+When a child agent encounters an error during execution, `AgentAsTool` propagates it as a Go error. This means:
 
-- The parent agent's loop continues normally. It receives the error description as a tool result and can decide how to respond (retry, try a different specialist, or inform the user).
-- The parent's `Invoke`/`InvokeStream` call does not fail because of a child error.
-- This is intentional: in a multi-agent system, one failing specialist shouldn't crash the entire orchestration.
+- The error is returned from the tool handler, and the agent loop handles it according to its normal error handling behavior.
+- The parent agent's `Invoke`/`InvokeStream` call may fail if the child error is not recoverable.
 
 ```go
 // Inside AgentAsTool (simplified):
 result, err := child.InvokeStream(ctx, message, callback)
 if err != nil {
-    return err.Error(), nil // error text returned to parent, not propagated
+    return "", fmt.Errorf("child agent %q: %w", name, err) // error propagated
 }
 return result, nil
 ```

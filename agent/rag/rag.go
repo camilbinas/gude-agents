@@ -13,7 +13,6 @@ import (
 
 // SplitTextE splits text into chunks of at most chunkSize runes with chunkOverlap
 // runes of overlap between consecutive chunks. Returns an error for invalid parameters.
-// Documented in docs/rag.md — update when changing behavior.
 func SplitTextE(text string, chunkSize int, chunkOverlap int) ([]string, error) {
 	if chunkSize < 1 {
 		return nil, fmt.Errorf("splittext: chunkSize must be >= 1, got %d", chunkSize)
