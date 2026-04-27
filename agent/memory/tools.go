@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -40,11 +39,11 @@ const defaultRememberDescription = "Store a fact, preference, or decision into l
 const defaultRecallDescription = "Retrieve previously stored facts, preferences, and decisions from long-term memory. " +
 	"Use this to recall context from past conversations."
 
-// NewRememberTool creates a composable RememberTool backed by a ScopedStore
+// NewRememberTool creates a composable RememberTool backed by a MemoryStore
 // and Embedder. The tool extracts the identifier from the agent context via
-// agent.GetIdentifier, embeds the fact, and stores it in the scoped store.
+// agent.GetIdentifier, embeds the fact, and stores it in the memory store.
 // Documented in docs/memory.md — update when changing behavior.
-func NewRememberTool(store *rag.ScopedStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool {
+func NewRememberTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool {
 	cfg := &toolConfig{
 		name:        "remember",
 		description: defaultRememberDescription,
@@ -109,11 +108,11 @@ func NewRememberTool(store *rag.ScopedStore, embedder agent.Embedder, opts ...To
 	)
 }
 
-// NewRecallTool creates a composable RecallTool backed by a ScopedStore
+// NewRecallTool creates a composable RecallTool backed by a MemoryStore
 // and Embedder. The tool extracts the identifier from the agent context via
-// agent.GetIdentifier, embeds the query, and searches the scoped store.
+// agent.GetIdentifier, embeds the query, and searches the memory store.
 // Documented in docs/memory.md — update when changing behavior.
-func NewRecallTool(store *rag.ScopedStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool {
+func NewRecallTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool {
 	cfg := &toolConfig{
 		name:        "recall",
 		description: defaultRecallDescription,
@@ -177,8 +176,8 @@ func NewRecallTool(store *rag.ScopedStore, embedder agent.Embedder, opts ...Tool
 
 // formatScoredDocuments renders a slice of ScoredDocuments as a human-readable
 // string, matching the format used by formatEntries. Internal metadata keys
-// (_scope_id, created_at) are handled specially: _scope_id is excluded from
-// the metadata display, and created_at is shown as the Time field.
+// (created_at) are handled specially: created_at is shown as the Time field
+// and excluded from the metadata display.
 func formatScoredDocuments(results []agent.ScoredDocument) string {
 	var b strings.Builder
 	for i, sd := range results {
@@ -190,7 +189,7 @@ func formatScoredDocuments(results []agent.ScoredDocument) string {
 		// Collect user metadata (exclude internal keys).
 		var metaParts []string
 		for k, v := range sd.Document.Metadata {
-			if k == rag.ScopeMetadataKey || k == "created_at" {
+			if k == "created_at" {
 				continue
 			}
 			metaParts = append(metaParts, fmt.Sprintf("%s=%s", k, v))

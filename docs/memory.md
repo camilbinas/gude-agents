@@ -4,10 +4,75 @@ Long-term memory gives agents knowledge storage and semantic retrieval, scoped b
 
 The framework provides two approaches to long-term memory:
 
-1. **Composable building blocks** (recommended for new code) — assemble `ScopedStore`, `NewRememberTool`, `NewRecallTool`, and any `VectorStore` backend into the memory pattern you need.
+1. **Composable building blocks** (recommended for new code) — assemble `MemoryStore`, `NewRememberTool`, `NewRecallTool`, and any backend into the memory pattern you need.
 2. **Memory interface** (backward compatible) — the original `Remember`/`Recall` interface, now backed by the composable layer internally.
 
-Both approaches use the same underlying storage and produce identical results. The composable approach gives you more flexibility: custom tool names, multiple stores per agent, and the ability to mix memory and semantic patterns.
+Both approaches use the same underlying storage and produce identical results. The composable approach gives you more flexibility: custom tool names, multiple stores per agent, and the ability to mix memory patterns.
+
+## Architecture
+
+The memory system is self-contained — it has no dependency on the RAG package. Memory backends implement the `MemoryStore` interface directly, using their native capabilities for identifier-scoped storage and vector similarity search.
+
+```
+agent/memory          → agent (for Document, ScoredDocument, Embedder)
+agent/memory/redis    → agent/memory (for MemoryStore), go-redis
+agent/memory/postgres → agent/memory (for MemoryStore), pgx, pgvector
+agent/memory/agentcore → agent/memory (for Memory interface only), AWS SDK
+agent/rag             → agent (for VectorStore, Document, etc.) — no memory concepts
+```
+
+```mermaid
+graph TD
+    subgraph "agent package"
+        Doc[agent.Document]
+        SDoc[agent.ScoredDocument]
+        Emb[agent.Embedder]
+    end
+
+    subgraph "memory package"
+        MSI[MemoryStore interface]
+        IMS[InMemoryStore]
+        Adp[Adapter]
+        MI[Memory interface]
+        TMI[TypedMemory T interface]
+        TMS[TypedMemoryStore T]
+        TA[TypedAdapter T]
+        RT[NewRememberTool]
+        RCT[NewRecallTool]
+    end
+
+    subgraph "memory backends"
+        Redis[memory/redis.Store]
+        PG[memory/postgres.Store]
+        AC[memory/agentcore.Store]
+    end
+
+    MSI -->|uses| Doc
+    MSI -->|uses| SDoc
+    IMS -->|implements| MSI
+    Redis -->|implements| MSI
+    PG -->|implements| MSI
+    AC -->|implements| MI
+    Adp -->|wraps| MSI
+    Adp -->|uses| Emb
+    Adp -->|implements| MI
+    TMS -->|wraps| MSI
+    TA -->|wraps| TMS
+    TA -->|implements| TMI
+    RT -->|uses| MSI
+    RCT -->|uses| MSI
+
+    style MSI fill:#f9f,stroke:#333,stroke-width:2px
+```
+
+Each backend handles identifier scoping natively:
+
+| Backend | Scoping Mechanism | Description |
+|---------|-------------------|-------------|
+| InMemoryStore | Map partitioning | `map[string][]vsEntry` keyed by identifier — O(1) partition lookup |
+| Redis | TAG field filter | `@identifier:{value}` in FT.SEARCH queries — native RediSearch filtering |
+| Postgres | SQL WHERE clause | `WHERE identifier = $1` on a dedicated indexed column |
+| AgentCore | Managed service | Implements `Memory` directly — scoping handled by AWS |
 
 ## Composable Building Blocks
 
@@ -15,43 +80,59 @@ The composable approach separates concerns into independent pieces you wire toge
 
 | Building Block | Package | Purpose |
 |---|---|---|
-| `VectorStore` | `agent` | Stores document embeddings and performs similarity search |
-| `ScopedStore` | `agent/rag` | Wraps any VectorStore to partition documents by identifier |
-| `NewRememberTool` | `agent/memory` | Tool that stores facts into a ScopedStore |
-| `NewRecallTool` | `agent/memory` | Tool that retrieves facts from a ScopedStore |
+| `MemoryStore` | `agent/memory` | Identifier-scoped document storage and vector similarity search |
+| `InMemoryStore` | `agent/memory` | In-memory `MemoryStore` implementation (map partitioned by identifier) |
+| `NewRememberTool` | `agent/memory` | Tool that stores facts into a MemoryStore |
+| `NewRecallTool` | `agent/memory` | Tool that retrieves facts from a MemoryStore |
 | `Adapter` | `agent/memory` | Bridges composable blocks into the Memory interface |
 
-The key insight: "long-term memory" and "semantic search" are not different storage systems — they are different usage patterns on top of the same vector similarity infrastructure.
+### MemoryStore Interface
 
-### ScopedStore
+Import: `github.com/camilbinas/gude-agents/agent/memory`
 
-Import: `github.com/camilbinas/gude-agents/agent/rag`
-
-`ScopedStore` wraps any `agent.VectorStore` to partition documents by identifier. It injects a reserved metadata key (`_scope_id`) into each document on `Add` and filters results by that key on `Search`.
+`MemoryStore` is the low-level storage interface for memory backends. It provides identifier-scoped document storage and vector similarity search. Backends implement this interface directly using their native capabilities — SQL `WHERE` clauses for Postgres, Redis TAG filters for Redis, in-memory map partitioning for the default store.
 
 ```go
-func NewScopedStore(store agent.VectorStore) *ScopedStore
+type MemoryStore interface {
+    Add(ctx context.Context, identifier string, docs []agent.Document, embeddings [][]float64) error
+    Search(ctx context.Context, identifier string, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error)
+}
 ```
 
-When the underlying store implements the optional `ScopedSearcher` interface (as the Redis VectorStore does), `ScopedStore` uses native TAG filtering for efficient scoped queries. Otherwise, it over-fetches and post-filters by metadata — transparent to the caller.
+`MemoryStore` uses `agent.Document` and `agent.ScoredDocument` — the same types used by the RAG system — so that documents have a uniform representation across the library. These types are defined in the `agent` package, not the `rag` package, so importing them creates no coupling to RAG.
+
+| Method | Condition | Behavior |
+|--------|-----------|----------|
+| `Add` | Empty identifier | Returns error |
+| `Add` | docs/embeddings length mismatch | Returns error |
+| `Search` | Empty identifier | Returns error |
+| `Search` | topK < 1 | Returns error |
+| `Search` | No matching documents | Returns non-nil empty slice, no error |
+
+### InMemoryStore
+
+Import: `github.com/camilbinas/gude-agents/agent/memory`
+
+`InMemoryStore` implements `MemoryStore` using an in-memory map partitioned by identifier. Each identifier gets its own slice of entries. Search uses brute-force cosine similarity. Safe for concurrent use.
 
 ```go
-import "github.com/camilbinas/gude-agents/agent/rag"
-
-// Wrap any VectorStore with scoping.
-memStore := rag.NewMemoryStore()
-scopedStore := rag.NewScopedStore(memStore)
+func NewInMemoryStore() *InMemoryStore
 ```
 
-See [ScopedStore in the RAG docs](rag.md) for the full API reference.
+```go
+import "github.com/camilbinas/gude-agents/agent/memory"
+
+// Create an in-memory store.
+memStore := memory.NewInMemoryStore()
+```
 
 ### NewRememberTool
 
 ```go
-func NewRememberTool(store *rag.ScopedStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool
+func NewRememberTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool
 ```
 
-Creates a tool that stores facts into a `ScopedStore`. The tool extracts the identifier from the agent context via `agent.GetIdentifier`, embeds the fact, and stores it with metadata including a `created_at` timestamp and any user-provided key-value pairs.
+Creates a tool that stores facts into a `MemoryStore`. The tool extracts the identifier from the agent context via `agent.GetIdentifier`, embeds the fact, and stores it with metadata including a `created_at` timestamp and any user-provided key-value pairs.
 
 - **Default name**: `"remember"`
 - **Default description**: Instructs the LLM to store facts, preferences, and decisions for later recall.
@@ -61,10 +142,10 @@ Creates a tool that stores facts into a `ScopedStore`. The tool extracts the ide
 ### NewRecallTool
 
 ```go
-func NewRecallTool(store *rag.ScopedStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool
+func NewRecallTool(store MemoryStore, embedder agent.Embedder, opts ...ToolOption) tool.Tool
 ```
 
-Creates a tool that retrieves facts from a `ScopedStore`. The tool extracts the identifier from the agent context, embeds the query, and searches the scoped store.
+Creates a tool that retrieves facts from a `MemoryStore`. The tool extracts the identifier from the agent context, embeds the query, and searches the store.
 
 - **Default name**: `"recall"`
 - **Default description**: Instructs the LLM to retrieve previously stored facts and context.
@@ -87,17 +168,17 @@ Use `WithToolName` to give tools distinct names when running multiple stores in 
 ### Adapter
 
 ```go
-func NewAdapter(store *rag.ScopedStore, embedder agent.Embedder) *Adapter
+func NewAdapter(store MemoryStore, embedder agent.Embedder) *Adapter
 ```
 
-`Adapter` implements the `Memory` interface using a `ScopedStore` and `Embedder`. Use it when you want the composable storage layer but need to pass a `Memory` to existing code.
+`Adapter` implements the `Memory` interface using a `MemoryStore` and `Embedder`. Use it when you want the composable storage layer but need to pass a `Memory` to existing code.
 
-- `Remember` validates inputs, embeds the fact, and stores it in the scoped store with `created_at` and user metadata.
-- `Recall` validates inputs, embeds the query, searches the scoped store, and converts `ScoredDocument` results to `[]Entry`. Internal metadata keys (`_scope_id`, `created_at`) are excluded from the returned `Entry.Metadata`.
+- `Remember` validates inputs, embeds the fact, and stores it in the memory store with `created_at` and user metadata.
+- `Recall` validates inputs, embeds the query, searches the memory store, and converts `ScoredDocument` results to `[]Entry`. Internal metadata keys (`created_at`) are excluded from the returned `Entry.Metadata`.
 
 ## Composable Patterns
 
-### Long-Term Memory (VectorStore + ScopedStore + Tools)
+### Long-Term Memory (MemoryStore + Tools)
 
 The standard long-term memory pattern — per-user fact storage with remember/recall tools:
 
@@ -113,7 +194,6 @@ import (
     "github.com/camilbinas/gude-agents/agent/memory"
     "github.com/camilbinas/gude-agents/agent/prompt"
     "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/rag"
     "github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -130,14 +210,13 @@ func main() {
         log.Fatal(err)
     }
 
-    // 1. Create a VectorStore and wrap it with scoping.
-    vectorStore := rag.NewMemoryStore()
-    scopedStore := rag.NewScopedStore(vectorStore)
+    // 1. Create an in-memory store.
+    memStore := memory.NewInMemoryStore()
 
     // 2. Create composable remember/recall tools.
     tools := []tool.Tool{
-        memory.NewRememberTool(scopedStore, embedder),
-        memory.NewRecallTool(scopedStore, embedder),
+        memory.NewRememberTool(memStore, embedder),
+        memory.NewRecallTool(memStore, embedder),
     }
 
     // 3. Build the agent.
@@ -161,7 +240,7 @@ func main() {
 }
 ```
 
-This is equivalent to the `Memory` interface approach but gives you direct control over the VectorStore backend and tool configuration.
+This is equivalent to the `Memory` interface approach but gives you direct control over the storage backend and tool configuration.
 
 ### Multi-Store Agent (Distinct Tool Names)
 
@@ -179,7 +258,6 @@ import (
     "github.com/camilbinas/gude-agents/agent/memory"
     "github.com/camilbinas/gude-agents/agent/prompt"
     "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/rag"
     "github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -197,10 +275,10 @@ func main() {
     }
 
     // Preferences store — user settings and preferences.
-    prefStore := rag.NewScopedStore(rag.NewMemoryStore())
+    prefStore := memory.NewInMemoryStore()
 
     // Projects store — project-specific context and decisions.
-    projStore := rag.NewScopedStore(rag.NewMemoryStore())
+    projStore := memory.NewInMemoryStore()
 
     tools := []tool.Tool{
         // Preferences tools
@@ -243,7 +321,7 @@ func main() {
 }
 ```
 
-Each tool pair operates on its own `ScopedStore`, so preferences and project facts are stored and retrieved independently. The LLM sees four distinct tools and decides which to use based on the descriptions.
+Each tool pair operates on its own `InMemoryStore`, so preferences and project facts are stored and retrieved independently. The LLM sees four distinct tools and decides which to use based on the descriptions.
 
 ### Semantic Search (VectorStore + Retriever, No Scoping)
 
@@ -268,15 +346,13 @@ If you have existing code that expects a `Memory` interface, use the `Adapter` t
 ```go
 import (
     "github.com/camilbinas/gude-agents/agent/memory"
-    "github.com/camilbinas/gude-agents/agent/rag"
 )
 
-// Create composable building blocks.
-vectorStore := rag.NewMemoryStore()
-scopedStore := rag.NewScopedStore(vectorStore)
+// Create an in-memory store.
+memStore := memory.NewInMemoryStore()
 
 // Bridge into the Memory interface.
-adapter := memory.NewAdapter(scopedStore, embedder)
+adapter := memory.NewAdapter(memStore, embedder)
 
 // Use adapter anywhere Memory is expected.
 tools := []tool.Tool{
@@ -285,7 +361,155 @@ tools := []tool.Tool{
 }
 ```
 
-This is exactly what the built-in `memory.NewInMemory(embedder)` does internally — it creates a `MemoryStore`, wraps it in a `ScopedStore`, and creates an `Adapter`.
+This is exactly what the built-in `memory.NewInMemory(embedder)` does internally — it creates an `InMemoryStore` and wraps it in an `Adapter`.
+
+## Typed Memory
+
+`TypedMemory[T]` provides type-safe memory for user-defined Go structs. Instead of flattening domain data into `Entry{Fact, Metadata}`, you define your own struct and get full type safety through generics.
+
+### TypedMemory Interface
+
+```go
+type TypedMemory[T any] interface {
+    Remember(ctx context.Context, identifier string, value T) error
+    Recall(ctx context.Context, identifier string, query string, limit int) ([]TypedEntry[T], error)
+}
+```
+
+### TypedEntry
+
+```go
+type TypedEntry[T any] struct {
+    Value T
+    Score float64
+}
+```
+
+### TypedMemoryStore
+
+`TypedMemoryStore[T]` wraps a `MemoryStore` with typed serialization. It encodes user structs into `Document.Metadata` via the `_typed_data` JSON key on `Add` and decodes them back on `Search`.
+
+```go
+func NewTypedMemoryStore[T any](store MemoryStore) *TypedMemoryStore[T]
+```
+
+### TypedAdapter
+
+`TypedAdapter[T]` implements `TypedMemory[T]` by composing a `TypedMemoryStore[T]`, an `Embedder`, and a content extraction function. The content function extracts the text used for embedding from each value.
+
+```go
+func NewTypedAdapter[T any](store *TypedMemoryStore[T], embedder agent.Embedder, contentFunc func(T) string) *TypedAdapter[T]
+```
+
+### NewTypedInMemory
+
+Convenience constructor that creates an in-memory `TypedAdapter` — the typed equivalent of `NewInMemory`:
+
+```go
+func NewTypedInMemory[T any](embedder agent.Embedder, contentFunc func(T) string) *TypedAdapter[T]
+```
+
+Internally creates `InMemoryStore` → `TypedMemoryStore[T]` → `TypedAdapter[T]`.
+
+### Typed Tools
+
+Composable tools for typed memory, analogous to `NewRememberTool`/`NewRecallTool`:
+
+```go
+func NewTypedRememberTool[T any](
+    store *TypedMemoryStore[T],
+    embedder agent.Embedder,
+    contentFunc func(T) string,
+    schemaFunc func() map[string]any,
+    opts ...ToolOption,
+) tool.Tool
+
+func NewTypedRecallTool[T any](
+    store *TypedMemoryStore[T],
+    embedder agent.Embedder,
+    opts ...ToolOption,
+) tool.Tool
+```
+
+`NewTypedRememberTool` accepts a `schemaFunc` that returns the JSON Schema for the LLM input shape, enabling the LLM to understand the structure of type T. `NewTypedRecallTool` uses the same query/limit schema as `NewRecallTool`.
+
+### Typed Memory Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/camilbinas/gude-agents/agent"
+    "github.com/camilbinas/gude-agents/agent/memory"
+    "github.com/camilbinas/gude-agents/agent/prompt"
+    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
+    "github.com/camilbinas/gude-agents/agent/tool"
+)
+
+type Preference struct {
+    Category string `json:"category"`
+    Detail   string `json:"detail"`
+}
+
+func main() {
+    ctx := context.Background()
+
+    provider, err := bedrock.Standard()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    embedder, err := bedrock.TitanEmbedV2()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Create a typed in-memory store.
+    memStore := memory.NewInMemoryStore()
+    typedStore := memory.NewTypedMemoryStore[Preference](memStore)
+
+    contentFunc := func(p Preference) string {
+        return fmt.Sprintf("%s: %s", p.Category, p.Detail)
+    }
+
+    schemaFunc := func() map[string]any {
+        return map[string]any{
+            "type": "object",
+            "properties": map[string]any{
+                "category": map[string]any{"type": "string"},
+                "detail":   map[string]any{"type": "string"},
+            },
+            "required": []any{"category", "detail"},
+        }
+    }
+
+    tools := []tool.Tool{
+        memory.NewTypedRememberTool(typedStore, embedder, contentFunc, schemaFunc),
+        memory.NewTypedRecallTool(typedStore, embedder),
+    }
+
+    a, err := agent.Default(
+        provider,
+        prompt.Text("You are a helpful assistant that remembers user preferences."),
+        tools,
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    ctx = agent.WithIdentifier(ctx, "user-789")
+
+    result, _, err := a.Invoke(ctx, "I prefer dark mode and use vim as my editor.")
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(result)
+}
+```
 
 ## Core Types
 
@@ -336,13 +560,13 @@ Validation rules (all implementations must follow these):
 
 Import: `github.com/camilbinas/gude-agents/agent/memory`
 
-`Store` is a thread-safe in-memory `Memory` backed by an `agent.Embedder` for cosine similarity search. Good for prototyping and tests — for production, use a persistent backend like the [AgentCore Backend](#agentcore-backend) or see [Backends](#backends) for all options.
+`InMemory` is a thread-safe in-memory `Memory` backed by an `agent.Embedder` for cosine similarity search. Good for prototyping and tests — for production, use a persistent backend like the [AgentCore Backend](#agentcore-backend), [Redis Backend](#redis-backend), or [Postgres Backend](#postgres-backend).
 
 ```go
-func NewStore(embedder agent.Embedder) *Store
+func NewInMemory(embedder agent.Embedder) *InMemory
 ```
 
-The embedder computes embedding vectors for both `Remember` (embed the fact) and `Recall` (embed the query, then rank stored entries by cosine similarity). Internally, `NewStore` creates a `rag.MemoryStore`, wraps it in a `rag.ScopedStore`, and uses an `Adapter` — so it benefits from the unified storage layer while preserving the familiar API.
+The embedder computes embedding vectors for both `Remember` (embed the fact) and `Recall` (embed the query, then rank stored entries by cosine similarity). Internally, `NewInMemory` creates an `InMemoryStore` and wraps it in an `Adapter` — so it benefits from the composable storage layer while preserving the familiar API.
 
 ```go
 import (
@@ -436,13 +660,181 @@ The handler extracts the identifier from the context, calls `m.Recall` with the 
 
 For the composable equivalent with customizable names, see [NewRecallTool](#newrecalltool).
 
-## AgentCore Backend
+## Backends
+
+The memory system supports multiple storage backends. Each backend implements `MemoryStore` directly using its native capabilities for identifier scoping — no intermediate abstraction layers.
+
+| Backend | Import | Scoping | Dependencies |
+|---------|--------|---------|--------------|
+| [InMemoryStore](#inmemorystore) | `agent/memory` | Map partitioning | None |
+| [Redis](#redis-backend) | `agent/memory/redis` | TAG field filter | Redis Stack |
+| [Postgres](#postgres-backend) | `agent/memory/postgres` | SQL WHERE clause | PostgreSQL + pgvector |
+| [AgentCore](#agentcore-backend) | `agent/memory/agentcore` | Managed service | AWS SDK |
+
+### Redis Backend
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/redis`
+
+`Store` implements both `memory.MemoryStore` and `memory.Memory` using Redis Stack (RediSearch) for vector similarity search. It uses a native Redis TAG field for identifier-based filtering — the identifier is stored as a top-level TAG field in each Redis hash, and search queries use `@identifier:{value}` to filter results at the index level.
+
+Requires Redis Stack (not standard community Redis). The store uses RediSearch commands (`FT.CREATE`, `FT.SEARCH`) that are only available in Redis Stack.
+
+```go
+import (
+    memredis "github.com/camilbinas/gude-agents/agent/memory/redis"
+)
+
+store, err := memredis.New(
+    memredis.Options{Addr: "127.0.0.1:6379"},
+    embedder,
+    1024, // embedding dimension
+)
+```
+
+The constructor pings Redis to verify connectivity, then creates a RediSearch HNSW index with the following schema:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | TEXT | The fact text |
+| `metadata` | TEXT | JSON-serialized metadata map |
+| `identifier` | TAG | The identifier string (indexed for native filtering) |
+| `embedding` | VECTOR (HNSW) | Float32 embedding vector |
+
+Search uses native TAG filtering — no post-search metadata filtering:
+
+```
+@identifier:{escaped_value}=>[KNN {topK} @embedding $BLOB AS score]
+```
+
+The `Store` also implements `Memory` directly via an internal `Adapter`, so it can be used with both the composable tools and the `Memory` interface:
+
+```go
+// Composable approach — pass the MemoryStore to tools.
+tools := []tool.Tool{
+    memory.NewRememberTool(store, embedder),
+    memory.NewRecallTool(store, embedder),
+}
+
+// Memory interface approach — use Remember/Recall directly.
+err := store.Remember(ctx, "user-123", "prefers dark mode", nil)
+entries, err := store.Recall(ctx, "user-123", "theme preferences", 5)
+```
+
+#### Redis Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithIndexName(name)` | `"gude_memory_idx"` | RediSearch index name |
+| `WithKeyPrefix(prefix)` | `"gude:memory:"` | Redis key prefix for hash entries |
+| `WithHNSWM(m)` | `16` | HNSW M parameter (max outgoing edges per node) |
+| `WithHNSWEFConstruction(ef)` | `200` | HNSW EF_CONSTRUCTION parameter (search width during index build) |
+| `WithDropExisting()` | disabled | Drop and recreate the index on construction (dev/testing only) |
+
+#### Redis Error Wrapping
+
+| Condition | Error |
+|-----------|-------|
+| nil embedder | `"redis memory: embedder is required"` |
+| dim < 1 | `"redis memory: dim must be at least 1"` |
+| Redis unreachable | `"redis memory: ping: <wrapped>"` |
+| Index creation failure | `"redis memory: create index: <wrapped>"` |
+| Empty identifier (Add/Search) | `"redis memory: identifier must not be empty"` |
+
+### Postgres Backend
+
+Import: `github.com/camilbinas/gude-agents/agent/memory/postgres`
+
+`Store` implements both `memory.MemoryStore` and `memory.Memory` using PostgreSQL with pgvector for vector similarity search. It uses a dedicated `identifier` column with a SQL `WHERE` clause for scoping — the identifier is a first-class indexed column, not a JSONB metadata field.
+
+Requires PostgreSQL with the pgvector extension.
+
+```go
+import (
+    "github.com/jackc/pgx/v5/pgxpool"
+    mempg "github.com/camilbinas/gude-agents/agent/memory/postgres"
+)
+
+pool, err := pgxpool.New(ctx, "postgres://postgres:postgres@localhost:5432/postgres")
+if err != nil {
+    log.Fatal(err)
+}
+
+store, err := mempg.New(pool, embedder, 1024,
+    mempg.WithAutoMigrate(),
+)
+```
+
+When `WithAutoMigrate` is enabled, the constructor creates the pgvector extension, table, and indexes:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS memory_entries (
+    id         TEXT PRIMARY KEY,
+    identifier TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    metadata   JSONB,
+    embedding  vector(1024) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS memory_entries_identifier_idx ON memory_entries (identifier);
+CREATE INDEX IF NOT EXISTS memory_entries_embedding_idx ON memory_entries
+    USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 200);
+```
+
+Search uses native SQL scoping:
+
+```sql
+SELECT content, metadata, 1 - (embedding <=> $1) AS similarity
+FROM memory_entries
+WHERE identifier = $2
+ORDER BY embedding <=> $1
+LIMIT $3
+```
+
+Like the Redis backend, `Store` implements `Memory` directly via an internal `Adapter`:
+
+```go
+// Composable approach.
+tools := []tool.Tool{
+    memory.NewRememberTool(store, embedder),
+    memory.NewRecallTool(store, embedder),
+}
+
+// Memory interface approach.
+err := store.Remember(ctx, "user-123", "prefers dark mode", nil)
+entries, err := store.Recall(ctx, "user-123", "theme preferences", 5)
+```
+
+#### Postgres Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithTableName(name)` | `"memory_entries"` | PostgreSQL table name |
+| `WithAutoMigrate()` | disabled | Create extension, table, and indexes on construction |
+| `WithHNSW(m, efConstruction)` | `m=16, ef=200` | HNSW index parameters (used with `WithAutoMigrate`) |
+| `WithIVFFlat(lists)` | disabled | Use IVFFlat index instead of HNSW (used with `WithAutoMigrate`) |
+| `WithDistanceMetric(metric)` | `"cosine"` | Distance metric: `"cosine"`, `"l2"`, or `"inner_product"` |
+| `WithDropExisting()` | disabled | Drop and recreate the table on construction (dev/testing only) |
+
+#### Postgres Error Wrapping
+
+| Condition | Error |
+|-----------|-------|
+| nil pool | `"postgres memory: pool is required"` |
+| nil embedder | `"postgres memory: embedder is required"` |
+| dim < 1 | `"postgres memory: dim must be at least 1"` |
+| DDL failure | `"postgres memory: create table: <wrapped>"` |
+| Empty identifier (Add/Search) | `"postgres memory: identifier must not be empty"` |
+
+### AgentCore Backend
 
 Import: `github.com/camilbinas/gude-agents/agent/memory/agentcore`
 
 `Store` is a persistent `Memory` backed by [AWS Bedrock AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/). It stores and retrieves facts using AgentCore's managed memory service with built-in semantic search — no embedder setup required. The backend lives in its own Go sub-module, so you only pull in AWS SDK dependencies when you use it.
 
-AgentCore is a standalone managed-service backend. It implements `Memory` directly and does not use `VectorStore` or `ScopedStore` — AgentCore manages its own storage, embeddings, and search internally.
+AgentCore is a standalone managed-service backend. It implements `Memory` directly and does not use `MemoryStore` — AgentCore manages its own storage, embeddings, and search internally.
 
 ```go
 import (
@@ -456,7 +848,7 @@ client := bedrockagentcore.NewFromConfig(cfg)
 store, err := agentcore.New(client, "your-memory-id")
 ```
 
-### Store Modes
+#### Store Modes
 
 The backend supports two storage modes, selected via `WithStoreMode`:
 
@@ -475,7 +867,7 @@ store, err := agentcore.New(client, "my-memory-id",
 )
 ```
 
-### Configuration Options
+#### AgentCore Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -483,7 +875,7 @@ store, err := agentcore.New(client, "my-memory-id",
 | `WithNamespaceTemplate(tmpl)` | `"/facts/{{.ActorID}}/"` | Go `text/template` string for generating the namespace from the actor ID. The template receives a struct with an `ActorID` field. |
 | `WithSessionIDFunc(fn)` | `uuid.NewString` | Function for generating session IDs used in CreateEvent mode. |
 
-### Error Wrapping
+#### AgentCore Error Wrapping
 
 AgentCore API errors are wrapped with context, following the same pattern as the in-memory store:
 
@@ -493,7 +885,7 @@ AgentCore API errors are wrapped with context, following the same pattern as the
 
 All errors use `%w` so callers can use `errors.Is` and `errors.As`.
 
-### Full Example
+#### AgentCore Full Example
 
 Create an AgentCore store, wire the tools into an agent, and run it with an identifier:
 
@@ -564,285 +956,3 @@ func main() {
     fmt.Println(result)
 }
 ```
-
-
-## Redis Backend
-
-Import: `github.com/camilbinas/gude-agents/agent/memory/redis`
-
-`Store` is a persistent `Memory` backed by [Redis Stack](https://redis.io/docs/stack/) (RediSearch) with HNSW-indexed embedding vectors for KNN similarity search. It requires an `agent.Embedder` for computing embedding vectors. The backend lives in its own Go sub-module, so you only pull in Redis dependencies when you use it.
-
-Redis Stack is required — standard community Redis does not include the RediSearch module. Run it locally with Docker:
-
-```bash
-docker run -p 6379:6379 redis/redis-stack-server:latest
-```
-
-```go
-import (
-    memoryredis "github.com/camilbinas/gude-agents/agent/memory/redis"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-)
-
-embedder, err := bedrock.TitanEmbedV2()
-if err != nil {
-    log.Fatal(err)
-}
-
-store, err := memoryredis.New(
-    memoryredis.Options{Addr: "127.0.0.1:6379"},
-    embedder,
-    1024, // Titan Embed V2 dimension
-)
-if err != nil {
-    log.Fatal(err)
-}
-defer store.Close()
-```
-
-### Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `WithIndexName(name)` | `"gude_memory_idx"` | RediSearch index name |
-| `WithKeyPrefix(prefix)` | `"gude:memory:"` | Redis key prefix for all stored hashes |
-| `WithHNSWM(m)` | `16` | HNSW M parameter (graph connectivity) |
-| `WithHNSWEFConstruction(ef)` | `200` | HNSW EF_CONSTRUCTION parameter (index build quality) |
-| `WithDropExisting()` | `false` | Drop the index and its documents before creating a fresh one. Dev/examples only. |
-
-### Error Wrapping
-
-Redis and embedder errors are wrapped with context, following the same pattern as the other backends:
-
-- Remember: `fmt.Errorf("redis memory: embed fact: %w", err)`, `fmt.Errorf("redis memory: marshal metadata: %w", err)`, `fmt.Errorf("redis memory: remember: %w", err)`
-- Recall: `fmt.Errorf("redis memory: embed query: %w", err)`, `fmt.Errorf("redis memory: recall: %w", err)`
-- Constructor: `fmt.Errorf("redis memory: ping: %w", err)`, `fmt.Errorf("redis memory: create index: %w", err)`
-
-All errors use `%w` so callers can use `errors.Is` and `errors.As`.
-
-### Full Example
-
-Create a Redis store, wire the tools into an agent, and run it with an identifier:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/memory"
-    memoryredis "github.com/camilbinas/gude-agents/agent/memory/redis"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/tool"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // 1. Create a provider and embedder.
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    embedder, err := bedrock.TitanEmbedV2()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 2. Create a Redis memory store (1024-dim for Titan Embed V2).
-    store, err := memoryredis.New(
-        memoryredis.Options{Addr: "127.0.0.1:6379"},
-        embedder,
-        1024,
-        memoryredis.WithDropExisting(), // clean slate for the example
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer store.Close()
-
-    // 3. Build the remember and recall tools.
-    tools := []tool.Tool{
-        memory.RememberTool(store),
-        memory.RecallTool(store),
-    }
-
-    // 4. Create the agent with memory tools.
-    a, err := agent.Default(
-        provider,
-        prompt.Text("You are a helpful assistant with long-term memory. "+
-            "Use the remember tool to store important facts the user shares. "+
-            "Use the recall tool to retrieve relevant context from past conversations."),
-        tools,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 5. Set the identifier and invoke.
-    ctx = agent.WithIdentifier(ctx, "user-123")
-
-    result, _, err := a.Invoke(ctx, "I prefer dark mode and use PostgreSQL 16 for all my projects.")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Turn 1:", result)
-
-    result, _, err = a.Invoke(ctx, "What database do I use?")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Turn 2:", result)
-}
-```
-
-## Identifier Context Helpers
-
-The application sets the identifier on the context before invoking the agent. The tools extract it automatically — the LLM never needs to know or fabricate identifiers. The identifier can represent any scoping entity: a user ID, team ID, project ID, tenant ID, etc.
-
-```go
-func WithIdentifier(ctx context.Context, id string) context.Context
-func GetIdentifier(ctx context.Context) string
-```
-
-`WithIdentifier` attaches an identifier to the context. `GetIdentifier` retrieves it, returning an empty string if none is set.
-
-These follow the same pattern as `WithImages`/`GetImages` and `WithConversationID` in `agent/context.go`.
-
-If neither tool finds an identifier on the context, it returns an error: `"memory: identifier not found in context; use agent.WithIdentifier"`.
-
-## Code Example
-
-Full example — create an in-memory store, wire the tools into an agent, and run it with an identifier on the context:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/memory"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/tool"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // 1. Create a provider and embedder.
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    embedder, err := bedrock.TitanEmbedV2()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 2. Create an in-memory store.
-    store := memory.NewInMemory(embedder)
-
-    // 3. Build the remember and recall tools.
-    tools := []tool.Tool{
-        memory.RememberTool(store),
-        memory.RecallTool(store),
-    }
-
-    // 4. Create the agent with memory tools.
-    a, err := agent.Default(
-        provider,
-        prompt.Text("You are a helpful assistant with long-term memory. "+
-            "Use the remember tool to store important facts the user shares. "+
-            "Use the recall tool to retrieve relevant context from past conversations."),
-        tools,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 5. Set the identifier on the context.
-    ctx = agent.WithIdentifier(ctx, "user-123")
-
-    // 6. First conversation — the agent stores a preference.
-    result, _, err := a.Invoke(ctx, "I prefer dark mode and use PostgreSQL 16 for all my projects.")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Turn 1:", result)
-
-    // 7. Later conversation — the agent recalls stored facts.
-    result, _, err = a.Invoke(ctx, "What database do I use?")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Turn 2:", result)
-}
-```
-
-### HTTP Multi-Tenant Pattern
-
-For HTTP servers where each request has a different scope, set the identifier per-request:
-
-```go
-func handleChat(a *agent.Agent) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        userID := r.Header.Get("X-User-ID")
-
-        ctx := agent.WithIdentifier(r.Context(), userID)
-
-        result, _, err := a.Invoke(ctx, r.FormValue("message"))
-        if err != nil {
-            http.Error(w, err.Error(), http.StatusInternalServerError)
-            return
-        }
-
-        fmt.Fprint(w, result)
-    }
-}
-```
-
-## Long-Term Memory vs Conversation Memory
-
-| | Conversation Memory | Long-Term Memory |
-|---|---|---|
-| **Stores** | Ordered message sequences | Discrete facts |
-| **Keyed by** | Conversation ID | Identifier (user, team, project, etc.) |
-| **Retrieval** | Load all messages for a conversation | Semantic similarity search |
-| **Scope** | Single conversation | Across all conversations for an identifier |
-| **Interface** | `agent.Conversation` (Load/Save) | `memory.Memory` (Remember/Recall) |
-| **Wiring** | `agent.WithConversation` option | Tools added to the agent's tool list |
-
-The two systems are complementary. Use conversation memory for multi-turn context within a session. Use long-term memory for knowledge that should persist across sessions — preferences, decisions, project context.
-
-## Backends
-
-Each backend lives in its own sub-module with its own `go.mod`, so you only import the dependencies you need:
-
-| Backend | Package | Status |
-|---------|---------|--------|
-| In-memory | `agent/memory` | Available |
-| AgentCore | `agent/memory/agentcore` | Available |
-| PostgreSQL | `agent/memory/postgres` | Planned |
-| Redis | `agent/memory/redis` | Available |
-
-The PostgreSQL backend will use [pgvector](https://github.com/pgvector/pgvector) for vector similarity search.
-
-All VectorStore-based backends (in-memory, Redis) can be used with either the composable tools (`NewRememberTool`/`NewRecallTool`) or the `Memory` interface via the `Adapter`. The AgentCore backend implements `Memory` directly and works with `RememberTool`/`RecallTool`.
-
-## See Also
-
-- [Conversation System](conversation.md) — conversation memory (Load/Save per conversation)
-- [RAG Pipeline](rag.md) — document retrieval, vector stores, and `ScopedStore`
-- [Tool System](tools.md) — how tools work in the agent loop, including `tool.NewRaw`
-- [Agent API Reference](agent-api.md) — `agent.WithIdentifier` and agent construction
-- [Getting Started](getting-started.md) — installation and first agent

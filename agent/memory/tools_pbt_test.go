@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/rag"
 	"pgregory.net/rapid"
 )
 
@@ -21,7 +20,6 @@ import (
 // set on the agent context and any non-empty fact string, after invoking
 // NewRememberTool to store the fact, invoking NewRecallTool with the same
 // fact as the query returns a non-empty result containing the original fact text.
-//
 func TestProperty_NewToolsRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate random inputs.
@@ -29,14 +27,13 @@ func TestProperty_NewToolsRoundTrip(t *testing.T) {
 		fact := genNonEmptyString(rt, "fact")
 		metadata := genMetadata(rt)
 
-		// Create a fresh MemoryStore + ScopedStore + hashEmbedder per iteration.
-		memStore := rag.NewMemoryStore()
-		scopedStore := rag.NewScopedStore(memStore)
+		// Create a fresh InMemoryStore + hashEmbedder per iteration.
+		store := NewInMemoryStore()
 		embedder := &hashEmbedder{dim: 16}
 
 		// Build composable tools.
-		rememberTool := NewRememberTool(scopedStore, embedder)
-		recallTool := NewRecallTool(scopedStore, embedder)
+		rememberTool := NewRememberTool(store, embedder)
+		recallTool := NewRecallTool(store, embedder)
 
 		// Set identifier on context.
 		ctx := agent.WithIdentifier(context.Background(), identifier)
@@ -85,14 +82,12 @@ func TestProperty_NewToolsRoundTrip(t *testing.T) {
 // Property 5: RememberTool stores complete metadata
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_RememberToolMetadata verifies that for any non-empty fact string
 // and any non-nil user-provided metadata map, after invoking NewRememberTool to
-// store the fact, the document stored in the underlying VectorStore has:
-// Content equal to the fact text, metadata["_scope_id"] equal to the context
-// identifier, a metadata["created_at"] value parseable as RFC 3339, and all
-// user-provided metadata key-value pairs present in the document metadata.
-//
+// store the fact, the document stored in the underlying MemoryStore has:
+// Content equal to the fact text, a metadata["created_at"] value parseable as
+// RFC 3339, and all user-provided metadata key-value pairs present in the
+// document metadata.
 func TestProperty_RememberToolMetadata(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate random inputs.
@@ -109,13 +104,12 @@ func TestProperty_RememberToolMetadata(t *testing.T) {
 			userMeta[key] = val
 		}
 
-		// Create a fresh MemoryStore + ScopedStore + hashEmbedder per iteration.
-		memStore := rag.NewMemoryStore()
-		scopedStore := rag.NewScopedStore(memStore)
+		// Create a fresh InMemoryStore + hashEmbedder per iteration.
+		store := NewInMemoryStore()
 		embedder := &hashEmbedder{dim: 16}
 
 		// Build the composable RememberTool.
-		rememberTool := NewRememberTool(scopedStore, embedder)
+		rememberTool := NewRememberTool(store, embedder)
 
 		// Set identifier on context.
 		ctx := agent.WithIdentifier(context.Background(), identifier)
@@ -136,15 +130,15 @@ func TestProperty_RememberToolMetadata(t *testing.T) {
 			rt.Fatalf("NewRememberTool handler returned error: %v", err)
 		}
 
-		// Search the MemoryStore directly (bypassing ScopedStore) to inspect
-		// the raw stored document. Use the fact's embedding as the query.
+		// Search the InMemoryStore directly to inspect the raw stored document.
+		// Use the fact's embedding as the query.
 		queryEmb, err := embedder.Embed(ctx, fact)
 		if err != nil {
 			rt.Fatalf("Embed query failed: %v", err)
 		}
-		results, err := memStore.Search(ctx, queryEmb, 10)
+		results, err := store.Search(ctx, identifier, queryEmb, 10)
 		if err != nil {
-			rt.Fatalf("MemoryStore.Search failed: %v", err)
+			rt.Fatalf("InMemoryStore.Search failed: %v", err)
 		}
 
 		if len(results) == 0 {
@@ -163,15 +157,6 @@ func TestProperty_RememberToolMetadata(t *testing.T) {
 			// Verify Content == fact.
 			if doc.Content != fact {
 				rt.Fatalf("stored document Content = %q, want %q", doc.Content, fact)
-			}
-
-			// Verify metadata["_scope_id"] == identifier.
-			scopeVal, ok := doc.Metadata[rag.ScopeMetadataKey]
-			if !ok {
-				rt.Fatalf("stored document missing %q metadata key", rag.ScopeMetadataKey)
-			}
-			if scopeVal != identifier {
-				rt.Fatalf("stored document %q = %q, want %q", rag.ScopeMetadataKey, scopeVal, identifier)
 			}
 
 			// Verify metadata["created_at"] is parseable as RFC 3339.
@@ -209,7 +194,6 @@ func TestProperty_RememberToolMetadata(t *testing.T) {
 // formatScoredDocuments contains each result's fact text, each user metadata
 // key-value pair (excluding _scope_id and created_at), the created_at timestamp
 // in RFC 3339 format, and the similarity score formatted to 4 decimal places.
-//
 func TestProperty_RecallToolOutputFormat(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate 1–5 ScoredDocuments with non-nil metadata.
@@ -236,7 +220,9 @@ func TestProperty_RecallToolOutputFormat(t *testing.T) {
 			meta["created_at"] = ts
 
 			// Add _scope_id (should be excluded from output metadata).
-			meta[rag.ScopeMetadataKey] = genNonEmptyString(rt, "scope_id")
+			// Note: MemoryStore no longer injects _scope_id, but we test that
+			// formatScoredDocuments handles it gracefully if present.
+			meta["_scope_id"] = genNonEmptyString(rt, "scope_id")
 
 			results[i] = agent.ScoredDocument{
 				Document: agent.Document{
@@ -260,7 +246,7 @@ func TestProperty_RecallToolOutputFormat(t *testing.T) {
 
 			// Each user metadata key-value pair must appear (excluding _scope_id and created_at).
 			for k, v := range sd.Document.Metadata {
-				if k == rag.ScopeMetadataKey || k == "created_at" {
+				if k == "_scope_id" || k == "created_at" {
 					continue
 				}
 				kv := fmt.Sprintf("%s=%s", k, v)
@@ -292,20 +278,18 @@ func TestProperty_RecallToolOutputFormat(t *testing.T) {
 // whose Spec.Name equals the provided name. The same holds for NewRecallTool.
 // When no WithToolName option is provided, NewRememberTool defaults to
 // "remember" and NewRecallTool defaults to "recall".
-//
 func TestProperty_ToolNameCustomization(t *testing.T) {
 	// Shared dependencies — tools are not invoked, so a single store/embedder suffices.
-	memStore := rag.NewMemoryStore()
-	scopedStore := rag.NewScopedStore(memStore)
+	store := NewInMemoryStore()
 	embedder := &hashEmbedder{dim: 16}
 
 	t.Run("defaults", func(t *testing.T) {
-		rememberTool := NewRememberTool(scopedStore, embedder)
+		rememberTool := NewRememberTool(store, embedder)
 		if rememberTool.Spec.Name != "remember" {
 			t.Fatalf("NewRememberTool default Spec.Name = %q, want %q", rememberTool.Spec.Name, "remember")
 		}
 
-		recallTool := NewRecallTool(scopedStore, embedder)
+		recallTool := NewRecallTool(store, embedder)
 		if recallTool.Spec.Name != "recall" {
 			t.Fatalf("NewRecallTool default Spec.Name = %q, want %q", recallTool.Spec.Name, "recall")
 		}
@@ -316,13 +300,13 @@ func TestProperty_ToolNameCustomization(t *testing.T) {
 			// Generate a random non-empty tool name (alphanumeric + underscores, 1–50 chars).
 			name := rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,49}`).Draw(rt, "tool_name")
 
-			rememberTool := NewRememberTool(scopedStore, embedder, WithToolName(name))
+			rememberTool := NewRememberTool(store, embedder, WithToolName(name))
 			if rememberTool.Spec.Name != name {
 				rt.Fatalf("NewRememberTool with WithToolName(%q): Spec.Name = %q, want %q",
 					name, rememberTool.Spec.Name, name)
 			}
 
-			recallTool := NewRecallTool(scopedStore, embedder, WithToolName(name))
+			recallTool := NewRecallTool(store, embedder, WithToolName(name))
 			if recallTool.Spec.Name != name {
 				rt.Fatalf("NewRecallTool with WithToolName(%q): Spec.Name = %q, want %q",
 					name, recallTool.Spec.Name, name)

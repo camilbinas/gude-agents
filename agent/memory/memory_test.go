@@ -9,9 +9,75 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 )
 
+// TestNewInMemory_ReturnsNonNilMemory verifies that NewInMemory returns a
+// non-nil *InMemory that satisfies the Memory interface.
+func TestNewInMemory_ReturnsNonNilMemory(t *testing.T) {
+	m := NewInMemory(&hashEmbedder{dim: 8})
+	if m == nil {
+		t.Fatal("expected non-nil *InMemory, got nil")
+	}
+	// Compile-time check: *InMemory implements Memory.
+	var _ Memory = m
+}
+
+// TestNewInMemory_RememberRecallBasicFlow verifies the basic round-trip:
+// remember a fact, recall it, and confirm the returned entry matches.
+func TestNewInMemory_RememberRecallBasicFlow(t *testing.T) {
+	m := NewInMemory(&hashEmbedder{dim: 8})
+	ctx := context.Background()
+
+	const identifier = "user-42"
+	const fact = "The capital of France is Paris"
+	meta := map[string]string{"source": "geography"}
+
+	if err := m.Remember(ctx, identifier, fact, meta); err != nil {
+		t.Fatalf("Remember failed: %v", err)
+	}
+
+	entries, err := m.Recall(ctx, identifier, fact, 5)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected at least one entry, got none")
+	}
+
+	found := false
+	for _, e := range entries {
+		if e.Fact == fact {
+			found = true
+			if e.Metadata["source"] != "geography" {
+				t.Errorf("metadata[source] = %q, want %q", e.Metadata["source"], "geography")
+			}
+			if e.CreatedAt.IsZero() {
+				t.Error("expected non-zero CreatedAt")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected to find fact %q in results, got %v", fact, entries)
+	}
+}
+
+// TestNewInMemory_RecallNoEntries verifies that Recall on a fresh InMemory
+// with no stored entries returns a non-nil empty slice.
+func TestNewInMemory_RecallNoEntries(t *testing.T) {
+	m := NewInMemory(&hashEmbedder{dim: 8})
+	results, err := m.Recall(context.Background(), "no-such-user", "query", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if results == nil {
+		t.Fatal("expected non-nil slice, got nil")
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected empty slice, got %d elements", len(results))
+	}
+}
+
 // TestRemember_EmptyFact verifies that Remember returns an error when the fact
 // string is empty.
-//
 func TestRemember_EmptyFact(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	err := store.Remember(context.Background(), "user-1", "", nil)
@@ -26,7 +92,6 @@ func TestRemember_EmptyFact(t *testing.T) {
 
 // TestRemember_EmptyUserID verifies that Remember returns an error when the
 // identifier is empty.
-//
 func TestRemember_EmptyUserID(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	err := store.Remember(context.Background(), "", "some fact", nil)
@@ -41,7 +106,6 @@ func TestRemember_EmptyUserID(t *testing.T) {
 
 // TestRecall_EmptyUserID verifies that Recall returns an error when the
 // identifier is empty.
-//
 func TestRecall_EmptyUserID(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	results, err := store.Recall(context.Background(), "", "query", 5)
@@ -59,7 +123,6 @@ func TestRecall_EmptyUserID(t *testing.T) {
 
 // TestRecall_InvalidLimit verifies that Recall returns an error when the limit
 // is less than 1.
-//
 func TestRecall_InvalidLimit(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 
@@ -82,7 +145,6 @@ func TestRecall_InvalidLimit(t *testing.T) {
 
 // TestRecall_NoEntries verifies that Recall for a user with no stored entries
 // returns an empty non-nil slice and no error.
-//
 func TestRecall_NoEntries(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	results, err := store.Recall(context.Background(), "unknown-user", "query", 5)
@@ -100,7 +162,6 @@ func TestRecall_NoEntries(t *testing.T) {
 // TestStore_ConcurrentAccess verifies that the Store is safe for concurrent use
 // by multiple goroutines. It launches 10 goroutines each performing 100
 // Remember+Recall operations. Run with -race to detect data races.
-//
 func TestStore_ConcurrentAccess(t *testing.T) {
 	store := NewInMemory(&hashEmbedder{dim: 8})
 	ctx := context.Background()
@@ -139,7 +200,6 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 
 // TestRememberTool_NoUserID verifies that RememberTool returns an error when
 // no identifier is present on the context.
-//
 func TestRememberTool_NoUserID(t *testing.T) {
 	spy := &spyMemory{}
 	rt := RememberTool(spy)
@@ -160,7 +220,6 @@ func TestRememberTool_NoUserID(t *testing.T) {
 
 // TestRecallTool_NoUserID verifies that RecallTool returns an error when
 // no identifier is present on the context.
-//
 func TestRecallTool_NoUserID(t *testing.T) {
 	spy := &spyMemory{}
 	ct := RecallTool(spy)
@@ -181,7 +240,6 @@ func TestRecallTool_NoUserID(t *testing.T) {
 
 // TestRecallTool_NoResults verifies that RecallTool returns "No relevant
 // memories found." when Recall returns an empty slice.
-//
 func TestRecallTool_NoResults(t *testing.T) {
 	spy := &spyMemory{recallResult: []Entry{}}
 	ct := RecallTool(spy)
@@ -200,7 +258,6 @@ func TestRecallTool_NoResults(t *testing.T) {
 }
 
 // TestRememberTool_Name verifies that RememberTool has the name "remember".
-//
 func TestRememberTool_Name(t *testing.T) {
 	spy := &spyMemory{}
 	rt := RememberTool(spy)
@@ -212,7 +269,6 @@ func TestRememberTool_Name(t *testing.T) {
 }
 
 // TestRecallTool_Name verifies that RecallTool has the name "recall".
-//
 func TestRecallTool_Name(t *testing.T) {
 	spy := &spyMemory{}
 	ct := RecallTool(spy)

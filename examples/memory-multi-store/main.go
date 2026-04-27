@@ -1,41 +1,10 @@
 // Example: Multi-store memory with distinct tool names (Redis-backed).
 //
-// Demonstrates an agent with two separate Redis-backed memory stores — one for
-// user preferences and one for project context — each with its own tool names
-// and its own RediSearch index. The LLM sees four tools and decides which store
-// to use based on the tool descriptions.
-//
-// Because each store is a separate rag/redis.VectorStore with its own index,
-// preferences and project facts are fully isolated at the Redis level. The
-// ScopedStore wrapper adds per-user partitioning within each index using native
-// TAG filtering.
-//
-// This pattern is only possible with the composable building blocks
-// (NewRememberTool / NewRecallTool + WithToolName). The EpisodicMemory
-// interface always produces tools named "remember" and "recall", so you
-// can't have multiple stores in one agent with that approach.
+// Two separate Redis-backed memory stores — one for user preferences, one for
+// project context — each with its own RediSearch index and tool names.
 //
 // Prerequisites:
-//   - AWS credentials configured (env vars, ~/.aws/credentials, or IAM role)
 //   - Redis Stack running locally (NOT standard Redis — requires RediSearch)
-//
-// Start Redis Stack:
-//
-//	docker run -p 6379:6379 redis/redis-stack-server:latest
-//
-// Optional env vars:
-//   - REDIS_ADDR: Redis address (default: 127.0.0.1:6379)
-//
-// Sample session:
-//
-//	You: Remember that I prefer dark mode.
-//	Agent: (uses remember_preferences) Stored your preference.
-//
-//	You: Remember that Project Alpha uses PostgreSQL 16.
-//	Agent: (uses remember_projects) Stored that project detail.
-//
-//	You: What database does Project Alpha use?
-//	Agent: (uses recall_projects) Project Alpha uses PostgreSQL 16.
 //
 // Run:
 //
@@ -52,10 +21,9 @@ import (
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/memory"
+	memredis "github.com/camilbinas/gude-agents/agent/memory/redis"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/rag"
-	ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
@@ -70,28 +38,30 @@ func main() {
 	}
 
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
-	redisOpts := ragredis.Options{Addr: addr}
+	redisOpts := memredis.Options{Addr: addr}
 
-	// 1. Create separate Redis VectorStores with distinct indexes.
-	prefVS, err := ragredis.New(redisOpts, "gude_preferences", 1024)
+	// 1. Create separate Redis memory stores with distinct indexes.
+	prefStore, err := memredis.New(redisOpts, embedder, 1024,
+		memredis.WithIndexName("gude_preferences"),
+		memredis.WithKeyPrefix("gude:preferences:"),
+	)
 	if err != nil {
-		log.Fatalf("preferences vectorstore: %v", err)
+		log.Fatalf("preferences memory store: %v", err)
 	}
-	defer prefVS.Close()
+	defer prefStore.Close()
 
-	projVS, err := ragredis.New(redisOpts, "gude_projects", 1024)
+	projStore, err := memredis.New(redisOpts, embedder, 1024,
+		memredis.WithIndexName("gude_projects"),
+		memredis.WithKeyPrefix("gude:projects:"),
+	)
 	if err != nil {
-		log.Fatalf("projects vectorstore: %v", err)
+		log.Fatalf("projects memory store: %v", err)
 	}
-	defer projVS.Close()
+	defer projStore.Close()
 
-	// 2. Wrap each in a ScopedStore for per-user partitioning.
-	//    ScopedStore detects the Redis ScopedSearcher interface and uses
-	//    native TAG filtering automatically.
-	prefStore := rag.NewScopedStore(prefVS)
-	projStore := rag.NewScopedStore(projVS)
-
-	// 3. Create tools with distinct names and descriptions per domain.
+	// 2. Create tools with distinct names and descriptions per domain.
+	//    Each Store implements MemoryStore and uses a native TAG field for
+	//    per-user partitioning within its index.
 	tools := []tool.Tool{
 		// Preferences
 		memory.NewRememberTool(prefStore, embedder,
@@ -118,7 +88,7 @@ func main() {
 		conversation.DefaultSummaryFunc(bedrock.Must(bedrock.Cheapest())),
 	)
 
-	// 4. Build the agent with all four tools.
+	// 3. Build the agent with all four tools.
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
 		prompt.RISEN{
@@ -136,7 +106,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 5. Set the identifier on the context.
+	// 4. Set the identifier on the context.
 	ctx := agent.WithIdentifier(context.Background(), "user-456")
 
 	fmt.Println("Multi-store Redis memory agent. Type 'quit' to exit.")

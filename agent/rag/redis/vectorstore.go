@@ -3,9 +3,7 @@
 //
 // Requires Redis Stack — NOT standard community Redis. The vector store uses
 // RediSearch commands (FT.CREATE, FT.SEARCH) that are only available in
-// Redis Stack. Run it locally with:
-//
-//	docker run -p 6379:6379 redis/redis-stack-server:latest
+// Redis Stack.
 package redis
 
 import (
@@ -119,7 +117,6 @@ func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*
 		"SCHEMA",
 		"content", "TEXT",
 		"metadata", "TEXT",
-		"_scope_id", "TAG",
 		"embedding", "VECTOR", "HNSW", "10",
 		"TYPE", "FLOAT32",
 		"DIM", dim,
@@ -163,19 +160,11 @@ func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings
 		key := s.indexName + ":" + uuid.New().String()
 		embeddingBytes := float64sToFloat32Bytes(embeddings[i])
 
-		fields := map[string]interface{}{
+		err = s.client.HSet(ctx, key, map[string]interface{}{
 			"content":   doc.Content,
 			"metadata":  string(metaJSON),
 			"embedding": embeddingBytes,
-		}
-
-		// Store _scope_id as a top-level TAG field when present in metadata,
-		// enabling native Redis TAG filtering via ScopedSearch.
-		if scopeID, ok := doc.Metadata["_scope_id"]; ok {
-			fields["_scope_id"] = scopeID
-		}
-
-		err = s.client.HSet(ctx, key, fields).Err()
+		}).Err()
 		if err != nil {
 			return fmt.Errorf("redis vectorstore: add: %w", err)
 		}
@@ -334,59 +323,6 @@ func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument,
 	})
 
 	return scored, nil
-}
-
-// escapeTag escapes RediSearch TAG special characters with a backslash so that
-// arbitrary strings can be used safely in @field:{...} queries.
-func escapeTag(s string) string {
-	const special = `,.<>{}[]"':;!@#$%^&*()-+=~/ `
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if strings.ContainsRune(special, r) {
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// ScopedSearch performs a KNN search filtered by a TAG field. This implements
-// the rag.ScopedSearcher interface, enabling ScopedStore to use native Redis
-// TAG filtering instead of post-search metadata filtering.
-func (s *VectorStore) ScopedSearch(ctx context.Context, scopeKey, scopeValue string,
-	queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
-
-	if scopeValue == "" {
-		return nil, fmt.Errorf("redis vectorstore: scopeValue must not be empty")
-	}
-	if topK < 1 {
-		return nil, fmt.Errorf("redis vectorstore: topK must be >= 1, got %d", topK)
-	}
-
-	blob := float64sToFloat32Bytes(queryEmbedding)
-	escaped := escapeTag(scopeValue)
-	query := fmt.Sprintf("@%s:{%s}=>[KNN %d @embedding $BLOB AS score]", scopeKey, escaped, topK)
-
-	res, err := s.client.Do(ctx, "FT.SEARCH", s.indexName,
-		query,
-		"PARAMS", "2", "BLOB", blob,
-		"SORTBY", "score",
-		"LIMIT", "0", fmt.Sprintf("%d", topK),
-		"DIALECT", "2",
-	).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis vectorstore: scoped search: %w", err)
-	}
-
-	switch v := res.(type) {
-	case map[interface{}]interface{}:
-		return s.parseRESP3(v)
-	case []interface{}:
-		return s.parseRESP2(v)
-	default:
-		return nil, nil
-	}
 }
 
 // Close closes the underlying Redis client.

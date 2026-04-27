@@ -7,25 +7,23 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // Compile-time check that Adapter implements Memory.
 var _ Memory = (*Adapter)(nil)
 
-// Adapter implements Memory using a ScopedStore and Embedder.
-// It bridges the composable building blocks (VectorStore + ScopedStore +
-// Embedder) into the existing Memory interface for backward
-// compatibility.
+// Adapter implements Memory using a MemoryStore and Embedder.
+// It bridges the composable building blocks (MemoryStore + Embedder) into
+// the existing Memory interface for backward compatibility.
 // Documented in docs/memory.md — update when changing behavior.
 type Adapter struct {
-	store    *rag.ScopedStore
+	store    MemoryStore
 	embedder agent.Embedder
 }
 
-// NewAdapter creates a Memory adapter backed by a ScopedStore
+// NewAdapter creates a Memory adapter backed by a MemoryStore
 // and Embedder.
-func NewAdapter(store *rag.ScopedStore, embedder agent.Embedder) *Adapter {
+func NewAdapter(store MemoryStore, embedder agent.Embedder) *Adapter {
 	return &Adapter{
 		store:    store,
 		embedder: embedder,
@@ -34,7 +32,7 @@ func NewAdapter(store *rag.ScopedStore, embedder agent.Embedder) *Adapter {
 
 // Remember implements Memory.Remember. It validates inputs, embeds
 // the fact, constructs a Document with created_at and user metadata, and
-// stores it in the scoped store.
+// stores it in the memory store.
 func (a *Adapter) Remember(ctx context.Context, identifier, fact string, metadata map[string]string) error {
 	if identifier == "" {
 		return errors.New("memory: identifier must not be empty")
@@ -67,10 +65,9 @@ func (a *Adapter) Remember(ctx context.Context, identifier, fact string, metadat
 }
 
 // Recall implements Memory.Recall. It validates inputs, embeds the
-// query, searches the scoped store, and converts ScoredDocuments to Entries.
-// Internal metadata keys (_scope_id and created_at) are excluded from the
-// returned Entry.Metadata. Returns an empty non-nil slice when no results
-// are found.
+// query, searches the memory store, and converts ScoredDocuments to Entries.
+// The created_at metadata key is excluded from the returned Entry.Metadata.
+// Returns an empty non-nil slice when no results are found.
 func (a *Adapter) Recall(ctx context.Context, identifier, query string, limit int) ([]Entry, error) {
 	if identifier == "" {
 		return nil, errors.New("memory: identifier must not be empty")
@@ -106,7 +103,7 @@ func (a *Adapter) Recall(ctx context.Context, identifier, query string, limit in
 		// Build user metadata, filtering out internal keys.
 		userMeta := make(map[string]string, len(sd.Document.Metadata))
 		for k, v := range sd.Document.Metadata {
-			if k == rag.ScopeMetadataKey || k == "created_at" {
+			if k == "created_at" {
 				continue
 			}
 			userMeta[k] = v

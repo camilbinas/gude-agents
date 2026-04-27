@@ -6,18 +6,15 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // TestNewRememberTool_MissingIdentifier verifies that NewRememberTool returns
 // a descriptive error when the agent context does not have an identifier set.
-//
 func TestNewRememberTool_MissingIdentifier(t *testing.T) {
-	memStore := rag.NewMemoryStore()
-	scopedStore := rag.NewScopedStore(memStore)
+	store := NewInMemoryStore()
 	embedder := &hashEmbedder{dim: 16}
 
-	rememberTool := NewRememberTool(scopedStore, embedder)
+	rememberTool := NewRememberTool(store, embedder)
 
 	// Use a bare context with no identifier attached.
 	ctx := context.Background()
@@ -38,13 +35,11 @@ func TestNewRememberTool_MissingIdentifier(t *testing.T) {
 
 // TestNewRecallTool_MissingIdentifier verifies that NewRecallTool returns
 // a descriptive error when the agent context does not have an identifier set.
-//
 func TestNewRecallTool_MissingIdentifier(t *testing.T) {
-	memStore := rag.NewMemoryStore()
-	scopedStore := rag.NewScopedStore(memStore)
+	store := NewInMemoryStore()
 	embedder := &hashEmbedder{dim: 16}
 
-	recallTool := NewRecallTool(scopedStore, embedder)
+	recallTool := NewRecallTool(store, embedder)
 
 	// Use a bare context with no identifier attached.
 	ctx := context.Background()
@@ -65,13 +60,11 @@ func TestNewRecallTool_MissingIdentifier(t *testing.T) {
 
 // TestNewRecallTool_NoResults verifies that NewRecallTool returns
 // "No relevant memories found." when the underlying store is empty.
-//
 func TestNewRecallTool_NoResults(t *testing.T) {
-	memStore := rag.NewMemoryStore()
-	scopedStore := rag.NewScopedStore(memStore)
+	store := NewInMemoryStore()
 	embedder := &hashEmbedder{dim: 16}
 
-	recallTool := NewRecallTool(scopedStore, embedder)
+	recallTool := NewRecallTool(store, embedder)
 
 	ctx := agent.WithIdentifier(context.Background(), "user-1")
 	input, err := json.Marshal(map[string]any{"query": "anything"})
@@ -91,14 +84,12 @@ func TestNewRecallTool_NoResults(t *testing.T) {
 
 // TestMultipleToolInstances verifies that two tools with distinct names
 // can be created and coexist, each having a different Spec.Name.
-//
 func TestMultipleToolInstances(t *testing.T) {
-	memStore := rag.NewMemoryStore()
-	scopedStore := rag.NewScopedStore(memStore)
+	store := NewInMemoryStore()
 	embedder := &hashEmbedder{dim: 16}
 
-	rememberPrefs := NewRememberTool(scopedStore, embedder, WithToolName("remember_preferences"))
-	rememberProjects := NewRememberTool(scopedStore, embedder, WithToolName("remember_projects"))
+	rememberPrefs := NewRememberTool(store, embedder, WithToolName("remember_preferences"))
+	rememberProjects := NewRememberTool(store, embedder, WithToolName("remember_projects"))
 
 	if rememberPrefs.Spec.Name != "remember_preferences" {
 		t.Fatalf("rememberPrefs.Spec.Name = %q, want %q", rememberPrefs.Spec.Name, "remember_preferences")
@@ -109,4 +100,122 @@ func TestMultipleToolInstances(t *testing.T) {
 	if rememberPrefs.Spec.Name == rememberProjects.Spec.Name {
 		t.Fatal("two tool instances should have distinct names")
 	}
+}
+
+// TestToolSchemaValidation verifies that the tool schemas for NewRememberTool
+// and NewRecallTool have the expected structure: correct type, required fields,
+// and property definitions.
+func TestToolSchemaValidation(t *testing.T) {
+	store := NewInMemoryStore()
+	embedder := &hashEmbedder{dim: 16}
+
+	t.Run("remember_tool_schema", func(t *testing.T) {
+		rememberTool := NewRememberTool(store, embedder)
+
+		// Spec.Name defaults to "remember".
+		if rememberTool.Spec.Name != "remember" {
+			t.Fatalf("Spec.Name = %q, want %q", rememberTool.Spec.Name, "remember")
+		}
+
+		// Spec.Description should be non-empty.
+		if rememberTool.Spec.Description == "" {
+			t.Fatal("Spec.Description is empty")
+		}
+
+		// Verify the input schema structure.
+		schema := rememberTool.Spec.InputSchema
+		schemaBytes, err := json.Marshal(schema)
+		if err != nil {
+			t.Fatalf("marshal schema: %v", err)
+		}
+
+		var schemaMap map[string]any
+		if err := json.Unmarshal(schemaBytes, &schemaMap); err != nil {
+			t.Fatalf("unmarshal schema: %v", err)
+		}
+
+		if schemaMap["type"] != "object" {
+			t.Fatalf("schema type = %v, want %q", schemaMap["type"], "object")
+		}
+
+		props, ok := schemaMap["properties"].(map[string]any)
+		if !ok {
+			t.Fatal("schema missing 'properties' object")
+		}
+
+		if _, ok := props["fact"]; !ok {
+			t.Fatal("schema missing 'fact' property")
+		}
+
+		required, ok := schemaMap["required"].([]any)
+		if !ok {
+			t.Fatal("schema missing 'required' array")
+		}
+		foundFact := false
+		for _, r := range required {
+			if r == "fact" {
+				foundFact = true
+			}
+		}
+		if !foundFact {
+			t.Fatal("'fact' not in required fields")
+		}
+	})
+
+	t.Run("recall_tool_schema", func(t *testing.T) {
+		recallTool := NewRecallTool(store, embedder)
+
+		// Spec.Name defaults to "recall".
+		if recallTool.Spec.Name != "recall" {
+			t.Fatalf("Spec.Name = %q, want %q", recallTool.Spec.Name, "recall")
+		}
+
+		// Spec.Description should be non-empty.
+		if recallTool.Spec.Description == "" {
+			t.Fatal("Spec.Description is empty")
+		}
+
+		// Verify the input schema structure.
+		schema := recallTool.Spec.InputSchema
+		schemaBytes, err := json.Marshal(schema)
+		if err != nil {
+			t.Fatalf("marshal schema: %v", err)
+		}
+
+		var schemaMap map[string]any
+		if err := json.Unmarshal(schemaBytes, &schemaMap); err != nil {
+			t.Fatalf("unmarshal schema: %v", err)
+		}
+
+		if schemaMap["type"] != "object" {
+			t.Fatalf("schema type = %v, want %q", schemaMap["type"], "object")
+		}
+
+		props, ok := schemaMap["properties"].(map[string]any)
+		if !ok {
+			t.Fatal("schema missing 'properties' object")
+		}
+
+		if _, ok := props["query"]; !ok {
+			t.Fatal("schema missing 'query' property")
+		}
+
+		if _, ok := props["limit"]; !ok {
+			t.Fatal("schema missing 'limit' property")
+		}
+
+		required, ok := schemaMap["required"].([]any)
+		if !ok {
+			t.Fatal("schema missing 'required' array")
+		}
+		foundQuery := false
+		for _, r := range required {
+			if r == "query" {
+				foundQuery = true
+			}
+		}
+		if !foundQuery {
+			t.Fatal("'query' not in required fields")
+		}
+	})
 }
