@@ -13,25 +13,41 @@ const structuredOutputToolName = "structured_output"
 // InvokeStructured forces the LLM to return a JSON response conforming to T.
 // It applies input guardrails, loads/saves conversation, merges inference config,
 // and applies output guardrails consistently with InvokeStream. Provider calls
-// use the same timeout and retry logic as InvokeStream.
+// use the same timeout, retry, and observability hooks as InvokeStream.
 func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, TokenUsage, error) {
+	convID := ResolveConversationID(ctx, a.conversationID)
+	h := a.hooks()
+	modelID := a.modelID()
+
+	ctx, invoke := h.onInvokeStart(ctx, a.invokeParams(convID, userMessage, ctx))
+
+	result, usage, err := invokeStructuredInner[T](ctx, a, userMessage, convID, &h, modelID)
+	invoke.finish(err, usage)
+
+	return result, usage, err
+}
+
+func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage string, convID string, h *hooks, modelID string) (T, TokenUsage, error) {
 	var zero T
 
 	// Input guardrails.
 	msg := userMessage
 	for _, g := range a.inputGuardrails {
+		gCtx, gf := h.onGuardrailStart(ctx, "input", msg)
 		var err error
-		msg, err = g(ctx, msg)
+		msg, err = g(gCtx, msg)
+		gf.finish(err, msg)
 		if err != nil {
 			return zero, TokenUsage{}, &GuardrailError{Direction: "input", Cause: err}
 		}
 	}
 
 	// Load conversation history.
-	convID := ResolveConversationID(ctx, a.conversationID)
 	var messages []Message
 	if a.conversation != nil {
-		history, err := a.conversation.Load(ctx, convID)
+		loadCtx, cf := h.onConversationStart(ctx, "load", convID)
+		history, err := a.conversation.Load(loadCtx, convID)
+		cf.finish(err, len(history))
 		if err != nil {
 			return zero, TokenUsage{}, fmt.Errorf("structured output: conversation load: %w", err)
 		}
@@ -40,7 +56,9 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 
 	// RAG retrieval — same safety prefix as InvokeStream.
 	if a.retriever != nil {
-		docs, err := a.retriever.Retrieve(ctx, msg)
+		retCtx, rf := h.onRetrieverStart(ctx, msg)
+		docs, err := a.retriever.Retrieve(retCtx, msg)
+		rf.finish(err, len(docs))
 		if err != nil {
 			return zero, TokenUsage{}, fmt.Errorf("structured output: retriever: %w", err)
 		}
@@ -86,11 +104,19 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 		InferenceConfig: mergedCfg,
 	}
 
-	resp, err := a.callProviderWithRetry(ctx, params, nil)
+	provCtx, provF := h.onProviderCallStart(ctx, ProviderCallParams{
+		System:          a.instructions,
+		MessageCount:    len(messages),
+		InferenceConfig: mergedCfg,
+	}, modelID)
+
+	resp, err := a.callProviderWithRetry(provCtx, params, nil)
 	if err != nil {
+		provF.finish(err, TokenUsage{}, 0, "")
 		return zero, TokenUsage{}, &ProviderError{Cause: err}
 	}
 
+	provF.finish(nil, resp.Usage, len(resp.ToolCalls), "")
 	usage := resp.Usage
 
 	if len(resp.ToolCalls) == 0 {
@@ -111,7 +137,9 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 	// Output guardrails on the raw JSON.
 	rawText := string(found.Input)
 	for _, g := range a.outputGuardrails {
-		rawText, err = g(ctx, rawText)
+		gCtx, gf := h.onGuardrailStart(ctx, "output", rawText)
+		rawText, err = g(gCtx, rawText)
+		gf.finish(err, rawText)
 		if err != nil {
 			return zero, usage, &GuardrailError{Direction: "output", Cause: err}
 		}
@@ -125,11 +153,14 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 
 	// Save conversation.
 	if a.conversation != nil {
+		saveCtx, cf := h.onConversationStart(ctx, "save", convID)
 		assistantMsg := Message{
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: rawText}},
 		}
-		if err := a.conversation.Save(ctx, convID, append(messages, assistantMsg)); err != nil {
+		err := a.conversation.Save(saveCtx, convID, append(messages, assistantMsg))
+		cf.finish(err, len(messages)+1)
+		if err != nil {
 			return zero, usage, fmt.Errorf("structured output: conversation save: %w", err)
 		}
 	}
