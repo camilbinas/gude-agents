@@ -130,7 +130,11 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 		return TokenUsage{}, fmt.Errorf("inference config: %w", err)
 	}
 
-	return a.runLoop(ctx, convID, messages, 0, a.instructions, mergedInferenceCfg, cb)
+	return a.runLoop(ctx, convID, messages, 0, a.instructions, mergedInferenceCfg, cb, &hooks{
+		tracing: a.tracingHook,
+		metrics: a.metricsHook,
+		logging: a.loggingHook,
+	})
 }
 
 // ResumeInvoke is a convenience wrapper over Resume that collects streamed
