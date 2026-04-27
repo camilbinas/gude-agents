@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime v1.51.8
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4
-	github.com/camilbinas/gude-agents v0.27.0
+	github.com/camilbinas/gude-agents v0.27.1
 	github.com/stretchr/testify v1.11.1
 	pgregory.net/rapid v1.2.0
 )
