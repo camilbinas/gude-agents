@@ -39,7 +39,7 @@ func main() {
 	// A cheap model for classification — it only picks a node name.
 	classifier := bedrock.Must(bedrock.Cheapest())
 
-	routerAgent, err := agent.Minimal(classifier, prompt.Text(
+	routerAgent, err := agent.Worker(classifier, prompt.Text(
 		"You are a question classifier. Based on the question, pick the best expert.\n"+
 			"- code_expert: programming, algorithms, code review, debugging\n"+
 			"- devops_expert: infrastructure, CI/CD, Docker, Kubernetes, cloud\n"+

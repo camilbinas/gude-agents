@@ -81,7 +81,7 @@ func main() {
 		},
 	)
 
-	enricher, err := agent.Minimal(haiku, prompt.Text(
+	enricher, err := agent.Worker(haiku, prompt.Text(
 		"You enrich articles with metadata. Use the word_count tool to count "+
 			"the words in the article, then return a short metadata line like: "+
 			"\"Words: 42, Reading time: ~1 min\". Return only the metadata line.",
@@ -92,7 +92,7 @@ func main() {
 
 	// Summarise agent — has memory. Produces agent.conversation.load / agent.conversation.save spans.
 	store := conversation.NewInMemory()
-	summariser, err := agent.Minimal(haiku, prompt.Text(
+	summariser, err := agent.Worker(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
 	), nil,
 		tracing.WithTracing(nil),
@@ -103,7 +103,7 @@ func main() {
 	}
 
 	// Sentiment agent — plain, no tools or memory.
-	sentimentAnalyser, err := agent.Minimal(haiku, prompt.Text(
+	sentimentAnalyser, err := agent.Worker(haiku, prompt.Text(
 		"Analyse the sentiment of the provided article. "+
 			"Return a single word: Positive, Negative, or Neutral.",
 	), nil, tracing.WithTracing(nil))
