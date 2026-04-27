@@ -17,7 +17,10 @@ type Invoker = agent.Invoker
 // outputKey is the state key to write the agent response to.
 func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc {
 	return func(ctx context.Context, state State) (State, error) {
-		msg, _ := state[inputKey].(string)
+		msg, ok := state[inputKey].(string)
+		if !ok {
+			return nil, fmt.Errorf("AgentNode: state[%q] is missing or not a string", inputKey)
+		}
 		result, usage, err := a.Invoke(ctx, msg)
 		if err != nil {
 			return nil, err

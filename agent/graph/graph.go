@@ -174,6 +174,11 @@ func (g *Graph) validate() error {
 
 	// 2–5. Check all routes.
 	for node, r := range g.routes {
+		// Source node must be registered.
+		if _, ok := g.nodes[node]; !ok {
+			return &GraphValidationError{Message: fmt.Sprintf("route source node %q is not registered", node)}
+		}
+
 		// Conflict check: at most one field of the route union may be set.
 		if r.static != "" && r.conditional != nil {
 			return &GraphValidationError{Message: fmt.Sprintf("node %q has conflicting routing rules (static and conditional)", node)}

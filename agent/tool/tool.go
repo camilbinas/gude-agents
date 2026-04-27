@@ -201,7 +201,7 @@ type AsyncHandler[T any] func(ctx context.Context, input T)
 // The background goroutine gets a detached context (context.Background) so it
 // isn't cancelled when the HTTP request or agent invocation finishes.
 //
-// If errLogger is nil, handler panics are silently recovered.
+// If errLogger is nil, handler panics are logged to the default logger.
 func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger) Tool {
 	schema := GenerateSchema[T]()
 	return Tool{
@@ -353,6 +353,11 @@ func goTypeToSchema(t reflect.Type) map[string]any {
 		}
 	case reflect.Struct:
 		return buildObjectSchema(t)
+	case reflect.Map:
+		return map[string]any{
+			"type":                 "object",
+			"additionalProperties": goTypeToSchema(t.Elem()),
+		}
 	default:
 		return map[string]any{"type": "string"}
 	}
