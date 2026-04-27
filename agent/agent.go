@@ -15,33 +15,47 @@ var ErrTokenBudgetExceeded = fmt.Errorf("token budget exceeded")
 
 // Agent orchestrates LLM calls and tool execution.
 type Agent struct {
-	provider         Provider
-	toolsMu          sync.RWMutex // protects tools and toolSpecs for safe runtime registration (unlikely but possible)
-	tools            map[string]tool.Tool
-	toolSpecs        []tool.Spec
-	instructions     string
-	maxIterations    int
-	parallelTools    bool
+	name         string
+	provider     Provider
+	instructions string
+
+	// Tools
+	toolsMu   sync.RWMutex // protects tools and toolSpecs for runtime registration
+	tools     map[string]tool.Tool
+	toolSpecs []tool.Spec
+
+	// Inference
+	inferenceConfig *InferenceConfig // nil = use provider defaults
+	maxIterations   int
+	parallelTools   bool
+	tokenBudget     int // 0 = no budget
+
+	// Conversation
 	conversation     Conversation
 	conversationID   string
+	syncConversation bool          // call Wait() on conversation after each Save
+	normStrategy     *NormStrategy // nil = default (Merge); pointer distinguishes "not set" from "set to Merge"
+	normDisabled     bool
+
+	// RAG
+	retriever        Retriever        // nil = no RAG
+	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
+
+	// Pipeline
 	middlewares      []Middleware
 	inputGuardrails  []InputGuardrail
 	outputGuardrails []OutputGuardrail
-	tokenBudget      int              // 0 = no budget
-	retriever        Retriever        // nil = no RAG
-	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
-	thinkingCallback ThinkingCallback // nil = discard thinking chunks
-	syncConversation bool             // if true, call Wait() on conversation after each Save
-	normStrategy     *NormStrategy    // nil = use default (Merge); pointer to distinguish "not set" from "set to Merge"
-	normDisabled     bool             // true = skip normalization entirely
+
+	// Resilience
+	providerTimeout time.Duration // 0 = no timeout
+	retryMax        int           // 0 = no retry
+	retryBaseDelay  time.Duration
+
+	// Observability
 	tracingHook      TracingHook      // nil = no tracing
 	metricsHook      MetricsHook      // nil = no metrics
 	loggingHook      LoggingHook      // nil = no logging
-	name             string           // optional agent name for observability
-	providerTimeout  time.Duration    // 0 = no timeout (default)
-	retryMax         int              // 0 = no retry (default)
-	retryBaseDelay   time.Duration    // base delay for exponential backoff
-	inferenceConfig  *InferenceConfig // nil = no agent-level inference params
+	thinkingCallback ThinkingCallback // nil = discard thinking chunks
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
