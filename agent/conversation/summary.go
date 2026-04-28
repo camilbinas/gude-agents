@@ -174,11 +174,11 @@ func NewSummaryFunc(provider agent.Provider, systemPrompt string) SummaryFunc {
 		return [2]agent.Message{
 			{
 				Role:    agent.RoleUser,
-				Content: []agent.ContentBlock{agent.TextBlock{Text: "Here is a summary of our previous conversation: " + resp.Text}},
+				Content: []agent.ContentBlock{agent.TextBlock{Text: "[Automated summary of earlier messages in this conversation — not a new user message]\n\n" + resp.Text}},
 			},
 			{
 				Role:    agent.RoleAssistant,
-				Content: []agent.ContentBlock{agent.TextBlock{Text: "Understood. I will use this context to continue our conversation."}},
+				Content: []agent.ContentBlock{agent.TextBlock{Text: "OK"}},
 			},
 		}, nil
 	}
