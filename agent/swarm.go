@@ -410,7 +410,8 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 
 		// Persist conversation and active agent.
 		if s.conversation != nil {
-			if err := s.conversation.Save(ctx, convID, messages); err != nil {
+			saveCtx := WithTokenUsage(ctx, result.Usage)
+			if err := s.conversation.Save(saveCtx, convID, messages); err != nil {
 				if finishSwarmRun != nil {
 					finishSwarmRun(err, result)
 				}

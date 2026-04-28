@@ -246,7 +246,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 						hr.ConversationID = convID
 					}
 				}
-				a.saveConversation(ctx, convID, messages[ragOffset:], h)
+				a.saveConversation(ctx, convID, messages[ragOffset:], cumulative, h)
 				return cumulative, ErrHandoffRequested
 			}
 
@@ -285,7 +285,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
 		iterF.finish(0, true)
 
-		if err := a.saveConversation(ctx, convID, messages[ragOffset:], h); err != nil {
+		if err := a.saveConversation(ctx, convID, messages[ragOffset:], cumulative, h); err != nil {
 			return cumulative, err
 		}
 		return cumulative, nil
@@ -296,11 +296,14 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 }
 
 // saveConversation persists conversation history if configured.
-func (a *Agent) saveConversation(ctx context.Context, convID string, messages []Message, h *hooks) error {
+// It attaches cumulative token usage to the context so conversation strategies
+// can use actual provider-reported counts for compaction decisions.
+func (a *Agent) saveConversation(ctx context.Context, convID string, messages []Message, cumulative TokenUsage, h *hooks) error {
 	if a.conversation == nil {
 		return nil
 	}
-	saveCtx, cf := h.onConversationStart(ctx, "save", convID)
+	saveCtx := WithTokenUsage(ctx, cumulative)
+	saveCtx, cf := h.onConversationStart(saveCtx, "save", convID)
 	err := a.conversation.Save(saveCtx, convID, messages)
 	cf.finish(err, len(messages))
 	if err != nil {

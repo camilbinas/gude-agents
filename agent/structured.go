@@ -153,15 +153,12 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 
 	// Save conversation.
 	if a.conversation != nil {
-		saveCtx, cf := h.onConversationStart(ctx, "save", convID)
 		assistantMsg := Message{
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: rawText}},
 		}
-		err := a.conversation.Save(saveCtx, convID, append(messages, assistantMsg))
-		cf.finish(err, len(messages)+1)
-		if err != nil {
-			return zero, usage, fmt.Errorf("structured output: conversation save: %w", err)
+		if err := a.saveConversation(ctx, convID, append(messages, assistantMsg), usage, h); err != nil {
+			return zero, usage, fmt.Errorf("structured output: %w", err)
 		}
 	}
 

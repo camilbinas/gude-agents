@@ -89,6 +89,26 @@ func GetInferenceConfig(ctx context.Context) *InferenceConfig
 
 Retrieves the per-invocation `InferenceConfig` from a Go `context.Context`. Returns `nil` if none is attached.
 
+### Token Usage Context Helpers
+
+The agent loop attaches cumulative token usage to the context before calling `Conversation.Save`. This lets conversation strategies (like `TokenSummary`) use actual provider-reported token counts to decide when to trigger compaction.
+
+#### WithTokenUsage
+
+```go
+func WithTokenUsage(ctx context.Context, usage TokenUsage) context.Context
+```
+
+Attaches cumulative `TokenUsage` to a Go `context.Context`. Uses value semantics — mutations to the original struct after attachment don't affect the stored value.
+
+#### GetTokenUsage
+
+```go
+func GetTokenUsage(ctx context.Context) (TokenUsage, bool)
+```
+
+Retrieves the cumulative `TokenUsage` from a Go `context.Context`. Returns zero value and `false` if none is attached (e.g. when `Save` is called outside the agent loop).
+
 ## Per-Invocation Scoping
 
 Each call to `Invoke` or `InvokeStream` creates a fresh `InvocationContext` and attaches it to the Go context that flows through middleware and tool handlers. This means:

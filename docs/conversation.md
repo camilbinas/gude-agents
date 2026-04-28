@@ -204,6 +204,29 @@ func WithSummaryTimeout(d time.Duration) SummaryOption
 
 Sets a per-summarization timeout. Each background goroutine gets a context with this deadline. If the LLM call doesn't complete in time, the summarization is cancelled. Default: no timeout.
 
+### TokenSummary
+
+```go
+func NewTokenSummary(inner Conversation, tokenThreshold int, fn SummaryFunc, opts ...TokenSummaryOption) (*TokenSummary, error)
+```
+
+Like `Summary`, but triggers based on actual provider-reported input token count instead of message count. The agent loop attaches cumulative `TokenUsage` to the context passed to `Save` (via `agent.WithTokenUsage`), and `TokenSummary` reads it to decide when to summarize. When `Save` is called outside the agent loop (no token usage in context), summarization is not triggered.
+
+```go
+s, err := conversation.NewTokenSummary(store, 100_000,
+    conversation.DefaultSummaryFunc(provider),
+    conversation.WithTokenPreserveRecentMessages(3),
+    conversation.WithTokenTriggerThreshold(80),
+)
+```
+
+| Option | Description | Default |
+|---|---|---|
+| `WithTokenSummaryLogger(l)` | Logger for background summarization errors | nil |
+| `WithTokenPreserveRecentMessages(n)` | Turns to keep out of summarization | 0 |
+| `WithTokenTriggerThreshold(pct)` | Percentage of token threshold to trigger at | 80 |
+| `WithTokenSummaryTimeout(d)` | Per-summarization timeout | no timeout |
+
 ## Composable Middleware Pattern
 
 Strategies wrap each other like middleware. Each strategy takes an `inner Conversation` as its first argument, so you build a pipeline by nesting constructors:

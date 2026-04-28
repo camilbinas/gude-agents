@@ -102,6 +102,28 @@ func GetDocuments(ctx context.Context) []DocumentBlock {
 	return docs
 }
 
+// tokenUsageKey is the context key for cumulative token usage.
+type tokenUsageKey struct{}
+
+// WithTokenUsage attaches cumulative TokenUsage to the context. The agent loop
+// sets this before calling Conversation.Save so that conversation strategies
+// (e.g. token-aware summarization) can use actual provider-reported token counts
+// to decide when to trigger compaction.
+func WithTokenUsage(ctx context.Context, usage TokenUsage) context.Context {
+	return context.WithValue(ctx, tokenUsageKey{}, &usage)
+}
+
+// GetTokenUsage retrieves the cumulative TokenUsage from the context.
+// Returns zero value and false if none is attached (e.g. Save called outside
+// the agent loop).
+func GetTokenUsage(ctx context.Context) (TokenUsage, bool) {
+	u, ok := ctx.Value(tokenUsageKey{}).(*TokenUsage)
+	if !ok || u == nil {
+		return TokenUsage{}, false
+	}
+	return *u, true
+}
+
 // identifierKey is the context key for per-invocation scoping identity.
 type identifierKey struct{}
 

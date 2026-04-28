@@ -228,6 +228,48 @@ func TestWithIdentifier_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestGetTokenUsage_FalseWhenNoneAttached(t *testing.T) {
+	ctx := context.Background()
+
+	_, ok := GetTokenUsage(ctx)
+	if ok {
+		t.Fatal("expected ok=false when no token usage attached")
+	}
+}
+
+func TestWithTokenUsage_RoundTrip(t *testing.T) {
+	usage := TokenUsage{InputTokens: 1500, OutputTokens: 300}
+
+	ctx := WithTokenUsage(context.Background(), usage)
+	got, ok := GetTokenUsage(ctx)
+
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got.InputTokens != 1500 {
+		t.Errorf("InputTokens: expected 1500, got %d", got.InputTokens)
+	}
+	if got.OutputTokens != 300 {
+		t.Errorf("OutputTokens: expected 300, got %d", got.OutputTokens)
+	}
+}
+
+func TestWithTokenUsage_ValueSemantics(t *testing.T) {
+	usage := TokenUsage{InputTokens: 100, OutputTokens: 50}
+	ctx := WithTokenUsage(context.Background(), usage)
+
+	// Mutating the original should not affect what's in context.
+	usage.InputTokens = 9999
+
+	got, ok := GetTokenUsage(ctx)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got.InputTokens != 100 {
+		t.Errorf("expected 100 (value copy), got %d", got.InputTokens)
+	}
+}
+
 func TestGetIdentifier_EmptyWhenNoneAttached(t *testing.T) {
 	got := GetIdentifier(context.Background())
 	if got != "" {
