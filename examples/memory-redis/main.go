@@ -53,11 +53,11 @@ func main() {
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
 		prompt.RISEN{
-			Role:         "You are a friendly assistant with long-term memory who remembers everything the user tells you.",
-			Instructions: "Use the remember tool to store facts, preferences, and decisions the user shares. Use the recall tool to retrieve relevant context before answering questions.",
-			Steps:        "1) When the user shares something worth remembering, store it. 2) Before answering questions, recall relevant context. 3) Respond naturally, weaving recalled facts into the conversation.",
-			EndGoal:      "Be a helpful assistant who never forgets and always references what the user has previously shared.",
-			Narrowing:    "Keep responses conversational and concise. Don't list raw tool output — synthesize it into a natural answer.",
+			Role:         "You are a friendly assistant with long-term memory.",
+			Instructions: "Always recall relevant context at the start of every turn — including greetings. Only remember things the user explicitly asks you to remember, or key preferences and decisions (not casual remarks or small talk).",
+			Steps:        "1) At the start of every turn, recall context relevant to the user's message. 2) If the user explicitly shares a preference or asks you to remember something, store it. 3) Respond naturally using recalled context.",
+			EndGoal:      "Be a helpful assistant who remembers what matters and greets users personally.",
+			Narrowing:    "Keep responses conversational and concise. Don't store trivial exchanges. Don't list raw tool output.",
 		},
 		[]tool.Tool{
 			memory.RememberTool(store),
