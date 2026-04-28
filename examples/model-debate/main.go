@@ -11,7 +11,6 @@
 // stdout so you see everything in real time.
 //
 // Key concepts demonstrated:
-//   - agent.AgentAsTool  — wraps a child agent as a callable tool
 //   - Multi-provider setup (Anthropic + Gemini + Bedrock/Qwen3)
 //   - Conversation memory with windowed history
 //   - Structured prompts with prompt.Text
