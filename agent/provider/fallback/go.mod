@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/provider/fallback
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.27.2
+	github.com/camilbinas/gude-agents v0.28.0
 	github.com/stretchr/testify v1.11.1
 )
 
