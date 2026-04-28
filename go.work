@@ -7,6 +7,7 @@ use (
 	./agent/conversation/redis
 	./agent/conversation/s3
 	./agent/conversation/sqlite
+	./agent/eval
 	./agent/logging/debug
 	./agent/logging/slog
 	./agent/mcp
