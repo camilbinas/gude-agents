@@ -1,7 +1,7 @@
-// Example: Memory for long-term user knowledge.
+// Example: In-memory typed memory with remember, recall, and forget.
 //
-// The agent remembers facts and preferences across conversations using an
-// in-memory vector store backed by Titan Embed V2.
+// Demonstrates the simplest memory setup using the in-memory store.
+// Type "clear" to forget all memories for the current user.
 //
 // Run:
 //
@@ -14,6 +14,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
@@ -22,21 +23,37 @@ import (
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
+// Fact is a simple memory entry — just a text fact with a category.
+type Fact struct {
+	ID       string `json:"id" db:"id,pk"`
+	UserID   string `json:"user_id" db:"user_id,identifier"`
+	Text     string `json:"fact" db:"fact,content" description:"The fact, preference, or decision to remember" required:"true"`
+	Category string `json:"category" db:"category" description:"Optional category: preference, decision, context"`
+}
+
 func main() {
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
-	store := memory.NewInMemory(embedder)
+	store, err := memory.NewStore[Fact](embedder)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text("You are a helpful assistant with long-term memory. "+
-			"Use the remember tool to store important facts, preferences, and decisions the user shares. "+
-			"Use the recall tool to retrieve relevant context before answering questions."),
+		prompt.Text(
+			"You are a helpful assistant with long-term memory. "+
+				"Use remember to store facts, preferences, and decisions the user shares. "+
+				"Use recall to retrieve relevant context before answering questions. "+
+				"Use forget to remove a specific memory when the user asks you to forget something.",
+		),
 		[]tool.Tool{
-			memory.RememberTool(store),
-			memory.RecallTool(store),
+			memory.NewRememberTool(store),
+			memory.NewRecallTool(store),
+			memory.NewForgetTool(store),
 		},
 		debug.WithLogging(),
+		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "memory-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -44,9 +61,14 @@ func main() {
 
 	ctx := agent.WithIdentifier(context.Background(), "user-123")
 
-	fmt.Println("Chat agent with memory. Type 'quit' to exit.")
+	fmt.Println("Chat agent with in-memory memory. Type 'quit' to exit, 'clear' to forget all.")
 	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")
+	fmt.Println("Then: 'Forget that preference'")
 	fmt.Println()
 
-	utils.Chat(ctx, a)
+	utils.Chat(ctx, a, utils.ChatOptions{
+		ClearFunc: func(ctx context.Context) error {
+			return store.ForgetAll(ctx, "user-123")
+		},
+	})
 }

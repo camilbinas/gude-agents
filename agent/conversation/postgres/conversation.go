@@ -1,19 +1,8 @@
-// Package postgres provides a PostgreSQL-based memory driver for the gude-agents
-// framework. It stores each conversation as a row in a PostgreSQL table, with
-// messages serialized as JSONB.
+// Package postgres provides a PostgreSQL-based conversation driver for the
+// gude-agents framework. It stores each conversation as a row in a PostgreSQL
+// table, with messages serialized as JSONB.
 //
-// This is useful for production deployments where you already run PostgreSQL
-// and want durable, ACID-compliant conversation storage with full SQL
-// queryability. The JSONB column lets you use PostgreSQL JSON operators to
-// query into conversation history if needed.
-//
-// The driver uses github.com/jackc/pgx/v5, the standard pure-Go PostgreSQL
-// driver with native PostgreSQL type support.
-//
-// By default, the table must already exist. Use WithAutoMigrate to have the
-// driver create it automatically (useful for development).
-//
-// Expected table schema:
+// The table must be created by the caller. Expected schema:
 //
 //	CREATE TABLE conversations (
 //	    conversation_id TEXT PRIMARY KEY,
@@ -21,22 +10,25 @@
 //	    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 //	);
 //
+// Column names are configurable via WithColumns if your table uses different
+// names. The table name is configurable via WithTableName.
+//
 // Usage:
 //
 //	pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
 //	store, err := postgres.New(pool)
 //
-//	// Auto-create the table (development):
-//	store, err := postgres.New(pool, postgres.WithAutoMigrate())
-//
-// Run:
-//
-//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./postgres-memory
+//	// Map to an existing table with different column names:
+//	store, err := postgres.New(pool,
+//	    postgres.WithTableName("chat_history"),
+//	    postgres.WithColumns("id", "data", "modified_at"),
+//	)
 package postgres
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
@@ -52,45 +44,38 @@ var _ conversation.ConversationManager = (*PostgresConversation)(nil)
 // PostgreSQL database. Each conversation is stored as a row with its messages
 // serialized as JSONB.
 type PostgresConversation struct {
-	pool      *pgxpool.Pool
-	tableName string
+	pool *pgxpool.Pool
+	cfg  *pgConfig
 }
 
-// New creates a new PostgresMemory. The pool should be a connected pgxpool.Pool.
+// New creates a new PostgresConversation. The pool should be a connected pgxpool.Pool.
+// The table must already exist with the expected schema.
 //
-// By default, the table must already exist with the expected schema. Use
-// WithAutoMigrate to create it automatically.
-//
-// Returns an error if the pool is nil or (with WithAutoMigrate) the schema
-// cannot be initialized.
+// Returns an error if the pool is nil.
 func New(pool *pgxpool.Pool, opts ...Option) (*PostgresConversation, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("postgres conversation: pool is required")
 	}
 
-	cfg := &pgConfig{
-		tableName: "conversations",
-	}
+	cfg := defaultConfig()
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	if cfg.autoMigrate {
-		ddl := fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS %s (
-				conversation_id TEXT PRIMARY KEY,
-				messages        JSONB NOT NULL,
-				updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-			)
-		`, cfg.tableName)
-		if _, err := pool.Exec(context.Background(), ddl); err != nil {
-			return nil, fmt.Errorf("postgres conversation: create table: %w", err)
+	// Validate and sanitize identifiers for safe SQL interpolation.
+	for _, name := range []string{cfg.tableName, cfg.colID, cfg.colMessages, cfg.colUpdatedAt} {
+		if name == "" || strings.ContainsRune(name, 0) {
+			return nil, fmt.Errorf("postgres conversation: identifier %q is invalid", name)
 		}
 	}
+	cfg.tableName = pgx.Identifier{cfg.tableName}.Sanitize()
+	cfg.colID = pgx.Identifier{cfg.colID}.Sanitize()
+	cfg.colMessages = pgx.Identifier{cfg.colMessages}.Sanitize()
+	cfg.colUpdatedAt = pgx.Identifier{cfg.colUpdatedAt}.Sanitize()
 
 	return &PostgresConversation{
-		pool:      pool,
-		tableName: cfg.tableName,
+		pool: pool,
+		cfg:  cfg,
 	}, nil
 }
 
@@ -103,12 +88,17 @@ func (m *PostgresConversation) Save(ctx context.Context, conversationID string, 
 	}
 
 	query := fmt.Sprintf(`
-		INSERT INTO %s (conversation_id, messages, updated_at)
+		INSERT INTO %s (%s, %s, %s)
 		VALUES ($1, $2, NOW())
-		ON CONFLICT (conversation_id) DO UPDATE SET
-			messages   = EXCLUDED.messages,
-			updated_at = EXCLUDED.updated_at
-	`, m.tableName)
+		ON CONFLICT (%s) DO UPDATE SET
+			%s = EXCLUDED.%s,
+			%s = EXCLUDED.%s
+	`, m.cfg.tableName,
+		m.cfg.colID, m.cfg.colMessages, m.cfg.colUpdatedAt,
+		m.cfg.colID,
+		m.cfg.colMessages, m.cfg.colMessages,
+		m.cfg.colUpdatedAt, m.cfg.colUpdatedAt,
+	)
 
 	if _, err := m.pool.Exec(ctx, query, conversationID, data); err != nil {
 		return fmt.Errorf("postgres conversation: save: %w", err)
@@ -119,7 +109,8 @@ func (m *PostgresConversation) Save(ctx context.Context, conversationID string, 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the conversation does not exist.
 func (m *PostgresConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
-	query := fmt.Sprintf(`SELECT messages FROM %s WHERE conversation_id = $1`, m.tableName)
+	query := fmt.Sprintf(`SELECT %s FROM %s WHERE %s = $1`,
+		m.cfg.colMessages, m.cfg.tableName, m.cfg.colID)
 
 	var data []byte
 	err := m.pool.QueryRow(ctx, query, conversationID).Scan(&data)
@@ -140,7 +131,8 @@ func (m *PostgresConversation) Load(ctx context.Context, conversationID string) 
 // List returns all conversation IDs in the database, ordered by most recently
 // updated first.
 func (m *PostgresConversation) List(ctx context.Context) ([]string, error) {
-	query := fmt.Sprintf(`SELECT conversation_id FROM %s ORDER BY updated_at DESC`, m.tableName)
+	query := fmt.Sprintf(`SELECT %s FROM %s ORDER BY %s DESC`,
+		m.cfg.colID, m.cfg.tableName, m.cfg.colUpdatedAt)
 
 	rows, err := m.pool.Query(ctx, query)
 	if err != nil {
@@ -165,7 +157,8 @@ func (m *PostgresConversation) List(ctx context.Context) ([]string, error) {
 // Delete removes a conversation by ID. Returns nil if the conversation
 // does not exist.
 func (m *PostgresConversation) Delete(ctx context.Context, conversationID string) error {
-	query := fmt.Sprintf(`DELETE FROM %s WHERE conversation_id = $1`, m.tableName)
+	query := fmt.Sprintf(`DELETE FROM %s WHERE %s = $1`,
+		m.cfg.tableName, m.cfg.colID)
 
 	if _, err := m.pool.Exec(ctx, query, conversationID); err != nil {
 		return fmt.Errorf("postgres conversation: delete: %w", err)

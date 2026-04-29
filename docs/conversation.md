@@ -405,25 +405,27 @@ The database and table are created automatically. WAL journal mode is enabled fo
 
 Import: `github.com/camilbinas/gude-agents/agent/conversation/postgres`
 
-Stores conversation history as rows in a PostgreSQL table, with messages stored as JSONB. Uses [pgx/v5](https://github.com/jackc/pgx), the standard pure-Go PostgreSQL driver.
+Stores conversation history as rows in a PostgreSQL table, with messages stored as JSONB. Uses [pgx/v5](https://github.com/jackc/pgx), the standard pure-Go PostgreSQL driver. The table must be created by the caller.
 
 ```go
 pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
-mem, err := pgmemory.New(pool)
-
-// Auto-create the table (development):
-mem, err := pgmemory.New(pool, pgmemory.WithAutoMigrate())
-
-// With options:
 mem, err := pgmemory.New(pool,
-    pgmemory.WithTableName("agent_conversations"),
-    pgmemory.WithAutoMigrate(),
+    pgmemory.WithTableName("chat_history"),
+    pgmemory.WithColumns("id", "data", "modified_at"),
 )
 ```
 
-Options: `WithTableName(name string)` (default: `"conversations"`), `WithAutoMigrate()` (off by default).
+Expected schema (column names configurable via `WithColumns`):
 
-By default, the table must already exist with the expected schema (see package doc). Use `WithAutoMigrate` for development or when the DB user has CREATE TABLE permissions. PostgreSQL's MVCC provides full ACID transactions and handles concurrent access from multiple processes. `List` returns conversations ordered by most recently updated first.
+```sql
+CREATE TABLE conversations (
+    conversation_id TEXT PRIMARY KEY,
+    messages        JSONB NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Options: `WithTableName(name string)` (default: `"conversations"`), `WithColumns(id, messages, updatedAt string)` (defaults: `"conversation_id"`, `"messages"`, `"updated_at"`).
 
 ### Disk — agent/conversation/disk
 

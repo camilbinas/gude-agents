@@ -1,13 +1,37 @@
-// Example: PostgreSQL-backed memory for persistent long-term knowledge.
+// Example: Typed PostgreSQL memory with struct-to-column mapping as agent tools.
 //
-// Memory backed by PostgreSQL with pgvector for HNSW-indexed semantic search.
+// Demonstrates using TypedStore with Remember/Recall tools so the LLM can
+// store and retrieve structured episodic memories with filtered recall.
 //
 // Prerequisites:
-//   - PostgreSQL with the pgvector extension installed
+//   - PostgreSQL with pgvector extension
+//   - Table created (see DDL below)
+//
+// DDL:
+//
+//	CREATE EXTENSION IF NOT EXISTS vector;
+//
+//	CREATE TABLE episodic_memories (
+//	    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+//	    user_id     TEXT NOT NULL,
+//	    title       TEXT NOT NULL,
+//	    event_type  TEXT NOT NULL,
+//	    context     TEXT,
+//	    actions     JSONB,
+//	    outcome     TEXT,
+//	    importance  DOUBLE PRECISION NOT NULL DEFAULT 0,
+//	    observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+//	    embedding   vector(1024) NOT NULL
+//	);
+//
+//	CREATE INDEX episodic_memories_user_idx ON episodic_memories (user_id);
+//	CREATE INDEX episodic_memories_embedding_idx ON episodic_memories
+//	    USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 200);
 //
 // Run:
 //
-//	POSTGRES_URL="postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" go run ./memory-postgres
+//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./memory-typed-postgres
+
 package main
 
 import (
@@ -15,12 +39,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/memory"
-	memorypostgres "github.com/camilbinas/gude-agents/agent/memory/postgres"
+	"github.com/camilbinas/gude-agents/agent/memory/postgres"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -29,12 +53,25 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// EpisodicMemory represents a single observed event.
+type EpisodicMemory struct {
+	ID         string    `json:"id" db:"id,pk"`
+	UserID     string    `json:"user_id" db:"user_id,identifier"`
+	Title      string    `json:"title" db:"title,content" description:"Short title summarizing the event" required:"true"`
+	EventType  string    `json:"event_type" db:"event_type" description:"Category: incident, recovery, deployment, observation" required:"true"`
+	Context    string    `json:"context" db:"context" description:"Detailed description of what happened" required:"true"`
+	Actions    []string  `json:"actions" db:"actions,jsonb" description:"Actions taken"`
+	Outcome    string    `json:"outcome" db:"outcome" description:"Result of the event"`
+	Importance float64   `json:"importance" db:"importance" description:"Importance score 0.0-1.0" required:"true"`
+	ObservedAt time.Time `json:"observed_at" db:"observed_at,noinput"`
+}
+
 func main() {
 	godotenv.Load() //nolint
 
 	pgURL := os.Getenv("POSTGRES_URL")
 	if pgURL == "" {
-		log.Fatal("POSTGRES_URL is required")
+		log.Fatal("POSTGRES_URL environment variable is required")
 	}
 
 	ctx := context.Background()
@@ -43,46 +80,52 @@ func main() {
 	if err != nil {
 		log.Fatalf("postgres connect: %v", err)
 	}
+	defer pool.Close()
 
-	// Titan Embed V2 outputs 1024-dimensional vectors.
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
-	// Create a PostgreSQL memory store (1024-dim for Titan Embed V2).
-	store, err := memorypostgres.New(pool, embedder, 1024,
-		memorypostgres.WithAutoMigrate(),
-		memorypostgres.WithDropExisting(),
+	mem, err := postgres.NewStore[EpisodicMemory](pool, embedder, 1024,
+		postgres.WithTableName("episodic_memories"),
 	)
 	if err != nil {
-		log.Fatalf("postgres memory store: %v", err)
+		log.Fatalf("typed store: %v", err)
 	}
-	defer store.Close()
 
-	// Create the agent with memory tools.
+	// Create tools — recall defaults to filtering by importance and sorting by time.
+	rememberTool := postgres.NewRememberTool(mem,
+		postgres.WithToolName("remember_event"),
+		postgres.WithToolDescription("Store an observed event as an episodic memory."),
+	)
+	recallTool := postgres.NewRecallTool(mem,
+		postgres.WithToolName("recall_events"),
+		postgres.WithToolDescription("Recall relevant past events by semantic similarity, sorted by most recent."),
+		postgres.WithFieldGT("importance", 0.3),
+		postgres.WithOrderBy("observed_at", postgres.Desc),
+	)
+
+	store := conversation.NewWindow(conversation.NewInMemory(), 20)
+
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
-		prompt.RISEN{
-			Role:         "You are a friendly assistant with long-term memory who remembers everything the user tells you.",
-			Instructions: "Use the remember tool to store facts, preferences, and decisions the user shares. Use the recall tool to retrieve relevant context before answering questions.",
-			Steps:        "1) When the user shares something worth remembering, store it. 2) Before answering questions, recall relevant context. 3) Respond naturally, weaving recalled facts into the conversation.",
-			EndGoal:      "Be a helpful assistant who never forgets and always references what the user has previously shared.",
-			Narrowing:    "Keep responses conversational and concise. Don't list raw tool output — synthesize it into a natural answer.",
-		},
-		[]tool.Tool{
-			memory.RememberTool(store),
-			memory.RecallTool(store),
-		},
+		prompt.Text(
+			"You are a monitoring assistant that tracks system events. "+
+				"Use remember_event to store incidents, recoveries, and deployments. "+
+				"Use recall_events to retrieve relevant past events when asked. "+
+				"Always recall before answering questions about past events.",
+		),
+		[]tool.Tool{rememberTool, recallTool},
+		agent.WithConversation(store, "monitoring-session"),
 		debug.WithLogging(),
-		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "postgres-memory-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx = agent.WithIdentifier(ctx, "user-123")
+	ctx = agent.WithIdentifier(ctx, "user_1")
 
 	fmt.Println()
-	fmt.Println("Chat agent with PostgreSQL memory. Type 'quit' to exit.")
-	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")
+	fmt.Println("Monitoring assistant with typed episodic memory.")
+	fmt.Println("Try: 'example.com went down with HTTP 503' then 'what incidents happened recently?'")
 	fmt.Println()
 
 	utils.Chat(ctx, a)

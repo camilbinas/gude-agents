@@ -1,6 +1,14 @@
 // Run:
 //
 //	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./conversation-postgres
+//
+// DDL (create before running):
+//
+//	CREATE TABLE agent_conversations (
+//	    conversation_id TEXT PRIMARY KEY,
+//	    messages        JSONB NOT NULL,
+//	    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+//	);
 
 package main
 
@@ -38,7 +46,6 @@ func main() {
 
 	store, err := postgres.New(pool,
 		postgres.WithTableName("agent_conversations"),
-		postgres.WithAutoMigrate(),
 	)
 	if err != nil {
 		log.Fatalf("postgres store: %v", err)

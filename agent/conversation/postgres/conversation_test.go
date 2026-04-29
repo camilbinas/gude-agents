@@ -9,6 +9,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/testutil"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"pgregory.net/rapid"
 )
@@ -41,7 +42,19 @@ func newTestMemory(t *testing.T) *PostgresConversation {
 	pool := skipIfNoPostgres(t)
 	table := uniqueTable(t)
 
-	m, err := New(pool, WithTableName(table), WithAutoMigrate())
+	// Create the table manually (no auto-migrate).
+	ddl := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			conversation_id TEXT PRIMARY KEY,
+			messages        JSONB NOT NULL,
+			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`, table)
+	if _, err := pool.Exec(context.Background(), ddl); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	m, err := New(pool, WithTableName(table))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -72,7 +85,19 @@ func TestNew_CustomTableName(t *testing.T) {
 	pool := skipIfNoPostgres(t)
 	table := fmt.Sprintf("custom_%d", os.Getpid())
 
-	m, err := New(pool, WithTableName(table), WithAutoMigrate())
+	// Create the table manually.
+	ddl := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			conversation_id TEXT PRIMARY KEY,
+			messages        JSONB NOT NULL,
+			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`, table)
+	if _, err := pool.Exec(context.Background(), ddl); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	m, err := New(pool, WithTableName(table))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -81,8 +106,9 @@ func TestNew_CustomTableName(t *testing.T) {
 		m.Close()
 	}()
 
-	if m.tableName != table {
-		t.Fatalf("expected table name %q, got %q", table, m.tableName)
+	wantTable := pgx.Identifier{table}.Sanitize()
+	if m.cfg.tableName != wantTable {
+		t.Fatalf("expected table name %q, got %q", wantTable, m.cfg.tableName)
 	}
 
 	ctx := context.Background()

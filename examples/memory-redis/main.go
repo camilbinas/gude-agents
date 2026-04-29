@@ -1,13 +1,14 @@
-// Example: Redis-backed memory for persistent long-term knowledge.
+// Example: Typed Redis memory with struct-to-field mapping as agent tools.
 //
-// Memory backed by Redis Stack (RediSearch) with HNSW-indexed semantic search.
+// Demonstrates using Redis TypedStore with Remember/Recall tools so the LLM
+// can store and retrieve structured user preferences with filtered recall.
 //
 // Prerequisites:
 //   - Redis Stack running locally (NOT standard Redis — requires RediSearch)
 //
 // Run:
 //
-//	go run ./memory-redis
+//	go run ./memory-typed-redis
 package main
 
 import (
@@ -15,11 +16,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/memory"
 	memoryredis "github.com/camilbinas/gude-agents/agent/memory/redis"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -27,6 +28,18 @@ import (
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
+
+// Preference represents a user preference or setting.
+// Same struct works for both Redis and Postgres — only the store differs.
+type Preference struct {
+	ID       string    `json:"id" db:"id,pk"`
+	UserID   string    `json:"user_id" db:"user_id,identifier"`
+	Title    string    `json:"title" db:"title,content" description:"Short description of the preference" required:"true"`
+	Category string    `json:"category" db:"category" description:"Category: appearance, workflow, communication, tools" required:"true"`
+	Value    string    `json:"value" db:"value" description:"The preference value or setting" required:"true"`
+	Priority float64   `json:"priority" db:"priority,numeric" description:"How important this preference is 0.0-1.0" required:"true"`
+	SavedAt  time.Time `json:"saved_at" db:"saved_at,noinput"`
+}
 
 func main() {
 	godotenv.Load() //nolint
@@ -38,43 +51,51 @@ func main() {
 
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
-	// Create a Redis memory store (1024-dim for Titan Embed V2).
-	store, err := memoryredis.New(
+	mem, err := memoryredis.NewStore[Preference](
 		memoryredis.Options{Addr: addr},
-		embedder,
-		1024,
+		embedder, 1024,
+		memoryredis.WithIndexName("preferences_idx"),
+		memoryredis.WithKeyPrefix("pref:"),
 	)
 	if err != nil {
-		log.Fatalf("redis memory store: %v", err)
+		log.Fatalf("redis typed store: %v", err)
 	}
-	defer store.Close()
+	defer mem.Close()
 
-	// Create the agent with memory tools.
+	// Create tools — recall filters by priority.
+	rememberTool := memoryredis.NewRememberTool(mem,
+		memoryredis.WithToolName("save_preference"),
+		memoryredis.WithToolDescription("Store a user preference or setting for later recall."),
+	)
+	recallTool := memoryredis.NewRecallTool(mem,
+		memoryredis.WithToolName("get_preferences"),
+		memoryredis.WithToolDescription("Retrieve relevant user preferences by semantic similarity."),
+		memoryredis.WithFieldGT("priority", 0.2),
+	)
+
+	store := conversation.NewWindow(conversation.NewInMemory(), 20)
+
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
-		prompt.RISEN{
-			Role:         "You are a friendly assistant with long-term memory.",
-			Instructions: "Always recall relevant context at the start of every turn — including greetings. Only remember things the user explicitly asks you to remember, or key preferences and decisions (not casual remarks or small talk).",
-			Steps:        "1) At the start of every turn, recall context relevant to the user's message. 2) If the user explicitly shares a preference or asks you to remember something, store it. 3) Respond naturally using recalled context.",
-			EndGoal:      "Be a helpful assistant who remembers what matters and greets users personally.",
-			Narrowing:    "Keep responses conversational and concise. Don't store trivial exchanges. Don't list raw tool output.",
-		},
-		[]tool.Tool{
-			memory.RememberTool(store),
-			memory.RecallTool(store),
-		},
+		prompt.Text(
+			"You are a personal assistant that remembers user preferences. "+
+				"Use save_preference to store preferences the user shares (appearance, workflow, tools, communication style). "+
+				"Use get_preferences to retrieve relevant preferences when answering questions. "+
+				"Always check preferences before making suggestions.",
+		),
+		[]tool.Tool{rememberTool, recallTool},
+		agent.WithConversation(store, "preferences-session"),
 		debug.WithLogging(),
-		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "redis-memory-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := agent.WithIdentifier(context.Background(), "user-123")
+	ctx := agent.WithIdentifier(context.Background(), "user_1")
 
 	fmt.Println()
-	fmt.Println("Chat agent with Redis memory. Type 'quit' to exit.")
-	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")
+	fmt.Println("Personal assistant with typed Redis preference memory.")
+	fmt.Println("Try: 'I prefer dark mode and vim keybindings' then 'What are my editor preferences?'")
 	fmt.Println()
 
 	utils.Chat(ctx, a)

@@ -2,95 +2,441 @@ package memory
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// vsEntry pairs a document with its embedding vector.
-type vsEntry struct {
-	doc       agent.Document
+// Store is an in-memory memory store that maps Go struct fields using `db`
+// struct tags. It uses brute-force cosine similarity for vector search.
+// Safe for concurrent use. Useful for development, testing, and examples.
+type Store[T any] struct {
+	mu       sync.RWMutex
+	entries  map[string][]memEntry[T] // keyed by identifier
+	embedder agent.Embedder
+	schema   *memSchema
+}
+
+type memEntry[T any] struct {
+	id        string
+	value     T
 	embedding []float64
 }
 
-// InMemoryStore implements MemoryStore using an in-memory map partitioned
-// by identifier. Each identifier gets its own slice of entries. Search uses
-// brute-force cosine similarity. Safe for concurrent use.
-type InMemoryStore struct {
-	mu      sync.RWMutex
-	entries map[string][]vsEntry // keyed by identifier
+type memSchema struct {
+	pkIdx      int
+	identIdx   int
+	contentIdx int
 }
 
-// NewInMemoryStore returns an empty InMemoryStore.
-func NewInMemoryStore() *InMemoryStore {
-	return &InMemoryStore{
-		entries: make(map[string][]vsEntry),
+// NewStore creates an in-memory Store for the given struct type T.
+// It parses `db` struct tags to identify the pk, identifier, and content fields.
+func NewStore[T any](embedder agent.Embedder) (*Store[T], error) {
+	if embedder == nil {
+		return nil, errors.New("memory: embedder is required")
 	}
+	schema, err := parseMemSchema[T]()
+	if err != nil {
+		return nil, err
+	}
+	return &Store[T]{
+		entries:  make(map[string][]memEntry[T]),
+		embedder: embedder,
+		schema:   schema,
+	}, nil
 }
 
-// Add stores documents and their embeddings scoped to the given identifier.
-// Returns an error if identifier is empty or if docs and embeddings have
-// different lengths.
-func (s *InMemoryStore) Add(ctx context.Context, identifier string, docs []agent.Document, embeddings [][]float64) error {
+// Remember stores a value for the given identifier.
+func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) error {
 	if identifier == "" {
-		return fmt.Errorf("memory: identifier must not be empty")
+		return errors.New("memory: identifier must not be empty")
 	}
-	if len(docs) != len(embeddings) {
-		return fmt.Errorf("memory: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
+	setMemIdentifier(&value, s.schema, identifier)
+
+	content := s.extractContent(value)
+	if content == "" {
+		return errors.New("memory: content field is empty")
+	}
+
+	embedding, err := s.embedder.Embed(ctx, content)
+	if err != nil {
+		return fmt.Errorf("memory: embed: %w", err)
+	}
+
+	id := s.extractPK(value)
+	if id == "" {
+		id = randomID()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries[identifier] = append(s.entries[identifier], memEntry[T]{
+		id: id, value: value, embedding: embedding,
+	})
+	return nil
+}
+
+// Recall retrieves values by semantic similarity to the query.
+func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int) ([]Entry[T], error) {
+	if identifier == "" {
+		return nil, errors.New("memory: identifier must not be empty")
+	}
+	if limit < 1 {
+		return nil, errors.New("memory: limit must be at least 1")
+	}
+
+	embedding, err := s.embedder.Embed(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("memory: embed query: %w", err)
+	}
+
+	s.mu.RLock()
+	bucket := s.entries[identifier]
+	s.mu.RUnlock()
+
+	if len(bucket) == 0 {
+		return []Entry[T]{}, nil
+	}
+
+	type scored struct {
+		entry memEntry[T]
+		score float64
+	}
+	results := make([]scored, len(bucket))
+	for i, e := range bucket {
+		results[i] = scored{entry: e, score: cosineSimilarity(embedding, e.embedding)}
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+	if limit > len(results) {
+		limit = len(results)
+	}
+
+	entries := make([]Entry[T], limit)
+	for i := 0; i < limit; i++ {
+		entries[i] = Entry[T]{Value: results[i].entry.value, Score: results[i].score}
+	}
+	return entries, nil
+}
+
+// ForgetAll removes all entries for the given identifier.
+func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
+	if identifier == "" {
+		return errors.New("memory: identifier must not be empty")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, doc := range docs {
-		s.entries[identifier] = append(s.entries[identifier], vsEntry{doc: doc, embedding: embeddings[i]})
+	delete(s.entries, identifier)
+	return nil
+}
+
+// Forget removes a single entry by ID.
+func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
+	if identifier == "" {
+		return errors.New("memory: identifier must not be empty")
+	}
+	if id == "" {
+		return errors.New("memory: id must not be empty")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bucket := s.entries[identifier]
+	for i, e := range bucket {
+		if e.id == id {
+			s.entries[identifier] = append(bucket[:i], bucket[i+1:]...)
+			return nil
+		}
 	}
 	return nil
 }
 
-// Search returns the top-K documents for the given identifier by cosine
-// similarity to queryEmbedding. Results are ordered by descending score.
-// Returns a non-nil empty slice when no documents match the identifier.
-// Returns an error if identifier is empty or topK < 1.
-func (s *InMemoryStore) Search(ctx context.Context, identifier string, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
-	if identifier == "" {
-		return nil, fmt.Errorf("memory: identifier must not be empty")
-	}
-	if topK < 1 {
-		return nil, fmt.Errorf("memory: topK must be >= 1, got %d", topK)
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// --- Tools ---
 
-	bucket := s.entries[identifier]
-	if len(bucket) == 0 {
-		return []agent.ScoredDocument{}, nil
-	}
+// ToolOption configures tool metadata.
+type ToolOption func(*toolCfg)
+type toolCfg struct{ name, description string }
 
-	scored := make([]agent.ScoredDocument, len(bucket))
-	for i, e := range bucket {
-		scored[i] = agent.ScoredDocument{
-			Document: e.doc,
-			Score:    cosineSimilarity(queryEmbedding, e.embedding),
+// WithToolName sets the tool name.
+func WithToolName(name string) ToolOption {
+	return func(c *toolCfg) {
+		if name != "" {
+			c.name = name
 		}
 	}
-
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].Score > scored[j].Score
-	})
-
-	if topK > len(scored) {
-		topK = len(scored)
-	}
-	return scored[:topK], nil
 }
 
-// cosineSimilarity computes dot(a,b) / (norm(a) * norm(b)).
+// WithToolDescription sets the tool description.
+func WithToolDescription(desc string) ToolOption {
+	return func(c *toolCfg) {
+		if desc != "" {
+			c.description = desc
+		}
+	}
+}
+
+// NewRememberTool creates a tool that stores values into an in-memory Store.
+func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
+	cfg := &toolCfg{name: "remember", description: "Store a memory entry for later recall."}
+	for _, o := range opts {
+		o(cfg)
+	}
+	schema := generateMemSchema[T]()
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			id := agent.GetIdentifier(ctx)
+			if id == "" {
+				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+			}
+			var value T
+			if err := json.Unmarshal(input, &value); err != nil {
+				return "", fmt.Errorf("memory: unmarshal: %w", err)
+			}
+			return "Remembered.", store.Remember(ctx, id, value)
+		},
+	)
+}
+
+// NewRecallTool creates a tool that retrieves values from an in-memory Store.
+func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
+	cfg := &toolCfg{name: "recall", description: "Retrieve relevant memory entries by semantic similarity."}
+	for _, o := range opts {
+		o(cfg)
+	}
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string", "description": "A natural-language query describing what to recall."},
+			"limit": map[string]any{"type": "integer", "description": "Maximum number of results. Defaults to 5."},
+		},
+		"required": []any{"query"},
+	}
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			id := agent.GetIdentifier(ctx)
+			if id == "" {
+				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+			}
+			var params struct {
+				Query string `json:"query"`
+				Limit int    `json:"limit"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+			if params.Limit == 0 {
+				params.Limit = 5
+			}
+			results, err := store.Recall(ctx, id, params.Query, params.Limit)
+			if err != nil {
+				return "", err
+			}
+			if len(results) == 0 {
+				return "No relevant memories found.", nil
+			}
+			var b strings.Builder
+			for i, r := range results {
+				if i > 0 {
+					b.WriteString("\n")
+				}
+				data, _ := json.Marshal(r.Value)
+				fmt.Fprintf(&b, "- %s\n  Score: %.4f", string(data), r.Score)
+			}
+			return b.String(), nil
+		},
+	)
+}
+
+// NewForgetTool creates a tool that removes a single entry by ID.
+func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
+	cfg := &toolCfg{name: "forget", description: "Remove a specific memory entry by its ID."}
+	for _, o := range opts {
+		o(cfg)
+	}
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string", "description": "The ID of the entry to forget."},
+		},
+		"required": []any{"id"},
+	}
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			identifier := agent.GetIdentifier(ctx)
+			if identifier == "" {
+				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+			}
+			var params struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+			return "Forgotten.", store.Forget(ctx, identifier, params.ID)
+		},
+	)
+}
+
+// --- Internal helpers ---
+
+func parseMemSchema[T any]() (*memSchema, error) {
+	var zero T
+	t := reflect.TypeOf(zero)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("memory: T must be a struct, got %s", t.Kind())
+	}
+	schema := &memSchema{pkIdx: -1, identIdx: -1, contentIdx: -1}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		tag := field.Tag.Get("db")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		parts := strings.Split(tag, ",")
+		for _, p := range parts[1:] {
+			switch strings.TrimSpace(p) {
+			case "pk":
+				schema.pkIdx = i
+			case "identifier":
+				schema.identIdx = i
+			case "content":
+				schema.contentIdx = i
+			}
+		}
+	}
+	if schema.identIdx == -1 {
+		return nil, errors.New("memory: struct must have a field with db:\"...,identifier\" tag")
+	}
+	if schema.contentIdx == -1 {
+		return nil, errors.New("memory: struct must have a field with db:\"...,content\" tag")
+	}
+	return schema, nil
+}
+
+func (s *Store[T]) extractContent(value T) string {
+	v := reflect.ValueOf(value)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return fmt.Sprintf("%v", v.Field(s.schema.contentIdx).Interface())
+}
+
+func (s *Store[T]) extractPK(value T) string {
+	if s.schema.pkIdx < 0 {
+		return ""
+	}
+	v := reflect.ValueOf(value)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	pk := fmt.Sprintf("%v", v.Field(s.schema.pkIdx).Interface())
+	if pk == "" {
+		return ""
+	}
+	return pk
+}
+
+func setMemIdentifier[T any](value *T, schema *memSchema, id string) {
+	v := reflect.ValueOf(value).Elem()
+	field := v.Field(schema.identIdx)
+	if field.CanSet() && field.Kind() == reflect.String {
+		field.SetString(id)
+	}
+}
+
+func generateMemSchema[T any]() map[string]any {
+	var zero T
+	t := reflect.TypeOf(zero)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	properties := make(map[string]any)
+	var required []string
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		dbTag := field.Tag.Get("db")
+		if dbTag == "" || dbTag == "-" {
+			continue
+		}
+		parts := strings.Split(dbTag, ",")
+		skip := false
+		for _, p := range parts[1:] {
+			switch strings.TrimSpace(p) {
+			case "pk", "identifier", "noinput":
+				skip = true
+			}
+		}
+		if skip {
+			continue
+		}
+		name := field.Name
+		if jsonTag := field.Tag.Get("json"); jsonTag != "" {
+			jp := strings.Split(jsonTag, ",")
+			if jp[0] == "-" {
+				continue
+			}
+			if jp[0] != "" {
+				name = jp[0]
+			}
+		}
+		prop := map[string]any{"type": goTypeStr(field.Type)}
+		if desc := field.Tag.Get("description"); desc != "" {
+			prop["description"] = desc
+		}
+		if field.Tag.Get("required") == "true" {
+			required = append(required, name)
+		}
+		properties[name] = prop
+	}
+	schema := map[string]any{"type": "object", "properties": properties}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+func goTypeStr(t reflect.Type) string {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "string"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "integer"
+	case reflect.Float32, reflect.Float64:
+		return "number"
+	case reflect.Bool:
+		return "boolean"
+	default:
+		return "string"
+	}
+}
+
 func cosineSimilarity(a, b []float64) float64 {
 	n := len(a)
 	if n != len(b) {
-		return 0.0
+		return 0
 	}
 	var dot, normA, normB float64
 	for i := 0; i < n; i++ {
@@ -101,39 +447,13 @@ func cosineSimilarity(a, b []float64) float64 {
 	magA := math.Sqrt(normA)
 	magB := math.Sqrt(normB)
 	if magA == 0 || magB == 0 {
-		return 0.0
+		return 0
 	}
 	return dot / (magA * magB)
 }
 
-// InMemory is an in-memory Memory backed by an InMemoryStore and Adapter.
-// It provides the same public API as before but delegates all storage and
-// similarity logic to the InMemoryStore.
-type InMemory struct {
-	adapter *Adapter
-}
-
-// NewInMemory creates a new in-memory Store. The embedder is used to compute
-// embedding vectors for Remember and Recall operations.
-func NewInMemory(embedder agent.Embedder) *InMemory {
-	store := NewInMemoryStore()
-	adapter := NewAdapter(store, embedder)
-	return &InMemory{
-		adapter: adapter,
-	}
-}
-
-// Remember stores a fact for the given identifier. Metadata is optional.
-// Returns an error if identifier or fact is empty.
-func (s *InMemory) Remember(ctx context.Context, identifier, fact string, metadata map[string]string) error {
-	return s.adapter.Remember(ctx, identifier, fact, metadata)
-}
-
-// Recall retrieves the top entries for the given identifier by semantic
-// similarity to the query. Returns at most limit results, ordered by
-// descending score.
-// Returns an error if identifier is empty or limit < 1.
-// Returns an empty non-nil slice (not nil) if no entries exist for the identifier.
-func (s *InMemory) Recall(ctx context.Context, identifier, query string, limit int) ([]Entry, error) {
-	return s.adapter.Recall(ctx, identifier, query, limit)
+func randomID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
