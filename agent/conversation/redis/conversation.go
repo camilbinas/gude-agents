@@ -12,60 +12,67 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// Compile-time check: RedisMemory implements agent.Conversation.
-var _ agent.Conversation = (*RedisConversation)(nil)
+// Compile-time interface checks.
+var _ agent.Conversation = (*Conversation)(nil)
+var _ conversation.ConversationManager = (*Conversation)(nil)
 
-// Compile-time check: RedisMemory implements conversation.ConversationManager.
-var _ conversation.ConversationManager = (*RedisConversation)(nil)
+// Option configures a Conversation instance.
+type Option func(*config)
 
-// RedisConversationOption configures a RedisMemory instance.
-type RedisConversationOption func(*RedisConversation)
+type config struct {
+	ttl       time.Duration
+	keyPrefix string
+}
 
 // WithTTL sets the TTL for conversation keys. 0 means no expiration.
-func WithTTL(d time.Duration) RedisConversationOption {
-	return func(m *RedisConversation) {
-		m.ttl = d
+func WithTTL(d time.Duration) Option {
+	return func(c *config) {
+		c.ttl = d
 	}
 }
 
 // WithKeyPrefix sets the key prefix. Default: "gude:"
-func WithKeyPrefix(prefix string) RedisConversationOption {
-	return func(m *RedisConversation) {
-		m.keyPrefix = prefix
+func WithKeyPrefix(prefix string) Option {
+	return func(c *config) {
+		if prefix != "" {
+			c.keyPrefix = prefix
+		}
 	}
 }
 
-// RedisConversation implements agent.Conversation using Redis.
-type RedisConversation struct {
+// Conversation implements agent.Conversation using Redis.
+type Conversation struct {
 	client    *goredis.Client
 	ttl       time.Duration
 	keyPrefix string
 }
 
-// New creates a new RedisMemory. Pings Redis to verify connectivity.
-func New(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error) {
-	client := newClient(opts)
-
-	m := &RedisConversation{
-		client:    client,
+// New creates a new Redis conversation store. Pings Redis to verify connectivity.
+func New(opts Options, mopts ...Option) (*Conversation, error) {
+	cfg := &config{
 		ttl:       0,
 		keyPrefix: "gude:",
 	}
-
 	for _, o := range mopts {
-		o(m)
+		o(cfg)
 	}
+
+	client := newClient(opts)
 
 	if err := client.Ping(context.Background()).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("redis conversation: ping: %w", err)
 	}
 
-	return m, nil
+	return &Conversation{
+		client:    client,
+		ttl:       cfg.ttl,
+		keyPrefix: cfg.keyPrefix,
+	}, nil
 }
 
 // Save persists messages for the given conversation ID.
-func (m *RedisConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
 		return fmt.Errorf("redis conversation: marshal: %w", err)
@@ -78,7 +85,7 @@ func (m *RedisConversation) Save(ctx context.Context, conversationID string, mes
 }
 
 // Load retrieves messages for the given conversation ID.
-func (m *RedisConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	key := m.keyPrefix + conversationID
 	data, err := m.client.Get(ctx, key).Bytes()
 	if err != nil {
@@ -95,7 +102,7 @@ func (m *RedisConversation) Load(ctx context.Context, conversationID string) ([]
 }
 
 // List returns all conversation IDs by scanning keys with the configured prefix.
-func (m *RedisConversation) List(ctx context.Context) ([]string, error) {
+func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	pattern := m.keyPrefix + "*"
 	var ids []string
 	var cursor uint64
@@ -118,7 +125,7 @@ func (m *RedisConversation) List(ctx context.Context) ([]string, error) {
 }
 
 // Delete removes a conversation key from Redis.
-func (m *RedisConversation) Delete(ctx context.Context, conversationID string) error {
+func (m *Conversation) Delete(ctx context.Context, conversationID string) error {
 	key := m.keyPrefix + conversationID
 	if err := m.client.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("redis conversation: delete: %w", err)
@@ -127,6 +134,6 @@ func (m *RedisConversation) Delete(ctx context.Context, conversationID string) e
 }
 
 // Close closes the underlying Redis client.
-func (m *RedisConversation) Close() error {
+func (m *Conversation) Close() error {
 	return m.client.Close()
 }

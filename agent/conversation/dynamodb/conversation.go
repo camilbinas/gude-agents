@@ -48,11 +48,11 @@ type dynamoDBClient interface {
 }
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*DynamoDBConversation)(nil)
-var _ conversation.ConversationManager = (*DynamoDBConversation)(nil)
+var _ agent.Conversation = (*Conversation)(nil)
+var _ conversation.ConversationManager = (*Conversation)(nil)
 
-// DynamoDBConversation implements agent.Conversation and conversation.ConversationManager using Amazon DynamoDB.
-type DynamoDBConversation struct {
+// Conversation implements agent.Conversation and conversation.ConversationManager using Amazon DynamoDB.
+type Conversation struct {
 	client       dynamoDBClient
 	table        string
 	keyPrefix    string
@@ -65,12 +65,12 @@ type DynamoDBConversation struct {
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if table is empty.
-func New(cfg aws.Config, table string, opts ...DynamoDBConversationOption) (*DynamoDBConversation, error) {
+func New(cfg aws.Config, table string, opts ...ConversationOption) (*Conversation, error) {
 	if table == "" {
 		return nil, fmt.Errorf("dynamodb conversation: table name is required")
 	}
 
-	c := &dynamoDBConversationConfig{
+	c := &config{
 		keyPrefix:    "gude:",
 		ttlAttribute: "ttl",
 		pkAttribute:  "conversation_id",
@@ -85,7 +85,7 @@ func New(cfg aws.Config, table string, opts ...DynamoDBConversationOption) (*Dyn
 		}
 	})
 
-	return &DynamoDBConversation{
+	return &Conversation{
 		client:       client,
 		table:        table,
 		keyPrefix:    c.keyPrefix,
@@ -97,7 +97,7 @@ func New(cfg aws.Config, table string, opts ...DynamoDBConversationOption) (*Dyn
 
 // Save persists messages for the given conversation ID as a DynamoDB item.
 // When TTL is configured, a numeric Unix-epoch TTL attribute is also written.
-func (m *DynamoDBConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
 		return fmt.Errorf("dynamodb conversation: save: %w", err)
@@ -133,7 +133,7 @@ func (m *DynamoDBConversation) Save(ctx context.Context, conversationID string, 
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the item does not exist.
-func (m *DynamoDBConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	pk := m.keyPrefix + conversationID
 
 	out, err := m.client.GetItem(ctx, &dynamodb.GetItemInput{
@@ -170,7 +170,7 @@ func (m *DynamoDBConversation) Load(ctx context.Context, conversationID string) 
 
 // List returns all conversation IDs whose items share the configured key prefix.
 // This method performs a full-table Scan — see package documentation for cost implications.
-func (m *DynamoDBConversation) List(ctx context.Context) ([]string, error) {
+func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	var ids []string
 	var lastKey map[string]dbtypes.AttributeValue
 
@@ -214,7 +214,7 @@ func (m *DynamoDBConversation) List(ctx context.Context) ([]string, error) {
 
 // Delete removes the item for the given conversation ID.
 // A not-found response is not treated as an error.
-func (m *DynamoDBConversation) Delete(ctx context.Context, conversationID string) error {
+func (m *Conversation) Delete(ctx context.Context, conversationID string) error {
 	pk := m.keyPrefix + conversationID
 
 	_, err := m.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{

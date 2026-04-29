@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/camilbinas/gude-agents/agent"
 )
 
@@ -93,7 +94,7 @@ func TestNew_EmptyBucket(t *testing.T) {
 	}
 }
 
-// TestNew_LazyConstruction verifies that valid args return a non-nil S3Conversation
+// TestNew_LazyConstruction verifies that valid args return a non-nil Conversation
 // without making any network calls.
 func TestNew_LazyConstruction(t *testing.T) {
 	m, err := New(aws.Config{}, "my-bucket")
@@ -101,12 +102,12 @@ func TestNew_LazyConstruction(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m == nil {
-		t.Fatal("expected non-nil S3Conversation")
+		t.Fatal("expected non-nil Conversation")
 	}
 }
 
-// TestS3Conversation_DefaultKeyPrefix verifies that keyPrefix defaults to "".
-func TestS3Conversation_DefaultKeyPrefix(t *testing.T) {
+// TestConversation_DefaultKeyPrefix verifies that keyPrefix defaults to "".
+func TestConversation_DefaultKeyPrefix(t *testing.T) {
 	m, err := New(aws.Config{}, "my-bucket")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -116,36 +117,36 @@ func TestS3Conversation_DefaultKeyPrefix(t *testing.T) {
 	}
 }
 
-// TestS3Conversation_WithEndpoint verifies that construction succeeds when a custom endpoint is provided.
-func TestS3Conversation_WithEndpoint(t *testing.T) {
+// TestConversation_WithEndpoint verifies that construction succeeds when a custom endpoint is provided.
+func TestConversation_WithEndpoint(t *testing.T) {
 	m, err := New(aws.Config{}, "my-bucket", WithEndpoint("http://localhost:9000"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m == nil {
-		t.Fatal("expected non-nil S3Conversation")
+		t.Fatal("expected non-nil Conversation")
 	}
 }
 
-// TestS3Conversation_WithPathStyle verifies that construction succeeds when path-style is enabled.
-func TestS3Conversation_WithPathStyle(t *testing.T) {
+// TestConversation_WithPathStyle verifies that construction succeeds when path-style is enabled.
+func TestConversation_WithPathStyle(t *testing.T) {
 	m, err := New(aws.Config{}, "my-bucket", WithPathStyle(true))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m == nil {
-		t.Fatal("expected non-nil S3Conversation")
+		t.Fatal("expected non-nil Conversation")
 	}
 }
 
 // --- Error wrapping tests ---
 
-// TestS3Conversation_Save_ErrorWrapping verifies that a PutObject error is wrapped with "s3 conversation: save".
-func TestS3Conversation_Save_ErrorWrapping(t *testing.T) {
+// TestConversation_Save_ErrorWrapping verifies that a PutObject error is wrapped with "s3 conversation: save".
+func TestConversation_Save_ErrorWrapping(t *testing.T) {
 	mock := newMockS3Client()
 	mock.putErr = errors.New("s3 unavailable")
 
-	m := &S3Conversation{
+	m := &Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -160,12 +161,12 @@ func TestS3Conversation_Save_ErrorWrapping(t *testing.T) {
 	}
 }
 
-// TestS3Conversation_Load_ErrorWrapping verifies that a non-404 GetObject error is wrapped with "s3 conversation: load".
-func TestS3Conversation_Load_ErrorWrapping(t *testing.T) {
+// TestConversation_Load_ErrorWrapping verifies that a non-404 GetObject error is wrapped with "s3 conversation: load".
+func TestConversation_Load_ErrorWrapping(t *testing.T) {
 	mock := newMockS3Client()
 	mock.getErr = errors.New("s3 internal error")
 
-	m := &S3Conversation{
+	m := &Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -180,12 +181,12 @@ func TestS3Conversation_Load_ErrorWrapping(t *testing.T) {
 	}
 }
 
-// TestS3Conversation_Delete_ErrorWrapping verifies that a DeleteObject error is wrapped with "s3 conversation: delete".
-func TestS3Conversation_Delete_ErrorWrapping(t *testing.T) {
+// TestConversation_Delete_ErrorWrapping verifies that a DeleteObject error is wrapped with "s3 conversation: delete".
+func TestConversation_Delete_ErrorWrapping(t *testing.T) {
 	mock := newMockS3Client()
 	mock.deleteErr = errors.New("s3 delete error")
 
-	m := &S3Conversation{
+	m := &Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -202,12 +203,12 @@ func TestS3Conversation_Delete_ErrorWrapping(t *testing.T) {
 
 // --- Not-found and edge case tests ---
 
-// TestS3Conversation_Load_NotFound verifies that a NoSuchKey error returns an empty slice and nil error.
-func TestS3Conversation_Load_NotFound(t *testing.T) {
+// TestConversation_Load_NotFound verifies that a NoSuchKey error returns an empty slice and nil error.
+func TestConversation_Load_NotFound(t *testing.T) {
 	mock := newMockS3Client()
 	// No objects stored — GetObject will return NoSuchKey.
 
-	m := &S3Conversation{
+	m := &Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -225,11 +226,11 @@ func TestS3Conversation_Load_NotFound(t *testing.T) {
 	}
 }
 
-// TestS3Conversation_Save_EmptySlice verifies that saving an empty slice writes "[]" JSON.
-func TestS3Conversation_Save_EmptySlice(t *testing.T) {
+// TestConversation_Save_EmptySlice verifies that saving an empty slice writes "[]" JSON.
+func TestConversation_Save_EmptySlice(t *testing.T) {
 	mock := newMockS3Client()
 
-	m := &S3Conversation{
+	m := &Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",
@@ -250,11 +251,11 @@ func TestS3Conversation_Save_EmptySlice(t *testing.T) {
 	}
 }
 
-// TestS3Conversation_Delete_NonExistent verifies that deleting a key that was never saved returns nil error.
-func TestS3Conversation_Delete_NonExistent(t *testing.T) {
+// TestConversation_Delete_NonExistent verifies that deleting a key that was never saved returns nil error.
+func TestConversation_Delete_NonExistent(t *testing.T) {
 	mock := newMockS3Client()
 
-	m := &S3Conversation{
+	m := &Conversation{
 		client:    mock,
 		bucket:    "test-bucket",
 		keyPrefix: "",

@@ -26,9 +26,9 @@ func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10
 func TestProperty_ConversationSaveLoadRoundTrip(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := New(RedisOptions{Addr: addr})
+	mem, err := New(Options{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -56,12 +56,12 @@ func TestProperty_ConversationSaveLoadRoundTrip(t *testing.T) {
 	})
 }
 
-// --- Unit Tests for RedisConversation ---
+// --- Unit Tests for Conversation ---
 
-// TestNew_UnreachableAddr verifies that NewRedisConversation returns an error
+// TestNew_UnreachableAddr verifies that NewConversation returns an error
 // containing "ping" when the Redis address is unreachable.
 func TestNew_UnreachableAddr(t *testing.T) {
-	_, err := New(RedisOptions{Addr: "localhost:1"})
+	_, err := New(Options{Addr: "localhost:1"})
 	if err == nil {
 		t.Fatal("expected error for unreachable address, got nil")
 	}
@@ -70,14 +70,14 @@ func TestNew_UnreachableAddr(t *testing.T) {
 	}
 }
 
-// TestRedisConversation_LoadNonExistent verifies that Load for a non-existent conversation ID
+// TestConversation_LoadNonExistent verifies that Load for a non-existent conversation ID
 // returns an empty (non-nil) slice and nil error.
-func TestRedisConversation_LoadNonExistent(t *testing.T) {
+func TestConversation_LoadNonExistent(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := New(RedisOptions{Addr: addr})
+	mem, err := New(Options{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -93,14 +93,14 @@ func TestRedisConversation_LoadNonExistent(t *testing.T) {
 	}
 }
 
-// TestRedisConversation_DefaultKeyPrefix verifies that a newly created RedisConversation
+// TestConversation_DefaultKeyPrefix verifies that a newly created Conversation
 // has the default key prefix "gude:".
-func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
+func TestConversation_DefaultKeyPrefix(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := New(RedisOptions{Addr: addr})
+	mem, err := New(Options{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -109,15 +109,15 @@ func TestRedisConversation_DefaultKeyPrefix(t *testing.T) {
 	}
 }
 
-// TestRedisConversation_TTLSet verifies that when WithTTL is configured, saved keys
+// TestConversation_TTLSet verifies that when WithTTL is configured, saved keys
 // have a TTL set in Redis.
-func TestRedisConversation_TTLSet(t *testing.T) {
+func TestConversation_TTLSet(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	ttl := 10 * time.Minute
-	mem, err := New(RedisOptions{Addr: addr}, WithTTL(ttl))
+	mem, err := New(Options{Addr: addr}, WithTTL(ttl))
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -145,14 +145,14 @@ func TestRedisConversation_TTLSet(t *testing.T) {
 	}
 }
 
-// TestRedisConversation_NoExpiration verifies that when no TTL is configured (default),
+// TestConversation_NoExpiration verifies that when no TTL is configured (default),
 // saved keys have no expiration (TTL returns -1 in Redis).
-func TestRedisConversation_NoExpiration(t *testing.T) {
+func TestConversation_NoExpiration(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
-	mem, err := New(RedisOptions{Addr: addr})
+	mem, err := New(Options{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -192,16 +192,16 @@ func searchSubstr(s, substr string) bool {
 	return false
 }
 
-// TestRedisConversation_WithOption verifies that RedisConversation is accepted by agent.WithConversation.
-func TestRedisConversation_WithOption(t *testing.T) {
+// TestConversation_WithOption verifies that Conversation is accepted by agent.WithConversation.
+func TestConversation_WithOption(t *testing.T) {
 	addr := skipIfNoRedis(t)
-	mem, err := New(RedisOptions{Addr: addr})
+	mem, err := New(Options{Addr: addr})
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
-	// This should compile and not panic — proves RedisConversation satisfies the Conversation interface
+	// This should compile and not panic — proves Conversation satisfies the Conversation interface
 	// used by WithConversation.
 	opt := agent.WithConversation(mem, "test-conv")
 	if opt == nil {
@@ -209,17 +209,17 @@ func TestRedisConversation_WithOption(t *testing.T) {
 	}
 }
 
-// --- Integration Tests for RedisConversation List and Delete ---
+// --- Integration Tests for Conversation List and Delete ---
 
-// TestRedisConversation_ListReturnsSavedConversationIDs verifies that List returns
+// TestConversation_ListReturnsSavedConversationIDs verifies that List returns
 // all conversation IDs that have been saved, using a unique key prefix.
-func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
+func TestConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	prefix := "test-list-delete:"
-	mem, err := New(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
+	mem, err := New(Options{Addr: addr}, WithKeyPrefix(prefix))
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 
@@ -265,15 +265,15 @@ func TestRedisConversation_ListReturnsSavedConversationIDs(t *testing.T) {
 	}
 }
 
-// TestRedisConversation_DeleteRemovesTargetKey verifies that Delete removes the target
+// TestConversation_DeleteRemovesTargetKey verifies that Delete removes the target
 // conversation while leaving other conversations intact.
-func TestRedisConversation_DeleteRemovesTargetKey(t *testing.T) {
+func TestConversation_DeleteRemovesTargetKey(t *testing.T) {
 	addr := skipIfNoRedis(t)
 
 	prefix := "test-del-target:"
-	mem, err := New(RedisOptions{Addr: addr}, WithKeyPrefix(prefix))
+	mem, err := New(Options{Addr: addr}, WithKeyPrefix(prefix))
 	if err != nil {
-		t.Fatalf("failed to create RedisConversation: %v", err)
+		t.Fatalf("failed to create Conversation: %v", err)
 	}
 	defer mem.Close()
 

@@ -25,7 +25,7 @@ func main() {
 	}
 
 	store, err := redis.New(
-		redis.RedisOptions{Addr: redisAddr},
+		redis.Options{Addr: redisAddr},
 		redis.WithTTL(1*time.Hour),
 		redis.WithKeyPrefix("example:comnversation:"),
 	)

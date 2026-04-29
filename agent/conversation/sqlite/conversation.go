@@ -32,13 +32,13 @@ import (
 )
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*SQLiteConversation)(nil)
-var _ conversation.ConversationManager = (*SQLiteConversation)(nil)
+var _ agent.Conversation = (*Conversation)(nil)
+var _ conversation.ConversationManager = (*Conversation)(nil)
 
-// SQLiteConversation implements agent.Conversation and conversation.ConversationManager using a
+// Conversation implements agent.Conversation and conversation.ConversationManager using a
 // SQLite database. Each conversation is stored as a row with its messages
 // serialized as JSON.
-type SQLiteConversation struct {
+type Conversation struct {
 	db        *sql.DB
 	tableName string
 }
@@ -50,7 +50,7 @@ type SQLiteConversation struct {
 // The conversations table is created automatically if it doesn't exist.
 // Returns an error if the database cannot be opened or the schema cannot
 // be initialized.
-func New(dsn string, opts ...Option) (*SQLiteConversation, error) {
+func New(dsn string, opts ...Option) (*Conversation, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("sqlite conversation: dsn is required")
 	}
@@ -92,7 +92,7 @@ func New(dsn string, opts ...Option) (*SQLiteConversation, error) {
 		return nil, fmt.Errorf("sqlite conversation: create table: %w", err)
 	}
 
-	return &SQLiteConversation{
+	return &Conversation{
 		db:        db,
 		tableName: cfg.tableName,
 	}, nil
@@ -100,7 +100,7 @@ func New(dsn string, opts ...Option) (*SQLiteConversation, error) {
 
 // Save persists messages for the given conversation ID. Uses an upsert so
 // that both new and existing conversations are handled in a single statement.
-func (m *SQLiteConversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
 		return fmt.Errorf("sqlite conversation: marshal: %w", err)
@@ -122,7 +122,7 @@ func (m *SQLiteConversation) Save(ctx context.Context, conversationID string, me
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the conversation does not exist.
-func (m *SQLiteConversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	query := fmt.Sprintf(`SELECT messages FROM %s WHERE conversation_id = ?`, m.tableName)
 
 	var data string
@@ -143,7 +143,7 @@ func (m *SQLiteConversation) Load(ctx context.Context, conversationID string) ([
 
 // List returns all conversation IDs in the database, ordered by most recently
 // updated first.
-func (m *SQLiteConversation) List(ctx context.Context) ([]string, error) {
+func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	query := fmt.Sprintf(`SELECT conversation_id FROM %s ORDER BY updated_at DESC`, m.tableName)
 
 	rows, err := m.db.QueryContext(ctx, query)
@@ -168,7 +168,7 @@ func (m *SQLiteConversation) List(ctx context.Context) ([]string, error) {
 
 // Delete removes a conversation by ID. Returns nil if the conversation
 // does not exist.
-func (m *SQLiteConversation) Delete(ctx context.Context, conversationID string) error {
+func (m *Conversation) Delete(ctx context.Context, conversationID string) error {
 	query := fmt.Sprintf(`DELETE FROM %s WHERE conversation_id = ?`, m.tableName)
 
 	if _, err := m.db.ExecContext(ctx, query, conversationID); err != nil {
@@ -178,6 +178,6 @@ func (m *SQLiteConversation) Delete(ctx context.Context, conversationID string) 
 }
 
 // Close closes the underlying database connection.
-func (m *SQLiteConversation) Close() error {
+func (m *Conversation) Close() error {
 	return m.db.Close()
 }

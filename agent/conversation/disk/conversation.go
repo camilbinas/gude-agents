@@ -24,22 +24,22 @@ import (
 )
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*DiskConversation)(nil)
-var _ conversation.ConversationManager = (*DiskConversation)(nil)
+var _ agent.Conversation = (*Conversation)(nil)
+var _ conversation.ConversationManager = (*Conversation)(nil)
 
-// DiskConversation implements agent.Conversation and conversation.ConversationManager using the
+// Conversation implements agent.Conversation and conversation.ConversationManager using the
 // local filesystem. Each conversation is stored as a JSON file.
-type DiskConversation struct {
+type Conversation struct {
 	dir string
 	mu  sync.RWMutex
 }
 
 // Option configures a DiskMemory instance.
-type Option func(*DiskConversation)
+type Option func(*Conversation)
 
 // New creates a new DiskMemory that stores conversations in the given directory.
 // The directory is created if it doesn't exist.
-func New(dir string, opts ...Option) (*DiskConversation, error) {
+func New(dir string, opts ...Option) (*Conversation, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("disk conversation: directory path is required")
 	}
@@ -48,7 +48,7 @@ func New(dir string, opts ...Option) (*DiskConversation, error) {
 		return nil, fmt.Errorf("disk conversation: create directory: %w", err)
 	}
 
-	m := &DiskConversation{dir: dir}
+	m := &Conversation{dir: dir}
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -56,7 +56,7 @@ func New(dir string, opts ...Option) (*DiskConversation, error) {
 }
 
 // Save persists messages for the given conversation ID as a JSON file.
-func (m *DiskConversation) Save(_ context.Context, conversationID string, messages []agent.Message) error {
+func (m *Conversation) Save(_ context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
 		return fmt.Errorf("disk conversation: marshal: %w", err)
@@ -82,7 +82,7 @@ func (m *DiskConversation) Save(_ context.Context, conversationID string, messag
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty slice if the file does not exist.
-func (m *DiskConversation) Load(_ context.Context, conversationID string) ([]agent.Message, error) {
+func (m *Conversation) Load(_ context.Context, conversationID string) ([]agent.Message, error) {
 	path := m.path(conversationID)
 
 	m.mu.RLock()
@@ -105,7 +105,7 @@ func (m *DiskConversation) Load(_ context.Context, conversationID string) ([]age
 }
 
 // List returns all conversation IDs in the directory.
-func (m *DiskConversation) List(_ context.Context) ([]string, error) {
+func (m *Conversation) List(_ context.Context) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -128,7 +128,7 @@ func (m *DiskConversation) List(_ context.Context) ([]string, error) {
 }
 
 // Delete removes the conversation file. Returns nil if the file doesn't exist.
-func (m *DiskConversation) Delete(_ context.Context, conversationID string) error {
+func (m *Conversation) Delete(_ context.Context, conversationID string) error {
 	path := m.path(conversationID)
 
 	m.mu.Lock()
@@ -141,7 +141,7 @@ func (m *DiskConversation) Delete(_ context.Context, conversationID string) erro
 }
 
 // path returns the file path for a conversation ID.
-func (m *DiskConversation) path(conversationID string) string {
+func (m *Conversation) path(conversationID string) string {
 	// Sanitize the conversation ID to prevent path traversal.
 	safe := strings.ReplaceAll(conversationID, "/", "_")
 	safe = strings.ReplaceAll(safe, "..", "_")

@@ -6,16 +6,16 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// RedisOptions holds Redis connection configuration.
-type RedisOptions struct {
+// Options holds Redis connection configuration.
+type Options struct {
 	Addr      string // Default: "127.0.0.1:6379"
 	Password  string
 	DB        int         // Default: 0
 	TLSConfig *tls.Config // Optional
 }
 
-// newClient creates a go-redis client from RedisOptions, applying defaults.
-func newClient(opts RedisOptions) *goredis.Client {
+// newClient creates a go-redis client from Options, applying defaults.
+func newClient(opts Options) *goredis.Client {
 	addr := opts.Addr
 	if addr == "" {
 		addr = "127.0.0.1:6379"

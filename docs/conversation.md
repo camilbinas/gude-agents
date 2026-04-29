@@ -331,7 +331,7 @@ Stores conversation history as JSON in Redis string keys. Requires a running Red
 
 ```go
 mem, err := redismemory.New(
-    redismemory.RedisOptions{Addr: "localhost:6379"},
+    redismemory.Options{Addr: "localhost:6379"},
     redismemory.WithTTL(24*time.Hour),
     redismemory.WithKeyPrefix("myapp:"),
 )

@@ -30,12 +30,12 @@ type s3Client interface {
 }
 
 // Compile-time interface checks.
-var _ agent.Conversation = (*S3Conversation)(nil)
-var _ conversation.ConversationManager = (*S3Conversation)(nil)
+var _ agent.Conversation = (*Conversation)(nil)
+var _ conversation.ConversationManager = (*Conversation)(nil)
 
-// S3Conversation implements agent.Conversation and conversation.ConversationManager using an
+// Conversation implements agent.Conversation and conversation.ConversationManager using an
 // S3-compatible object store.
-type S3Conversation struct {
+type Conversation struct {
 	client    s3Client
 	bucket    string
 	keyPrefix string
@@ -45,12 +45,12 @@ type S3Conversation struct {
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if bucket is empty.
-func New(cfg aws.Config, bucket string, opts ...S3ConversationOption) (*S3Conversation, error) {
+func New(cfg aws.Config, bucket string, opts ...ConversationOption) (*Conversation, error) {
 	if bucket == "" {
 		return nil, fmt.Errorf("s3 conversation: bucket name is required")
 	}
 
-	c := &s3ConversationConfig{
+	c := &config{
 		keyPrefix: "",
 	}
 	for _, o := range opts {
@@ -75,7 +75,7 @@ func New(cfg aws.Config, bucket string, opts ...S3ConversationOption) (*S3Conver
 		}
 	})
 
-	return &S3Conversation{
+	return &Conversation{
 		client:    client,
 		bucket:    bucket,
 		keyPrefix: c.keyPrefix,
@@ -83,7 +83,7 @@ func New(cfg aws.Config, bucket string, opts ...S3ConversationOption) (*S3Conver
 }
 
 // Save persists messages for the given conversation ID as a JSON object in S3.
-func (m *S3Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
 		return fmt.Errorf("s3 conversation: save: %w", err)
@@ -104,7 +104,7 @@ func (m *S3Conversation) Save(ctx context.Context, conversationID string, messag
 
 // Load retrieves messages for the given conversation ID.
 // Returns an empty non-nil slice if the object does not exist.
-func (m *S3Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+func (m *Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
 	out, err := m.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(m.keyPrefix + conversationID),
@@ -132,7 +132,7 @@ func (m *S3Conversation) Load(ctx context.Context, conversationID string) ([]age
 }
 
 // List returns all conversation IDs whose objects share the configured key prefix.
-func (m *S3Conversation) List(ctx context.Context) ([]string, error) {
+func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	var ids []string
 	var continuationToken *string
 
@@ -163,7 +163,7 @@ func (m *S3Conversation) List(ctx context.Context) ([]string, error) {
 
 // Delete removes the object for the given conversation ID.
 // A not-found response is not treated as an error.
-func (m *S3Conversation) Delete(ctx context.Context, conversationID string) error {
+func (m *Conversation) Delete(ctx context.Context, conversationID string) error {
 	_, err := m.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(m.keyPrefix + conversationID),
