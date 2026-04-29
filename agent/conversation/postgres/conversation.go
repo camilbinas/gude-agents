@@ -38,7 +38,6 @@ import (
 
 // Compile-time interface checks.
 var _ agent.Conversation = (*Conversation)(nil)
-var _ conversation.ConversationManager = (*Conversation)(nil)
 
 // Conversation implements agent.Conversation and conversation.ConversationManager using a
 // PostgreSQL database. Each conversation is stored as a row with its messages

@@ -235,6 +235,9 @@ func (m *inMemoryStore) Save(_ context.Context, id string, msgs []agent.Message)
 	return nil
 }
 
+func (m *inMemoryStore) List(_ context.Context) ([]string, error) { return nil, nil }
+func (m *inMemoryStore) Delete(_ context.Context, _ string) error { return nil }
+
 func TestSwarm_MemoryPersistsConversation(t *testing.T) {
 	alphaProvider := &mockSwarmProvider{responses: []*agent.ProviderResponse{
 		{Text: "Hello from turn 1", Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5}},

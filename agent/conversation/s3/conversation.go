@@ -31,7 +31,6 @@ type s3Client interface {
 
 // Compile-time interface checks.
 var _ agent.Conversation = (*Conversation)(nil)
-var _ conversation.ConversationManager = (*Conversation)(nil)
 
 // Conversation implements agent.Conversation and conversation.ConversationManager using an
 // S3-compatible object store.

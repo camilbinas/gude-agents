@@ -269,6 +269,9 @@ func (m *recordingMemory) Save(_ context.Context, _ string, msgs []Message) erro
 	return nil
 }
 
+func (m *recordingMemory) List(_ context.Context) ([]string, error) { return nil, nil }
+func (m *recordingMemory) Delete(_ context.Context, _ string) error { return nil }
+
 // TestAgent_RetrieverErrorWrapping verifies that when the retriever returns an error,
 // the agent wraps it with the "retriever: " prefix.
 func TestAgent_RetrieverErrorWrapping(t *testing.T) {

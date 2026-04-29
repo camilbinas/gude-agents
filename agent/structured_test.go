@@ -492,6 +492,9 @@ func (m *trackingMemory) Save(_ context.Context, _ string, msgs []Message) error
 	return nil
 }
 
+func (m *trackingMemory) List(_ context.Context) ([]string, error) { return nil, nil }
+func (m *trackingMemory) Delete(_ context.Context, _ string) error { return nil }
+
 func TestInvokeStructured_MemoryLoadAndSaveCalled(t *testing.T) {
 	validJSON, _ := json.Marshal(SimpleStruct{Name: "test", Count: 1})
 	sp := &structuredTestProvider{

@@ -49,7 +49,6 @@ type dynamoDBClient interface {
 
 // Compile-time interface checks.
 var _ agent.Conversation = (*Conversation)(nil)
-var _ conversation.ConversationManager = (*Conversation)(nil)
 
 // Conversation implements agent.Conversation and conversation.ConversationManager using Amazon DynamoDB.
 type Conversation struct {

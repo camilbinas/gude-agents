@@ -8,6 +8,8 @@ import (
 )
 
 // InMemory is a simple in-process Conversation store backed by a map.
+var _ agent.Conversation = (*InMemory)(nil)
+
 type InMemory struct {
 	mu   sync.RWMutex
 	data map[string][]agent.Message

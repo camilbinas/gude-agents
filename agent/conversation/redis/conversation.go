@@ -14,7 +14,6 @@ import (
 
 // Compile-time interface checks.
 var _ agent.Conversation = (*Conversation)(nil)
-var _ conversation.ConversationManager = (*Conversation)(nil)
 
 // Option configures a Conversation instance.
 type Option func(*config)

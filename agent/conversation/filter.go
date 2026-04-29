@@ -51,3 +51,13 @@ func (f *Filter) Load(ctx context.Context, conversationID string) ([]agent.Messa
 func (f *Filter) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
 	return f.inner.Save(ctx, conversationID, messages)
 }
+
+// List delegates to the inner store.
+func (f *Filter) List(ctx context.Context) ([]string, error) {
+	return f.inner.List(ctx)
+}
+
+// Delete delegates to the inner store.
+func (f *Filter) Delete(ctx context.Context, conversationID string) error {
+	return f.inner.Delete(ctx, conversationID)
+}

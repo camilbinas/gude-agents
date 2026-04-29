@@ -38,44 +38,35 @@ result, _, err := a.Invoke(ctx, req.Message)
 
 See [HTTP & Multi-Tenant Environments](http.md) for the full pattern.
 
-## ConversationManager Interface
+## Conversation Interface
 
-`ConversationManager` extends `Conversation` with lifecycle operations for listing and deleting conversations:
+`agent.Conversation` provides the full lifecycle for conversation storage:
 
 ```go
-type ConversationManager interface {
-    agent.Conversation
+type Conversation interface {
+    Load(ctx context.Context, conversationID string) ([]Message, error)
+    Save(ctx context.Context, conversationID string, messages []Message) error
     List(ctx context.Context) ([]string, error)
     Delete(ctx context.Context, conversationID string) error
 }
 ```
 
-`List` returns all conversation IDs in the store. `Delete` removes a conversation by ID (returns nil if not found). The in-memory `InMemory` implements `ConversationManager`.
-
 ## InMemory Store
 
 ```go
-func NewInMemory() *InMemory
+store := conversation.NewInMemory()
 ```
 
-`NewInMemory` creates an empty in-memory store backed by a `map[string][]agent.Message`. It's thread-safe — reads use `sync.RWMutex` read locks, writes use exclusive locks. Both `Load` and `Save` deep-copy the message slice, so callers can't accidentally mutate stored data.
-
-`InMemory` implements `ConversationManager`, so you can list and delete conversations:
+Thread-safe in-memory store backed by a map. Deep-copies on Load and Save.
 
 ```go
-store := conversation.NewInMemory()
-
-// ... use the store with an agent ...
-
-ids, err := store.List(ctx)
-fmt.Println("Conversations:", ids)
-
-err = store.Delete(ctx, "old-conversation")
+ids, _ := store.List(ctx)
+store.Delete(ctx, "old-conversation")
 ```
 
 ## Strategies
 
-Strategies are `Conversation` implementations that wrap another `Conversation` and transform messages on `Load`, `Save`, or both. They follow a middleware pattern — you compose them by nesting one inside another.
+Strategies wrap a `Conversation` and transform messages on `Load`, `Save`, or both. They delegate `List` and `Delete` to the inner store.
 
 ### Window
 
@@ -294,7 +285,7 @@ func main() {
 	}
 	fmt.Println("Turn 2:", result)
 
-	// ConversationManager: list and delete conversations.
+	// List and delete conversations.
 	ids, _ := store.List(ctx)
 	fmt.Printf("\nConversations in store: %v\n", ids)
 
@@ -306,7 +297,7 @@ func main() {
 
 ## Persistent Conversation Drivers
 
-For production use cases where conversation history must survive process restarts, persistent drivers are available as separate packages. All implement both `agent.Conversation` and `conversation.ConversationManager` (List, Delete).
+For production use cases where conversation history must survive process restarts, persistent drivers are available as separate packages. All implement `agent.Conversation`.
 
 ### Provider Comparison
 

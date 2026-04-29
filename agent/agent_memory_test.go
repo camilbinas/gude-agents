@@ -46,6 +46,9 @@ func (s *testMemoryStore) Save(_ context.Context, id string, msgs []Message) err
 	return nil
 }
 
+func (s *testMemoryStore) List(_ context.Context) ([]string, error) { return nil, nil }
+func (s *testMemoryStore) Delete(_ context.Context, _ string) error { return nil }
+
 func TestAgent_LoadsHistoryOnSecondInvocation(t *testing.T) {
 	sp := newScriptedProvider(
 		&ProviderResponse{Text: "first reply"},
@@ -130,6 +133,9 @@ func (failingMemory) Save(_ context.Context, _ string, _ []Message) error {
 	return nil
 }
 
+func (failingMemory) List(_ context.Context) ([]string, error) { return nil, nil }
+func (failingMemory) Delete(_ context.Context, _ string) error { return nil }
+
 func TestAgent_ConversationLoadFailureReturnsError(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "should not reach"})
 	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(failingMemory{}, "conv-1"))
@@ -170,6 +176,9 @@ func (w *trackingWaiter) Save(_ context.Context, id string, msgs []Message) erro
 	w.data[id] = msgs
 	return nil
 }
+
+func (w *trackingWaiter) List(_ context.Context) ([]string, error) { return nil, nil }
+func (w *trackingWaiter) Delete(_ context.Context, _ string) error { return nil }
 
 func (w *trackingWaiter) Wait() {
 	w.mu.Lock()

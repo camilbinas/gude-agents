@@ -9,6 +9,12 @@ type Conversation interface {
 
 	// Save persists messages for the given conversation ID.
 	Save(ctx context.Context, conversationID string, messages []Message) error
+
+	// List returns all conversation IDs in the store.
+	List(ctx context.Context) ([]string, error)
+
+	// Delete removes a conversation by ID. Returns nil if not found.
+	Delete(ctx context.Context, conversationID string) error
 }
 
 // ConversationWaiter is an optional interface that Conversation implementations

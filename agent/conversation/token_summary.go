@@ -273,3 +273,13 @@ func (s *TokenSummary) Close() {
 func (s *TokenSummary) Wait() {
 	s.wg.Wait()
 }
+
+// List delegates to the inner store.
+func (s *TokenSummary) List(ctx context.Context) ([]string, error) {
+	return s.inner.List(ctx)
+}
+
+// Delete delegates to the inner store.
+func (s *TokenSummary) Delete(ctx context.Context, conversationID string) error {
+	return s.inner.Delete(ctx, conversationID)
+}

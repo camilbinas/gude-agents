@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/conversation"
 )
 
 // ChatOptions configures the interactive chat loop.
@@ -109,7 +108,7 @@ func SwarmChat(ctx context.Context, sw *agent.Swarm) {
 }
 
 // ClearConversation returns a ClearFunc that deletes a conversation.
-func ClearConversation(m conversation.ConversationManager, conversationID string) func(ctx context.Context) error {
+func ClearConversation(m agent.Conversation, conversationID string) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		return m.Delete(ctx, conversationID)
 	}

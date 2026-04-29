@@ -81,3 +81,13 @@ func safeTruncate(msgs []agent.Message, start int) []agent.Message {
 	}
 	return msgs[start:]
 }
+
+// List delegates to the inner store.
+func (w *Window) List(ctx context.Context) ([]string, error) {
+	return w.inner.List(ctx)
+}
+
+// Delete delegates to the inner store.
+func (w *Window) Delete(ctx context.Context, conversationID string) error {
+	return w.inner.Delete(ctx, conversationID)
+}
