@@ -45,6 +45,21 @@ Tag format: `db:"column_name,role"`
 
 Additional struct tags: `description:"..."` (shown to LLM), `required:"true"` (marked required in schema), `enum:"a,b,c"` (enum constraint).
 
+## Interface
+
+All memory backends satisfy the `memory.Memory[T]` interface — use it to write backend-agnostic code or to implement custom backends.
+
+```go
+type Memory[T any] interface {
+    Remember(ctx context.Context, identifier string, value T) error
+    Recall(ctx context.Context, identifier string, query string, limit int, opts ...RecallOption) ([]Entry[T], error)
+    Forget(ctx context.Context, identifier, id string) error
+    ForgetAll(ctx context.Context, identifier string) error
+}
+```
+
+Backend-specific `RecallOption` values (filtering, sorting) are silently ignored by backends that don't support them.
+
 ## Backends
 
 ### In-Memory

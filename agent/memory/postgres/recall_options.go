@@ -14,9 +14,11 @@ const (
 )
 
 // RecallOption configures filtering and sorting for typed Recall queries.
-// It also satisfies the Option interface, so it can be passed directly to
-// NewRecallTool alongside ToolOptions.
+// It satisfies memory.RecallOption so it can be passed to the interface method,
+// and also satisfies the Option interface for NewRecallTool.
 type RecallOption func(*recallConfig)
+
+func (RecallOption) IsRecallOption() {}
 
 func (r RecallOption) applyTool(c *toolConfig) {
 	c.recallOpts = append(c.recallOpts, r)

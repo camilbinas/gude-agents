@@ -27,7 +27,7 @@ func (f ToolOption) applyTool(c *toolConfig) { f(c) }
 type toolConfig struct {
 	name        string
 	description string
-	recallOpts  []RecallOption
+	recallOpts  []memory.RecallOption
 }
 
 // WithToolName sets the tool name.

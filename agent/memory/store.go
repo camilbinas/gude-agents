@@ -87,7 +87,7 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 }
 
 // Recall retrieves values by semantic similarity to the query.
-func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int) ([]Entry[T], error) {
+func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...RecallOption) ([]Entry[T], error) {
 	if identifier == "" {
 		return nil, errors.New("memory: identifier must not be empty")
 	}

@@ -212,8 +212,11 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	return nil
 }
 
-// Recall retrieves values by semantic similarity with optional filters.
-func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...RecallOption) ([]memory.Entry[T], error) {
+// Recall retrieves values by semantic similarity to the query, scoped to the
+// identifier. Supports filtering and sorting via RecallOption.
+//
+// Implements memory.Memory[T].
+func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...memory.RecallOption) ([]memory.Entry[T], error) {
 	if identifier == "" {
 		return nil, errors.New("redis: identifier must not be empty")
 	}
@@ -230,7 +233,9 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 	// Apply options.
 	rc := &recallConfig{}
 	for _, o := range opts {
-		o(rc)
+		if ro, ok := o.(RecallOption); ok {
+			ro(rc)
+		}
 	}
 
 	// Build FT.SEARCH query.
@@ -715,7 +720,10 @@ func (s *Store[T]) scanAttrs(attrs map[interface{}]interface{}) (T, float64) {
 // Redis RecallOption reuses the same type from recall_options.go pattern.
 
 // RecallOption configures filtering for typed Redis Recall queries.
+// It satisfies memory.RecallOption so it can be passed to the interface method.
 type RecallOption func(*recallConfig)
+
+func (RecallOption) IsRecallOption() {}
 
 // Implement Option interface for tool compatibility.
 func (r RecallOption) applyTool(c *toolConfig) {

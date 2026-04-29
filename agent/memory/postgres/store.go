@@ -189,9 +189,10 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 }
 
 // Recall retrieves values by semantic similarity to the query, scoped to the
-// identifier extracted from the provided value or passed explicitly.
-// Supports filtering and sorting via RecallOption.
-func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...RecallOption) ([]memory.Entry[T], error) {
+// identifier. Supports filtering and sorting via RecallOption.
+//
+// Implements memory.Memory[T].
+func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...memory.RecallOption) ([]memory.Entry[T], error) {
 	if identifier == "" {
 		return nil, errors.New("postgres: identifier must not be empty")
 	}
@@ -208,7 +209,9 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 	// Apply options.
 	rc := &recallConfig{}
 	for _, o := range opts {
-		o(rc)
+		if ro, ok := o.(RecallOption); ok {
+			ro(rc)
+		}
 	}
 
 	// Build the query.

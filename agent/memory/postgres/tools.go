@@ -35,7 +35,7 @@ func (r recallToolOption) applyTool(c *toolConfig) {
 type toolConfig struct {
 	name        string
 	description string
-	recallOpts  []RecallOption
+	recallOpts  []memory.RecallOption
 }
 
 // WithToolName sets the tool name. Default: "remember" / "recall".
