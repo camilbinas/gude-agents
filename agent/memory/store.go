@@ -125,7 +125,7 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 
 	entries := make([]Entry[T], limit)
 	for i := 0; i < limit; i++ {
-		entries[i] = Entry[T]{Value: results[i].entry.value, Score: results[i].score}
+		entries[i] = Entry[T]{ID: results[i].entry.id, Value: results[i].entry.value, Score: results[i].score}
 	}
 	return entries, nil
 }
@@ -250,7 +250,7 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 					b.WriteString("\n")
 				}
 				data, _ := json.Marshal(r.Value)
-				fmt.Fprintf(&b, "- %s\n  Score: %.4f", string(data), r.Score)
+				fmt.Fprintf(&b, "- %s\n  ID: %s\n  Score: %.4f", string(data), r.ID, r.Score)
 			}
 			return b.String(), nil
 		},

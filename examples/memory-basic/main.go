@@ -6,6 +6,7 @@
 // Run:
 //
 //	go run ./memory-basic
+
 package main
 
 import (
@@ -34,10 +35,12 @@ type Fact struct {
 func main() {
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())
 
-	store, err := memory.NewStore[Fact](embedder)
+	mem, err := memory.NewStore[Fact](embedder)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	store := conversation.NewWindow(conversation.NewInMemory(), 40)
 
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
@@ -48,12 +51,12 @@ func main() {
 				"Use forget to remove a specific memory when the user asks you to forget something.",
 		),
 		[]tool.Tool{
-			memory.NewRememberTool(store),
-			memory.NewRecallTool(store),
-			memory.NewForgetTool(store),
+			memory.NewRememberTool(mem),
+			memory.NewRecallTool(mem),
+			memory.NewForgetTool(mem),
 		},
 		debug.WithLogging(),
-		agent.WithConversation(conversation.NewWindow(conversation.NewInMemory(), 40), "memory-session"),
+		agent.WithConversation(store, "memory-session"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -68,7 +71,11 @@ func main() {
 
 	utils.Chat(ctx, a, utils.ChatOptions{
 		ClearFunc: func(ctx context.Context) error {
-			return store.ForgetAll(ctx, "user-123")
+			if err := mem.ForgetAll(ctx, "user-123"); err != nil {
+				return err
+			}
+
+			return mem.ForgetAll(ctx, "user-123")
 		},
 	})
 }

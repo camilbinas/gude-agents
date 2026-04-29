@@ -30,7 +30,7 @@
 //
 // Run:
 //
-//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./memory-typed-postgres
+//	POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run ./memory-postgres
 
 package main
 
@@ -121,12 +121,20 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx = agent.WithIdentifier(ctx, "user_1")
+	ctx = agent.WithIdentifier(ctx, "user-123")
 
 	fmt.Println()
-	fmt.Println("Monitoring assistant with typed episodic memory.")
+	fmt.Println("Monitoring assistant with typed episodic memory. Type 'quit' to exit, 'clear' to forget all.")
 	fmt.Println("Try: 'example.com went down with HTTP 503' then 'what incidents happened recently?'")
 	fmt.Println()
 
-	utils.Chat(ctx, a)
+	utils.Chat(ctx, a, utils.ChatOptions{
+		ClearFunc: func(ctx context.Context) error {
+			if err := store.Delete(ctx, "monitoring-session"); err != nil {
+				return err
+			}
+
+			return mem.ForgetAll(ctx, "user-123")
+		},
+	})
 }

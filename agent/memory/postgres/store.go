@@ -269,7 +269,9 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 		if err != nil {
 			return nil, fmt.Errorf("postgres: scan: %w", err)
 		}
+		id := s.extractPK(value)
 		results = append(results, memory.Entry[T]{
+			ID:    id,
 			Value: value,
 			Score: similarity,
 		})
@@ -298,6 +300,19 @@ func (s *Store[T]) extractContent(value T) string {
 	col := s.schema.Columns[s.schema.ContentIdx]
 	field := v.Field(col.FieldIndex)
 	return fmt.Sprintf("%v", field.Interface())
+}
+
+// extractPK gets the value of the pk-tagged field as a string.
+func (s *Store[T]) extractPK(value T) string {
+	if s.schema.PKIndex < 0 {
+		return ""
+	}
+	v := reflect.ValueOf(value)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	col := s.schema.Columns[s.schema.PKIndex]
+	return fmt.Sprintf("%v", v.Field(col.FieldIndex).Interface())
 }
 
 // extractValues extracts all column values from the struct in schema order.

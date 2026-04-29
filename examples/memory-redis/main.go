@@ -8,7 +8,8 @@
 //
 // Run:
 //
-//	go run ./memory-typed-redis
+//	go run ./memory-redis
+
 package main
 
 import (
@@ -25,6 +26,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/agent/tool/webfetch"
+	"github.com/camilbinas/gude-agents/agent/tool/websearch/tavily"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
@@ -65,12 +68,16 @@ func main() {
 	// Create tools — recall filters by priority.
 	rememberTool := memoryredis.NewRememberTool(mem,
 		memoryredis.WithToolName("save_preference"),
-		memoryredis.WithToolDescription("Store a user preference or setting for later recall."),
+		memoryredis.WithToolDescription("Store any user information: name, preferences, settings, facts, decisions, or context they share."),
 	)
 	recallTool := memoryredis.NewRecallTool(mem,
 		memoryredis.WithToolName("get_preferences"),
-		memoryredis.WithToolDescription("Retrieve relevant user preferences by semantic similarity."),
+		memoryredis.WithToolDescription("Retrieve relevant user information and preferences by semantic similarity."),
 		memoryredis.WithFieldGT("priority", 0.2),
+	)
+	forgetTool := memoryredis.NewForgetTool(mem,
+		memoryredis.WithToolName("forget_preference"),
+		memoryredis.WithToolDescription("Remove a specific memory entry when the user asks to forget something."),
 	)
 
 	store := conversation.NewWindow(conversation.NewInMemory(), 20)
@@ -78,12 +85,13 @@ func main() {
 	a, err := agent.Default(
 		bedrock.Must(bedrock.Standard()),
 		prompt.Text(
-			"You are a personal assistant that remembers user preferences. "+
-				"Use save_preference to store preferences the user shares (appearance, workflow, tools, communication style). "+
-				"Use get_preferences to retrieve relevant preferences when answering questions. "+
-				"Always check preferences before making suggestions.",
+			"You are a personal assistant that remembers everything the user tells you about themselves. "+
+				"Use save_preference to store ANY personal information: name, preferences, settings, facts about the user, decisions, or context they share. "+
+				"Use get_preferences to retrieve relevant information when answering questions or before making suggestions. "+
+				"ALWAYS save when the user shares personal info (name, role, preferences, tools they use, etc). "+
+				"ALWAYS recall before answering questions about the user.",
 		),
-		[]tool.Tool{rememberTool, recallTool},
+		[]tool.Tool{rememberTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()},
 		agent.WithConversation(store, "preferences-session"),
 		debug.WithLogging(),
 	)
@@ -91,12 +99,20 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := agent.WithIdentifier(context.Background(), "user_1")
+	ctx := agent.WithIdentifier(context.Background(), "user-123")
 
 	fmt.Println()
-	fmt.Println("Personal assistant with typed Redis preference memory.")
-	fmt.Println("Try: 'I prefer dark mode and vim keybindings' then 'What are my editor preferences?'")
+	fmt.Println("Personal assistant with Redis memory. Type 'quit' to exit, 'clear' to forget all.")
+	fmt.Println("Try: 'My name is Alice' then 'What do you know about me?'")
 	fmt.Println()
 
-	utils.Chat(ctx, a)
+	utils.Chat(ctx, a, utils.ChatOptions{
+		ClearFunc: func(ctx context.Context) error {
+			if err := store.Delete(ctx, "preferences-session"); err != nil {
+				return err
+			}
+
+			return mem.ForgetAll(ctx, "user-123")
+		},
+	})
 }

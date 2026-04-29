@@ -615,6 +615,10 @@ func (s *Store[T]) parseRESP3Results(m map[interface{}]interface{}) []memory.Ent
 		if !ok {
 			continue
 		}
+
+		// Extract the Redis key (document ID).
+		key, _ := entry["id"].(string)
+
 		attrsRaw, ok := entry["extra_attributes"]
 		if !ok {
 			continue
@@ -625,7 +629,7 @@ func (s *Store[T]) parseRESP3Results(m map[interface{}]interface{}) []memory.Ent
 		}
 
 		value, score := s.scanAttrs(attrs)
-		entries = append(entries, memory.Entry[T]{Value: value, Score: score})
+		entries = append(entries, memory.Entry[T]{ID: key, Value: value, Score: score})
 	}
 	return entries
 }
@@ -637,6 +641,9 @@ func (s *Store[T]) parseRESP2Results(results []interface{}) []memory.Entry[T] {
 
 	var entries []memory.Entry[T]
 	for i := 1; i+1 < len(results); i += 2 {
+		// In RESP2, results[i] is the key, results[i+1] is the field array.
+		key, _ := results[i].(string)
+
 		fields, ok := results[i+1].([]interface{})
 		if !ok {
 			continue
@@ -648,7 +655,7 @@ func (s *Store[T]) parseRESP2Results(results []interface{}) []memory.Entry[T] {
 		}
 
 		value, score := s.scanAttrs(attrs)
-		entries = append(entries, memory.Entry[T]{Value: value, Score: score})
+		entries = append(entries, memory.Entry[T]{ID: key, Value: value, Score: score})
 	}
 	return entries
 }

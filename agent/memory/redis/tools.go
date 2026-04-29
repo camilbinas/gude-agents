@@ -149,6 +149,55 @@ func NewRecallTool[T any](
 	)
 }
 
+// NewForgetTool creates a tool that removes a single entry by its Redis key.
+// The LLM should first recall to see entry IDs, then call this tool with the
+// ID of the entry to remove.
+func NewForgetTool[T any](
+	store *Store[T],
+	opts ...Option,
+) tool.Tool {
+	cfg := &toolConfig{
+		name:        "forget",
+		description: "Remove a specific memory entry by its ID. First recall to find the entry, then forget it by ID.",
+	}
+	for _, opt := range opts {
+		opt.applyTool(cfg)
+	}
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{
+				"type":        "string",
+				"description": "The ID of the memory entry to forget (from a previous recall).",
+			},
+		},
+		"required": []any{"id"},
+	}
+
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			identifier := agent.GetIdentifier(ctx)
+			if identifier == "" {
+				return "", errors.New("redis: identifier not found in context; use agent.WithIdentifier")
+			}
+
+			var params struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+
+			if err := store.Forget(ctx, identifier, params.ID); err != nil {
+				return "", err
+			}
+
+			return "Forgotten.", nil
+		},
+	)
+}
+
 // formatTypedResults renders entries as human-readable text.
 func formatTypedResults[T any](results []memory.Entry[T]) string {
 	var b strings.Builder
@@ -160,7 +209,7 @@ func formatTypedResults[T any](results []memory.Entry[T]) string {
 		if err != nil {
 			fmt.Fprintf(&b, "- (marshal error: %v) Score: %.4f", err, r.Score)
 		} else {
-			fmt.Fprintf(&b, "- %s\n  Score: %.4f", string(data), r.Score)
+			fmt.Fprintf(&b, "- %s\n  ID: %s\n  Score: %.4f", string(data), r.ID, r.Score)
 		}
 	}
 	return b.String()

@@ -173,7 +173,7 @@ func formatResults[T any](results []memory.Entry[T]) string {
 		if err != nil {
 			fmt.Fprintf(&b, "- (marshal error: %v) Score: %.4f", err, r.Score)
 		} else {
-			fmt.Fprintf(&b, "- %s\n  Score: %.4f", string(data), r.Score)
+			fmt.Fprintf(&b, "- %s\n  ID: %s\n  Score: %.4f", string(data), r.ID, r.Score)
 		}
 	}
 	return b.String()

@@ -98,7 +98,7 @@ Strings become TAG fields, numbers become NUMERIC fields (sortable/filterable). 
 
 ## Tools
 
-`NewRememberTool` and `NewRecallTool` wrap a store as agent tools. The LLM schema is auto-generated from struct tags (fields with `pk`, `identifier`, or `noinput` are excluded).
+`NewRememberTool`, `NewRecallTool`, and `NewForgetTool` wrap a store as agent tools. The LLM schema is auto-generated from struct tags (fields with `pk`, `identifier`, or `noinput` are excluded).
 
 ```go
 tools := []tool.Tool{
