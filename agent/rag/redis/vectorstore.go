@@ -143,21 +143,27 @@ func float64sToFloat32Bytes(v []float64) []byte {
 }
 
 // Add stores documents and their embeddings as Redis hashes.
-func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) error {
+func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
-		return fmt.Errorf("redis vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
+		return nil, fmt.Errorf("redis vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
 	if len(docs) == 0 {
-		return nil
+		return []string{}, nil
 	}
 
+	ids := make([]string, len(docs))
 	for i, doc := range docs {
 		metaJSON, err := json.Marshal(doc.Metadata)
 		if err != nil {
-			return fmt.Errorf("redis vectorstore: add: %w", err)
+			return nil, fmt.Errorf("redis vectorstore: add: %w", err)
 		}
 
-		key := s.indexName + ":" + uuid.New().String()
+		id := doc.ID
+		if id == "" {
+			id = uuid.New().String()
+		}
+		key := s.indexName + ":" + id
+		ids[i] = key
 		embeddingBytes := float64sToFloat32Bytes(embeddings[i])
 
 		err = s.client.HSet(ctx, key, map[string]interface{}{
@@ -166,11 +172,11 @@ func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings
 			"embedding": embeddingBytes,
 		}).Err()
 		if err != nil {
-			return fmt.Errorf("redis vectorstore: add: %w", err)
+			return nil, fmt.Errorf("redis vectorstore: add: %w", err)
 		}
 	}
 
-	return nil
+	return ids, nil
 }
 
 // Search performs KNN similarity search using FT.SEARCH.
@@ -228,6 +234,9 @@ func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredD
 		if !ok {
 			continue
 		}
+
+		key, _ := entry["id"].(string)
+
 		attrsRaw, ok := entry["extra_attributes"]
 		if !ok {
 			continue
@@ -254,6 +263,7 @@ func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredD
 
 		scored = append(scored, agent.ScoredDocument{
 			Document: agent.Document{
+				ID:       key,
 				Content:  content,
 				Metadata: metadata,
 			},
@@ -276,6 +286,8 @@ func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument,
 
 	var scored []agent.ScoredDocument
 	for i := 1; i+1 < len(results); i += 2 {
+		key, _ := results[i].(string)
+
 		fields, ok := results[i+1].([]interface{})
 		if !ok {
 			continue
@@ -311,6 +323,7 @@ func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument,
 
 		scored = append(scored, agent.ScoredDocument{
 			Document: agent.Document{
+				ID:       key,
 				Content:  content,
 				Metadata: metadata,
 			},
@@ -323,6 +336,17 @@ func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument,
 	})
 
 	return scored, nil
+}
+
+// Delete removes documents by their Redis keys.
+func (s *VectorStore) Delete(ctx context.Context, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := s.client.Del(ctx, ids...).Err(); err != nil {
+		return fmt.Errorf("redis vectorstore: delete: %w", err)
+	}
+	return nil
 }
 
 // Close closes the underlying Redis client.

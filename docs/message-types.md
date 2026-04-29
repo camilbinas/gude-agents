@@ -306,6 +306,7 @@ Set on the agent via `WithThinkingCallback`. See [Providers](providers.md#extend
 
 ```go
 type Document struct {
+    ID       string
     Content  string
     Metadata map[string]string
 }
@@ -315,6 +316,7 @@ A text chunk with associated metadata, used throughout the RAG pipeline. Documen
 
 | Field | Type | Description |
 |---|---|---|
+| `ID` | `string` | Storage-level ID. Empty on input means the store auto-generates one. |
 | `Content` | `string` | The text content of the document |
 | `Metadata` | `map[string]string` | Arbitrary key-value metadata (e.g., source, title) |
 

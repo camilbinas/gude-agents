@@ -31,25 +31,19 @@ In-memory brute-force cosine similarity vector store. Good for prototyping and t
 
 ```go
 store := rag.NewMemoryStore()
+
+// Delete documents by ID (returned from Add or from ScoredDocument results).
+err := store.Delete(ctx, "1", "2")
 ```
 
 ### PostgreSQL + pgvector
 
 Import: `github.com/camilbinas/gude-agents/agent/rag/postgres`
 
-Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search.
+Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search. The table must be created by the caller.
 
 ```go
-pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
-
-// Use an existing table with default column names:
-store, err := ragpg.New(pool, 1536)
-
-// Auto-create everything (development):
-store, err := ragpg.New(pool, 1536, ragpg.WithAutoMigrate())
-
-// Point at an existing table with custom columns:
-store, err := ragpg.New(pool, 1536,
+store, err := ragpg.New(pool, 1024,
     ragpg.WithTableName("users"),
     ragpg.WithColumns("id", "bio", "", "embedding"),
 )
@@ -57,14 +51,9 @@ store, err := ragpg.New(pool, 1536,
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `WithTableName(name string)` | `"documents"` | Table name for document storage |
-| `WithColumns(id, content, meta, embed)` | `"id"`, `"content"`, `"metadata"`, `"embedding"` | Map to custom column names. Pass `""` for meta to skip metadata. |
-| `WithAutoMigrate()` | off | Create extension, table, and index automatically |
-| `WithHNSW(m, efConstruction int)` | m=16, ef=200 | HNSW index parameters (only with `WithAutoMigrate`) |
-| `WithIVFFlat(lists int)` | 100 lists | IVFFlat index (only with `WithAutoMigrate`) |
+| `WithTableName(name string)` | `"documents"` | Table name |
+| `WithColumns(id, content, meta, embed)` | `"id"`, `"content"`, `"metadata"`, `"embedding"` | Column mapping. Pass `""` for meta to skip metadata. |
 | `WithDistanceMetric(metric string)` | `"cosine"` | Distance metric: `"cosine"`, `"l2"`, `"inner_product"` |
-
-By default, the table must already exist. `WithColumns` lets you point the store at any existing table — for example, a `users` table with a `bio` column and an `embedding` column. Pass `""` for the metadata column if the table doesn't have one.
 
 ### Redis Stack
 
@@ -75,7 +64,7 @@ Uses Redis Stack (RediSearch) for vector search. Requires Redis Stack — not st
 ```go
 store, err := ragredis.New(
     ragredis.Options{Addr: "localhost:6379"},
-    "my-index", 1536,
+    "my-index", 1024,
 )
 ```
 

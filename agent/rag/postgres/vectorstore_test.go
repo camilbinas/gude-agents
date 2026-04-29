@@ -28,7 +28,21 @@ func newTestStore(t *testing.T, dim int) *VectorStore {
 	pool := skipIfNoPostgres(t)
 	table := fmt.Sprintf("test_docs_%d", os.Getpid())
 
-	s, err := New(pool, dim, WithTableName(table), WithAutoMigrate())
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
+		t.Fatalf("create extension: %v", err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", table)); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	ddl := fmt.Sprintf(`CREATE TABLE %s (
+		id TEXT PRIMARY KEY, content TEXT NOT NULL, metadata JSONB, embedding vector(%d) NOT NULL
+	)`, table, dim)
+	if _, err := pool.Exec(ctx, ddl); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	s, err := New(pool, dim, WithTableName(table))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -80,7 +94,7 @@ func TestAddAndSearch(t *testing.T) {
 		{0.0, 0.0, 1.0},
 	}
 
-	if err := s.Add(ctx, docs, embeddings); err != nil {
+	if _, _, err := s.Add(ctx, docs, embeddings); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -136,7 +150,7 @@ func TestAdd_LengthMismatch(t *testing.T) {
 	docs := []agent.Document{{Content: "hello"}}
 	embeddings := [][]float64{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}}
 
-	err := s.Add(ctx, docs, embeddings)
+	_, err := s.Add(ctx, docs, embeddings)
 	if err == nil {
 		t.Fatal("expected error for length mismatch")
 	}
@@ -146,7 +160,7 @@ func TestAdd_Empty(t *testing.T) {
 	s := newTestStore(t, 3)
 	ctx := context.Background()
 
-	err := s.Add(ctx, nil, nil)
+	_, err := s.Add(ctx, nil, nil)
 	if err != nil {
 		t.Fatalf("expected nil error for empty add, got: %v", err)
 	}
@@ -156,7 +170,12 @@ func TestCustomTableName(t *testing.T) {
 	pool := skipIfNoPostgres(t)
 	table := fmt.Sprintf("custom_docs_%d", os.Getpid())
 
-	s, err := New(pool, 3, WithTableName(table), WithAutoMigrate())
+	ctx := context.Background()
+	pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+	pool.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
+	pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s (id TEXT PRIMARY KEY, content TEXT NOT NULL, metadata JSONB, embedding vector(3) NOT NULL)`, table))
+
+	s, err := New(pool, 3, WithTableName(table))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -174,7 +193,12 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 	pool := skipIfNoPostgres(t)
 	table := fmt.Sprintf("test_l2_%d", os.Getpid())
 
-	s, err := New(pool, 3, WithTableName(table), WithDistanceMetric("l2"), WithAutoMigrate())
+	ctx := context.Background()
+	pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+	pool.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
+	pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s (id TEXT PRIMARY KEY, content TEXT NOT NULL, metadata JSONB, embedding vector(3) NOT NULL)`, table))
+
+	s, err := New(pool, 3, WithTableName(table), WithDistanceMetric("l2"))
 	if err != nil {
 		t.Fatalf("New with L2: %v", err)
 	}
@@ -183,7 +207,7 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 		s.Close()
 	}()
 
-	ctx := context.Background()
+	ctx = context.Background()
 
 	docs := []agent.Document{
 		{Content: "near"},
@@ -194,7 +218,7 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 		{0.0, 0.0, 1.0},
 	}
 
-	if err := s.Add(ctx, docs, embeddings); err != nil {
+	if _, _, err := s.Add(ctx, docs, embeddings); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 

@@ -130,8 +130,9 @@ Drops the index and all its documents before creating a fresh one. Useful for ex
 
 ### Methods
 
-- `Add(ctx, docs, embeddings)` — stores documents and their embeddings as Redis hashes. Each document gets a UUID-based key under the index prefix.
-- `Search(ctx, queryEmbedding, topK)` — performs KNN similarity search using `FT.SEARCH`. Returns results sorted by descending cosine similarity (score = 1 - cosine distance).
+- `Add(ctx, docs, embeddings) ([]string, error)` — stores documents and their embeddings as Redis hashes. Returns the IDs of all stored documents in order. Each document gets a UUID-based key under the index prefix.
+- `Search(ctx, queryEmbedding, topK) ([]ScoredDocument, error)` — performs KNN similarity search using `FT.SEARCH`. Returns results sorted by descending cosine similarity (score = 1 - cosine distance).
+- `Delete(ctx, ids ...string) error` — removes documents by their IDs. Returns nil if an ID doesn't exist.
 
 ### Close
 

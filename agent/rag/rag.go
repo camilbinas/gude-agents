@@ -56,6 +56,7 @@ func SplitText(text string, chunkSize int, chunkOverlap int) []string {
 
 // vsEntry pairs a document with its embedding vector.
 type vsEntry struct {
+	id        string
 	doc       agent.Document
 	embedding []float64
 }
@@ -65,6 +66,7 @@ type vsEntry struct {
 type MemoryStore struct {
 	mu      sync.RWMutex
 	entries []vsEntry
+	nextID  int
 }
 
 // NewMemoryStore returns an empty MemoryStore.
@@ -73,21 +75,28 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // Add appends documents and their embeddings to the store.
-// Returns an error if docs and embeddings have different lengths.
-func (s *MemoryStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) error {
+// Returns the generated IDs for each document.
+func (s *MemoryStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
-		return fmt.Errorf("vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
+		return nil, fmt.Errorf("vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ids := make([]string, len(docs))
 	for i, doc := range docs {
-		s.entries = append(s.entries, vsEntry{doc: doc, embedding: embeddings[i]})
+		id := doc.ID
+		if id == "" {
+			s.nextID++
+			id = strconv.Itoa(s.nextID)
+		}
+		doc.ID = id
+		ids[i] = id
+		s.entries = append(s.entries, vsEntry{id: id, doc: doc, embedding: embeddings[i]})
 	}
-	return nil
+	return ids, nil
 }
 
 // Search returns the top-K documents by cosine similarity to queryEmbedding.
-// Returns an error if topK < 1. If fewer documents exist than topK, all are returned.
 func (s *MemoryStore) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("vectorstore: topK must be >= 1, got %d", topK)
@@ -111,6 +120,27 @@ func (s *MemoryStore) Search(ctx context.Context, queryEmbedding []float64, topK
 		topK = len(scored)
 	}
 	return scored[:topK], nil
+}
+
+// Delete removes documents by their IDs.
+func (s *MemoryStore) Delete(ctx context.Context, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	remove := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		remove[id] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.entries[:0]
+	for _, e := range s.entries {
+		if !remove[e.id] {
+			filtered = append(filtered, e)
+		}
+	}
+	s.entries = filtered
+	return nil
 }
 
 // cosineSimilarity computes dot(a,b) / (norm(a) * norm(b)).
@@ -351,7 +381,7 @@ func Ingest(
 		}
 	}
 
-	if err := store.Add(ctx, allDocs, allEmbeddings); err != nil {
+	if _, err := store.Add(ctx, allDocs, allEmbeddings); err != nil {
 		return fmt.Errorf("ingest: store.Add: %w", err)
 	}
 

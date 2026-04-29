@@ -1,12 +1,18 @@
 // Example: RAG agent backed by PostgreSQL + pgvector.
 //
-// Requires PostgreSQL with the pgvector extension installed:
+// Prerequisites:
+//   - PostgreSQL with the pgvector extension installed
+//
+// DDL (create before running):
 //
 //	CREATE EXTENSION IF NOT EXISTS vector;
-//
-// Environment variables:
-//
-//	POSTGRES_URL — connection string (required)
+//	CREATE TABLE example_docs (
+//	    id        TEXT PRIMARY KEY,
+//	    content   TEXT NOT NULL,
+//	    metadata  JSONB,
+//	    embedding vector(1024) NOT NULL
+//	);
+//	CREATE INDEX ON example_docs USING hnsw (embedding vector_cosine_ops);
 //
 // Run:
 //
@@ -50,7 +56,6 @@ func main() {
 
 	store, err := ragpg.New(pool, 1024,
 		ragpg.WithTableName("example_docs"),
-		ragpg.WithAutoMigrate(),
 	)
 	if err != nil {
 		log.Fatalf("postgres vectorstore: %v", err)
