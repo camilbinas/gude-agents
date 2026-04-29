@@ -21,19 +21,7 @@ import (
 )
 
 // Store is a Redis memory store that maps Go struct fields to Redis HASH
-// fields using `db` struct tags. It creates a RediSearch index with appropriate
-// field types (TAG, NUMERIC, TEXT, VECTOR) for native filtered search.
-//
-// Tag format: `db:"field_name,role"`
-//
-// Roles:
-//   - pk: primary key (used as part of the Redis key)
-//   - identifier: scoping field (TAG filter in queries)
-//   - content: field to embed (passed to the embedder)
-//   - jsonb: serialize as JSON string
-//   - noinput: exclude from LLM tool input schema
-//   - tag: force TAG indexing (default for strings)
-//   - numeric: force NUMERIC indexing (default for int/float/time)
+// fields using `db` struct tags. Requires Redis Stack (RediSearch).
 type Store[T any] struct {
 	client    *goredis.Client
 	indexName string

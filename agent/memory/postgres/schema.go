@@ -158,9 +158,7 @@ func placeholders(n int) string {
 }
 
 // GenerateInputSchema produces a JSON Schema for the LLM tool input,
-// excluding fields marked with noinput, pk, or identifier in their db tag.
-// It reads `json`, `description`, `enum`, and `required` struct tags
-// (same conventions as tool.GenerateSchema).
+// excluding fields tagged with pk, identifier, or noinput.
 func GenerateInputSchema[T any]() map[string]any {
 	var zero T
 	t := reflect.TypeOf(zero)

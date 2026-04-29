@@ -1,7 +1,4 @@
-// Package postgres provides a PostgreSQL-based conversation driver for the
-// gude-agents framework. It stores each conversation as a row in a PostgreSQL
-// table, with messages serialized as JSONB.
-//
+// Package postgres provides a PostgreSQL-based conversation driver.
 // The table must be created by the caller. Expected schema:
 //
 //	CREATE TABLE conversations (
@@ -10,15 +7,9 @@
 //	    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 //	);
 //
-// Column names are configurable via WithColumns if your table uses different
-// names. The table name is configurable via WithTableName.
-//
 // Usage:
 //
-//	pool, err := pgxpool.New(ctx, "postgres://user:pass@localhost:5432/mydb")
 //	store, err := postgres.New(pool)
-//
-//	// Map to an existing table with different column names:
 //	store, err := postgres.New(pool,
 //	    postgres.WithTableName("chat_history"),
 //	    postgres.WithColumns("id", "data", "modified_at"),
@@ -39,9 +30,7 @@ import (
 // Compile-time interface checks.
 var _ agent.Conversation = (*Conversation)(nil)
 
-// Conversation implements agent.Conversation and conversation.ConversationManager using a
-// PostgreSQL database. Each conversation is stored as a row with its messages
-// serialized as JSONB.
+// Conversation implements agent.Conversation using PostgreSQL.
 type Conversation struct {
 	pool *pgxpool.Pool
 	cfg  *pgConfig

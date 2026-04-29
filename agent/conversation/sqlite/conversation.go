@@ -34,9 +34,7 @@ import (
 // Compile-time interface checks.
 var _ agent.Conversation = (*Conversation)(nil)
 
-// Conversation implements agent.Conversation and conversation.ConversationManager using a
-// SQLite database. Each conversation is stored as a row with its messages
-// serialized as JSON.
+// Conversation implements agent.Conversation using SQLite.
 type Conversation struct {
 	db        *sql.DB
 	tableName string

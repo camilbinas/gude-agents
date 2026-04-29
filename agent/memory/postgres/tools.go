@@ -56,10 +56,7 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
-// NewRememberTool creates a tool that stores typed values into a Store.
-// The LLM sends a JSON object matching the struct schema (fields tagged with
-// pk, identifier, or noinput are excluded from the LLM input). The tool
-// deserializes the input, embeds the content field, and inserts a row.
+// NewRememberTool creates a tool that stores values into a Store.
 func NewRememberTool[T any](
 	store *Store[T],
 	opts ...Option,
@@ -95,12 +92,8 @@ func NewRememberTool[T any](
 	)
 }
 
-// NewRecallTool creates a tool that retrieves typed values from a Store.
-// The LLM provides a query string and optional limit; results are returned as
-// formatted JSON entries with similarity scores.
-//
-// Pass RecallOptions directly to set default filters (e.g. WithFieldGT,
-// WithOrderBy) — they apply to every recall call the LLM makes.
+// NewRecallTool creates a tool that retrieves values from a Store.
+// RecallOptions passed here apply as default filters to every call.
 func NewRecallTool[T any](
 	store *Store[T],
 	opts ...Option,

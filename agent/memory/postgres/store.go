@@ -15,21 +15,8 @@ import (
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-// Store is a PostgreSQL memory store that maps Go struct fields directly
-// to table columns using `db` struct tags. Unlike the base Store (which stores
-// everything in content + metadata JSONB), Store gives each field its own
-// column for native SQL filtering and indexing.
-//
-// Tag format: `db:"column_name,role"`
-//
-// Roles:
-//   - pk: primary key column
-//   - identifier: scoping column (used in WHERE for multi-tenant isolation)
-//   - content: field whose value is embedded (passed to the embedder)
-//   - jsonb: serialize the field as JSONB (for slices, maps, nested structs)
-//
-// The table must be created by the caller. The embedding column name is
-// configured via StoreOption.
+// Store is a PostgreSQL memory store that maps Go struct fields to table
+// columns using `db` struct tags. The table must be created by the caller.
 type Store[T any] struct {
 	pool         *pgxpool.Pool
 	embedder     agent.Embedder
@@ -79,7 +66,6 @@ func WithDistanceMetric(metric string) StoreOption {
 }
 
 // NewStore creates a Store for the given struct type T.
-// It parses `db` struct tags to build the column mapping.
 func NewStore[T any](pool *pgxpool.Pool, embedder agent.Embedder, dim int, opts ...StoreOption) (*Store[T], error) {
 	if pool == nil {
 		return nil, errors.New("postgres: pool is required")
@@ -138,11 +124,7 @@ func NewStore[T any](pool *pgxpool.Pool, embedder agent.Embedder, dim int, opts 
 	}, nil
 }
 
-// Remember stores a value for the given identifier. It sets the identifier
-// field on the struct, extracts the content field, embeds it, and inserts a
-// row with all struct fields mapped to their respective columns.
-//
-// Implements memory.TypedMemory[T].
+// Remember stores a value for the given identifier.
 func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) error {
 	if identifier == "" {
 		return errors.New("postgres: identifier must not be empty")
@@ -188,10 +170,7 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	return nil
 }
 
-// Recall retrieves values by semantic similarity to the query, scoped to the
-// identifier. Supports filtering and sorting via RecallOption.
-//
-// Implements memory.Memory[T].
+// Recall retrieves values by semantic similarity, scoped to the identifier.
 func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...memory.RecallOption) ([]memory.Entry[T], error) {
 	if identifier == "" {
 		return nil, errors.New("postgres: identifier must not be empty")

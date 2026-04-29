@@ -13,9 +13,7 @@ const (
 	Desc SortDir = "DESC"
 )
 
-// RecallOption configures filtering and sorting for typed Recall queries.
-// It satisfies memory.RecallOption so it can be passed to the interface method,
-// and also satisfies the Option interface for NewRecallTool.
+// RecallOption configures filtering and sorting for Recall queries.
 type RecallOption func(*recallConfig)
 
 func (RecallOption) IsRecallOption() {}

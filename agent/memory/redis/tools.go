@@ -48,9 +48,7 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
-// NewRememberTool creates a tool that stores typed values into a Redis Store.
-// The LLM schema is auto-generated from struct tags (fields with pk, identifier,
-// or noinput are excluded).
+// NewRememberTool creates a tool that stores values into a Store.
 func NewRememberTool[T any](
 	store *Store[T],
 	opts ...Option,
@@ -149,9 +147,7 @@ func NewRecallTool[T any](
 	)
 }
 
-// NewForgetTool creates a tool that removes a single entry by its Redis key.
-// The LLM should first recall to see entry IDs, then call this tool with the
-// ID of the entry to remove.
+// NewForgetTool creates a tool that removes a single entry by ID.
 func NewForgetTool[T any](
 	store *Store[T],
 	opts ...Option,
