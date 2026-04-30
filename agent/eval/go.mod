@@ -5,6 +5,6 @@ go 1.25.0
 replace github.com/camilbinas/gude-agents => ../../
 
 require (
-	github.com/camilbinas/gude-agents v0.35.0-00010101000000-000000000000
+	github.com/camilbinas/gude-agents v0.36.0-00010101000000-000000000000
 	pgregory.net/rapid v1.2.0
 )
