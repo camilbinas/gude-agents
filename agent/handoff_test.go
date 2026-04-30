@@ -30,7 +30,7 @@ func TestHandoffTool_ReturnsErrHandoffRequested(t *testing.T) {
 	ic := NewInvocationContext()
 	ctx := WithInvocationContext(context.Background(), ic)
 
-	_, err = a.InvokeStream(ctx, "Process refund #123", nil)
+	err = a.InvokeStream(ctx, "Process refund #123", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
@@ -80,7 +80,7 @@ func TestResume_ContinuesAfterHandoff(t *testing.T) {
 	ic := NewInvocationContext()
 	ctx := WithInvocationContext(context.Background(), ic)
 
-	_, err = a.InvokeStream(ctx, "Process a refund", nil)
+	err = a.InvokeStream(ctx, "Process a refund", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
@@ -88,7 +88,7 @@ func TestResume_ContinuesAfterHandoff(t *testing.T) {
 	hr, _ := GetHandoffRequest(ic)
 
 	// Resume with human input.
-	result, _, err := a.ResumeInvoke(ctx, hr, "Order 456")
+	result, err := a.ResumeInvoke(ctx, hr, "Order 456")
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestHandoff_PreservesConversationContext(t *testing.T) {
 	ic := NewInvocationContext()
 	ctx := WithInvocationContext(context.Background(), ic)
 
-	_, err = a.InvokeStream(ctx, "Check item ABC", nil)
+	err = a.InvokeStream(ctx, "Check item ABC", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}

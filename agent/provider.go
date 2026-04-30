@@ -111,10 +111,10 @@ type ModelIdentifier interface {
 }
 
 // Invoker abstracts anything that can handle a user message and return a
-// text response with token usage. *Agent satisfies this interface.
+// text response. *Agent satisfies this interface.
 // Used by graph.AgentNode, graph.LLMRouter, and useful for testing.
 type Invoker interface {
-	Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error)
+	Invoke(ctx context.Context, userMessage string) (string, error)
 }
 
 // compile-time check: *Agent implements Invoker.

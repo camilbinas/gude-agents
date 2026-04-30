@@ -102,8 +102,10 @@ func benchmark(prov agent.Provider, sysPrompt prompt.Instructions, apiKey string
 			log.Fatalf("create agent: %v", err)
 		}
 
+		ic := agent.NewInvocationContext()
+		ctx := agent.WithInvocationContext(context.Background(), ic)
 		start := time.Now()
-		resp, usage, err := a.Invoke(context.Background(), query)
+		resp, err := a.Invoke(ctx, query)
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -111,6 +113,7 @@ func benchmark(prov agent.Provider, sysPrompt prompt.Instructions, apiKey string
 			continue
 		}
 
+		usage := agent.GetInvocationUsage(ic)
 		r := result{
 			inputTokens:  usage.InputTokens,
 			outputTokens: usage.OutputTokens,

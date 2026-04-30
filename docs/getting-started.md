@@ -119,7 +119,7 @@ The agent provides two ways to get a response:
 `Invoke` is a blocking call that collects the full response into a single string and returns it:
 
 ```go
-func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error)
+func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, error)
 ```
 
 Use `Invoke` when you want the complete answer before processing it — the simplest option for scripts, CLI tools, and backend services.
@@ -129,13 +129,13 @@ Use `Invoke` when you want the complete answer before processing it — the simp
 `InvokeStream` delivers the response incrementally through a callback as the LLM generates tokens:
 
 ```go
-func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) (TokenUsage, error)
+func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) error
 ```
 
 `StreamCallback` is `func(chunk string)`. Each call receives a text chunk as it arrives from the provider. Use `InvokeStream` when you need real-time output — chat UIs, server-sent events, or any scenario where perceived latency matters.
 
 ```go
-usage, err := a.InvokeStream(ctx, "Tell me a joke", func(chunk string) {
+err := a.InvokeStream(ctx, "Tell me a joke", func(chunk string) {
 	fmt.Print(chunk) // prints tokens as they arrive
 })
 ```

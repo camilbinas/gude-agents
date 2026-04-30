@@ -21,7 +21,7 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 
 	// Invoke with per-request conversation ID "conv-A".
 	ctxA := WithConversationID(context.Background(), "conv-A")
-	result, _, err := a.Invoke(ctxA, "hello A")
+	result, err := a.Invoke(ctxA, "hello A")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 
 	// Invoke with per-request conversation ID "conv-B".
 	ctxB := WithConversationID(context.Background(), "conv-B")
-	result, _, err = a.Invoke(ctxB, "hello B")
+	result, err = a.Invoke(ctxB, "hello B")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestWithConversationID_FallsBackToDefault(t *testing.T) {
 	}
 
 	// Invoke without per-request override — should use "fallback".
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +92,11 @@ func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
 	ctx1 := WithConversationID(context.Background(), "user-1")
 	ctx2 := WithConversationID(context.Background(), "user-2")
 
-	r1, _, err := a.Invoke(ctx1, "hi from user 1")
+	r1, err := a.Invoke(ctx1, "hi from user 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2, _, err := a.Invoke(ctx2, "hi from user 2")
+	r2, err := a.Invoke(ctx2, "hi from user 2")
 	if err != nil {
 		t.Fatal(err)
 	}

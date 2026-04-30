@@ -164,7 +164,7 @@ func TestAgent_RetrieverCalledOnce(t *testing.T) {
 			t.Fatalf("failed to create agent: %v", err)
 		}
 
-		result, _, err := a.Invoke(context.Background(), "hello")
+		result, err := a.Invoke(context.Background(), "hello")
 		if err != nil {
 			t.Fatalf("Invoke failed: %v", err)
 		}
@@ -193,7 +193,7 @@ func TestAgent_RetrievedDocsInSystemPrompt(t *testing.T) {
 			t.Fatalf("failed to create agent: %v", err)
 		}
 
-		_, _, err = a.Invoke(context.Background(), "hello")
+		_, err = a.Invoke(context.Background(), "hello")
 		if err != nil {
 			t.Fatalf("Invoke failed: %v", err)
 		}
@@ -287,7 +287,7 @@ func TestAgent_RetrieverErrorWrapping(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err == nil {
 		t.Fatal("expected error from retriever, got nil")
 	}
@@ -311,7 +311,7 @@ func TestAgent_EmptyRetrieval(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestAgent_CustomContextFormatter(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "user question")
+	_, err = a.Invoke(context.Background(), "user question")
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hello")
+	result, err := a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}

@@ -27,7 +27,7 @@ func AgentAsTool(name, description string, child *Agent) tool.Tool {
 			return "", err
 		}
 		var result string
-		_, err := child.InvokeStream(ctx, args.Message, func(chunk string) {
+		err := child.InvokeStream(ctx, args.Message, func(chunk string) {
 			result += chunk
 		})
 		if err != nil {

@@ -161,7 +161,7 @@ func TestMiddleware_IntegrationWithAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

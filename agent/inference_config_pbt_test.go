@@ -316,7 +316,7 @@ func TestProperty_PerInvocationValidationBlocksProviderCall(t *testing.T) {
 		}
 
 		ctx := WithInferenceConfig(context.Background(), invalidCfg)
-		_, _, invokeErr := a.Invoke(ctx, "hello")
+		_, invokeErr := a.Invoke(ctx, "hello")
 
 		if invokeErr == nil {
 			rt.Fatalf("expected validation error for invalid config %+v, got nil", invalidCfg)

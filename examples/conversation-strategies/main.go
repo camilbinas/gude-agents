@@ -38,13 +38,13 @@ func main() {
 	ctx := context.Background()
 
 	// Multi-turn conversation through the composed pipeline.
-	result, _, err := a.Invoke(ctx, "My name is Alice. Remember that.")
+	result, err := a.Invoke(ctx, "My name is Alice. Remember that.")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("Turn 1:", result)
 
-	result, _, err = a.Invoke(ctx, "What is my name?")
+	result, err = a.Invoke(ctx, "What is my name?")
 	if err != nil {
 		log.Fatal(err)
 	}

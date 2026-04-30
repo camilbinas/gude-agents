@@ -62,7 +62,7 @@ func TestProperty2_InvokeStructured_ConverseParams(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, userMsg)
+		_, err = InvokeStructured[SimpleStruct](context.Background(), a, userMsg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,7 +152,9 @@ func TestProperty3_InvokeStructured_DeserializationRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		result, usage, err := InvokeStructured[RoundTripStruct](context.Background(), a, "test")
+		ic := NewInvocationContext()
+		ctx := WithInvocationContext(context.Background(), ic)
+		result, err := InvokeStructured[RoundTripStruct](ctx, a, "test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -188,6 +190,7 @@ func TestProperty3_InvokeStructured_DeserializationRoundTrip(t *testing.T) {
 		}
 
 		// Verify usage is passed through.
+		usage := GetInvocationUsage(ic)
 		if usage.InputTokens != 10 || usage.OutputTokens != 5 {
 			t.Errorf("Usage: got %+v, want {10, 5}", usage)
 		}
@@ -205,7 +208,7 @@ func TestInvokeStructured_NoToolCallReturned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for no tool call, got nil")
 	}
@@ -231,7 +234,7 @@ func TestInvokeStructured_WrongToolName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for wrong tool name, got nil")
 	}
@@ -257,7 +260,7 @@ func TestInvokeStructured_MalformedJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
@@ -282,7 +285,7 @@ func TestInvokeStructured_ProviderError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for provider failure, got nil")
 	}
@@ -511,7 +514,7 @@ func TestInvokeStructured_MemoryLoadAndSaveCalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "hello")
+	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -545,7 +548,7 @@ func TestInvokeStructured_InputGuardrailApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "original")
+	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "original")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -575,7 +578,7 @@ func TestInvokeStructured_InputGuardrailError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, invokeErr := InvokeStructured[SimpleStruct](context.Background(), a, "bad input")
+	_, invokeErr := InvokeStructured[SimpleStruct](context.Background(), a, "bad input")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -606,7 +609,7 @@ func TestInvokeStructured_OutputGuardrailApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := InvokeStructured[SimpleStruct](context.Background(), a, "hello")
+	result, err := InvokeStructured[SimpleStruct](context.Background(), a, "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -634,7 +637,7 @@ func TestInvokeStructured_OutputGuardrailError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, invokeErr := InvokeStructured[SimpleStruct](context.Background(), a, "hello")
+	_, invokeErr := InvokeStructured[SimpleStruct](context.Background(), a, "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -676,7 +679,7 @@ func TestProperty9_InvokeStructured_InputGuardrailOrder(t *testing.T) {
 			rt.Fatal(err)
 		}
 
-		_, _, err = InvokeStructured[SimpleStruct](context.Background(), a, "start")
+		_, err = InvokeStructured[SimpleStruct](context.Background(), a, "start")
 		if err != nil {
 			rt.Fatalf("unexpected error: %v", err)
 		}
@@ -749,7 +752,7 @@ func TestProperty10_InvokeStructured_OutputGuardrailOrder(t *testing.T) {
 			rt.Fatal(err)
 		}
 
-		_, _, err = InvokeStructured[string](context.Background(), a2, "hello")
+		_, err = InvokeStructured[string](context.Background(), a2, "hello")
 		if err != nil {
 			rt.Fatalf("unexpected error: %v", err)
 		}

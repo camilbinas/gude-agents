@@ -57,11 +57,11 @@ Extracts the handoff details after `ErrHandoffRequested` is returned. The `Hando
 - `ConversationID` — the conversation this handoff belongs to (resolved from context or agent default)
 - `Messages` — full conversation state at the point of handoff
 
-### `(*Agent) Resume(ctx, hr, humanResponse, cb) (TokenUsage, error)`
+### `(*Agent) Resume(ctx, hr, humanResponse, cb) error`
 
 Continues the agent loop from the saved conversation state, appending the human's response as a new user message.
 
-### `(*Agent) ResumeInvoke(ctx, hr, humanResponse) (string, TokenUsage, error)`
+### `(*Agent) ResumeInvoke(ctx, hr, humanResponse) (string, error)`
 
 Convenience wrapper that collects streamed output into a string.
 

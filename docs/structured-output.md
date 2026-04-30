@@ -7,7 +7,7 @@ Under the hood it uses tool forcing: it generates a JSON Schema from `T`, regist
 ## Function Signature
 
 ```go
-func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, TokenUsage, error)
+func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, error)
 ```
 
 - `T` — any Go struct type. The function generates a JSON Schema from `T` and uses it to constrain the LLM's response.
@@ -17,8 +17,9 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 
 Returns:
 - A value of type `T` populated from the LLM's JSON response.
-- `TokenUsage` with `InputTokens` and `OutputTokens` from the provider call.
 - An error if the provider call fails, the LLM doesn't return the expected tool call, or JSON deserialization fails.
+
+Token usage is available via `GetInvocationUsage` on the `InvocationContext` (same pattern as `Invoke`).
 
 ## How It Works
 
@@ -117,5 +118,5 @@ The generated JSON Schema for `MovieReview` looks like:
 ## See Also
 
 - [Tool System](tools.md) — `tool.GenerateSchema[T]` and struct tag reference
-- [Agent API Reference](agent-api.md) — `agent.New`, `agent.Default`, and `TokenUsage`
+- [Agent API Reference](agent-api.md) — `agent.New`, `agent.Default`, and `GetInvocationUsage`
 - [Providers](providers.md) — configuring the LLM provider used by `InvokeStructured`

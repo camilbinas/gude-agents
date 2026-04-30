@@ -68,7 +68,7 @@ func TestLoop_NoImages_SingleTextBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestLoop_WithImages_PrependsImagesThenText(t *testing.T) {
 	images := []ImageBlock{img1, img2}
 
 	ctx := WithImages(context.Background(), images)
-	_, _, err = a.Invoke(ctx, "describe these")
+	_, err = a.Invoke(ctx, "describe these")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestLoop_InvalidMIMEType_ReturnsErrorBeforeProvider(t *testing.T) {
 	badImage := ImageBlock{Source: ImageSource{MIMEType: "image/bmp", Data: []byte{0x42, 0x4D}}}
 	ctx := WithImages(context.Background(), []ImageBlock{badImage})
 
-	_, _, invokeErr := a.Invoke(ctx, "hello")
+	_, invokeErr := a.Invoke(ctx, "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error for invalid MIME type, got nil")
 	}

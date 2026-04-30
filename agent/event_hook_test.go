@@ -306,7 +306,7 @@ func TestEventHook_ThinkingForwarding(t *testing.T) {
 	}
 
 	ctx := WithEventHook(context.Background(), hook)
-	_, _, err = a.Invoke(ctx, "what is the answer?")
+	_, err = a.Invoke(ctx, "what is the answer?")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestEventHook_NoHookNoThinking(t *testing.T) {
 	}
 
 	// No EventHook in context — should not panic.
-	_, _, err = a.Invoke(context.Background(), "think about this")
+	_, err = a.Invoke(context.Background(), "think about this")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestEventHook_ParallelToolDispatch(t *testing.T) {
 	}
 
 	ctx := WithEventHook(context.Background(), hook)
-	_, _, err = a.Invoke(ctx, "run all tools")
+	_, err = a.Invoke(ctx, "run all tools")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

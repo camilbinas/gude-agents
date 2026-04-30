@@ -67,13 +67,13 @@ func main() {
 	fmt.Printf("Image: %s (%s)\n", imagePath, mimeType)
 	fmt.Println(strings.Repeat("─", 60))
 	imgCtx := agent.WithImages(ctx, []agent.ImageBlock{img})
-	if _, err := a.InvokeStream(imgCtx, "What is in this image?", func(c string) { fmt.Print(c) }); err != nil {
+	if err := a.InvokeStream(imgCtx, "What is in this image?", func(c string) { fmt.Print(c) }); err != nil {
 		log.Fatal(err)
 	}
 
 	// Turn 2 — follow-up without re-attaching the image.
 	fmt.Println("\n" + strings.Repeat("─", 60))
-	if _, err := a.InvokeStream(ctx, "Suggest a caption for it.", func(c string) { fmt.Print(c) }); err != nil {
+	if err := a.InvokeStream(ctx, "Suggest a caption for it.", func(c string) { fmt.Print(c) }); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println()

@@ -22,8 +22,10 @@ import (
 //	}
 //
 //	// In a node:
-//	result, usage, err := myAgent.Invoke(ctx, s.Topic)
-//	s.AddUsage(usage)  // accumulates into the graph's token counter
+//	ic := agent.NewInvocationContext()
+//	ctx := agent.WithInvocationContext(ctx, ic)
+//	result, err := myAgent.Invoke(ctx, s.Topic)
+//	s.AddUsage(agent.GetInvocationUsage(ic))  // accumulates into the graph's token counter
 type GraphState struct {
 	pendingUsage agent.TokenUsage `json:"-"`
 }

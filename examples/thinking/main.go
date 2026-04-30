@@ -21,6 +21,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
 	"github.com/camilbinas/gude-agents/agent/provider/anthropic"
@@ -45,6 +46,7 @@ func main() {
 		provider,
 		prompt.Text("You are a careful analytical thinker. Work through problems step by step."),
 		nil,
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -55,12 +57,12 @@ func main() {
 	// Attach EventHook via context — scoped to this invocation.
 	ctx = agent.WithEventHook(ctx, thinkingHook{})
 
-	usage, err := a.InvokeStream(ctx, question, func(chunk string) {
+	err = a.InvokeStream(ctx, question, func(chunk string) {
 		fmt.Print(chunk)
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("\n\nTokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
+	fmt.Println()
 }

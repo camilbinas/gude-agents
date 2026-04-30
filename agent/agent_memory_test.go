@@ -61,7 +61,7 @@ func TestAgent_LoadsHistoryOnSecondInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result1, _, err := a.Invoke(context.Background(), "hello")
+	result1, err := a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("first invoke: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestAgent_LoadsHistoryOnSecondInvocation(t *testing.T) {
 		t.Errorf("expected %q, got %q", "first reply", result1)
 	}
 
-	result2, _, err := a.Invoke(context.Background(), "follow up")
+	result2, err := a.Invoke(context.Background(), "follow up")
 	if err != nil {
 		t.Fatalf("second invoke: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestAgent_WorksWithoutConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestAgent_ConversationLoadFailureReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error from memory load failure, got nil")
 	}

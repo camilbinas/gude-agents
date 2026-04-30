@@ -117,7 +117,7 @@ func main() {
 	fmt.Println()
 
 	utils.Chat(ctx, a, utils.ChatOptions{
-		AfterInvoke: func(_ context.Context, _ agent.TokenUsage, _ error) {
+		AfterInvoke: func(_ context.Context, _ error) {
 			// Flush the tree exporter after each invocation so the trace
 			// prints immediately (only relevant for console mode).
 			if treeExp != nil {

@@ -116,7 +116,7 @@ func main() {
 			hook := &sseHook{w: w}
 			ctx := agent.WithEventHook(c.Context(), hook)
 
-			_, err := a.InvokeStream(ctx, q, func(chunk string) {
+			err := a.InvokeStream(ctx, q, func(chunk string) {
 				payload, _ := json.Marshal(map[string]string{"chunk": chunk})
 				fmt.Fprintf(w, "event: text\tdata: %s\n", payload)
 				w.Flush()

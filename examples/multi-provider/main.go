@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
@@ -43,12 +44,12 @@ func main() {
 	// OpenAI provider with most capable model
 	smart := openai.Must(openai.Smartest())
 
-	cheapAgent, err := agent.Default(cheap, instructions, nil)
+	cheapAgent, err := agent.Default(cheap, instructions, nil, auto.WithLogging())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	smartAgent, err := agent.Default(smart, instructions, nil)
+	smartAgent, err := agent.Default(smart, instructions, nil, auto.WithLogging())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func main() {
 		fmt.Printf("Q: %s\n", task.question)
 
 		start := time.Now()
-		result, usage, err := a.Invoke(ctx, task.question)
+		result, err := a.Invoke(ctx, task.question)
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -101,6 +102,6 @@ func main() {
 		}
 
 		fmt.Printf("A: %s\n", result)
-		fmt.Printf("   [%d in / %d out tokens, %s]\n\n", usage.InputTokens, usage.OutputTokens, elapsed.Round(time.Millisecond))
+		fmt.Printf("   [%s]\n\n", elapsed.Round(time.Millisecond))
 	}
 }

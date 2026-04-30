@@ -56,7 +56,7 @@ func main() {
 	}
 
 	for i, q := range questions {
-		result, _, err := a.Invoke(ctx, q)
+		result, err := a.Invoke(ctx, q)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func main() {
 	// summarization finishes before returning — no manual Wait() needed.
 	// This demonstrates that summarization is transparent: the agent still
 	// knows everything about Bob despite the condensed message count.
-	result, _, err := a.Invoke(ctx, "Remind me what city I live in.")
+	result, err := a.Invoke(ctx, "Remind me what city I live in.")
 	if err != nil {
 		log.Fatal(err)
 	}

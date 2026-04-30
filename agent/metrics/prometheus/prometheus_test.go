@@ -112,7 +112,7 @@ func TestWithMetrics_CustomRegisterer(t *testing.T) {
 	}
 
 	// Trigger an invocation so counters get label values and appear in Gather.
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("invoke error: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestNilHookNoPanic(t *testing.T) {
 	}
 
 	// This should not panic.
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestCoexistenceWithTracing(t *testing.T) {
 	// full tracing submodule dependency).
 	a.SetTracingHook(tracingHook)
 
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestAgentLoop_MetricsHookCalled(t *testing.T) {
 		t.Fatalf("unexpected error creating agent: %v", err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "do something")
+	result, err := a.Invoke(context.Background(), "do something")
 	if err != nil {
 		t.Fatalf("unexpected invoke error: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	// Set the tracing hook alongside the metrics hook.
 	a.SetTracingHook(tracingHook)
 
-	result, _, err := a.Invoke(context.Background(), "do something")
+	result, err := a.Invoke(context.Background(), "do something")
 	if err != nil {
 		t.Fatalf("unexpected invoke error: %v", err)
 	}

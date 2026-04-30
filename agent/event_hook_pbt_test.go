@@ -268,7 +268,7 @@ func TestProperty_ModelStartOrdering(t *testing.T) {
 		}
 
 		ctx := WithEventHook(context.Background(), hook)
-		_, _, err = a.Invoke(ctx, "hello")
+		_, err = a.Invoke(ctx, "hello")
 		if err != nil {
 			t.Fatalf("invoke failed: %v", err)
 		}
@@ -326,7 +326,7 @@ func TestProperty_ThinkingChunkForwarding(t *testing.T) {
 		}
 
 		ctx := WithEventHook(context.Background(), hook)
-		_, _, err = a.Invoke(ctx, "think")
+		_, err = a.Invoke(ctx, "think")
 		if err != nil {
 			t.Fatalf("invoke failed: %v", err)
 		}

@@ -60,7 +60,7 @@ func TestInputGuardrail_TransformsMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestOutputGuardrail_TransformsResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestInputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "bad input")
+	_, err = a.Invoke(context.Background(), "bad input")
 	if err == nil {
 		t.Fatal("expected error from input guardrail, got nil")
 	}
@@ -144,7 +144,7 @@ func TestOutputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error from output guardrail, got nil")
 	}
@@ -171,7 +171,7 @@ func TestMultipleInputGuardrails_AppliedInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "start")
+	_, err = a.Invoke(context.Background(), "start")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

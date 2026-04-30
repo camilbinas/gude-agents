@@ -137,7 +137,7 @@ Rules:
 
 	// ── Introduction ──────────────────────────────────────────────────────────
 	fmt.Println("📢 MODERATOR:")
-	_, err = moderator.InvokeStream(ctx,
+	err = moderator.InvokeStream(ctx,
 		"Introduce a 5-round debate between Claude (by Anthropic) and Gemini (by Google) about who is the better AI model. Be dramatic and fun. 2-3 sentences max.",
 		func(chunk string) { fmt.Print(chunk) },
 	)
@@ -161,7 +161,7 @@ Rules:
 		claudePrompt := buildPrompt("Claude", round, lastGemini, true)
 		fmt.Println("🟣 CLAUDE:")
 		var claudeResponse strings.Builder
-		_, err = claudeAgent.InvokeStream(ctx, claudePrompt, func(chunk string) {
+		err = claudeAgent.InvokeStream(ctx, claudePrompt, func(chunk string) {
 			fmt.Print(chunk)
 			claudeResponse.WriteString(chunk)
 		})
@@ -176,7 +176,7 @@ Rules:
 		geminiPrompt := buildPrompt("Gemini", round, lastClaude, false)
 		fmt.Println("🔵 GEMINI:")
 		var geminiResponse strings.Builder
-		_, err = geminiAgent.InvokeStream(ctx, geminiPrompt, func(chunk string) {
+		err = geminiAgent.InvokeStream(ctx, geminiPrompt, func(chunk string) {
 			fmt.Print(chunk)
 			geminiResponse.WriteString(chunk)
 		})
@@ -197,7 +197,7 @@ Rules:
 
 Based on the ENTIRE debate above, you MUST declare a winner — no draws allowed. Score each model on: reasoning quality, creativity, honesty/self-awareness, and task execution. Then announce the winner clearly. Be fair, specific, and entertaining. Keep it to 2-3 short paragraphs.`, transcript.String())
 
-	_, err = moderator.InvokeStream(ctx, verdictPrompt, func(chunk string) {
+	err = moderator.InvokeStream(ctx, verdictPrompt, func(chunk string) {
 		fmt.Print(chunk)
 	})
 	if err != nil {
@@ -269,7 +269,7 @@ func verboseChallenge(toolName, targetName string, child *agent.Agent) tool.Tool
 		// Stream the child's response so the audience sees the answer too.
 		fmt.Printf("    💬 %s's response:\n", targetName)
 		var result string
-		_, err := child.InvokeStream(ctx, args.Message, func(chunk string) {
+		err := child.InvokeStream(ctx, args.Message, func(chunk string) {
 			fmt.Print(chunk)
 			result += chunk
 		})

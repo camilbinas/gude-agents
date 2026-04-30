@@ -23,6 +23,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/provider/fallback"
@@ -61,6 +62,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -69,11 +71,10 @@ func main() {
 	fmt.Println("Sending request — primary will fail, backup (Bedrock) will handle it...")
 	fmt.Println()
 
-	result, usage, err := a.Invoke(context.Background(), "What is 2 + 2?")
+	result, err := a.Invoke(context.Background(), "What is 2 + 2?")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println(result)
-	fmt.Printf("\n[tokens: %d in / %d out]\n", usage.InputTokens, usage.OutputTokens)
 }

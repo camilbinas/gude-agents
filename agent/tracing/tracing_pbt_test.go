@@ -51,7 +51,7 @@ func TestProperty_InvokeSpanAttributes(t *testing.T) {
 			t.Fatalf("agent.New: %v", err)
 		}
 
-		_, _, err = a.Invoke(context.Background(), "hi")
+		_, err = a.Invoke(context.Background(), "hi")
 		if err != nil {
 			t.Fatalf("Invoke: %v", err)
 		}
@@ -104,7 +104,7 @@ func TestProperty_SuccessTokenUsage(t *testing.T) {
 			t.Fatalf("agent.New: %v", err)
 		}
 
-		_, _, err = a.Invoke(context.Background(), "hi")
+		_, err = a.Invoke(context.Background(), "hi")
 		if err != nil {
 			t.Fatalf("Invoke: %v", err)
 		}
@@ -148,7 +148,7 @@ func TestProperty_ErrorSpans(t *testing.T) {
 			t.Fatalf("agent.New: %v", err)
 		}
 
-		_, _, invokeErr := a.Invoke(context.Background(), "hi")
+		_, invokeErr := a.Invoke(context.Background(), "hi")
 		if invokeErr == nil {
 			t.Fatal("expected error from invoke")
 		}
@@ -230,7 +230,7 @@ func TestProperty_IterationNumbering(t *testing.T) {
 			t.Fatalf("agent.New: %v", err)
 		}
 
-		_, _, err = a.Invoke(context.Background(), "hi")
+		_, err = a.Invoke(context.Background(), "hi")
 		if err != nil {
 			t.Fatalf("Invoke: %v", err)
 		}
@@ -287,7 +287,7 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 			t.Fatalf("agent.New: %v", err)
 		}
 
-		_, _, err = a.Invoke(context.Background(), "hi")
+		_, err = a.Invoke(context.Background(), "hi")
 		if err != nil {
 			t.Fatalf("Invoke: %v", err)
 		}

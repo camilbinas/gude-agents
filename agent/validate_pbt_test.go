@@ -180,7 +180,7 @@ func TestProperty8_HandlerNotCalledOnInvalidInput(t *testing.T) {
 			rt.Fatalf("New: %v", err)
 		}
 
-		_, _, err = a.Invoke(context.Background(), "go")
+		_, err = a.Invoke(context.Background(), "go")
 		if err != nil {
 			rt.Fatalf("Invoke: %v", err)
 		}

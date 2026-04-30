@@ -150,11 +150,14 @@ func main() {
 		}
 
 		fmt.Print("Agent: ")
-		usage, err := a.InvokeStream(callCtx, input, func(chunk string) {
+		ic := agent.NewInvocationContext()
+		invokeCtx := agent.WithInvocationContext(callCtx, ic)
+		err := a.InvokeStream(invokeCtx, input, func(chunk string) {
 			fmt.Print(chunk)
 		})
 		fmt.Println()
 
+		usage := agent.GetInvocationUsage(ic)
 		if err != nil {
 			// Capture invocation-level errors in Sentry with full context.
 			sentrytrace.CaptureAgentError(ctx, err, input, usage)

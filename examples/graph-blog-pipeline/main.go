@@ -118,7 +118,7 @@ func main() {
 
 	// outline: drafts a structured outline from the topic
 	if err := g.AddNode("outline", func(ctx context.Context, s BlogState) (BlogState, error) {
-		outline, _, err := outliner.Invoke(ctx, s.Topic)
+		outline, err := outliner.Invoke(ctx, s.Topic)
 		if err != nil {
 			return s, err
 		}
@@ -131,7 +131,7 @@ func main() {
 	// draft: writes the full post from the outline
 	if err := g.AddNode("draft", func(ctx context.Context, s BlogState) (BlogState, error) {
 		input := fmt.Sprintf("Topic: %s\n\nOutline:\n%s", s.Topic, s.Outline)
-		post, _, err := writer.Invoke(ctx, input)
+		post, err := writer.Invoke(ctx, input)
 		if err != nil {
 			return s, err
 		}
@@ -143,7 +143,7 @@ func main() {
 
 	// review: scores the draft using structured output — typed, no JSON parsing
 	if err := g.AddNode("review", func(ctx context.Context, s BlogState) (BlogState, error) {
-		review, _, err := agent.InvokeStructured[ReviewResult](ctx, reviewer, s.Post)
+		review, err := agent.InvokeStructured[ReviewResult](ctx, reviewer, s.Post)
 		if err != nil {
 			return s, err
 		}
@@ -165,7 +165,7 @@ func main() {
 	// revise: rewrites the post using the reviewer's feedback
 	if err := g.AddNode("revise", func(ctx context.Context, s BlogState) (BlogState, error) {
 		input := fmt.Sprintf("Draft:\n%s\n\nFeedback: %s", s.Post, s.Feedback)
-		revised, _, err := reviser.Invoke(ctx, input)
+		revised, err := reviser.Invoke(ctx, input)
 		if err != nil {
 			return s, err
 		}
@@ -184,7 +184,7 @@ func main() {
 
 	// seo_meta: generates SEO title + description
 	if err := g.AddNode("seo_meta", func(ctx context.Context, s BlogState) (BlogState, error) {
-		seo, _, err := seoWriter.Invoke(ctx, s.Post)
+		seo, err := seoWriter.Invoke(ctx, s.Post)
 		if err != nil {
 			return s, err
 		}
@@ -196,7 +196,7 @@ func main() {
 
 	// social_copy: generates LinkedIn copy
 	if err := g.AddNode("social_copy", func(ctx context.Context, s BlogState) (BlogState, error) {
-		social, _, err := socialWriter.Invoke(ctx, s.Post)
+		social, err := socialWriter.Invoke(ctx, s.Post)
 		if err != nil {
 			return s, err
 		}

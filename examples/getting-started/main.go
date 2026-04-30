@@ -28,11 +28,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, usage, err := a.Invoke(context.Background(), "What is the capital of France?")
+	result, err := a.Invoke(context.Background(), "What is the capital of France?")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println(result)
-	fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
 }

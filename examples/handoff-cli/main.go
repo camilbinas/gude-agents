@@ -45,7 +45,7 @@ func main() {
 	ctx := agent.WithInvocationContext(context.Background(), ic)
 
 	fmt.Println("Agent: Processing your request...")
-	_, err = a.InvokeStream(ctx, "I need a refund for order #1234", func(chunk string) {
+	err = a.InvokeStream(ctx, "I need a refund for order #1234", func(chunk string) {
 		fmt.Print(chunk)
 	})
 
@@ -59,7 +59,7 @@ func main() {
 		humanInput := scanner.Text()
 
 		fmt.Println("\nAgent: Resuming...")
-		result, _, err := a.ResumeInvoke(ctx, hr, humanInput)
+		result, err := a.ResumeInvoke(ctx, hr, humanInput)
 		if err != nil {
 			log.Fatal(err)
 		}

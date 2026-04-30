@@ -102,7 +102,7 @@ func TestExecuteTools_SchemaValidation_MissingRequired(t *testing.T) {
 		&ProviderResponse{Text: "done"},
 	)
 	a2, _ := New(cp, prompt.Text("sys"), []tool.Tool{greetTool})
-	_, _, err = a2.Invoke(context.Background(), "hi")
+	_, err = a2.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestExecuteTools_SchemaValidation_InvalidEnum(t *testing.T) {
 		&ProviderResponse{Text: "done"},
 	)
 	a, _ := New(cp, prompt.Text("sys"), []tool.Tool{colorTool})
-	_, _, err := a.Invoke(context.Background(), "paint it")
+	_, err := a.Invoke(context.Background(), "paint it")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestExecuteTools_SchemaValidation_ValidPayload(t *testing.T) {
 		&ProviderResponse{Text: "done"},
 	)
 	a, _ := New(sp, prompt.Text("sys"), []tool.Tool{greetTool})
-	_, _, err := a.Invoke(context.Background(), "greet alice")
+	_, err := a.Invoke(context.Background(), "greet alice")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

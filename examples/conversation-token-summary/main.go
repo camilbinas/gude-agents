@@ -55,19 +55,24 @@ func main() {
 		"What do you know about me so far?",
 	}
 
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
 	for i, q := range questions {
-		result, usage, err := a.Invoke(ctx, q)
+		result, err := a.Invoke(ctx, q)
 		if err != nil {
 			log.Fatal(err)
 		}
+		usage := agent.GetInvocationUsage(ic)
 		fmt.Printf("Turn %d [%d input tokens]: %s\n", i+1, usage.InputTokens, result)
 	}
 
 	// Final check — the agent should still know everything despite summarization.
-	result, usage, err := a.Invoke(ctx, "What are my cats' names?")
+	result, err := a.Invoke(ctx, "What are my cats' names?")
 	if err != nil {
 		log.Fatal(err)
 	}
+	usage := agent.GetInvocationUsage(ic)
 	fmt.Printf("Turn %d [%d input tokens]: %s\n", len(questions)+1, usage.InputTokens, result)
 
 	// Inspect the store.

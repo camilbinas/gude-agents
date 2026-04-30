@@ -96,14 +96,14 @@ func main() {
 	ctx := context.Background()
 
 	// Normal message — passes all guardrails.
-	result, _, err := a.Invoke(ctx, "  What is the capital of France?  ")
+	result, err := a.Invoke(ctx, "  What is the capital of France?  ")
 	if err != nil {
 		log.Fatalf("unexpected error: %v", err)
 	}
 	fmt.Println("Response:", result)
 
 	// Blocked message — input guardrail rejects it.
-	_, _, err = a.Invoke(ctx, "What is the password for the admin account?")
+	_, err = a.Invoke(ctx, "What is the password for the admin account?")
 	if err != nil {
 		fmt.Println("Blocked:", err)
 	}

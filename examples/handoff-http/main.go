@@ -105,7 +105,7 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
 		ctx := agent.WithConversationID(r.Context(), req.ConversationID)
 		ctx = agent.WithInvocationContext(ctx, ic)
 
-		result, _, err := a.Invoke(ctx, req.Message)
+		result, err := a.Invoke(ctx, req.Message)
 
 		if errors.Is(err, agent.ErrHandoffRequested) {
 			hr, _ := agent.GetHandoffRequest(ic)
@@ -158,7 +158,7 @@ func handleResume(a *agent.Agent) http.HandlerFunc {
 		}
 
 		// Resume uses the ConversationID stored in the HandoffRequest.
-		result, _, err := a.ResumeInvoke(r.Context(), hr, req.HumanResponse)
+		result, err := a.ResumeInvoke(r.Context(), hr, req.HumanResponse)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

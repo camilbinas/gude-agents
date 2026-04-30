@@ -47,7 +47,7 @@ func main() {
 	ctxB := agent.WithConversationID(context.Background(), "conv-bob")
 
 	invoke := func(ctx context.Context, label, msg string) string {
-		result, _, err := a.Invoke(ctx, msg)
+		result, err := a.Invoke(ctx, msg)
 		if err != nil {
 			log.Fatalf("%s: %v", label, err)
 		}

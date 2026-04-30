@@ -107,7 +107,7 @@ func TestConcurrentInvocations_DifferentConversations(t *testing.T) {
 			defer wg.Done()
 			convID := "conv-" + string(rune('A'+i))
 			ctx := WithConversationID(context.Background(), convID)
-			results[i], _, errs[i] = a.Invoke(ctx, "msg-"+convID)
+			results[i], errs[i] = a.Invoke(ctx, "msg-"+convID)
 		}(i)
 	}
 	wg.Wait()
@@ -191,8 +191,8 @@ func TestMultiTurn_WithSharedConversation(t *testing.T) {
 	ctx2 := WithConversationID(context.Background(), "conv-2")
 
 	// Turn 1 for both conversations.
-	r1, _, _ := a.Invoke(ctx1, "I'm Alice")
-	r2, _, _ := a.Invoke(ctx2, "I'm Bob")
+	r1, _ := a.Invoke(ctx1, "I'm Alice")
+	r2, _ := a.Invoke(ctx2, "I'm Bob")
 
 	if r1 != "Hello Alice" {
 		t.Errorf("conv-1 turn 1: expected %q, got %q", "Hello Alice", r1)
@@ -202,8 +202,8 @@ func TestMultiTurn_WithSharedConversation(t *testing.T) {
 	}
 
 	// Turn 2 — each conversation should have its own history.
-	r3, _, _ := a.Invoke(ctx1, "Who am I?")
-	r4, _, _ := a.Invoke(ctx2, "Who am I?")
+	r3, _ := a.Invoke(ctx1, "Who am I?")
+	r4, _ := a.Invoke(ctx2, "Who am I?")
 
 	if r3 != "I remember you, Alice" {
 		t.Errorf("conv-1 turn 2: expected %q, got %q", "I remember you, Alice", r3)
@@ -251,7 +251,7 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 	ctx := WithConversationID(context.Background(), "user-42-session")
 	ctx = WithInvocationContext(ctx, ic)
 
-	_, err = a.InvokeStream(ctx, "Process refund", nil)
+	err = a.InvokeStream(ctx, "Process refund", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
@@ -273,7 +273,7 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 	}
 
 	// Resume — should save to the same conversation.
-	result, _, err := a.ResumeInvoke(context.Background(), hr, "Yes, approved")
+	result, err := a.ResumeInvoke(context.Background(), hr, "Yes, approved")
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}

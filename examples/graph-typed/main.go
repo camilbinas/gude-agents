@@ -94,50 +94,58 @@ func main() {
 	}
 
 	if err := g.AddNode("research", func(ctx context.Context, s State) (State, error) {
-		facts, usage, err := researcher.Invoke(ctx, s.Topic)
+		ic := agent.NewInvocationContext()
+		ctx = agent.WithInvocationContext(ctx, ic)
+		facts, err := researcher.Invoke(ctx, s.Topic)
 		if err != nil {
 			return s, err
 		}
 		s.Research = facts
-		s.AddUsage(usage)
+		s.AddUsage(agent.GetInvocationUsage(ic))
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := g.AddNode("summarise", func(ctx context.Context, s State) (State, error) {
-		summary, usage, err := summariser.Invoke(ctx, s.Research)
+		ic := agent.NewInvocationContext()
+		ctx = agent.WithInvocationContext(ctx, ic)
+		summary, err := summariser.Invoke(ctx, s.Research)
 		if err != nil {
 			return s, err
 		}
 		s.Summary = summary
-		s.AddUsage(usage)
+		s.AddUsage(agent.GetInvocationUsage(ic))
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := g.AddNode("score", func(ctx context.Context, s State) (State, error) {
-		result, usage, err := agent.InvokeStructured[ScoreResult](ctx, scorer, s.Summary)
+		ic := agent.NewInvocationContext()
+		ctx = agent.WithInvocationContext(ctx, ic)
+		result, err := agent.InvokeStructured[ScoreResult](ctx, scorer, s.Summary)
 		if err != nil {
 			return s, err
 		}
 		s.Score = result.Score
 		s.Feedback = result.Feedback
-		s.AddUsage(usage)
+		s.AddUsage(agent.GetInvocationUsage(ic))
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := g.AddNode("refine", func(ctx context.Context, s State) (State, error) {
+		ic := agent.NewInvocationContext()
+		ctx = agent.WithInvocationContext(ctx, ic)
 		input := fmt.Sprintf("Summary: %s\nFeedback: %s", s.Summary, s.Feedback)
-		refined, usage, err := refiner.Invoke(ctx, input)
+		refined, err := refiner.Invoke(ctx, input)
 		if err != nil {
 			return s, err
 		}
 		s.Research = refined // feed refined text back into summarise
-		s.AddUsage(usage)
+		s.AddUsage(agent.GetInvocationUsage(ic))
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)

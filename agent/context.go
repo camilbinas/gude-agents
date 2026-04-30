@@ -124,6 +124,30 @@ func GetTokenUsage(ctx context.Context) (TokenUsage, bool) {
 	return *u, true
 }
 
+// invocationUsageKey is the InvocationContext key for cumulative token usage.
+type invocationUsageKey struct{}
+
+// GetInvocationUsage retrieves the cumulative TokenUsage from an InvocationContext.
+// Returns zero value if no usage has been recorded (e.g. invocation hasn't completed).
+func GetInvocationUsage(ic *InvocationContext) TokenUsage {
+	if ic == nil {
+		return TokenUsage{}
+	}
+	v, ok := ic.Get(invocationUsageKey{})
+	if !ok {
+		return TokenUsage{}
+	}
+	u, _ := v.(TokenUsage)
+	return u
+}
+
+// setInvocationUsage stores cumulative TokenUsage on the InvocationContext.
+func setInvocationUsage(ic *InvocationContext, usage TokenUsage) {
+	if ic != nil {
+		ic.Set(invocationUsageKey{}, usage)
+	}
+}
+
 // identifierKey is the context key for per-invocation scoping identity.
 type identifierKey struct{}
 

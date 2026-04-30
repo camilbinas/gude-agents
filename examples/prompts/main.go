@@ -83,28 +83,28 @@ func main() {
 	ctx := context.Background()
 
 	fmt.Println("\n=== APE Agent ===")
-	result, _, err := apeAgent.Invoke(ctx, "How do I reset my password?")
+	result, err := apeAgent.Invoke(ctx, "How do I reset my password?")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(result)
 
 	fmt.Println("=== RISEN Agent ===")
-	result, _, err = risenAgent.Invoke(ctx, "I want a short trip from Munich.")
+	result, err = risenAgent.Invoke(ctx, "I want a short trip from Munich.")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(result)
 
 	fmt.Println("\n=== CO-STAR Agent ===")
-	result, _, err = costarAgent.Invoke(ctx, "I can't log in to my account.")
+	result, err = costarAgent.Invoke(ctx, "I can't log in to my account.")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(result)
 
 	fmt.Println("\n=== TRACE Agent ===")
-	result, _, err = traceAgent.Invoke(ctx, "Review this: func getUser(id string) { db.Query(\"SELECT * FROM users WHERE id=\" + id) }")
+	result, err = traceAgent.Invoke(ctx, "Review this: func getUser(id string) { db.Query(\"SELECT * FROM users WHERE id=\" + id) }")
 	if err != nil {
 		log.Fatal(err)
 	}

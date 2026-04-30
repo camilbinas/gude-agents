@@ -20,9 +20,10 @@ type ChatOptions struct {
 	// If it returns a non-nil context, that context is used for the invocation.
 	BeforeInvoke func(ctx context.Context, input string) context.Context
 
-	// AfterInvoke is called after each agent invocation with the usage and error.
+	// AfterInvoke is called after each agent invocation with the error (if any).
 	// Use it for post-invocation work like flushing trace exporters or logging tokens.
-	AfterInvoke func(ctx context.Context, usage agent.TokenUsage, err error)
+	// Token usage is available via agent.GetInvocationUsage on the InvocationContext.
+	AfterInvoke func(ctx context.Context, err error)
 }
 
 // Chat runs an interactive chat loop with the given agent. It reads from stdin,
@@ -64,13 +65,13 @@ func Chat(ctx context.Context, a *agent.Agent, opts ...ChatOptions) {
 			}
 		}
 
-		usage, err := a.InvokeStream(invokeCtx, input, func(chunk string) {
+		err := a.InvokeStream(invokeCtx, input, func(chunk string) {
 			fmt.Print(chunk)
 		})
 		fmt.Println()
 
 		if o.AfterInvoke != nil {
-			o.AfterInvoke(ctx, usage, err)
+			o.AfterInvoke(ctx, err)
 		}
 
 		if err != nil {

@@ -13,10 +13,11 @@ import (
 )
 
 // InvokeStream runs the agent loop, streaming the final text answer via cb.
-// It returns cumulative TokenUsage and nil on success, or an error on failure.
+// It returns nil on success, or an error on failure.
+// Cumulative token usage is available via GetInvocationUsage on the InvocationContext.
 // If the agent calls the handoff tool, it returns ErrHandoffRequested — use
 // GetHandoffRequest to retrieve the request and Agent.Resume to continue.
-func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) (TokenUsage, error) {
+func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) error {
 	// Create a new InvocationContext if one isn't already attached.
 	if GetInvocationContext(ctx) == nil {
 		ctx = WithInvocationContext(ctx, NewInvocationContext())
@@ -29,20 +30,23 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb, &h)
 	invoke.finish(err, usage)
 
-	return usage, err
+	// Store cumulative usage on the InvocationContext for caller access.
+	setInvocationUsage(GetInvocationContext(ctx), usage)
+
+	return err
 }
 
 // Invoke is a convenience wrapper over InvokeStream that collects all
 // streamed chunks into a single string.
-func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error) {
+func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, error) {
 	var sb strings.Builder
-	usage, err := a.InvokeStream(ctx, userMessage, func(chunk string) {
+	err := a.InvokeStream(ctx, userMessage, func(chunk string) {
 		sb.WriteString(chunk)
 	})
 	if err != nil {
-		return "", usage, err
+		return "", err
 	}
-	return sb.String(), usage, nil
+	return sb.String(), nil
 }
 
 // invokeStreamInner contains the core InvokeStream logic, separated so that

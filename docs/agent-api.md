@@ -144,7 +144,7 @@ func (h *myHook) OnThinking(_ context.Context, chunk string) {
 ### Invoke
 
 ```go
-func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, TokenUsage, error)
+func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, error)
 ```
 
 Runs the agent loop and returns the complete text response. Convenience wrapper over `InvokeStream` that collects all chunks.
@@ -152,7 +152,7 @@ Runs the agent loop and returns the complete text response. Convenience wrapper 
 ### InvokeStream
 
 ```go
-func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) (TokenUsage, error)
+func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) error
 ```
 
 Runs the agent loop, streaming the final text response via the callback. The callback receives chunks in real-time unless output guardrails are configured (in which case chunks are buffered).
@@ -160,6 +160,20 @@ Runs the agent loop, streaming the final text response via the callback. The cal
 ### InvokeStructured
 
 For structured output, see [Structured Output](structured-output.md).
+
+### Token Usage
+
+Cumulative token usage is stored on the `InvocationContext` after each invocation. Create one before calling `Invoke`/`InvokeStream` to access it:
+
+```go
+ic := agent.NewInvocationContext()
+ctx := agent.WithInvocationContext(ctx, ic)
+result, err := a.Invoke(ctx, "Hello")
+usage := agent.GetInvocationUsage(ic)
+fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
+```
+
+If no `InvocationContext` is attached, one is created internally — usage is still tracked for hooks and conversation strategies, but not accessible to the caller.
 
 ### Per-Invocation Context
 
@@ -179,7 +193,7 @@ img := agent.ImageBlock{
     Source: agent.ImageSource{Data: imageBytes, MIMEType: "image/jpeg"},
 }
 ctx := agent.WithImages(ctx, []agent.ImageBlock{img})
-result, _, err := a.Invoke(ctx, "What is in this image?")
+result, err := a.Invoke(ctx, "What is in this image?")
 ```
 
 Images and documents can also be passed by URL:
@@ -195,8 +209,8 @@ img := agent.ImageBlock{
 Continue an agent invocation after a human handoff:
 
 ```go
-func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) (TokenUsage, error)
-func (a *Agent) ResumeInvoke(ctx context.Context, hr *HandoffRequest, humanResponse string) (string, TokenUsage, error)
+func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) error
+func (a *Agent) ResumeInvoke(ctx context.Context, hr *HandoffRequest, humanResponse string) (string, error)
 ```
 
 See [Handoffs](handoff.md) for the full workflow.

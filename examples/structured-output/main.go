@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -40,12 +41,13 @@ func main() {
 		provider,
 		prompt.Text("You are a professional chef. Provide detailed, accurate recipes."),
 		nil, // InvokeStructured handles tool setup internally — no tools needed here
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	recipe, usage, err := agent.InvokeStructured[Recipe](
+	recipe, err := agent.InvokeStructured[Recipe](
 		ctx, a, "Give me a classic recipe for spaghetti carbonara.",
 	)
 	if err != nil {
@@ -71,5 +73,4 @@ func main() {
 		}
 	}
 	fmt.Printf("\n%s\n", strings.Repeat("-", 40))
-	fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
 }

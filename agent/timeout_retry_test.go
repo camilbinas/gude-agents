@@ -52,7 +52,7 @@ func TestWithTimeout_ProviderRespondsInTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestWithTimeout_ProviderTimesOut(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -96,7 +96,7 @@ func TestWithTimeout_ZeroMeansNoTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("expected success with zero timeout, got: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestWithRetry_SucceedsAfterTransientFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("expected success after retry, got: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestWithRetry_ExhaustsRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
 	}
@@ -196,7 +196,7 @@ func TestWithRetry_ZeroMeansNoRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error with zero retries")
 	}
@@ -220,7 +220,7 @@ func TestWithRetry_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "hi")
+	_, err = a.Invoke(ctx, "hi")
 	if err == nil {
 		t.Fatal("expected error from context cancellation")
 	}
@@ -268,7 +268,7 @@ func TestTimeoutAndRetry_Combined(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("expected success after timeout+retry, got: %v", err)
 	}

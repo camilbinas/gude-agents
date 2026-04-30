@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/mcp"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -64,6 +65,7 @@ When asked to perform calculations or operations, always use the available tools
 Show your work by describing what each tool returned.`),
 		mcpTools,
 		agent.WithMaxIterations(15),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -82,7 +84,7 @@ Show your work by describing what each tool returned.`),
 	fmt.Println(strings.Repeat("-", 60))
 
 	start := time.Now()
-	result, usage, err := a.Invoke(ctx, task)
+	result, err := a.Invoke(ctx, task)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -91,8 +93,7 @@ Show your work by describing what each tool returned.`),
 
 	fmt.Println(result)
 	fmt.Println(strings.Repeat("-", 60))
-	fmt.Printf("Completed in %s | tokens: %d in, %d out\n",
-		elapsed.Round(time.Millisecond), usage.InputTokens, usage.OutputTokens)
+	fmt.Printf("Completed in %s\n", elapsed.Round(time.Millisecond))
 }
 
 func truncate(s string, n int) string {

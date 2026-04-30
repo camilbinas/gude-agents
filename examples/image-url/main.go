@@ -61,7 +61,7 @@ func main() {
 	fmt.Printf("Image URL: %s\n", imageURL)
 	fmt.Println(strings.Repeat("─", 60))
 
-	if _, err := a.InvokeStream(imgCtx, "What is in this image? Describe it in detail.", func(chunk string) {
+	if err := a.InvokeStream(imgCtx, "What is in this image? Describe it in detail.", func(chunk string) {
 		fmt.Print(chunk)
 	}); err != nil {
 		log.Fatal(err)

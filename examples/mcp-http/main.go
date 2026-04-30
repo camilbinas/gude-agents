@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/mcp"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -79,18 +80,18 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Use the available tools when needed. Be concise."),
 		tools,
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	result, usage, err := a.Invoke(ctx, "Use the greet tool to greet the world.")
+	result, err := a.Invoke(ctx, "Use the greet tool to greet the world.")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println("Response:", result)
-	fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
 }
 
 // startLocalMCPServer starts an in-process MCP server with a demo tool

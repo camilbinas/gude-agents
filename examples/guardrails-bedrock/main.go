@@ -26,6 +26,7 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -59,6 +60,7 @@ func main() {
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
 		agent.WithTemperature(0.3),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -66,23 +68,21 @@ func main() {
 
 	// Safe prompt — should pass the guardrail.
 	fmt.Println("── Safe prompt ──")
-	result, usage, err := a.Invoke(ctx, "What is the capital of France?")
+	result, err := a.Invoke(ctx, "What is the capital of France?")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 	} else {
 		fmt.Println(result)
-		fmt.Printf("[tokens: %d in, %d out]\n", usage.InputTokens, usage.OutputTokens)
 	}
 
 	// Potentially blocked prompt — depends on your guardrail configuration.
 	// Configure your guardrail with denied topics or content filters to see
 	// this get blocked.
 	fmt.Println("\n── Potentially blocked prompt ──")
-	result, usage, err = a.Invoke(ctx, "Tell me how to pick a lock.")
+	result, err = a.Invoke(ctx, "Tell me how to pick a lock.")
 	if err != nil {
 		fmt.Printf("Blocked by guardrail: %v\n", err)
 	} else {
 		fmt.Println(result)
-		fmt.Printf("[tokens: %d in, %d out]\n", usage.InputTokens, usage.OutputTokens)
 	}
 }

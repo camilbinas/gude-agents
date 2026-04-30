@@ -46,7 +46,7 @@ func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
 
-	result, _, err := parent.Invoke(context.Background(), "delegate to child")
+	result, err := parent.Invoke(context.Background(), "delegate to child")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
 
-	result, _, err := parent.Invoke(context.Background(), "try child")
+	result, err := parent.Invoke(context.Background(), "try child")
 	if err != nil {
 		t.Fatalf("parent should not abort when child fails, got: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
 
-	result, _, err := parent.Invoke(context.Background(), "try broken child")
+	result, err := parent.Invoke(context.Background(), "try broken child")
 	if err != nil {
 		t.Fatalf("parent should not abort when child provider fails, got: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestAgentAsTool_ErrorIsToolError(t *testing.T) {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
 
-	_, _, err = parent.Invoke(context.Background(), "try broken child")
+	_, err = parent.Invoke(context.Background(), "try broken child")
 	if err != nil {
 		t.Fatalf("parent should not abort, got: %v", err)
 	}

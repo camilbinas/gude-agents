@@ -14,7 +14,8 @@ const structuredOutputToolName = "structured_output"
 // It applies input guardrails, loads/saves conversation, merges inference config,
 // and applies output guardrails consistently with InvokeStream. Provider calls
 // use the same timeout, retry, and observability hooks as InvokeStream.
-func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, TokenUsage, error) {
+// Cumulative token usage is available via GetInvocationUsage on the InvocationContext.
+func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, error) {
 	convID := ResolveConversationID(ctx, a.conversationID)
 	h := a.hooks(ctx)
 	modelID := a.modelID()
@@ -24,7 +25,14 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 	result, usage, err := invokeStructuredInner[T](ctx, a, userMessage, convID, &h, modelID)
 	invoke.finish(err, usage)
 
-	return result, usage, err
+	// Store cumulative usage on the InvocationContext for caller access.
+	setInvocationUsage(GetInvocationContext(ctx), usage)
+
+	var zero T
+	if err != nil {
+		return zero, err
+	}
+	return result, nil
 }
 
 func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage string, convID string, h *hooks, modelID string) (T, TokenUsage, error) {

@@ -21,7 +21,7 @@ func TestInvoke_AgentLevelInferenceConfigForwarded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestInvoke_PerInvocationOverridesAgentLevel(t *testing.T) {
 		Temperature: ptrFloat(0.9),
 	})
 
-	_, _, err = a.Invoke(ctx, "hello")
+	_, err = a.Invoke(ctx, "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestInvoke_NilInferenceConfigWhenNoneSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestInvoke_InvalidPerInvocationConfigReturnsError(t *testing.T) {
 		Temperature: ptrFloat(2.0), // invalid: > 1.0
 	})
 
-	_, _, err = a.Invoke(ctx, "hello")
+	_, err = a.Invoke(ctx, "hello")
 	if err == nil {
 		t.Fatal("expected error for invalid per-invocation config, got nil")
 	}

@@ -110,7 +110,7 @@ func main() {
 	}
 
 	for _, q := range questions {
-		result, _, err := a.Invoke(ctx, q)
+		result, err := a.Invoke(ctx, q)
 		if err != nil {
 			log.Fatal(err)
 		}

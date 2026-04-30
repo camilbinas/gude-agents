@@ -101,7 +101,7 @@ func main() {
 	for i, tc := range goldenCases {
 		fmt.Printf("  [%d/%d] %s\n", i+1, len(goldenCases), tc.query)
 
-		result, _, err := a.Invoke(ctx, tc.query)
+		result, err := a.Invoke(ctx, tc.query)
 		if err != nil {
 			log.Fatalf("agent invoke failed for case %d: %v", i, err)
 		}
