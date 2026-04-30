@@ -25,22 +25,34 @@ The retrieval pipeline runs in order: embed query → vector search → score th
 
 ## Vector Store Implementations
 
+All built-in stores implement `VectorStoreManager`, which extends `VectorStore` with `Find` (get by ID) and `DeleteByMetadata` (bulk delete by metadata filter).
+
+| Method | Description |
+|--------|-------------|
+| `Upsert(ctx, docs, embeddings)` | Insert or replace documents by ID. Returns stored IDs in input order. |
+| `Find(ctx, ids...)` | Retrieve documents by ID. Returns results in input order, omitting missing IDs. |
+| `DeleteByMetadata(ctx, filter)` | Delete all documents whose metadata contains all filter key-value pairs (AND semantics). Empty filter returns an error. |
+| `Delete(ctx, ids...)` | Delete documents by ID. |
+| `Search(ctx, embedding, topK)` | Similarity search. |
+
 ### rag.MemoryStore
 
-In-memory brute-force cosine similarity vector store. Good for prototyping and tests — for production, use a persistent vector store.
+In-memory brute-force cosine similarity vector store. Good for prototyping and tests — for production, use a persistent vector store. Implements `VectorStoreManager`.
 
 ```go
 store := rag.NewMemoryStore()
 
-// Delete documents by ID (returned from Add or from ScoredDocument results).
-err := store.Delete(ctx, "1", "2")
+ids, err := store.Upsert(ctx, docs, embeddings)  // insert or replace by ID
+found, err := store.Find(ctx, "id-1", "id-2")    // retrieve by ID
+err = store.DeleteByMetadata(ctx, map[string]string{"source": "readme.md"})
+err = store.Delete(ctx, "id-1", "id-2")
 ```
 
 ### PostgreSQL + pgvector
 
 Import: `github.com/camilbinas/gude-agents/agent/rag/postgres`
 
-Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search. The table must be created by the caller.
+Uses PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for approximate nearest-neighbor search. Implements `VectorStoreManager` — upsert uses `ON CONFLICT DO UPDATE`, and `DeleteByMetadata` uses JSONB containment (`@>`). The table must be created by the caller.
 
 ```go
 store, err := ragpg.New(pool, 1024,
@@ -59,7 +71,7 @@ store, err := ragpg.New(pool, 1024,
 
 Import: `github.com/camilbinas/gude-agents/agent/rag/redis`
 
-Uses Redis Stack (RediSearch) for vector search. Requires Redis Stack — not standard community Redis.
+Uses Redis Stack (RediSearch) for vector search. Implements `VectorStoreManager` — `DeleteByMetadata` uses `FT.SEARCH` to find matching documents then `DEL`. Requires Redis Stack — not standard community Redis.
 
 ```go
 store, err := ragredis.New(
@@ -76,7 +88,7 @@ Identifier-scoped storage — partitioning documents by user, tenant, or session
 
 ## rag.Ingest
 
-`Ingest` splits texts into chunks, embeds each chunk, and stores the results in a vector store.
+`Ingest` splits texts into chunks, embeds each chunk, and stores the results in a vector store. When the store implements `VectorStoreManager` and metadata contains a `"source"` key, old chunks for that source are deleted before upserting new ones (smart re-ingestion).
 
 ```go
 err := rag.Ingest(ctx, store, embedder, texts, metadata,

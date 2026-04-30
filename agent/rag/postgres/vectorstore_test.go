@@ -79,7 +79,7 @@ func TestNew_CreatesTable(t *testing.T) {
 	}
 }
 
-func TestAddAndSearch(t *testing.T) {
+func TestUpsertAndSearch(t *testing.T) {
 	s := newTestStore(t, 3)
 	ctx := context.Background()
 
@@ -94,8 +94,8 @@ func TestAddAndSearch(t *testing.T) {
 		{0.0, 0.0, 1.0},
 	}
 
-	if _, err := s.Add(ctx, docs, embeddings); err != nil {
-		t.Fatalf("Add: %v", err)
+	if _, err := s.Upsert(ctx, docs, embeddings); err != nil {
+		t.Fatalf("Upsert: %v", err)
 	}
 
 	// Search for something close to the first document.
@@ -143,26 +143,26 @@ func TestSearch_InvalidTopK(t *testing.T) {
 	}
 }
 
-func TestAdd_LengthMismatch(t *testing.T) {
+func TestUpsert_LengthMismatch(t *testing.T) {
 	s := newTestStore(t, 3)
 	ctx := context.Background()
 
 	docs := []agent.Document{{Content: "hello"}}
 	embeddings := [][]float64{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}}
 
-	_, err := s.Add(ctx, docs, embeddings)
+	_, err := s.Upsert(ctx, docs, embeddings)
 	if err == nil {
 		t.Fatal("expected error for length mismatch")
 	}
 }
 
-func TestAdd_Empty(t *testing.T) {
+func TestUpsert_Empty(t *testing.T) {
 	s := newTestStore(t, 3)
 	ctx := context.Background()
 
-	_, err := s.Add(ctx, nil, nil)
+	_, err := s.Upsert(ctx, nil, nil)
 	if err != nil {
-		t.Fatalf("expected nil error for empty add, got: %v", err)
+		t.Fatalf("expected nil error for empty upsert, got: %v", err)
 	}
 }
 
@@ -218,8 +218,8 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 		{0.0, 0.0, 1.0},
 	}
 
-	if _, err := s.Add(ctx, docs, embeddings); err != nil {
-		t.Fatalf("Add: %v", err)
+	if _, err := s.Upsert(ctx, docs, embeddings); err != nil {
+		t.Fatalf("Upsert: %v", err)
 	}
 
 	results, err := s.Search(ctx, []float64{1.0, 0.0, 0.0}, 2)

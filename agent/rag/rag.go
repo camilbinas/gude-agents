@@ -69,14 +69,19 @@ type MemoryStore struct {
 	nextID  int
 }
 
+// Compile-time check: MemoryStore must satisfy agent.VectorStoreManager.
+var _ agent.VectorStoreManager = (*MemoryStore)(nil)
+
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{}
 }
 
-// Add appends documents and their embeddings to the store.
-// Returns the generated IDs for each document.
-func (s *MemoryStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
+// Upsert stores documents with their embeddings. If a document's ID is empty,
+// the store generates one. If a document's ID already exists, the store
+// replaces the existing content, metadata, and embedding.
+// Returns the IDs of all stored documents in input order.
+func (s *MemoryStore) Upsert(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
 		return nil, fmt.Errorf("vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
@@ -91,7 +96,19 @@ func (s *MemoryStore) Add(ctx context.Context, docs []agent.Document, embeddings
 		}
 		doc.ID = id
 		ids[i] = id
-		s.entries = append(s.entries, vsEntry{id: id, doc: doc, embedding: embeddings[i]})
+
+		// Check if an entry with this ID already exists; if so, replace in-place.
+		found := false
+		for j, e := range s.entries {
+			if e.id == id {
+				s.entries[j] = vsEntry{id: id, doc: doc, embedding: embeddings[i]}
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.entries = append(s.entries, vsEntry{id: id, doc: doc, embedding: embeddings[i]})
+		}
 	}
 	return ids, nil
 }
@@ -120,6 +137,65 @@ func (s *MemoryStore) Search(ctx context.Context, queryEmbedding []float64, topK
 		topK = len(scored)
 	}
 	return scored[:topK], nil
+}
+
+// Find retrieves documents by their IDs. Returns documents in the same
+// order as the input IDs, omitting IDs that don't exist. Returns an empty
+// slice and nil error for an empty input.
+func (s *MemoryStore) Find(ctx context.Context, ids ...string) ([]agent.Document, error) {
+	if len(ids) == 0 {
+		return []agent.Document{}, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Build a map of id → entry for O(1) lookup.
+	idMap := make(map[string]agent.Document, len(s.entries))
+	for _, e := range s.entries {
+		idMap[e.id] = e.doc
+	}
+
+	// Iterate input IDs in order, collect found documents.
+	var result []agent.Document
+	for _, id := range ids {
+		if doc, ok := idMap[id]; ok {
+			result = append(result, doc)
+		}
+	}
+	if result == nil {
+		return []agent.Document{}, nil
+	}
+	return result, nil
+}
+
+// DeleteByMetadata deletes all documents whose metadata contains all
+// key-value pairs in the filter (AND semantics). Returns an error if the
+// filter is empty (safety guard against accidental full deletion).
+func (s *MemoryStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
+	if len(filter) == 0 {
+		return fmt.Errorf("vectorstore: filter must not be empty")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.entries[:0]
+	for _, e := range s.entries {
+		if !metadataMatchesFilter(e.doc.Metadata, filter) {
+			filtered = append(filtered, e)
+		}
+	}
+	s.entries = filtered
+	return nil
+}
+
+// metadataMatchesFilter returns true if the document's metadata contains all
+// key-value pairs in the filter.
+func metadataMatchesFilter(metadata map[string]string, filter map[string]string) bool {
+	for k, v := range filter {
+		if metadata[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // Delete removes documents by their IDs.
@@ -381,8 +457,25 @@ func Ingest(
 		}
 	}
 
-	if _, err := store.Add(ctx, allDocs, allEmbeddings); err != nil {
-		return fmt.Errorf("ingest: store.Add: %w", err)
+	// Smart re-ingestion: delete old chunks if store supports VectorStoreManager.
+	if mgr, ok := store.(agent.VectorStoreManager); ok {
+		// Collect unique "source" values from metadata.
+		seen := make(map[string]struct{})
+		for _, m := range metadata {
+			if src, exists := m["source"]; exists && src != "" {
+				seen[src] = struct{}{}
+			}
+		}
+		// For each unique source, delete old chunks before upserting new ones.
+		for src := range seen {
+			if err := mgr.DeleteByMetadata(ctx, map[string]string{"source": src}); err != nil {
+				return fmt.Errorf("ingest: delete old chunks: %w", err)
+			}
+		}
+	}
+
+	if _, err := store.Upsert(ctx, allDocs, allEmbeddings); err != nil {
+		return fmt.Errorf("ingest: store.Upsert: %w", err)
 	}
 
 	return nil

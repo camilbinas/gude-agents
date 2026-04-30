@@ -247,7 +247,7 @@ func TestMemoryStore_SearchDescendingOrder(t *testing.T) {
 		}
 
 		store := NewMemoryStore()
-		_, err := store.Add(context.Background(), docs, embeddings)
+		_, err := store.Upsert(context.Background(), docs, embeddings)
 		if err != nil {
 			t.Fatalf("Add failed: %v", err)
 		}
@@ -296,7 +296,7 @@ func TestMemoryStore_SearchReturnsAllWhenTopKExceedsSize(t *testing.T) {
 		}
 
 		store := NewMemoryStore()
-		_, err := store.Add(context.Background(), docs, embeddings)
+		_, err := store.Upsert(context.Background(), docs, embeddings)
 		if err != nil {
 			t.Fatalf("Add failed: %v", err)
 		}
@@ -351,7 +351,7 @@ func TestMemoryStore_AddLengthMismatch(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := store.Add(ctx, tc.docs, tc.embeddings)
+			_, err := store.Upsert(ctx, tc.docs, tc.embeddings)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -367,7 +367,7 @@ func TestMemoryStore_SearchTopKLessThanOne(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a document so the store is non-empty
-	_, err := store.Add(ctx, []agent.Document{{Content: "hello"}}, [][]float64{{1.0, 0.0}})
+	_, err := store.Upsert(ctx, []agent.Document{{Content: "hello"}}, [][]float64{{1.0, 0.0}})
 	if err != nil {
 		t.Fatalf("unexpected Add error: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
 			for i := 0; i < opsPerGoroutine; i++ {
 				doc := agent.Document{Content: fmt.Sprintf("doc-%d-%d", id, i)}
 				emb := []float64{float64(id), float64(i), 1.0}
-				_, _ = store.Add(ctx, []agent.Document{doc}, [][]float64{emb})
+				_, _ = store.Upsert(ctx, []agent.Document{doc}, [][]float64{emb})
 			}
 		}(g)
 		go func(id int) {
@@ -445,7 +445,7 @@ type mockVectorStore struct {
 	searchErr     error
 }
 
-func (m *mockVectorStore) Add(_ context.Context, _ []agent.Document, _ [][]float64) ([]string, error) {
+func (m *mockVectorStore) Upsert(_ context.Context, _ []agent.Document, _ [][]float64) ([]string, error) {
 	return nil, nil
 }
 
@@ -757,7 +757,7 @@ type recordingVectorStore struct {
 	docs []agent.Document
 }
 
-func (r *recordingVectorStore) Add(_ context.Context, docs []agent.Document, _ [][]float64) ([]string, error) {
+func (r *recordingVectorStore) Upsert(_ context.Context, docs []agent.Document, _ [][]float64) ([]string, error) {
 	r.docs = append(r.docs, docs...)
 	return nil, nil
 }
@@ -860,7 +860,7 @@ type failingVectorStore struct {
 	err error
 }
 
-func (f *failingVectorStore) Add(_ context.Context, _ []agent.Document, _ [][]float64) ([]string, error) {
+func (f *failingVectorStore) Upsert(_ context.Context, _ []agent.Document, _ [][]float64) ([]string, error) {
 	return nil, f.err
 }
 
@@ -945,8 +945,8 @@ func TestIngest_StoreFailureWrapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from Ingest, got nil")
 	}
-	if !strings.Contains(err.Error(), "ingest: store.Add:") {
-		t.Fatalf("expected error to contain %q, got %q", "ingest: store.Add:", err.Error())
+	if !strings.Contains(err.Error(), "ingest: store.Upsert:") {
+		t.Fatalf("expected error to contain %q, got %q", "ingest: store.Upsert:", err.Error())
 	}
 	if !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("expected error to wrap inner error, got %q", err.Error())

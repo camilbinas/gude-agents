@@ -39,8 +39,8 @@ import (
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-// Compile-time check: VectorStore implements agent.VectorStore.
-var _ agent.VectorStore = (*VectorStore)(nil)
+// Compile-time check: VectorStore implements agent.VectorStoreManager.
+var _ agent.VectorStoreManager = (*VectorStore)(nil)
 
 // VectorStore implements agent.VectorStore using PostgreSQL with pgvector.
 type VectorStore struct {
@@ -101,8 +101,11 @@ func New(pool *pgxpool.Pool, dim int, opts ...Option) (*VectorStore, error) {
 	}, nil
 }
 
-// Add stores documents and their embeddings.
-func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
+// Upsert stores documents with their embeddings. If a document's ID is empty,
+// the store generates one. If a document's ID already exists, the store
+// replaces the existing content, metadata, and embedding.
+// Returns the IDs of all stored documents in input order.
+func (s *VectorStore) Upsert(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
 		return nil, fmt.Errorf("postgres vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
@@ -125,12 +128,23 @@ func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings
 			if err != nil {
 				return nil, fmt.Errorf("postgres vectorstore: marshal metadata: %w", err)
 			}
-			query := fmt.Sprintf(`INSERT INTO %s (%s, %s, %s, %s) VALUES ($1, $2, $3, $4)`,
-				s.tableName, s.colID, s.colContent, s.colMeta, s.colEmbed)
+			query := fmt.Sprintf(
+				`INSERT INTO %s (%s, %s, %s, %s) VALUES ($1, $2, $3, $4) ON CONFLICT (%s) DO UPDATE SET %s=EXCLUDED.%s, %s=EXCLUDED.%s, %s=EXCLUDED.%s`,
+				s.tableName, s.colID, s.colContent, s.colMeta, s.colEmbed,
+				s.colID,
+				s.colContent, s.colContent,
+				s.colMeta, s.colMeta,
+				s.colEmbed, s.colEmbed,
+			)
 			batch.Queue(query, id, doc.Content, metaJSON, pgvector.NewVector(vec))
 		} else {
-			query := fmt.Sprintf(`INSERT INTO %s (%s, %s, %s) VALUES ($1, $2, $3)`,
-				s.tableName, s.colID, s.colContent, s.colEmbed)
+			query := fmt.Sprintf(
+				`INSERT INTO %s (%s, %s, %s) VALUES ($1, $2, $3) ON CONFLICT (%s) DO UPDATE SET %s=EXCLUDED.%s, %s=EXCLUDED.%s`,
+				s.tableName, s.colID, s.colContent, s.colEmbed,
+				s.colID,
+				s.colContent, s.colContent,
+				s.colEmbed, s.colEmbed,
+			)
 			batch.Queue(query, id, doc.Content, pgvector.NewVector(vec))
 		}
 	}
@@ -140,11 +154,75 @@ func (s *VectorStore) Add(ctx context.Context, docs []agent.Document, embeddings
 
 	for range docs {
 		if _, err := results.Exec(); err != nil {
-			return nil, fmt.Errorf("postgres vectorstore: add: %w", err)
+			return nil, fmt.Errorf("postgres vectorstore: upsert: %w", err)
 		}
 	}
 
 	return ids, nil
+}
+
+// Find retrieves documents by their IDs. Returns documents in the same order
+// as the input IDs, omitting IDs that don't exist. Returns an empty slice and
+// nil error for an empty input.
+func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document, error) {
+	if len(ids) == 0 {
+		return []agent.Document{}, nil
+	}
+
+	var query string
+	if s.colMeta != "" {
+		query = fmt.Sprintf(`SELECT %s, %s, %s FROM %s WHERE %s = ANY($1)`,
+			s.colID, s.colContent, s.colMeta, s.tableName, s.colID)
+	} else {
+		query = fmt.Sprintf(`SELECT %s, %s FROM %s WHERE %s = ANY($1)`,
+			s.colID, s.colContent, s.tableName, s.colID)
+	}
+
+	rows, err := s.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("postgres vectorstore: find: %w", err)
+	}
+	defer rows.Close()
+
+	// Collect results into a map for reordering.
+	found := make(map[string]agent.Document, len(ids))
+	for rows.Next() {
+		var id, content string
+		var metadata map[string]string
+
+		if s.colMeta != "" {
+			var metaJSON []byte
+			if err := rows.Scan(&id, &content, &metaJSON); err != nil {
+				return nil, fmt.Errorf("postgres vectorstore: find scan: %w", err)
+			}
+			if len(metaJSON) > 0 {
+				_ = json.Unmarshal(metaJSON, &metadata)
+			}
+		} else {
+			if err := rows.Scan(&id, &content); err != nil {
+				return nil, fmt.Errorf("postgres vectorstore: find scan: %w", err)
+			}
+		}
+
+		found[id] = agent.Document{
+			ID:       id,
+			Content:  content,
+			Metadata: metadata,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres vectorstore: find rows: %w", err)
+	}
+
+	// Reorder results to match input ID order, omitting missing IDs.
+	results := make([]agent.Document, 0, len(found))
+	for _, id := range ids {
+		if doc, ok := found[id]; ok {
+			results = append(results, doc)
+		}
+	}
+
+	return results, nil
 }
 
 // Search performs approximate nearest-neighbor search using pgvector.
@@ -214,6 +292,28 @@ func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK
 	}
 
 	return results, nil
+}
+
+// DeleteByMetadata deletes all documents whose metadata contains all key-value
+// pairs in the filter (AND semantics). Returns an error if the filter is empty.
+func (s *VectorStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
+	if len(filter) == 0 {
+		return fmt.Errorf("vectorstore: filter must not be empty")
+	}
+	if s.colMeta == "" {
+		return fmt.Errorf("postgres vectorstore: metadata column not configured")
+	}
+
+	filterJSON, err := json.Marshal(filter)
+	if err != nil {
+		return fmt.Errorf("postgres vectorstore: marshal filter: %w", err)
+	}
+
+	query := fmt.Sprintf(`DELETE FROM %s WHERE %s @> $1::jsonb`, s.tableName, s.colMeta)
+	if _, err := s.pool.Exec(ctx, query, filterJSON); err != nil {
+		return fmt.Errorf("postgres vectorstore: delete by metadata: %w", err)
+	}
+	return nil
 }
 
 // Delete removes documents by their IDs.

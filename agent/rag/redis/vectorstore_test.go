@@ -71,8 +71,8 @@ func TestProperty_VectorStoreAddSearchRoundTrip(t *testing.T) {
 
 		ctx := context.Background()
 
-		if _, err := store.Add(ctx, []agent.Document{doc}, [][]float64{emb}); err != nil {
-			t.Fatalf("Add failed: %v", err)
+		if _, err := store.Upsert(ctx, []agent.Document{doc}, [][]float64{emb}); err != nil {
+			t.Fatalf("Upsert failed: %v", err)
 		}
 
 		results, err := store.Search(ctx, emb, 1)
@@ -117,7 +117,7 @@ func TestProperty_VectorStoreAddRejectsMismatchedLengths(t *testing.T) {
 		}
 
 		store := &VectorStore{}
-		if _, err := store.Add(context.Background(), docs, embeddings); err == nil {
+		if _, err := store.Upsert(context.Background(), docs, embeddings); err == nil {
 			t.Fatalf("expected error for mismatched lengths (docs=%d, embeddings=%d), got nil", n, m)
 		}
 	})
@@ -143,7 +143,7 @@ func TestVectorStore_SearchTopKZero(t *testing.T) {
 
 func TestVectorStore_AddEmptySlice(t *testing.T) {
 	store := &VectorStore{}
-	if _, err := store.Add(context.Background(), []agent.Document{}, [][]float64{}); err != nil {
+	if _, err := store.Upsert(context.Background(), []agent.Document{}, [][]float64{}); err != nil {
 		t.Fatalf("expected nil error for empty slices, got: %v", err)
 	}
 }

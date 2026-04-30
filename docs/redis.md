@@ -79,7 +79,7 @@ Closes the underlying Redis client. Call this when you're done with the conversa
 
 ## VectorStore (Redis RAG)
 
-`VectorStore` implements `agent.VectorStore` using Redis Stack's RediSearch module. It stores document embeddings as Redis hashes and creates an HNSW index for KNN similarity search.
+`VectorStore` implements `agent.VectorStoreManager` using Redis Stack's RediSearch module. It stores document embeddings as Redis hashes and creates an HNSW index for KNN similarity search.
 
 > **Note:** `VectorStore` was previously named `RedisVectorStore` and lived in `agent/redis`. It now lives in `agent/rag/redis` as `VectorStore`. The constructor is `ragredis.New` (using the import alias below).
 
@@ -130,7 +130,9 @@ Drops the index and all its documents before creating a fresh one. Useful for ex
 
 ### Methods
 
-- `Add(ctx, docs, embeddings) ([]string, error)` — stores documents and their embeddings as Redis hashes. Returns the IDs of all stored documents in order. Each document gets a UUID-based key under the index prefix.
+- `Upsert(ctx, docs, embeddings) ([]string, error)` — stores documents and their embeddings as Redis hashes. If a document's ID already exists, replaces it (HSET is natively upsert). Returns the IDs of all stored documents in order.
+- `Find(ctx, ids...) ([]Document, error)` — retrieves documents by ID using pipelined HGETALL. Returns results in input order, omitting missing IDs.
+- `DeleteByMetadata(ctx, filter) error` — deletes all documents whose metadata matches all filter key-value pairs. Uses FT.SEARCH to find matches, then DEL.
 - `Search(ctx, queryEmbedding, topK) ([]ScoredDocument, error)` — performs KNN similarity search using `FT.SEARCH`. Returns results sorted by descending cosine similarity (score = 1 - cosine distance).
 - `Delete(ctx, ids ...string) error` — removes documents by their IDs. Returns nil if an ID doesn't exist.
 

@@ -29,15 +29,33 @@ type Embedder interface {
 
 // VectorStore stores document embeddings and performs similarity search.
 type VectorStore interface {
-	// Add stores documents with their embeddings. If a document's ID is empty,
-	// the store generates one. Returns the IDs of all stored documents in order.
-	Add(ctx context.Context, docs []Document, embeddings [][]float64) (ids []string, err error)
+	// Upsert stores documents with their embeddings. If a document's ID is empty,
+	// the store generates one. If a document's ID already exists, the store
+	// replaces the existing content, metadata, and embedding.
+	// Returns the IDs of all stored documents in input order.
+	Upsert(ctx context.Context, docs []Document, embeddings [][]float64) (ids []string, err error)
 
 	// Search returns the top-K documents by similarity. Results include document IDs.
 	Search(ctx context.Context, queryEmbedding []float64, topK int) ([]ScoredDocument, error)
 
 	// Delete removes documents by their IDs. Returns nil if an ID doesn't exist.
 	Delete(ctx context.Context, ids ...string) error
+}
+
+// VectorStoreManager extends VectorStore with document retrieval and
+// metadata-based bulk deletion for full lifecycle management.
+type VectorStoreManager interface {
+	VectorStore
+
+	// Find retrieves documents by their IDs. Returns documents in the same
+	// order as the input IDs, omitting IDs that don't exist. Returns an empty
+	// slice and nil error for an empty input.
+	Find(ctx context.Context, ids ...string) ([]Document, error)
+
+	// DeleteByMetadata deletes all documents whose metadata contains all
+	// key-value pairs in the filter (AND semantics). Returns an error if the
+	// filter is empty (safety guard against accidental full deletion).
+	DeleteByMetadata(ctx context.Context, filter map[string]string) error
 }
 
 // Retriever retrieves relevant documents for a query.
