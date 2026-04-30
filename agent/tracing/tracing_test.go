@@ -145,6 +145,9 @@ func (m *mockMemory) Save(_ context.Context, id string, msgs []agent.Message) er
 	return nil
 }
 
+func (m *mockMemory) List(_ context.Context) ([]string, error) { return nil, nil }
+func (m *mockMemory) Delete(_ context.Context, _ string) error { return nil }
+
 // ---------------------------------------------------------------------------
 // Mock Retriever
 // ---------------------------------------------------------------------------

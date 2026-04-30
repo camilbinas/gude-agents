@@ -94,7 +94,7 @@ func TestAddAndSearch(t *testing.T) {
 		{0.0, 0.0, 1.0},
 	}
 
-	if _, _, err := s.Add(ctx, docs, embeddings); err != nil {
+	if _, err := s.Add(ctx, docs, embeddings); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 		{0.0, 0.0, 1.0},
 	}
 
-	if _, _, err := s.Add(ctx, docs, embeddings); err != nil {
+	if _, err := s.Add(ctx, docs, embeddings); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
