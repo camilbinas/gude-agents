@@ -130,6 +130,38 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 	return entries, nil
 }
 
+// Update replaces an existing entry by ID with new content and re-embeds it.
+func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) error {
+	if identifier == "" {
+		return errors.New("memory: identifier must not be empty")
+	}
+	if id == "" {
+		return errors.New("memory: id must not be empty")
+	}
+	setMemIdentifier(&value, s.schema, identifier)
+
+	content := s.extractContent(value)
+	if content == "" {
+		return errors.New("memory: content field is empty")
+	}
+
+	embedding, err := s.embedder.Embed(ctx, content)
+	if err != nil {
+		return fmt.Errorf("memory: embed: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bucket := s.entries[identifier]
+	for i, e := range bucket {
+		if e.id == id {
+			s.entries[identifier][i] = memEntry[T]{id: id, value: value, embedding: embedding}
+			return nil
+		}
+	}
+	return fmt.Errorf("memory: entry %q not found", id)
+}
+
 // ForgetAll removes all entries for the given identifier.
 func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
 	if identifier == "" {
@@ -203,6 +235,44 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 				return "", fmt.Errorf("memory: unmarshal: %w", err)
 			}
 			return "Remembered.", store.Remember(ctx, id, value)
+		},
+	)
+}
+
+// NewUpdateTool creates a tool that updates an existing entry by ID.
+func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
+	cfg := &toolCfg{name: "update", description: "Update an existing memory entry by its ID."}
+	for _, o := range opts {
+		o(cfg)
+	}
+	schema := generateMemSchema[T]()
+	props := schema["properties"].(map[string]any)
+	props["id"] = map[string]any{"type": "string", "description": "The ID of the entry to update (from a previous recall)."}
+	if req, ok := schema["required"].([]string); ok {
+		schema["required"] = append(req, "id")
+	} else {
+		schema["required"] = []any{"id"}
+	}
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			identifier := agent.GetIdentifier(ctx)
+			if identifier == "" {
+				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+			}
+			var params struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+			var value T
+			if err := json.Unmarshal(input, &value); err != nil {
+				return "", fmt.Errorf("memory: unmarshal: %w", err)
+			}
+			if err := store.Update(ctx, identifier, params.ID, value); err != nil {
+				return "", err
+			}
+			return "Updated.", nil
 		},
 	)
 }
@@ -398,7 +468,7 @@ func generateMemSchema[T any]() map[string]any {
 				name = jp[0]
 			}
 		}
-		prop := map[string]any{"type": goTypeStr(field.Type)}
+		prop := tool.GoTypeToSchema(field.Type)
 		if desc := field.Tag.Get("description"); desc != "" {
 			prop["description"] = desc
 		}
@@ -412,25 +482,6 @@ func generateMemSchema[T any]() map[string]any {
 		schema["required"] = required
 	}
 	return schema
-}
-
-func goTypeStr(t reflect.Type) string {
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	switch t.Kind() {
-	case reflect.String:
-		return "string"
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return "integer"
-	case reflect.Float32, reflect.Float64:
-		return "number"
-	case reflect.Bool:
-		return "boolean"
-	default:
-		return "string"
-	}
 }
 
 func cosineSimilarity(a, b []float64) float64 {

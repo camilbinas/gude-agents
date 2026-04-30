@@ -70,6 +70,10 @@ func main() {
 		memoryredis.WithToolName("save_preference"),
 		memoryredis.WithToolDescription("Store any user information: name, preferences, settings, facts, decisions, or context they share."),
 	)
+	updateTool := memoryredis.NewUpdateTool(mem,
+		memoryredis.WithToolName("update_preference"),
+		memoryredis.WithToolDescription("Update an existing memory entry by its ID when the user corrects or changes a preference."),
+	)
 	recallTool := memoryredis.NewRecallTool(mem,
 		memoryredis.WithToolName("get_preferences"),
 		memoryredis.WithToolDescription("Retrieve relevant user information and preferences by semantic similarity."),
@@ -87,11 +91,12 @@ func main() {
 		prompt.Text(
 			"You are a personal assistant that remembers everything the user tells you about themselves. "+
 				"Use save_preference to store ANY personal information: name, preferences, settings, facts about the user, decisions, or context they share. "+
+				"Use update_preference to correct or change an existing preference by its ID when the user updates something. "+
 				"Use get_preferences to retrieve relevant information when answering questions or before making suggestions. "+
 				"ALWAYS save when the user shares personal info (name, role, preferences, tools they use, etc). "+
 				"ALWAYS recall before answering questions about the user.",
 		),
-		[]tool.Tool{rememberTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()},
+		[]tool.Tool{rememberTool, updateTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()},
 		agent.WithConversation(store, "preferences-session"),
 		debug.WithLogging(),
 	)

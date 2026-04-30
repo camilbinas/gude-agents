@@ -92,6 +92,103 @@ func NewRememberTool[T any](
 	)
 }
 
+// NewUpdateTool creates a tool that updates an existing entry by ID.
+func NewUpdateTool[T any](
+	store *Store[T],
+	opts ...Option,
+) tool.Tool {
+	cfg := &toolConfig{
+		name:        "update",
+		description: "Update an existing memory entry by its ID.",
+	}
+	for _, opt := range opts {
+		opt.applyTool(cfg)
+	}
+
+	schema := GenerateInputSchema[T]()
+	props := schema["properties"].(map[string]any)
+	props["id"] = map[string]any{"type": "string", "description": "The ID of the entry to update (from a previous recall)."}
+	if req, ok := schema["required"].([]string); ok {
+		schema["required"] = append(req, "id")
+	} else {
+		schema["required"] = []any{"id"}
+	}
+
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			identifier := agent.GetIdentifier(ctx)
+			if identifier == "" {
+				return "", errors.New("postgres: identifier not found in context; use agent.WithIdentifier")
+			}
+
+			var params struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+
+			var value T
+			if err := json.Unmarshal(input, &value); err != nil {
+				return "", fmt.Errorf("postgres: unmarshal: %w", err)
+			}
+
+			if err := store.Update(ctx, identifier, params.ID, value); err != nil {
+				return "", err
+			}
+
+			return "Updated.", nil
+		},
+	)
+}
+
+// NewForgetTool creates a tool that removes a single entry by ID.
+func NewForgetTool[T any](
+	store *Store[T],
+	opts ...Option,
+) tool.Tool {
+	cfg := &toolConfig{
+		name:        "forget",
+		description: "Remove a specific memory entry by its ID.",
+	}
+	for _, opt := range opts {
+		opt.applyTool(cfg)
+	}
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{
+				"type":        "string",
+				"description": "The ID of the memory entry to forget (from a previous recall).",
+			},
+		},
+		"required": []any{"id"},
+	}
+
+	return tool.NewRaw(cfg.name, cfg.description, schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			identifier := agent.GetIdentifier(ctx)
+			if identifier == "" {
+				return "", errors.New("postgres: identifier not found in context; use agent.WithIdentifier")
+			}
+
+			var params struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+
+			if err := store.Forget(ctx, identifier, params.ID); err != nil {
+				return "", err
+			}
+
+			return "Forgotten.", nil
+		},
+	)
+}
+
 // NewRecallTool creates a tool that retrieves values from a Store.
 // RecallOptions passed here apply as default filters to every call.
 func NewRecallTool[T any](

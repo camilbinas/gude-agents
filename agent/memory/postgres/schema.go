@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // columnRole marks special roles for columns extracted from struct tags.
@@ -206,7 +208,7 @@ func GenerateInputSchema[T any]() map[string]any {
 			}
 		}
 
-		prop := goTypeToJSONSchema(field.Type)
+		prop := tool.GoTypeToSchema(field.Type)
 
 		if desc := field.Tag.Get("description"); desc != "" {
 			prop["description"] = desc
@@ -234,30 +236,4 @@ func GenerateInputSchema[T any]() map[string]any {
 		schema["required"] = required
 	}
 	return schema
-}
-
-// goTypeToJSONSchema maps a Go type to a JSON Schema type descriptor.
-func goTypeToJSONSchema(t reflect.Type) map[string]any {
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	switch t.Kind() {
-	case reflect.String:
-		return map[string]any{"type": "string"}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return map[string]any{"type": "integer"}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return map[string]any{"type": "integer"}
-	case reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}
-	case reflect.Bool:
-		return map[string]any{"type": "boolean"}
-	case reflect.Slice, reflect.Array:
-		return map[string]any{
-			"type":  "array",
-			"items": goTypeToJSONSchema(t.Elem()),
-		}
-	default:
-		return map[string]any{"type": "string"}
-	}
 }

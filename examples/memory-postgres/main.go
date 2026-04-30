@@ -96,11 +96,19 @@ func main() {
 		postgres.WithToolName("remember_event"),
 		postgres.WithToolDescription("Store an observed event as an episodic memory."),
 	)
+	updateTool := postgres.NewUpdateTool(mem,
+		postgres.WithToolName("update_event"),
+		postgres.WithToolDescription("Update an existing episodic memory by its ID."),
+	)
 	recallTool := postgres.NewRecallTool(mem,
 		postgres.WithToolName("recall_events"),
 		postgres.WithToolDescription("Recall relevant past events by semantic similarity, sorted by most recent."),
 		postgres.WithFieldGT("importance", 0.3),
 		postgres.WithOrderBy("observed_at", postgres.Desc),
+	)
+	forgetTool := postgres.NewForgetTool(mem,
+		postgres.WithToolName("forget_event"),
+		postgres.WithToolDescription("Remove a specific event from memory by its ID."),
 	)
 
 	store := conversation.NewWindow(conversation.NewInMemory(), 20)
@@ -110,10 +118,11 @@ func main() {
 		prompt.Text(
 			"You are a monitoring assistant that tracks system events. "+
 				"Use remember_event to store incidents, recoveries, and deployments. "+
+				"Use update_event to correct or enrich an existing event by its ID. "+
 				"Use recall_events to retrieve relevant past events when asked. "+
 				"Always recall before answering questions about past events.",
 		),
-		[]tool.Tool{rememberTool, recallTool},
+		[]tool.Tool{rememberTool, updateTool, recallTool, forgetTool},
 		agent.WithConversation(store, "monitoring-session"),
 		debug.WithLogging(),
 		agent.WithParallelToolExecution(),

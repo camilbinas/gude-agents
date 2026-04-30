@@ -275,7 +275,7 @@ func buildObjectSchema(t reflect.Type) map[string]any {
 	}
 
 	if t.Kind() != reflect.Struct {
-		return goTypeToSchema(t)
+		return GoTypeToSchema(t)
 	}
 
 	properties := make(map[string]any)
@@ -298,7 +298,7 @@ func buildObjectSchema(t reflect.Type) map[string]any {
 			}
 		}
 
-		prop := goTypeToSchema(field.Type)
+		prop := GoTypeToSchema(field.Type)
 
 		if desc := field.Tag.Get("description"); desc != "" {
 			prop["description"] = desc
@@ -330,7 +330,9 @@ func buildObjectSchema(t reflect.Type) map[string]any {
 	return schema
 }
 
-func goTypeToSchema(t reflect.Type) map[string]any {
+// GoTypeToSchema maps a Go reflect.Type to a JSON Schema type descriptor.
+// Handles primitives, slices, arrays, structs, maps, and pointers.
+func GoTypeToSchema(t reflect.Type) map[string]any {
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -349,14 +351,14 @@ func goTypeToSchema(t reflect.Type) map[string]any {
 	case reflect.Slice, reflect.Array:
 		return map[string]any{
 			"type":  "array",
-			"items": goTypeToSchema(t.Elem()),
+			"items": GoTypeToSchema(t.Elem()),
 		}
 	case reflect.Struct:
 		return buildObjectSchema(t)
 	case reflect.Map:
 		return map[string]any{
 			"type":                 "object",
-			"additionalProperties": goTypeToSchema(t.Elem()),
+			"additionalProperties": GoTypeToSchema(t.Elem()),
 		}
 	default:
 		return map[string]any{"type": "string"}

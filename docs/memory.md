@@ -22,7 +22,9 @@ store, err := postgres.NewStore[Preference](pool, embedder, 1024,
 
 tools := []tool.Tool{
     postgres.NewRememberTool(store, postgres.WithToolName("save_preference")),
+    postgres.NewUpdateTool(store, postgres.WithToolName("update_preference")),
     postgres.NewRecallTool(store, postgres.WithToolName("get_preferences")),
+    postgres.NewForgetTool(store, postgres.WithToolName("forget_preference")),
 }
 
 a, _ := agent.Default(provider, systemPrompt, tools)
@@ -45,20 +47,32 @@ Tag format: `db:"column_name,role"`
 
 Additional struct tags: `description:"..."` (shown to LLM), `required:"true"` (marked required in schema), `enum:"a,b,c"` (enum constraint).
 
-## Interface
+## Interfaces
 
-All memory backends satisfy the `memory.Memory[T]` interface — use it to write backend-agnostic code or to implement custom backends.
+The core interface requires only Remember and Recall. Optional capabilities are expressed as separate interfaces that backends opt into.
 
 ```go
+// Core — every backend implements this.
 type Memory[T any] interface {
     Remember(ctx context.Context, identifier string, value T) error
     Recall(ctx context.Context, identifier string, query string, limit int, opts ...RecallOption) ([]Entry[T], error)
+}
+
+// Optional capabilities.
+type Updater[T any] interface {
+    Update(ctx context.Context, identifier, id string, value T) error
+}
+
+type Forgetter[T any] interface {
     Forget(ctx context.Context, identifier, id string) error
+}
+
+type BulkForgetter[T any] interface {
     ForgetAll(ctx context.Context, identifier string) error
 }
 ```
 
-Backend-specific `RecallOption` values (filtering, sorting) are silently ignored by backends that don't support them.
+All built-in backends (in-memory, Postgres, Redis) implement all four interfaces. Custom backends only need to implement `Memory[T]` — add the others as needed.
 
 ## Backends
 
@@ -113,7 +127,7 @@ Strings become TAG fields, numbers become NUMERIC fields (sortable/filterable). 
 
 ## Tools
 
-`NewRememberTool`, `NewRecallTool`, and `NewForgetTool` wrap a store as agent tools. The LLM schema is auto-generated from struct tags (fields with `pk`, `identifier`, or `noinput` are excluded).
+`NewRememberTool`, `NewUpdateTool`, `NewRecallTool`, and `NewForgetTool` wrap a store as agent tools. The LLM schema is auto-generated from struct tags (fields with `pk`, `identifier`, or `noinput` are excluded). `NewUpdateTool` adds an `id` parameter so the LLM can target an existing entry.
 
 ```go
 tools := []tool.Tool{
@@ -121,10 +135,17 @@ tools := []tool.Tool{
         postgres.WithToolName("remember_event"),
         postgres.WithToolDescription("Store an event."),
     ),
+    postgres.NewUpdateTool(store,
+        postgres.WithToolName("update_event"),
+        postgres.WithToolDescription("Update an existing event by ID."),
+    ),
     postgres.NewRecallTool(store,
         postgres.WithToolName("recall_events"),
         postgres.WithFieldGT("importance", 0.3),
         postgres.WithOrderBy("observed_at", postgres.Desc),
+    ),
+    postgres.NewForgetTool(store,
+        postgres.WithToolName("forget_event"),
     ),
 }
 ```
@@ -144,6 +165,13 @@ Pass `RecallOption` values to `Recall()` or to `NewRecallTool` (applied to every
 | `WithMinSimilarity(threshold)` | Minimum vector similarity score |
 | `WithOrderBy(col, dir)` | Custom sort (overrides vector similarity) |
 | `WithRawFilter(sql, args...)` | Raw SQL WHERE clause (Postgres only) |
+
+## Update
+
+```go
+// Update an existing entry by ID — re-embeds the content automatically.
+store.Update(ctx, "user-123", entryID, updatedValue)
+```
 
 ## Deletion
 

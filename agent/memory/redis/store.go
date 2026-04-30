@@ -273,6 +273,45 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 	return results, nil
 }
 
+// Update replaces an existing entry by its Redis key, re-embedding the content.
+func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) error {
+	if identifier == "" {
+		return errors.New("redis: identifier must not be empty")
+	}
+	if id == "" {
+		return errors.New("redis: id must not be empty")
+	}
+
+	exists, err := s.client.Exists(ctx, id).Result()
+	if err != nil {
+		return fmt.Errorf("redis: exists check: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("redis: entry %q not found", id)
+	}
+
+	setRedisIdentifier(&value, s.schema, identifier)
+
+	content := s.extractContent(value)
+	if content == "" {
+		return errors.New("redis: content field is empty")
+	}
+
+	embedding, err := s.embedder.Embed(ctx, content)
+	if err != nil {
+		return fmt.Errorf("redis: embed: %w", err)
+	}
+
+	fields := s.buildHashFields(value)
+	fields["embedding"] = float64sToFloat32Bytes(embedding)
+
+	if err := s.client.HSet(ctx, id, fields).Err(); err != nil {
+		return fmt.Errorf("redis: hset: %w", err)
+	}
+
+	return nil
+}
+
 // ForgetAll removes all stored entries for the given identifier.
 func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
 	if identifier == "" {

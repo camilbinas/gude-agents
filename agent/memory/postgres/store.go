@@ -404,6 +404,88 @@ func (s *Store[T]) scanRow(rows pgx.Rows) (T, float64, error) {
 	return result, similarity, nil
 }
 
+// Update replaces an existing entry by primary key, re-embedding the content.
+func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) error {
+	if identifier == "" {
+		return errors.New("postgres: identifier must not be empty")
+	}
+	if id == "" {
+		return errors.New("postgres: id must not be empty")
+	}
+	if s.schema.PKIndex < 0 {
+		return errors.New("postgres: struct has no pk field; cannot update by id")
+	}
+
+	setIdentifierField(&value, s.schema, identifier)
+
+	content := s.extractContent(value)
+	if content == "" {
+		return errors.New("postgres: content field is empty")
+	}
+
+	embedding, err := s.embedder.Embed(ctx, content)
+	if err != nil {
+		return fmt.Errorf("postgres: embed: %w", err)
+	}
+
+	// Build SET clause — update all columns except PK and identifier.
+	var setClauses []string
+	var args []any
+	paramIdx := 1
+
+	v := reflect.ValueOf(value)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	for i, col := range s.schema.Columns {
+		if i == s.schema.PKIndex || i == s.schema.IdentifierIdx {
+			continue
+		}
+		field := v.Field(col.FieldIndex)
+		val := field.Interface()
+		if col.IsJSONB {
+			data, err := json.Marshal(val)
+			if err != nil {
+				return fmt.Errorf("postgres: marshal jsonb field %s: %w", col.Column, err)
+			}
+			args = append(args, data)
+		} else {
+			args = append(args, val)
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col.Column, paramIdx))
+		paramIdx++
+	}
+
+	// Add embedding to SET.
+	vec := float64sToFloat32(embedding)
+	args = append(args, pgvector.NewVector(vec))
+	setClauses = append(setClauses, fmt.Sprintf("%s = $%d", s.embeddingCol, paramIdx))
+	paramIdx++
+
+	// WHERE pk = $N AND identifier = $N+1
+	pkCol := s.schema.Columns[s.schema.PKIndex].Column
+	identifierCol := s.schema.Columns[s.schema.IdentifierIdx].Column
+	args = append(args, id, identifier)
+
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE %s = $%d AND %s = $%d",
+		s.tableName,
+		strings.Join(setClauses, ", "),
+		pkCol, paramIdx,
+		identifierCol, paramIdx+1,
+	)
+
+	result, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("postgres: update: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("postgres: entry %q not found", id)
+	}
+	return nil
+}
+
 // ForgetAll removes all stored entries for the given identifier.
 func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
 	if identifier == "" {
