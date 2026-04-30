@@ -116,6 +116,7 @@ func main() {
 		[]tool.Tool{rememberTool, recallTool},
 		agent.WithConversation(store, "monitoring-session"),
 		debug.WithLogging(),
+		agent.WithParallelToolExecution(),
 	)
 	if err != nil {
 		log.Fatal(err)

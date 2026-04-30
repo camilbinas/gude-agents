@@ -2,6 +2,15 @@
 
 The tool system lets you define functions that the LLM can invoke during a conversation. You describe a tool's name, purpose, and input schema — the framework handles marshalling, unmarshalling, and wiring it into the agent loop.
 
+| Constructor | Input | Use Case |
+|-------------|-------|----------|
+| `tool.New[T]` | Auto-generated from struct tags | Most tools — typed, safe, concise |
+| `tool.NewRaw` | Hand-crafted JSON Schema + `json.RawMessage` | Full schema control |
+| `tool.NewSimple` | None | Tools with no parameters (e.g. current time) |
+| `tool.NewString` | Single required string | Simple query tools |
+| `tool.NewAsync` | Same as `New[T]` | Fire-and-forget side effects |
+| `tool.NewRich` | Same as `New[T]` | Tools that return text + images |
+
 ## tool.New[T] — Typed Constructor
 
 ```go

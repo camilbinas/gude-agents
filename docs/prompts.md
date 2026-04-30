@@ -138,140 +138,22 @@ func (tr TRACE) String() string
 
 `String()` concatenates the non-empty fields with labels like `Task:`, `Request:`, `Action:`, `Context:`, and `Example:`, separated by newlines.
 
-## Code Examples
-
-### Text
-
-A minimal agent with a plain-text system prompt:
+## Example
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+a, _ := agent.Default(provider,
+    prompt.RISEN{
+        Role:         "You are a travel planning assistant.",
+        Instructions: "Help users plan trips by suggesting destinations and logistics.",
+        Steps:        "1) Ask about preferences. 2) Suggest destinations. 3) Outline itinerary.",
+        EndGoal:      "Provide a practical, ready-to-use travel plan.",
+        Narrowing:    "Focus on Europe. Budget-friendly. Under 7 days.",
+    },
+    nil,
 )
-
-func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant that answers questions concisely."),
-		nil,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	result, _, err := a.Invoke(context.Background(), "What is the capital of France?")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-}
 ```
 
-### RISEN
-
-A task-focused travel planning agent using the RISEN framework:
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-)
-
-func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := agent.Default(
-		provider,
-		prompt.RISEN{
-			Role:         "You are a travel planning assistant.",
-			Instructions: "Help users plan trips by suggesting destinations, activities, and logistics.",
-			Steps:        "1) Ask about preferences. 2) Suggest destinations. 3) Outline a day-by-day itinerary.",
-			EndGoal:      "Provide a practical, ready-to-use travel plan.",
-			Narrowing:    "Focus on Europe. Budget-friendly options. Keep it under 7 days.",
-		},
-		nil,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	result, _, err := a.Invoke(context.Background(), "I want a short trip from Munich.")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-}
-```
-
-### COSTAR
-
-A customer support assistant using the CO-STAR framework for tone control:
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-)
-
-func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := agent.Default(
-		provider,
-		prompt.COSTAR{
-			Context:   "You are a customer support assistant for a SaaS product.",
-			Objective: "Help users troubleshoot issues and find answers quickly.",
-			Style:     "Clear and structured. Use numbered steps for instructions.",
-			Tone:      "Friendly and patient. Never blame the user.",
-			Audience:  "Non-technical users who may be frustrated.",
-			Response:  "Keep answers under 3 paragraphs. Use bullet points for lists.",
-		},
-		nil,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	result, _, err := a.Invoke(context.Background(), "I can't log in to my account.")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-}
-```
+All prompt types work the same way — pass them as the second argument to any agent constructor.
 
 ## See Also
 

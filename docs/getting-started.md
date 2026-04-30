@@ -162,49 +162,14 @@ Not intended for production — the colored output is designed to be read while 
 
 ## Preset Constructors
 
-gude-agents ships six preset constructors that configure an agent for common use cases. Most accept the same base parameters — `(provider, instructions, tools, ...Option)` — and return `(*Agent, error)`. `RAGAgent` adds a required `Retriever` parameter before tools.
+All presets accept `(provider, instructions, tools, ...Option)` and return `(*Agent, error)`. Options passed after the defaults override them.
 
-### Default
-
-```go
-func Default(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error)
-```
-
-Configures: 5 max iterations, no logging.
-
-Use `Default` for standalone agents — it's the right starting point for most applications. The 5-iteration limit gives the agent enough room to call tools and refine its answer without running away.
-
-### Worker
-
-```go
-func Worker(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error)
-```
-
-Configures: logging enabled, 3 max iterations.
-
-Use `Worker` for sub-agents in a multi-agent setup. The lower iteration limit keeps child agents focused and prevents them from consuming too many tokens on a single delegation.
-
-### Orchestrator
-
-```go
-func Orchestrator(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error)
-```
-
-Configures: logging enabled, 5 max iterations, parallel tool execution.
-
-Use `Orchestrator` for a parent agent that routes work to other agents. Parallel tool execution lets it dispatch to multiple child agents concurrently, which is critical when the orchestrator delegates to several specialists in a single turn.
-
-### RAGAgent
-
-```go
-func RAGAgent(provider Provider, instructions prompt.Instructions, r Retriever, tools []tool.Tool, opts ...Option) (*Agent, error)
-```
-
-Configures: logging enabled, 5 max iterations, retriever attached.
-
-Use `RAGAgent` for retrieval-augmented generation. The `Retriever` is a required parameter, making it impossible to forget. Retrieved documents are automatically injected as a user/assistant message turn before each LLM call — keeping untrusted content isolated from the system prompt.
-
-All presets accept additional `...Option` arguments that are applied after the defaults, so you can override any setting:
+| Preset | Max Iterations | Logging | Parallel Tools | Use Case |
+|--------|---------------|---------|----------------|----------|
+| `Default` | 5 | off | off | Standalone agents |
+| `Worker` | 3 | on | off | Sub-agents in multi-agent setups |
+| `Orchestrator` | 5 | on | on | Parent agent routing to specialists |
+| `RAGAgent` | 5 | on | off | Retrieval-augmented generation (takes a `Retriever` parameter before tools) |
 
 ```go
 a, err := agent.Default(provider, instructions, tools,

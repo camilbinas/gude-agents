@@ -23,55 +23,20 @@ When no logging hook is set, the agent performs nil checks at each hook call sit
 
 ## Option Functions
 
-### `WithLogging`
-
-```go
-func WithLogging(opts ...Option) agent.Option
-```
-
-Returns an `agent.Option` that creates a slog-based logging hook and installs it on the agent. The hook emits structured log entries at each lifecycle point using `log/slog`.
-
-### `WithGraphLogging`
-
-```go
-func WithGraphLogging(opts ...Option) graph.GraphOption
-```
-
-Returns a `graph.GraphOption` that installs the slog-based logging hook on a graph.
-
-### `WithSwarmLogging`
-
-```go
-func WithSwarmLogging(opts ...Option) agent.SwarmOption
-```
-
-Returns an `agent.SwarmOption` that installs the slog-based logging hook on a swarm.
-
-### `WithHandler`
-
-```go
-func WithHandler(h slog.Handler) Option
-```
-
-Sets a custom `slog.Handler` for log output. When not provided, the hook uses `slog.Default()`.
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `WithLogging(opts...)` | `agent.Option` | Installs slog-based logging hook on an agent |
+| `WithGraphLogging(opts...)` | `graph.GraphOption` | Installs slog-based logging hook on a graph |
+| `WithSwarmLogging(opts...)` | `agent.SwarmOption` | Installs slog-based logging hook on a swarm |
+| `WithHandler(h slog.Handler)` | `Option` | Sets a custom slog handler (default: `slog.Default()`) |
+| `WithMinLevel(level slog.Level)` | `Option` | Minimum log level (default: `slog.LevelDebug`) |
 
 ```go
 a, err := agent.New(provider, instructions, tools,
-    agentslog.WithLogging(agentslog.WithHandler(slog.NewJSONHandler(os.Stdout, nil))),
-)
-```
-
-### `WithMinLevel`
-
-```go
-func WithMinLevel(level slog.Level) Option
-```
-
-Sets the minimum log level. Entries below this level are not emitted. Default is `slog.LevelDebug` (all entries).
-
-```go
-a, err := agent.New(provider, instructions, tools,
-    agentslog.WithLogging(agentslog.WithMinLevel(slog.LevelInfo)),
+    agentslog.WithLogging(
+        agentslog.WithHandler(slog.NewJSONHandler(os.Stdout, nil)),
+        agentslog.WithMinLevel(slog.LevelInfo),
+    ),
 )
 ```
 
