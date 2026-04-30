@@ -16,7 +16,7 @@ const structuredOutputToolName = "structured_output"
 // use the same timeout, retry, and observability hooks as InvokeStream.
 func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, TokenUsage, error) {
 	convID := ResolveConversationID(ctx, a.conversationID)
-	h := a.hooks()
+	h := a.hooks(ctx)
 	modelID := a.modelID()
 
 	ctx, invoke := h.onInvokeStart(ctx, a.invokeParams(convID, userMessage, ctx))

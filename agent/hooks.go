@@ -14,6 +14,7 @@ type hooks struct {
 	tracing TracingHook
 	metrics MetricsHook
 	logging LoggingHook
+	event   EventHook
 }
 
 // invokeFinisher is returned by onInvokeStart and called when the invocation ends.
@@ -81,6 +82,8 @@ type providerFinisher struct {
 	finishTracing func(err error, usage TokenUsage, toolCallCount int, responseText string)
 	finishMetrics func(err error, usage TokenUsage)
 	logging       LoggingHook
+	event         EventHook
+	ctx           context.Context
 	start         time.Time
 }
 
@@ -94,12 +97,16 @@ func (f *providerFinisher) finish(err error, usage TokenUsage, toolCallCount int
 	if f.logging != nil {
 		f.logging.OnProviderCallEnd(err, usage, toolCallCount, time.Since(f.start))
 	}
+	if f.event != nil {
+		f.event.OnModelEnd(f.ctx, deriveStopReason(toolCallCount, err))
+	}
 }
 
 func (h *hooks) onProviderCallStart(ctx context.Context, params ProviderCallParams, modelID string) (context.Context, *providerFinisher) {
-	f := &providerFinisher{start: time.Now()}
+	f := &providerFinisher{start: time.Now(), ctx: ctx}
 	if h.tracing != nil {
 		ctx, f.finishTracing = h.tracing.OnProviderCallStart(ctx, params)
+		f.ctx = ctx
 	}
 	if h.metrics != nil {
 		f.finishMetrics = h.metrics.OnProviderCallStart(modelID)
@@ -107,6 +114,11 @@ func (h *hooks) onProviderCallStart(ctx context.Context, params ProviderCallPara
 	if h.logging != nil {
 		h.logging.OnProviderCallStart(modelID)
 		f.logging = h.logging
+	}
+	if h.event != nil {
+		h.event.OnModelStart(ctx)
+		f.event = h.event
+		f.ctx = ctx
 	}
 	return ctx, f
 }
@@ -116,6 +128,8 @@ type toolFinisher struct {
 	finishTracing func(err error, output string)
 	finishMetrics func(err error)
 	logging       LoggingHook
+	event         EventHook
+	ctx           context.Context
 	toolName      string
 	start         time.Time
 }
@@ -130,12 +144,16 @@ func (f *toolFinisher) finish(err error, output string) {
 	if f.logging != nil {
 		f.logging.OnToolEnd(f.toolName, err, time.Since(f.start))
 	}
+	if f.event != nil {
+		f.event.OnToolCallEnd(f.ctx, f.toolName, output, err, time.Since(f.start))
+	}
 }
 
 func (h *hooks) onToolStart(ctx context.Context, toolName string, input json.RawMessage) (context.Context, *toolFinisher) {
-	f := &toolFinisher{toolName: toolName, start: time.Now()}
+	f := &toolFinisher{toolName: toolName, start: time.Now(), ctx: ctx}
 	if h.tracing != nil {
 		ctx, f.finishTracing = h.tracing.OnToolStart(ctx, toolName, input)
+		f.ctx = ctx
 	}
 	if h.metrics != nil {
 		f.finishMetrics = h.metrics.OnToolStart(toolName)
@@ -143,6 +161,11 @@ func (h *hooks) onToolStart(ctx context.Context, toolName string, input json.Raw
 	if h.logging != nil {
 		h.logging.OnToolStart(toolName)
 		f.logging = h.logging
+	}
+	if h.event != nil {
+		h.event.OnToolCallStart(ctx, toolName, input)
+		f.event = h.event
+		f.ctx = ctx
 	}
 	return ctx, f
 }
@@ -256,4 +279,17 @@ func (h *hooks) onMaxIterationsExceeded(ctx context.Context, limit int) {
 	if h.logging != nil {
 		h.logging.OnMaxIterationsExceeded(limit)
 	}
+}
+
+// deriveStopReason returns the stop reason string for OnModelEnd based on the
+// provider call outcome. If err is non-nil, it returns "error". If tool calls
+// were present (toolCallCount > 0), it returns "tool_use". Otherwise "end_turn".
+func deriveStopReason(toolCallCount int, err error) string {
+	if err != nil {
+		return StopReasonError
+	}
+	if toolCallCount > 0 {
+		return StopReasonToolUse
+	}
+	return StopReasonEndTurn
 }

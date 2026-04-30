@@ -233,7 +233,7 @@ type ConverseParams struct {
 | `System` | `string` | System prompt text |
 | `ToolConfig` | `[]tool.Spec` | Tool specifications the LLM can choose from |
 | `ToolChoice` | `*tool.Choice` | Controls tool selection behavior; `nil` means provider default (auto) |
-| `ThinkingCallback` | `ThinkingCallback` | Optional callback for streaming thinking chunks; set via `WithThinkingCallback` |
+| `ThinkingCallback` | `ThinkingCallback` | Internal callback for streaming thinking chunks; set automatically by the agent loop when an EventHook is configured |
 | `InferenceConfig` | `*InferenceConfig` | Optional inference parameters; `nil` means use provider defaults |
 
 `tool.Spec` and `tool.Choice` are defined in the `tool` sub-package (`github.com/camilbinas/gude-agents/agent/tool`). See [Tool System](tools.md) for details.
@@ -298,9 +298,9 @@ When output guardrails are configured on the agent, chunks are buffered until al
 type ThinkingCallback func(chunk string)
 ```
 
-`ThinkingCallback` receives incremental thinking/reasoning chunks during streaming. Called in real-time as the model reasons internally, before the final answer is produced. Only fires when the provider has thinking enabled (via `WithThinking`).
+`ThinkingCallback` receives incremental thinking/reasoning chunks during streaming. Used internally by the agent loop to forward chunks to `EventHook.OnThinking`. Provider implementations call this during `ConverseStream` when thinking is enabled.
 
-Set on the agent via `WithThinkingCallback`. See [Providers](providers.md#extended-thinking) for which models support thinking.
+See [Providers](providers.md#extended-thinking) for which models support thinking, and [Agent API](agent-api.md#event-hook) for how to receive thinking chunks via EventHook.
 
 ## Document
 

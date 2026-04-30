@@ -44,7 +44,7 @@ if mi, ok := provider.(agent.ModelIdentifier); ok {
 
 ## Extended Thinking
 
-Extended thinking lets models reason internally before producing a final answer. The reasoning process is separate from the response text and can be streamed in real-time via `WithThinkingCallback`.
+Extended thinking lets models reason internally before producing a final answer. The reasoning process is separate from the response text and can be streamed in real-time via `EventHook.OnThinking`.
 
 ### Enabling Thinking
 
@@ -86,17 +86,14 @@ provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
 
 ### Streaming Thinking Output
 
-Use `WithThinkingCallback` on the agent to receive reasoning chunks in real-time:
+Use `EventHook.OnThinking` to receive reasoning chunks in real-time:
 
 ```go
-a, _ := agent.Default(provider, instructions, nil,
-    agent.WithThinkingCallback(func(chunk string) {
-        fmt.Print(chunk) // stream reasoning to the user
-    }),
-)
+ctx = agent.WithEventHook(ctx, myEventHook) // OnThinking receives reasoning chunks
+a.InvokeStream(ctx, message, streamCB)
 ```
 
-The thinking callback fires before the answer streams. OpenAI does not expose reasoning tokens in the stream, so the callback never fires for OpenAI providers.
+The thinking chunks arrive before the answer streams. OpenAI does not expose reasoning tokens in the stream, so `OnThinking` never fires for OpenAI providers.
 
 See `examples/thinking` for a complete working example.
 

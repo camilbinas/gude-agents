@@ -185,7 +185,7 @@ a, err := agent.New(provider, instructions, tools,
 )
 ```
 
-Both hooks are separate fields on the `Agent` struct (alongside the logging hook). The agent loop nil-checks each independently. The metrics hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.
+All hooks are separate fields on the `Agent` struct. The agent loop nil-checks each independently. The metrics hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.
 
 ## Custom Registerer for Testing
 

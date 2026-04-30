@@ -23,7 +23,7 @@ func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamC
 	}
 
 	convID := ResolveConversationID(ctx, a.conversationID)
-	h := a.hooks()
+	h := a.hooks(ctx)
 
 	ctx, invoke := h.onInvokeStart(ctx, a.invokeParams(convID, userMessage, ctx))
 	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb, &h)
@@ -175,6 +175,14 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		copy(currentToolSpecs, a.toolSpecs)
 		a.toolsMu.RUnlock()
 
+		// Forward thinking chunks to EventHook.OnThinking when configured.
+		var thinkingCB ThinkingCallback
+		if h.event != nil {
+			thinkingCB = func(chunk string) {
+				h.event.OnThinking(iterCtx, chunk)
+			}
+		}
+
 		provCtx, provF := h.onProviderCallStart(iterCtx, ProviderCallParams{
 			System:          systemPrompt,
 			MessageCount:    len(converseMessages),
@@ -185,7 +193,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			Messages:         converseMessages,
 			System:           systemPrompt,
 			ToolConfig:       currentToolSpecs,
-			ThinkingCallback: a.thinkingCallback,
+			ThinkingCallback: thinkingCB,
 			InferenceConfig:  inferenceConfig,
 		}, streamCB)
 
@@ -444,8 +452,8 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, h *hooks) [
 }
 
 // hooks returns the composite hook dispatcher for this agent.
-func (a *Agent) hooks() hooks {
-	return hooks{tracing: a.tracingHook, metrics: a.metricsHook, logging: a.loggingHook}
+func (a *Agent) hooks(ctx context.Context) hooks {
+	return hooks{tracing: a.tracingHook, metrics: a.metricsHook, logging: a.loggingHook, event: eventHookFromContext(ctx)}
 }
 
 // modelID returns the provider's model ID, or empty string.

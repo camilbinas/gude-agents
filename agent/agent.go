@@ -52,10 +52,9 @@ type Agent struct {
 	retryBaseDelay  time.Duration
 
 	// Observability
-	tracingHook      TracingHook      // nil = no tracing
-	metricsHook      MetricsHook      // nil = no metrics
-	loggingHook      LoggingHook      // nil = no logging
-	thinkingCallback ThinkingCallback // nil = discard thinking chunks
+	tracingHook TracingHook // nil = no tracing
+	metricsHook MetricsHook // nil = no metrics
+	loggingHook LoggingHook // nil = no logging
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.

@@ -103,19 +103,40 @@ result, _, err := a.Invoke(ctx, "Be creative!")
 
 ### Thinking
 
-`WithThinkingCallback(cb)` receives the model's internal reasoning chunks in real-time. Only fires when the provider has thinking enabled:
+Thinking chunks are delivered through `EventHook.OnThinking`. Only fires when the provider has thinking enabled:
 
 ```go
-provider, _ := anthropic.New("claude-sonnet-4-6",
-    anthropic.WithThinking(pvdr.ThinkingHigh),
-    anthropic.WithMaxTokens(16000),
-)
+ctx = agent.WithEventHook(ctx, myEventHook)
+a.InvokeStream(ctx, message, streamCB) // OnThinking fires during streaming
+```
 
-a, _ := agent.Default(provider, instructions, nil,
-    agent.WithThinkingCallback(func(chunk string) {
-        fmt.Print(chunk)
-    }),
-)
+### Event Hook
+
+`WithEventHook(ctx, h)` attaches an `EventHook` to a specific invocation via context. Designed for real-time UI event delivery — tool call start/end, model start/end, and thinking chunks. Invocation-scoped, so it's naturally concurrent-safe across HTTP handlers.
+
+```go
+ctx = agent.WithEventHook(ctx, myHook)
+result, usage, _ := a.Invoke(ctx, message)
+```
+
+| Method | Description |
+|---|---|
+| `OnToolCallStart(ctx, toolName, input)` | Called before a tool handler is invoked |
+| `OnToolCallEnd(ctx, toolName, output, err, duration)` | Called after a tool handler completes |
+| `OnThinking(ctx, chunk)` | Called for each thinking/reasoning chunk |
+| `OnModelStart(ctx)` | Called before the provider call |
+| `OnModelEnd(ctx, stopReason)` | Called after the provider call. `stopReason`: `"end_turn"`, `"tool_use"`, or `"error"` |
+
+Embed `agent.BaseEventHook` to only override the methods you need:
+
+```go
+type myHook struct {
+    agent.BaseEventHook
+}
+
+func (h *myHook) OnThinking(_ context.Context, chunk string) {
+    fmt.Print(chunk)
+}
 ```
 
 ## Invocation

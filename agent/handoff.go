@@ -148,6 +148,7 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 		tracing: a.tracingHook,
 		metrics: a.metricsHook,
 		logging: a.loggingHook,
+		event:   eventHookFromContext(ctx),
 	})
 }
 

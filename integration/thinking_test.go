@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"sync"
@@ -22,6 +23,23 @@ import (
 // These tests require a provider that supports thinking (Claude 4-series on Bedrock).
 // They are skipped when MODEL_PROVIDER is set to a provider without thinking support.
 
+// collectingEventHook records thinking chunks for test assertions.
+type collectingEventHook struct {
+	mu     sync.Mutex
+	chunks []string
+}
+
+func (h *collectingEventHook) OnToolCallStart(_ context.Context, _ string, _ json.RawMessage) {}
+func (h *collectingEventHook) OnToolCallEnd(_ context.Context, _ string, _ string, _ error, _ time.Duration) {
+}
+func (h *collectingEventHook) OnThinking(_ context.Context, chunk string) {
+	h.mu.Lock()
+	h.chunks = append(h.chunks, chunk)
+	h.mu.Unlock()
+}
+func (h *collectingEventHook) OnModelStart(_ context.Context)         {}
+func (h *collectingEventHook) OnModelEnd(_ context.Context, _ string) {}
+
 func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 	// Thinking is only supported on Claude 4-series (Bedrock) and Gemini 2.5+.
 	// Skip for providers that don't support it.
@@ -38,17 +56,11 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 	}
 	tp := &trackingProvider{inner: p}
 
-	var mu sync.Mutex
-	var thinkingChunks []string
+	hook := &collectingEventHook{}
 
 	a, err := agent.New(tp,
 		prompt.Text("You are a helpful assistant. Be brief."),
 		nil,
-		agent.WithThinkingCallback(func(chunk string) {
-			mu.Lock()
-			thinkingChunks = append(thinkingChunks, chunk)
-			mu.Unlock()
-		}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +68,7 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	ctx = agent.WithEventHook(ctx, hook)
 
 	result, _, err := a.Invoke(ctx, "What is 17 * 23? Show your reasoning.")
 	if err != nil {
@@ -64,10 +77,10 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 
 	t.Logf("Response: %s", result)
 
-	mu.Lock()
-	chunkCount := len(thinkingChunks)
-	thinkingText := strings.Join(thinkingChunks, "")
-	mu.Unlock()
+	hook.mu.Lock()
+	chunkCount := len(hook.chunks)
+	thinkingText := strings.Join(hook.chunks, "")
+	hook.mu.Unlock()
 
 	t.Logf("Thinking chunks: %d, total length: %d chars", chunkCount, len(thinkingText))
 
@@ -96,18 +109,13 @@ func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 	}
 	tp := &trackingProvider{inner: p}
 
+	hook := &collectingEventHook{}
 	var mu sync.Mutex
-	var thinkingChunks []string
 	var responseChunks []string
 
 	a, err := agent.New(tp,
 		prompt.Text("You are a helpful assistant. Be brief."),
 		nil,
-		agent.WithThinkingCallback(func(chunk string) {
-			mu.Lock()
-			thinkingChunks = append(thinkingChunks, chunk)
-			mu.Unlock()
-		}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +123,7 @@ func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	ctx = agent.WithEventHook(ctx, hook)
 
 	_, err = a.InvokeStream(ctx, "Explain why the sky is blue in one sentence.", func(chunk string) {
 		mu.Lock()
@@ -125,18 +134,23 @@ func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 		t.Fatalf("InvokeStream error: %v", err)
 	}
 
+	hook.mu.Lock()
+	thinkingText := strings.Join(hook.chunks, "")
+	thinkingCount := len(hook.chunks)
+	hook.mu.Unlock()
+
 	mu.Lock()
-	thinkingText := strings.Join(thinkingChunks, "")
 	responseText := strings.Join(responseChunks, "")
+	responseCount := len(responseChunks)
 	mu.Unlock()
 
-	t.Logf("Thinking: %d chunks, %d chars", len(thinkingChunks), len(thinkingText))
-	t.Logf("Response: %d chunks, text: %s", len(responseChunks), responseText)
+	t.Logf("Thinking: %d chunks, %d chars", thinkingCount, len(thinkingText))
+	t.Logf("Response: %d chunks, text: %s", responseCount, responseText)
 
-	if len(thinkingChunks) == 0 {
+	if thinkingCount == 0 {
 		t.Error("expected thinking chunks during streaming")
 	}
-	if len(responseChunks) == 0 {
+	if responseCount == 0 {
 		t.Error("expected response chunks during streaming")
 	}
 	if responseText == "" {

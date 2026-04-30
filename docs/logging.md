@@ -139,25 +139,22 @@ swarm, err := agent.NewSwarm(members,
 
 Swarm logging emits entries for `swarm.run.start`, `swarm.run.end`, `swarm.agent.start`, `swarm.agent.end`, and `swarm.handoff`.
 
-## Coexistence with Tracing and Metrics
+## Coexistence with Tracing, Metrics, and Event Hook
 
-Logging, tracing, and metrics can all be enabled simultaneously:
+Logging, tracing, metrics, and the event hook can all be enabled simultaneously. Tracing, metrics, and logging are agent-scoped (set at construction); the event hook is invocation-scoped (set via context):
 
 ```go
-import (
-    "github.com/camilbinas/gude-agents/agent/tracing"
-    prometheus "github.com/camilbinas/gude-agents/agent/metrics/prometheus"
-    agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
-)
-
 a, err := agent.New(provider, instructions, tools,
     tracing.WithTracing(nil),
     prometheus.WithMetrics(),
     agentslog.WithLogging(),
 )
+
+ctx = agent.WithEventHook(ctx, myUIHook)
+a.InvokeStream(ctx, message, streamCB)
 ```
 
-All three hooks are separate fields on the `Agent` struct. The agent loop nil-checks each independently. The logging hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.
+All hooks are nil-checked independently. The logging hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.
 
 ## See Also
 

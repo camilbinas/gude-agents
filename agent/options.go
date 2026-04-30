@@ -119,16 +119,6 @@ func WithContextFormatter(f ContextFormatter) Option {
 	}
 }
 
-// WithThinkingCallback sets a callback that receives thinking/reasoning chunks in real-time.
-// The callback is called as the model reasons, before the final answer is streamed.
-// Only fires when the provider has thinking enabled (e.g. WithThinking, WithReasoningEffort).
-func WithThinkingCallback(cb ThinkingCallback) Option {
-	return func(a *Agent) error {
-		a.thinkingCallback = cb
-		return nil
-	}
-}
-
 // WithSynchronousConversation makes the agent call Wait() on the conversation after each Save,
 // blocking until any background work (e.g. summarization) is complete before
 // returning from Invoke. Only has an effect if the conversation implements ConversationWaiter.
