@@ -35,7 +35,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/anthropic"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -77,7 +77,7 @@ Rules:
 - Be witty and engaging. This is a show, not a lecture.`),
 		nil, // tools added after geminiAgent is created
 		agent.WithConversation(claudeConv, "claude-debate"),
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -96,7 +96,7 @@ Rules:
 - Be witty and engaging. This is a show, not a lecture.`),
 		nil, // tools added after claudeAgent is created
 		agent.WithConversation(geminiConv, "gemini-debate"),
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -122,7 +122,7 @@ Rules:
 		moderatorProvider,
 		prompt.Text("You are a neutral debate moderator. Be brief and entertaining."),
 		nil,
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

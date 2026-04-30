@@ -22,7 +22,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -56,7 +56,7 @@ func main() {
 		bedrock.Must(bedrock.Standard()),
 		prompt.Text("You are a helpful assistant with vision capabilities. Be concise."),
 		nil,
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithConversation(conversation.NewInMemory(), "demo"),
 	)
 	if err != nil {

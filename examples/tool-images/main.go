@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -82,7 +82,7 @@ func main() {
 			Expectation: "When an image is returned, describe its contents in detail.",
 		},
 		[]tool.Tool{swatchTool},
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

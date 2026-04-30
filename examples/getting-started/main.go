@@ -10,7 +10,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -22,7 +22,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

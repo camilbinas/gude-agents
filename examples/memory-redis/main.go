@@ -21,7 +21,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	memoryredis "github.com/camilbinas/gude-agents/agent/memory/redis"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -98,7 +98,7 @@ func main() {
 		),
 		[]tool.Tool{rememberTool, updateTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()},
 		agent.WithConversation(store, "preferences-session"),
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

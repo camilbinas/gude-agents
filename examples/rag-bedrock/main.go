@@ -22,7 +22,7 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
@@ -62,7 +62,7 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Use the search_knowledge_base tool to find relevant information before answering."),
 		[]tool.Tool{kbTool},
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatalf("agent: %v", err)

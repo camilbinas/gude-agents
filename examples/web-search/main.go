@@ -24,7 +24,7 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -48,7 +48,7 @@ func main() {
 			tavily.New(os.Getenv("TAVILY_API_KEY")),
 			webfetch.New(),
 		},
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithParallelToolExecution(),
 		agent.WithMaxIterations(10),
 	)

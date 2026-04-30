@@ -16,7 +16,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -55,7 +55,7 @@ func main() {
 			memory.NewRecallTool(mem),
 			memory.NewForgetTool(mem),
 		},
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithConversation(store, "memory-session"),
 	)
 	if err != nil {

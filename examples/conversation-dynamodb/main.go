@@ -30,7 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation/dynamodb"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -65,7 +65,7 @@ func main() {
 		nil,
 		agent.WithConversation(conv, "demo-conversation"),
 		agent.WithName("helpful-agent"),
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

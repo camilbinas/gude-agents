@@ -16,7 +16,7 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -65,7 +65,7 @@ func main() {
 		prompt.Text("Answer questions using only the provided context. Be concise."),
 		retriever,
 		nil,
-		debug.WithLogging(),
+		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

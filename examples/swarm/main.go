@@ -11,7 +11,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -35,7 +35,7 @@ func main() {
 			Narrowing:    "Never try to answer questions yourself — always hand off.",
 		},
 		nil,
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithName("triage"),
 	)
 	if err != nil {
@@ -53,7 +53,7 @@ func main() {
 			Narrowing:    "If the question is not about billing, use transfer_to_triage to route it back.",
 		},
 		[]tool.Tool{utils.CheckBalanceTool()},
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithName("billing"),
 	)
 	if err != nil {
@@ -71,7 +71,7 @@ func main() {
 			Narrowing:    "If the question is not technical, use transfer_to_triage to route it back.",
 		},
 		[]tool.Tool{utils.SearchDocsTool()},
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithName("technical"),
 	)
 	if err != nil {
@@ -86,7 +86,7 @@ func main() {
 	},
 		agent.WithSwarmMaxHandoffs(5),
 		agent.WithSwarmConversation(conversation.NewInMemory(), "support-session"),
-		debug.WithSwarmLogging(),
+		auto.WithSwarmLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

@@ -12,7 +12,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -35,7 +35,7 @@ func main() {
 
 	summariser, err := agent.Worker(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
-	), nil, debug.WithLogging(), agent.WithName("summariser"))
+	), nil, auto.WithLogging(), agent.WithName("summariser"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func main() {
 	sentimentAnalyser, err := agent.Worker(haiku, prompt.Text(
 		"Analyse the sentiment of the provided article. "+
 			"Return a single word: Positive, Negative, or Neutral.",
-	), nil, debug.WithLogging(), agent.WithName("sentiment"))
+	), nil, auto.WithLogging(), agent.WithName("sentiment"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func main() {
 
 	g, err := graph.NewGraph(
 		graph.WithMaxIterations(20),
-		debug.WithGraphLogging(),
+		auto.WithGraphLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

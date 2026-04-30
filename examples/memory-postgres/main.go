@@ -43,7 +43,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/memory/postgres"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
@@ -124,7 +124,7 @@ func main() {
 		),
 		[]tool.Tool{rememberTool, updateTool, recallTool, forgetTool},
 		agent.WithConversation(store, "monitoring-session"),
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithParallelToolExecution(),
 	)
 	if err != nil {

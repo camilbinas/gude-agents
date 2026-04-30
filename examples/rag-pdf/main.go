@@ -21,7 +21,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -84,7 +84,7 @@ func main() {
 		retriever,
 		nil,
 		agent.WithSharedConversation(conversation.NewInMemory()),
-		debug.WithLogging(),
+		auto.WithLogging(),
 		agent.WithContextFormatter(logAndFormat),
 	)
 	if err != nil {

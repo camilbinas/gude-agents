@@ -21,6 +21,27 @@ a, err := agent.New(provider, instructions, tools,
 
 When no logging hook is set, the agent performs nil checks at each hook call site and skips all logging hook logic.
 
+## Auto Logging
+
+Import: `github.com/camilbinas/gude-agents/agent/logging/auto`
+
+Selects the backend based on the environment. Checks `APP_ENV`, `ENV`, and `ENVIRONMENT` in order (first non-empty wins). Defaults to production-safe structured logging.
+
+```go
+import "github.com/camilbinas/gude-agents/agent/logging/auto"
+
+a, err := agent.New(provider, instructions, tools,
+    auto.WithLogging(),
+)
+```
+
+| Environment value | Backend |
+|-----------|---------|
+| `development`, `dev`, or `local` (case-insensitive) | `debug.WithLogging()` |
+| anything else / unset | `slog.WithLogging()` |
+
+`auto.WithGraphLogging()` follows the same logic for graph workflows.
+
 ## Option Functions
 
 | Function | Returns | Description |
@@ -87,10 +108,6 @@ Each log entry includes relevant key-value attributes:
 | `blocked` | GuardrailComplete | Whether the guardrail blocked |
 | `initial_agent` / `member_count` / `max_handoffs` | SwarmRunStart | Swarm configuration |
 | `final_agent` / `handoff_count` | SwarmRunEnd | Swarm outcome |
-
-## Relationship to Legacy Logger
-
-The `LoggingHook` replaces the old `WithLogger` / `logf` pattern that was removed in v0.3.0. All lifecycle logging now goes through the hook system. When no hook is set, no logging occurs.
 
 ## Graph Logging
 
