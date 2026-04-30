@@ -34,7 +34,7 @@ func TestIntegration_SimpleTextResponse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What is 2+2? Reply with just the number.")
+	result, err := a.Invoke(ctx, "What is 2+2? Reply with just the number.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestIntegration_Streaming(t *testing.T) {
 	defer cancel()
 
 	var chunks []string
-	_, err = a.InvokeStream(ctx, "Say hello in one word.", func(chunk string) {
+	err = a.InvokeStream(ctx, "Say hello in one word.", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
@@ -90,7 +90,7 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 
 	// Turn 1: stream a response and establish context.
 	var chunks1 []string
-	_, err = a.InvokeStream(ctx, "My favorite number is 42. Remember that.", func(chunk string) {
+	err = a.InvokeStream(ctx, "My favorite number is 42. Remember that.", func(chunk string) {
 		chunks1 = append(chunks1, chunk)
 	})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 
 	// Turn 2: stream again and verify memory continuity.
 	var chunks2 []string
-	_, err = a.InvokeStream(ctx, "What is my favorite number?", func(chunk string) {
+	err = a.InvokeStream(ctx, "What is my favorite number?", func(chunk string) {
 		chunks2 = append(chunks2, chunk)
 	})
 	if err != nil {
@@ -136,7 +136,7 @@ func TestIntegration_ToolCalling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What is 7 times 6?")
+	result, err := a.Invoke(ctx, "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestIntegration_MultiToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What's the weather in Paris and London?")
+	result, err := a.Invoke(ctx, "What's the weather in Paris and London?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -208,12 +208,12 @@ func TestIntegration_MemoryMultiTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "My favorite color is blue. Remember that.")
+	_, err = a.Invoke(ctx, "My favorite color is blue. Remember that.")
 	if err != nil {
 		t.Fatalf("first invoke error: %v", err)
 	}
 
-	result, _, err := a.Invoke(ctx, "What is my favorite color?")
+	result, err := a.Invoke(ctx, "What is my favorite color?")
 	if err != nil {
 		t.Fatalf("second invoke error: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestIntegration_InvocationContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "Store the word 'banana' and then read it back.")
+	result, err := a.Invoke(ctx, "Store the word 'banana' and then read it back.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -290,7 +290,10 @@ func TestIntegration_InvokeStructured(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, usage, err := agent.InvokeStructured[Person](ctx, a, "Extract the person: John is 30 years old.")
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
+	result, err := agent.InvokeStructured[Person](ctx, a, "Extract the person: John is 30 years old.")
 	if err != nil {
 		t.Fatalf("InvokeStructured error: %v", err)
 	}
@@ -304,6 +307,7 @@ func TestIntegration_InvokeStructured(t *testing.T) {
 	if result.Age != 30 {
 		t.Errorf("expected Age to be 30, got: %d", result.Age)
 	}
+	usage := agent.GetInvocationUsage(ic)
 	t.Logf("Structured result: %+v, usage: %+v", result, usage)
 }
 
@@ -317,11 +321,15 @@ func TestIntegration_TokenUsage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, usage, err := a.Invoke(ctx, "Say hello.")
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
+	_, err = a.Invoke(ctx, "Say hello.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
+	usage := agent.GetInvocationUsage(ic)
 	if usage.InputTokens <= 0 {
 		t.Errorf("expected InputTokens > 0, got: %d", usage.InputTokens)
 	}
@@ -353,14 +361,18 @@ func TestIntegration_StreamingWithToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
 	var chunks []string
-	usage, err := a.InvokeStream(ctx, "What is 7 times 6?", func(chunk string) {
+	err = a.InvokeStream(ctx, "What is 7 times 6?", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
 		t.Fatalf("InvokeStream error: %v", err)
 	}
 
+	usage := agent.GetInvocationUsage(ic)
 	full := strings.Join(chunks, "")
 	if !strings.Contains(full, "42") {
 		t.Errorf("expected streamed response to contain '42', got: %s", full)
@@ -397,12 +409,16 @@ func TestIntegration_TokenUsageAccumulatesAcrossToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
 	// Ask about two cities to force multiple provider calls (tool call + final response).
-	_, usage, err := a.Invoke(ctx, "What's the weather in Paris and Tokyo?")
+	_, err = a.Invoke(ctx, "What's the weather in Paris and Tokyo?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
+	usage := agent.GetInvocationUsage(ic)
 	// With tool calls, the agent makes at least 2 provider calls.
 	// Accumulated usage should be higher than a single-call scenario.
 	if usage.Total() <= 0 {
@@ -440,7 +456,7 @@ func TestIntegration_TokenBudgetEnforcement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "What is 2+2?")
+	_, err = a.Invoke(ctx, "What is 2+2?")
 	if err == nil {
 		t.Fatal("expected ErrTokenBudgetExceeded, got nil")
 	}
@@ -460,11 +476,15 @@ func TestIntegration_StreamingTokenUsage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	usage, err := a.InvokeStream(ctx, "Say hello.", func(_ string) {})
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
+	err = a.InvokeStream(ctx, "Say hello.", func(_ string) {})
 	if err != nil {
 		t.Fatalf("InvokeStream error: %v", err)
 	}
 
+	usage := agent.GetInvocationUsage(ic)
 	if usage.InputTokens <= 0 {
 		t.Errorf("expected InputTokens > 0 from streaming, got: %d", usage.InputTokens)
 	}
@@ -529,13 +549,17 @@ func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, usage, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
+	ic := agent.NewInvocationContext()
+	ctx = agent.WithInvocationContext(ctx, ic)
+
+	result, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 	if !strings.Contains(result, "Paris") {
 		t.Errorf("expected response to contain 'Paris', got: %s", result)
 	}
+	usage := agent.GetInvocationUsage(ic)
 	if usage.InputTokens <= 0 || usage.OutputTokens <= 0 {
 		t.Errorf("expected non-zero token usage, got: %+v", usage)
 	}
@@ -564,7 +588,7 @@ func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
 		Temperature: &temp,
 	})
 
-	result, _, err := a.Invoke(creativeCtx, "Write a one-sentence haiku about clouds.")
+	result, err := a.Invoke(creativeCtx, "Write a one-sentence haiku about clouds.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -593,7 +617,7 @@ func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
 		StopSequences: []string{"2."},
 	})
 
-	result, _, err := a.Invoke(stopCtx, "List 5 programming languages.")
+	result, err := a.Invoke(stopCtx, "List 5 programming languages.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -624,7 +648,7 @@ func TestIntegration_InferenceConfig_InvalidPerInvocationReturnsError(t *testing
 		Temperature: &badTemp,
 	})
 
-	_, _, err = a.Invoke(badCtx, "hello")
+	_, err = a.Invoke(badCtx, "hello")
 	if err == nil {
 		t.Fatal("expected error for invalid per-invocation temperature, got nil")
 	}

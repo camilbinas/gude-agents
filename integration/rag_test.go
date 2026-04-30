@@ -273,7 +273,7 @@ func TestIntegration_RAG_AgentWithRetriever(t *testing.T) {
 		t.Fatalf("agent creation error: %v", err)
 	}
 
-	result, _, err := a.Invoke(ctx, "What is Project Aurora?")
+	result, err := a.Invoke(ctx, "What is Project Aurora?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestIntegration_RAG_RetrieverTool(t *testing.T) {
 		t.Fatalf("agent creation error: %v", err)
 	}
 
-	result, _, err := a.Invoke(ctx, "When is lunch served?")
+	result, err := a.Invoke(ctx, "When is lunch served?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}

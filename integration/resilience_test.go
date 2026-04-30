@@ -62,7 +62,7 @@ func TestIntegration_Resilience_RetryRecovers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What is 2+2? Reply with just the number.")
+	result, err := a.Invoke(ctx, "What is 2+2? Reply with just the number.")
 	if err != nil {
 		t.Fatalf("expected retry to recover, got error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestIntegration_Resilience_RetryExhausted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "Hello")
+	_, err = a.Invoke(ctx, "Hello")
 	if err == nil {
 		t.Fatal("expected error after retries exhausted, got nil")
 	}
@@ -115,7 +115,7 @@ func TestIntegration_Resilience_TimeoutEnforced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "Write a 1000 word essay.")
+	_, err = a.Invoke(ctx, "Write a 1000 word essay.")
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -141,7 +141,7 @@ func TestIntegration_Resilience_FallbackProvider(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
+	result, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "Hello")
+	_, err = a.Invoke(ctx, "Hello")
 	if err == nil {
 		t.Fatal("expected error when all fallback providers fail, got nil")
 	}
@@ -201,7 +201,7 @@ func TestIntegration_Resilience_RetryWithFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "Say hello in one word.")
+	result, err := a.Invoke(ctx, "Say hello in one word.")
 	if err != nil {
 		t.Fatalf("expected fallback to handle failure, got: %v", err)
 	}

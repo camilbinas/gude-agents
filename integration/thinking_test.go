@@ -70,7 +70,7 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 	defer cancel()
 	ctx = agent.WithEventHook(ctx, hook)
 
-	result, _, err := a.Invoke(ctx, "What is 17 * 23? Show your reasoning.")
+	result, err := a.Invoke(ctx, "What is 17 * 23? Show your reasoning.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 	defer cancel()
 	ctx = agent.WithEventHook(ctx, hook)
 
-	_, err = a.InvokeStream(ctx, "Explain why the sky is blue in one sentence.", func(chunk string) {
+	err = a.InvokeStream(ctx, "Explain why the sky is blue in one sentence.", func(chunk string) {
 		mu.Lock()
 		responseChunks = append(responseChunks, chunk)
 		mu.Unlock()

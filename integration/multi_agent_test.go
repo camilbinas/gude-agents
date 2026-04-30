@@ -57,13 +57,12 @@ func TestIntegration_MultiAgent_OrchestratorDelegatesToWorker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	result, usage, err := orchestrator.Invoke(ctx, "What's the status of the Atlas project?")
+	result, err := orchestrator.Invoke(ctx, "What's the status of the Atlas project?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
 	t.Logf("Response: %s", result)
-	t.Logf("Tokens: %d in, %d out", usage.InputTokens, usage.OutputTokens)
 
 	lower := strings.ToLower(result)
 	if !strings.Contains(lower, "atlas") && !strings.Contains(lower, "active") {
@@ -110,7 +109,7 @@ func TestIntegration_MultiAgent_ParallelSpecialists(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	result, _, err := orchestrator.Invoke(ctx,
+	result, err := orchestrator.Invoke(ctx,
 		"Give me the status and revenue for the Atlas project.",
 	)
 	if err != nil {

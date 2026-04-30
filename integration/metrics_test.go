@@ -96,7 +96,7 @@ func TestIntegration_Metrics_AgentInvocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What is 2+2? Answer with just the number.")
+	result, err := a.Invoke(ctx, "What is 2+2? Answer with just the number.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}

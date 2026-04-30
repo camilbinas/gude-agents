@@ -70,7 +70,7 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What is 7 times 6?")
+	result, err := a.Invoke(ctx, "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "What's the weather in Paris?")
+	result, err := a.Invoke(ctx, "What's the weather in Paris?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestIntegration_Middleware_LogsToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	_, _, err = a.Invoke(ctx, "What is 7 times 6?")
+	_, err = a.Invoke(ctx, "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}

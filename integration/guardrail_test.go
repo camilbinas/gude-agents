@@ -37,7 +37,7 @@ func TestIntegration_Guardrail_InputTransform(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "Hello, what services do I have access to?")
+	result, err := a.Invoke(ctx, "Hello, what services do I have access to?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestIntegration_Guardrail_InputBlock(t *testing.T) {
 	defer cancel()
 
 	// Should be blocked — never reaches the LLM.
-	_, _, err = a.Invoke(ctx, "My password is hunter2")
+	_, err = a.Invoke(ctx, "My password is hunter2")
 	if err == nil {
 		t.Fatal("expected guardrail error, got nil")
 	}
@@ -89,7 +89,7 @@ func TestIntegration_Guardrail_InputBlock(t *testing.T) {
 	t.Logf("Blocked as expected: %v", err)
 
 	// Should pass — no sensitive content.
-	result, _, err := a.Invoke(ctx, "What is the capital of France?")
+	result, err := a.Invoke(ctx, "What is the capital of France?")
 	if err != nil {
 		t.Fatalf("expected clean message to pass, got: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestIntegration_Guardrail_OutputTransform(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "Should I invest in index funds?")
+	result, err := a.Invoke(ctx, "Should I invest in index funds?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestIntegration_Guardrail_OutputBlock(t *testing.T) {
 	defer cancel()
 
 	// Safe question — should pass.
-	result, _, err := a.Invoke(ctx, "What is the capital of Japan?")
+	result, err := a.Invoke(ctx, "What is the capital of Japan?")
 	if err != nil {
 		t.Fatalf("safe question failed: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestIntegration_Guardrail_ChainedGuardrails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, _, err := a.Invoke(ctx, "hello")
+	result, err := a.Invoke(ctx, "hello")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}

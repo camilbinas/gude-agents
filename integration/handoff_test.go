@@ -50,7 +50,7 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 	ic := agent.NewInvocationContext()
 	ctx = agent.WithInvocationContext(ctx, ic)
 
-	_, err = a.InvokeStream(ctx, "I need a refund for order #5678", nil)
+	err = a.InvokeStream(ctx, "I need a refund for order #5678", nil)
 	if !errors.Is(err, agent.ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 	}
 
 	// Step 2: Resume with manager approval.
-	result, _, err := a.ResumeInvoke(ctx, hr, "Approved. Process the refund.")
+	result, err := a.ResumeInvoke(ctx, hr, "Approved. Process the refund.")
 	if err != nil {
 		t.Fatalf("Resume error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 	ctx = agent.WithConversationID(ctx, convID)
 	ctx = agent.WithInvocationContext(ctx, ic)
 
-	_, err = a.InvokeStream(ctx, "I want to delete my account", nil)
+	err = a.InvokeStream(ctx, "I want to delete my account", nil)
 	if !errors.Is(err, agent.ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 	t.Logf("Messages saved on handoff: %d", len(saved))
 
 	// Resume — should save the completed conversation to the same key.
-	result, _, err := a.ResumeInvoke(context.Background(), hr, "Supervisor approved the deletion.")
+	result, err := a.ResumeInvoke(context.Background(), hr, "Supervisor approved the deletion.")
 	if err != nil {
 		t.Fatalf("Resume error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 	defer cancel()
 
 	// Normal question — should NOT trigger handoff.
-	result, _, err := a.Invoke(ctx, "What are your business hours?")
+	result, err := a.Invoke(ctx, "What are your business hours?")
 	if errors.Is(err, agent.ErrHandoffRequested) {
 		t.Error("did not expect handoff for a simple FAQ question")
 	}
@@ -197,7 +197,7 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 	ic := agent.NewInvocationContext()
 	ctx2 := agent.WithInvocationContext(ctx, ic)
 
-	_, err = a.InvokeStream(ctx2, "I want to file a formal complaint about being overcharged $500", nil)
+	err = a.InvokeStream(ctx2, "I want to file a formal complaint about being overcharged $500", nil)
 	if !errors.Is(err, agent.ErrHandoffRequested) {
 		t.Errorf("expected handoff for a complaint, got: %v", err)
 	} else {
