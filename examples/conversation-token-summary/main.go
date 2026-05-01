@@ -18,8 +18,6 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	ctx := context.Background()
-
 	// Token threshold of 600 — summarization triggers at 80% (480 input tokens).
 	// This triggers after roughly 7-8 exchanges as the conversation context grows.
 	store := conversation.NewInMemory()
@@ -55,28 +53,27 @@ func main() {
 		"What do you know about me so far?",
 	}
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
+	c := agent.Background()
 
 	for i, q := range questions {
-		result, err := a.Invoke(ctx, q)
+		result, err := a.Invoke(c, q)
 		if err != nil {
 			log.Fatal(err)
 		}
-		usage := agent.GetInvocationUsage(ic)
+		usage := c.Usage()
 		fmt.Printf("Turn %d [%d input tokens]: %s\n", i+1, usage.InputTokens, result)
 	}
 
 	// Final check — the agent should still know everything despite summarization.
-	result, err := a.Invoke(ctx, "What are my cats' names?")
+	result, err := a.Invoke(c, "What are my cats' names?")
 	if err != nil {
 		log.Fatal(err)
 	}
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	fmt.Printf("Turn %d [%d input tokens]: %s\n", len(questions)+1, usage.InputTokens, result)
 
 	// Inspect the store.
-	msgs, _ := store.Load(ctx, "token-summary-demo")
+	msgs, _ := store.Load(context.Background(), "token-summary-demo")
 	fmt.Printf("\nMessages in store after Turn %d: %d\n", len(questions)+1, len(msgs))
 	for i, m := range msgs {
 		for _, b := range m.Content {

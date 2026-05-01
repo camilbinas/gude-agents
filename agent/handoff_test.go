@@ -27,17 +27,16 @@ func TestHandoffTool_ReturnsErrHandoffRequested(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ic := NewInvocationContext()
-	ctx := WithInvocationContext(context.Background(), ic)
+	c := Background()
 
-	err = a.InvokeStream(ctx, "Process refund #123", nil)
+	err = a.InvokeStream(c, "Process refund #123", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
 
-	hr, ok := GetHandoffRequest(ic)
+	hr, ok := GetHandoffRequest(c)
 	if !ok {
-		t.Fatal("expected HandoffRequest in InvocationContext")
+		t.Fatal("expected HandoffRequest in Context")
 	}
 	if hr.Reason != "need approval" {
 		t.Errorf("reason = %q, want %q", hr.Reason, "need approval")
@@ -51,7 +50,6 @@ func TestHandoffTool_ReturnsErrHandoffRequested(t *testing.T) {
 }
 
 func TestResume_ContinuesAfterHandoff(t *testing.T) {
-	callCount := 0
 	provider := newScriptedProvider(
 		// First invocation: LLM calls handoff tool.
 		&ProviderResponse{
@@ -67,7 +65,6 @@ func TestResume_ContinuesAfterHandoff(t *testing.T) {
 
 	counterTool := tool.NewRaw("count", "counts calls", map[string]any{"type": "object"},
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			callCount++
 			return "counted", nil
 		},
 	)
@@ -77,18 +74,17 @@ func TestResume_ContinuesAfterHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ic := NewInvocationContext()
-	ctx := WithInvocationContext(context.Background(), ic)
+	c := Background()
 
-	err = a.InvokeStream(ctx, "Process a refund", nil)
+	err = a.InvokeStream(c, "Process a refund", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
 
-	hr, _ := GetHandoffRequest(ic)
+	hr, _ := GetHandoffRequest(c)
 
 	// Resume with human input.
-	result, err := a.ResumeInvoke(ctx, hr, "Order 456")
+	result, err := a.ResumeInvoke(c, hr, "Order 456")
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -128,15 +124,14 @@ func TestHandoff_PreservesConversationContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ic := NewInvocationContext()
-	ctx := WithInvocationContext(context.Background(), ic)
+	c := Background()
 
-	err = a.InvokeStream(ctx, "Check item ABC", nil)
+	err = a.InvokeStream(c, "Check item ABC", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
 
-	hr, _ := GetHandoffRequest(ic)
+	hr, _ := GetHandoffRequest(c)
 
 	// Messages should include: user msg, assistant tool call, tool result, assistant handoff call.
 	// That's at least 4 messages (the tool work before the handoff is preserved).
@@ -148,13 +143,13 @@ func TestHandoff_PreservesConversationContext(t *testing.T) {
 func TestGetHandoffRequest_NilContext(t *testing.T) {
 	hr, ok := GetHandoffRequest(nil)
 	if ok || hr != nil {
-		t.Error("expected nil, false for nil InvocationContext")
+		t.Error("expected nil, false for nil Context")
 	}
 }
 
 func TestGetHandoffRequest_NoHandoff(t *testing.T) {
-	ic := NewInvocationContext()
-	hr, ok := GetHandoffRequest(ic)
+	c := Background()
+	hr, ok := GetHandoffRequest(c)
 	if ok || hr != nil {
 		t.Error("expected nil, false when no handoff was requested")
 	}

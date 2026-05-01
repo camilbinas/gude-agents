@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -28,7 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "What is the capital of France?")
+	result, err := a.Invoke(agent.Background(), "What is the capital of France?")
 	if err != nil {
 		log.Fatal(err)
 	}

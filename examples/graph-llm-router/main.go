@@ -32,7 +32,7 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	provider := bedrock.Must(bedrock.Standard())
 

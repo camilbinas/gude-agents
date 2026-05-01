@@ -15,7 +15,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -32,7 +31,7 @@ func ptr[T any](v T) *T { return &v }
 func main() {
 	godotenv.Load() //nolint
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	provider := bedrock.Must(bedrock.Standard())
 
@@ -62,7 +61,7 @@ func main() {
 	// Override temperature for this single call to get more creative output.
 	// TopP falls back to the agent-level value (0.9) since we don't override it.
 	fmt.Println("\n── Call 2: Per-invocation override (temperature=0.95) ──")
-	creativeCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+	creativeCtx := agent.Background().WithInferenceConfig(&agent.InferenceConfig{
 		Temperature: ptr(0.95),
 	})
 	result, err = a.Invoke(creativeCtx, "Write a haiku about Go programming.")
@@ -75,7 +74,7 @@ func main() {
 	// Use stop sequences to cut generation when the model outputs "2.".
 	// This effectively limits the response to the first item in a list.
 	fmt.Println("\n── Call 3: Stop sequences (stop at \"2.\") ──")
-	stopCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+	stopCtx := agent.Background().WithInferenceConfig(&agent.InferenceConfig{
 		StopSequences: []string{"2."},
 	})
 	result, err = a.Invoke(stopCtx, "List 5 benefits of unit testing.")

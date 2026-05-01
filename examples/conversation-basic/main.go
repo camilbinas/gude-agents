@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -31,7 +30,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	turns := []string{
 		"Hi, my name is Alice and I love hiking.",

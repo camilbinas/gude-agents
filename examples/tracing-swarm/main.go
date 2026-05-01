@@ -10,7 +10,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -28,7 +27,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// 1. Set up tracing — console tree formatter.
 	treeExp := utils.NewTreeExporter()

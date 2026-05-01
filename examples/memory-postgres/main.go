@@ -74,9 +74,9 @@ func main() {
 		log.Fatal("POSTGRES_URL environment variable is required")
 	}
 
-	ctx := context.Background()
+	bgCtx := context.Background()
 
-	pool, err := pgxpool.New(ctx, pgURL)
+	pool, err := pgxpool.New(bgCtx, pgURL)
 	if err != nil {
 		log.Fatalf("postgres connect: %v", err)
 	}
@@ -131,7 +131,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx = agent.WithIdentifier(ctx, "user-123")
+	ctx := agent.Background().WithIdentifier("user-123")
 
 	fmt.Println()
 	fmt.Println("Monitoring assistant with typed episodic memory. Type 'quit' to exit, 'clear' to forget all.")

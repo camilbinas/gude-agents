@@ -5,7 +5,7 @@ Guardrails let you validate and transform messages at the boundaries of an agent
 ## InputGuardrail
 
 ```go
-type InputGuardrail func(ctx context.Context, message string) (string, error)
+type InputGuardrail func(c *Context, message string) (string, error)
 ```
 
 An `InputGuardrail` receives the user's message before it is sent to the provider. It can:
@@ -27,7 +27,7 @@ You can pass multiple guardrails in a single call or add them with separate `Wit
 ## OutputGuardrail
 
 ```go
-type OutputGuardrail func(ctx context.Context, response string) (string, error)
+type OutputGuardrail func(c *Context, response string) (string, error)
 ```
 
 An `OutputGuardrail` receives the LLM's final text response before it is returned to the caller. It can:
@@ -65,7 +65,7 @@ For input guardrails, the error is wrapped as `"input guardrail: <err>"`. For ou
 
 ```go
 // This guardrail blocks messages containing "forbidden"
-func blockForbidden(_ context.Context, msg string) (string, error) {
+func blockForbidden(_ *agent.Context, msg string) (string, error) {
     if strings.Contains(msg, "forbidden") {
         return "", fmt.Errorf("message contains blocked content")
     }
@@ -98,7 +98,6 @@ This example shows an input guardrail that sanitizes user messages and an output
 package main
 
 import (
-    "context"
     "fmt"
     "log"
     "strings"
@@ -109,12 +108,12 @@ import (
 )
 
 // inputSanitizer strips leading/trailing whitespace and lowercases the message.
-func inputSanitizer(_ context.Context, msg string) (string, error) {
+func inputSanitizer(_ *agent.Context, msg string) (string, error) {
     return strings.ToLower(strings.TrimSpace(msg)), nil
 }
 
 // maxLengthGuardrail rejects responses longer than 500 characters.
-func maxLengthGuardrail(_ context.Context, resp string) (string, error) {
+func maxLengthGuardrail(_ *agent.Context, resp string) (string, error) {
     if len(resp) > 500 {
         return "", fmt.Errorf("response too long: %d characters", len(resp))
     }
@@ -138,7 +137,8 @@ func main() {
         log.Fatal(err)
     }
 
-    result, _, err := a.Invoke(context.Background(), "  What is Go?  ")
+    c := agent.Background()
+    result, err := a.Invoke(c, "  What is Go?  ")
     if err != nil {
         log.Fatal(err)
     }

@@ -22,16 +22,16 @@ a, err := agent.New(provider, instructions, tools,
 )
 ```
 
-### `WithConversationID(ctx, id)`
+### `WithConversationID` on the Context
 
-Sets the conversation ID for a single invocation via the Go context.
+Sets the conversation ID for a single invocation via the `*Context`.
 
 ```go
-ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-result, _, err := a.Invoke(ctx, req.Message)
+c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+result, err := a.Invoke(c, req.Message)
 ```
 
-The agent resolves the conversation ID at invocation time: context override first, then the construction-time default. If neither is set and conversation persistence is configured, the conversation ID is an empty string (which still works but all requests share one conversation — probably not what you want).
+The agent resolves the conversation ID at invocation time: `*Context` value first, then the construction-time default. If neither is set and conversation persistence is configured, the conversation ID is an empty string (which still works but all requests share one conversation — probably not what you want).
 
 ## HTTP Server Pattern
 
@@ -58,9 +58,9 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
         json.NewDecoder(r.Body).Decode(&req)
 
         // Each request gets its own conversation ID.
-        ctx := agent.WithConversationID(r.Context(), req.ConversationID)
+        c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
 
-        result, _, err := a.Invoke(ctx, req.Message)
+        result, err := a.Invoke(c, req.Message)
         if err != nil {
             http.Error(w, err.Error(), 500)
             return
@@ -73,7 +73,7 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
 
 ## Swarm in HTTP
 
-Swarms also support per-request conversation IDs. The `WithSwarmConversation` default is overridden by `WithConversationID` on the context:
+Swarms also support per-request conversation IDs. The `WithSwarmConversation` default is overridden by `WithConversationID` on the `*Context`:
 
 ```go
 swarm, _ := agent.NewSwarm(members,
@@ -81,8 +81,8 @@ swarm, _ := agent.NewSwarm(members,
 )
 
 // In handler:
-ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-result, err := swarm.Invoke(ctx, req.Message)
+c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+result, err := swarm.Invoke(c, req.Message)
 ```
 
 The swarm persists both the conversation history and the active agent per conversation ID, so follow-up requests route to the correct agent automatically.
@@ -97,14 +97,12 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
         var req ChatRequest
         json.NewDecoder(r.Body).Decode(&req)
 
-        ic := agent.NewInvocationContext()
-        ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-        ctx = agent.WithInvocationContext(ctx, ic)
+        c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
 
-        _, _, err := a.Invoke(ctx, req.Message)
+        _, err := a.Invoke(c, req.Message)
 
         if errors.Is(err, agent.ErrHandoffRequested) {
-            hr, _ := agent.GetHandoffRequest(ic)
+            hr, _ := agent.GetHandoffRequest(c)
             // hr.ConversationID == req.ConversationID
             // Store hr for the resume endpoint...
             w.WriteHeader(http.StatusAccepted)
@@ -118,7 +116,7 @@ func handleResume(a *agent.Agent) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Load hr from storage...
         // Resume uses hr.ConversationID automatically.
-        result, _, _ := a.ResumeInvoke(r.Context(), hr, req.HumanResponse)
+        result, _ := a.ResumeInvoke(agent.NewContext(r.Context()), hr, req.HumanResponse)
         // ...
     }
 }
@@ -135,8 +133,8 @@ a, _ := agent.New(provider, instructions, tools,
 )
 
 // New pattern — same agent, multiple conversations.
-ctx := agent.WithConversationID(ctx, userSessionID)
-a.Invoke(ctx, msg)
+c := agent.NewContext(ctx).WithConversationID(userSessionID)
+a.Invoke(c, msg)
 ```
 
 ## Thread Safety

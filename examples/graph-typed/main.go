@@ -43,8 +43,6 @@ type State struct {
 func main() {
 	godotenv.Load() //nolint
 
-	ctx := context.Background()
-
 	provider := anthropic.Must(anthropic.ClaudeHaiku4_5())
 
 	researcher, err := agent.Worker(provider, prompt.Text(
@@ -94,58 +92,54 @@ func main() {
 	}
 
 	if err := g.AddNode("research", func(ctx context.Context, s State) (State, error) {
-		ic := agent.NewInvocationContext()
-		ctx = agent.WithInvocationContext(ctx, ic)
-		facts, err := researcher.Invoke(ctx, s.Topic)
+		c := agent.NewContext(ctx)
+		facts, err := researcher.Invoke(c, s.Topic)
 		if err != nil {
 			return s, err
 		}
 		s.Research = facts
-		s.AddUsage(agent.GetInvocationUsage(ic))
+		s.AddUsage(c.Usage())
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := g.AddNode("summarise", func(ctx context.Context, s State) (State, error) {
-		ic := agent.NewInvocationContext()
-		ctx = agent.WithInvocationContext(ctx, ic)
-		summary, err := summariser.Invoke(ctx, s.Research)
+		c := agent.NewContext(ctx)
+		summary, err := summariser.Invoke(c, s.Research)
 		if err != nil {
 			return s, err
 		}
 		s.Summary = summary
-		s.AddUsage(agent.GetInvocationUsage(ic))
+		s.AddUsage(c.Usage())
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := g.AddNode("score", func(ctx context.Context, s State) (State, error) {
-		ic := agent.NewInvocationContext()
-		ctx = agent.WithInvocationContext(ctx, ic)
-		result, err := agent.InvokeStructured[ScoreResult](ctx, scorer, s.Summary)
+		c := agent.NewContext(ctx)
+		result, err := agent.InvokeStructured[ScoreResult](c, scorer, s.Summary)
 		if err != nil {
 			return s, err
 		}
 		s.Score = result.Score
 		s.Feedback = result.Feedback
-		s.AddUsage(agent.GetInvocationUsage(ic))
+		s.AddUsage(c.Usage())
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := g.AddNode("refine", func(ctx context.Context, s State) (State, error) {
-		ic := agent.NewInvocationContext()
-		ctx = agent.WithInvocationContext(ctx, ic)
+		c := agent.NewContext(ctx)
 		input := fmt.Sprintf("Summary: %s\nFeedback: %s", s.Summary, s.Feedback)
-		refined, err := refiner.Invoke(ctx, input)
+		refined, err := refiner.Invoke(c, input)
 		if err != nil {
 			return s, err
 		}
 		s.Research = refined // feed refined text back into summarise
-		s.AddUsage(agent.GetInvocationUsage(ic))
+		s.AddUsage(c.Usage())
 		return s, nil
 	}); err != nil {
 		log.Fatal(err)
@@ -179,7 +173,7 @@ func main() {
 	}
 
 	// Run with an initial state — only Topic needs to be set.
-	result, err := g.Run(ctx, State{Topic: "the impact of large language models on software engineering"})
+	result, err := g.Run(context.Background(), State{Topic: "the impact of large language models on software engineering"})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -40,11 +40,11 @@ type sseHook struct {
 	w *bufio.Writer
 }
 
-func (h *sseHook) OnToolCallStart(_ context.Context, toolName string, input json.RawMessage) {
+func (h *sseHook) OnToolCallStart(_ *agent.Context, toolName string, input json.RawMessage) {
 	h.send("tool_start", map[string]any{"tool": toolName, "input": json.RawMessage(input)})
 }
 
-func (h *sseHook) OnToolCallEnd(_ context.Context, toolName string, output string, err error, d time.Duration) {
+func (h *sseHook) OnToolCallEnd(_ *agent.Context, toolName string, output string, err error, d time.Duration) {
 	data := map[string]any{"tool": toolName, "output": output, "duration_ms": d.Milliseconds()}
 	if err != nil {
 		data["error"] = err.Error()
@@ -52,15 +52,15 @@ func (h *sseHook) OnToolCallEnd(_ context.Context, toolName string, output strin
 	h.send("tool_end", data)
 }
 
-func (h *sseHook) OnThinking(_ context.Context, chunk string) {
+func (h *sseHook) OnThinking(_ *agent.Context, chunk string) {
 	h.send("thinking", map[string]any{"chunk": chunk})
 }
 
-func (h *sseHook) OnModelStart(_ context.Context) {
+func (h *sseHook) OnModelStart(_ *agent.Context) {
 	h.send("model_start", nil)
 }
 
-func (h *sseHook) OnModelEnd(_ context.Context, stopReason string) {
+func (h *sseHook) OnModelEnd(_ *agent.Context, stopReason string) {
 	h.send("model_end", map[string]any{"stop_reason": stopReason})
 }
 
@@ -114,7 +114,7 @@ func main() {
 
 		return c.SendStreamWriter(func(w *bufio.Writer) {
 			hook := &sseHook{w: w}
-			ctx := agent.WithEventHook(c.Context(), hook)
+			ctx := agent.NewContext(c.Context()).WithEventHook(hook)
 
 			err := a.InvokeStream(ctx, q, func(chunk string) {
 				payload, _ := json.Marshal(map[string]string{"chunk": chunk})

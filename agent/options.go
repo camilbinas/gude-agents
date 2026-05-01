@@ -45,7 +45,7 @@ func WithParallelToolExecution() Option {
 
 // WithConversation configures conversation history for multi-turn support.
 // The conversationID is used as the default; it can be overridden per-invocation
-// using WithConversationID on the context.
+// using c.WithConversationID on the *Context.
 func WithConversation(c Conversation, conversationID string) Option {
 	return func(a *Agent) error {
 		a.conversation = c
@@ -55,7 +55,7 @@ func WithConversation(c Conversation, conversationID string) Option {
 }
 
 // WithSharedConversation configures conversation history without a default conversationID.
-// Each invocation must provide a conversationID via WithConversationID on the context.
+// Each invocation must provide a conversationID via c.WithConversationID on the *Context.
 // This is the recommended pattern for HTTP servers where a single Agent instance
 // serves multiple concurrent conversations.
 func WithSharedConversation(c Conversation) Option {

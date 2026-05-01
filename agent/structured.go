@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -14,19 +13,19 @@ const structuredOutputToolName = "structured_output"
 // It applies input guardrails, loads/saves conversation, merges inference config,
 // and applies output guardrails consistently with InvokeStream. Provider calls
 // use the same timeout, retry, and observability hooks as InvokeStream.
-// Cumulative token usage is available via GetInvocationUsage on the InvocationContext.
-func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, error) {
-	convID := ResolveConversationID(ctx, a.conversationID)
-	h := a.hooks(ctx)
+// Cumulative token usage is available via c.Usage() after the call returns.
+func InvokeStructured[T any](c *Context, a *Agent, userMessage string) (T, error) {
+	convID := resolveConversationID(c, a.conversationID)
+	h := a.hooks(c)
 	modelID := a.modelID()
 
-	ctx, invoke := h.onInvokeStart(ctx, a.invokeParams(convID, userMessage, ctx))
+	c, invoke := h.onInvokeStart(c, a.invokeParams(convID, userMessage, c))
 
-	result, usage, err := invokeStructuredInner[T](ctx, a, userMessage, convID, &h, modelID)
+	result, usage, err := invokeStructuredInner[T](c, a, userMessage, convID, &h, modelID)
 	invoke.finish(err, usage)
 
-	// Store cumulative usage on the InvocationContext for caller access.
-	setInvocationUsage(GetInvocationContext(ctx), usage)
+	// Store cumulative usage on the Context for caller access.
+	c.setUsage(usage)
 
 	var zero T
 	if err != nil {
@@ -35,15 +34,15 @@ func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) 
 	return result, nil
 }
 
-func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage string, convID string, h *hooks, modelID string) (T, TokenUsage, error) {
+func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, convID string, h *hooks, modelID string) (T, TokenUsage, error) {
 	var zero T
 
 	// Input guardrails.
 	msg := userMessage
 	for _, g := range a.inputGuardrails {
-		gCtx, gf := h.onGuardrailStart(ctx, "input", msg)
+		gC, gf := h.onGuardrailStart(c, "input", msg)
 		var err error
-		msg, err = g(gCtx, msg)
+		msg, err = g(gC, msg)
 		gf.finish(err, msg)
 		if err != nil {
 			return zero, TokenUsage{}, &GuardrailError{Direction: "input", Cause: err}
@@ -53,8 +52,8 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 	// Load conversation history.
 	var messages []Message
 	if a.conversation != nil {
-		loadCtx, cf := h.onConversationStart(ctx, "load", convID)
-		history, err := a.conversation.Load(loadCtx, convID)
+		loadC, cf := h.onConversationStart(c, "load", convID)
+		history, err := a.conversation.Load(loadC, convID)
 		cf.finish(err, len(history))
 		if err != nil {
 			return zero, TokenUsage{}, fmt.Errorf("structured output: conversation load: %w", err)
@@ -64,8 +63,8 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 
 	// RAG retrieval — same safety prefix as InvokeStream.
 	if a.retriever != nil {
-		retCtx, rf := h.onRetrieverStart(ctx, msg)
-		docs, err := a.retriever.Retrieve(retCtx, msg)
+		retC, rf := h.onRetrieverStart(c, msg)
+		docs, err := a.retriever.Retrieve(retC, msg)
 		rf.finish(err, len(docs))
 		if err != nil {
 			return zero, TokenUsage{}, fmt.Errorf("structured output: retriever: %w", err)
@@ -90,7 +89,7 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 	})
 
 	// Merge and validate inference config.
-	mergedCfg := mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx))
+	mergedCfg := mergeInferenceConfig(a.inferenceConfig, c.InferenceConfig())
 	if err := validateInferenceConfig(mergedCfg); err != nil {
 		return zero, TokenUsage{}, fmt.Errorf("structured output: inference config: %w", err)
 	}
@@ -112,13 +111,13 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 		InferenceConfig: mergedCfg,
 	}
 
-	provCtx, provF := h.onProviderCallStart(ctx, ProviderCallParams{
+	provC, provF := h.onProviderCallStart(c, ProviderCallParams{
 		System:          a.instructions,
 		MessageCount:    len(messages),
 		InferenceConfig: mergedCfg,
 	}, modelID)
 
-	resp, err := a.callProviderWithRetry(provCtx, params, nil)
+	resp, err := a.callProviderWithRetry(provC, params, nil)
 	if err != nil {
 		provF.finish(err, TokenUsage{}, 0, "")
 		return zero, TokenUsage{}, &ProviderError{Cause: err}
@@ -145,8 +144,8 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 	// Output guardrails on the raw JSON.
 	rawText := string(found.Input)
 	for _, g := range a.outputGuardrails {
-		gCtx, gf := h.onGuardrailStart(ctx, "output", rawText)
-		rawText, err = g(gCtx, rawText)
+		gC, gf := h.onGuardrailStart(c, "output", rawText)
+		rawText, err = g(gC, rawText)
 		gf.finish(err, rawText)
 		if err != nil {
 			return zero, usage, &GuardrailError{Direction: "output", Cause: err}
@@ -165,7 +164,7 @@ func invokeStructuredInner[T any](ctx context.Context, a *Agent, userMessage str
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: rawText}},
 		}
-		if err := a.saveConversation(ctx, convID, append(messages, assistantMsg), usage, h); err != nil {
+		if err := a.saveConversation(c, convID, append(messages, assistantMsg), usage, h); err != nil {
 			return zero, usage, fmt.Errorf("structured output: %w", err)
 		}
 	}

@@ -14,7 +14,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,7 +23,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// ── 1. Keyword grounding ─────────────────────────────────────────────────
 	fmt.Println("═══ Keyword Grounding ═══")

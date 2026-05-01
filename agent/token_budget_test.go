@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -46,14 +45,13 @@ func TestProperty_AgentTokenAccumulation(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ic := NewInvocationContext()
-		ctx := WithInvocationContext(context.Background(), ic)
-		_, err = a.Invoke(ctx, "go")
+		ic := Background()
+		_, err = a.Invoke(ic, "go")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		usage := GetInvocationUsage(ic)
+		usage := ic.Usage()
 		if usage.InputTokens != expectedInput {
 			t.Errorf("InputTokens: expected %d, got %d", expectedInput, usage.InputTokens)
 		}
@@ -87,24 +85,22 @@ func TestProperty_AgentTokenResetBetweenInvocations(t *testing.T) {
 		}
 
 		// First invocation.
-		ic1 := NewInvocationContext()
-		ctx1 := WithInvocationContext(context.Background(), ic1)
-		_, err = a.Invoke(ctx1, "first")
+		ic1 := Background()
+		_, err = a.Invoke(ic1, "first")
 		if err != nil {
 			t.Fatalf("first invoke: %v", err)
 		}
 
 		// Second invocation.
-		ic2 := NewInvocationContext()
-		ctx2 := WithInvocationContext(context.Background(), ic2)
-		_, err = a.Invoke(ctx2, "second")
+		ic2 := Background()
+		_, err = a.Invoke(ic2, "second")
 		if err != nil {
 			t.Fatalf("second invoke: %v", err)
 		}
 
 		// Usage from second invocation must reflect only the second call.
-		usage1 := GetInvocationUsage(ic1)
-		usage2 := GetInvocationUsage(ic2)
+		usage1 := ic1.Usage()
+		usage2 := ic2.Usage()
 		if usage1.InputTokens != input1 || usage1.OutputTokens != output1 {
 			t.Errorf("first usage: expected (%d, %d), got (%d, %d)",
 				input1, output1, usage1.InputTokens, usage1.OutputTokens)
@@ -154,7 +150,7 @@ func TestProperty_AgentBudgetEnforcement(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err = a.Invoke(context.Background(), "go")
+		_, err = a.Invoke(Background(), "go")
 
 		if expectedAbortIdx >= 0 {
 			// Budget should have been exceeded.
@@ -189,9 +185,8 @@ func TestAgent_NoBudget_DoesNotAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ic := NewInvocationContext()
-	ctx := WithInvocationContext(context.Background(), ic)
-	result, err := a.Invoke(ctx, "go")
+	ic := Background()
+	result, err := a.Invoke(ic, "go")
 	if err != nil {
 		t.Fatalf("expected no error without budget, got: %v", err)
 	}
@@ -199,7 +194,7 @@ func TestAgent_NoBudget_DoesNotAbort(t *testing.T) {
 		t.Errorf("expected %q, got %q", "done", result)
 	}
 	// Usage should still be accumulated even without a budget.
-	usage := GetInvocationUsage(ic)
+	usage := ic.Usage()
 	if usage.InputTokens != 100000 {
 		t.Errorf("expected InputTokens=100000, got %d", usage.InputTokens)
 	}
@@ -222,7 +217,7 @@ func TestAgent_ZeroBudget_DoesNotAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(Background(), "hi")
 	if err != nil {
 		t.Fatalf("expected no error with zero budget, got: %v", err)
 	}

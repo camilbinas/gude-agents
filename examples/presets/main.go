@@ -66,5 +66,5 @@ func main() {
 
 	fmt.Println("Customer support agent ready. Try looking up an order. Type 'quit' to exit.")
 
-	utils.Chat(context.Background(), a)
+	utils.Chat(agent.Background(), a)
 }

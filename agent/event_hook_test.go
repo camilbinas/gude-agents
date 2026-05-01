@@ -44,54 +44,54 @@ type modelEndEvent struct {
 	stopReason string
 }
 
-func (r *recordingEventHook) OnToolCallStart(ctx context.Context, toolName string, input json.RawMessage) {
+func (r *recordingEventHook) OnToolCallStart(_ *Context, toolName string, input json.RawMessage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.toolStarts = append(r.toolStarts, toolStartEvent{toolName: toolName, input: input})
 }
 
-func (r *recordingEventHook) OnToolCallEnd(ctx context.Context, toolName string, output string, err error, duration time.Duration) {
+func (r *recordingEventHook) OnToolCallEnd(_ *Context, toolName string, output string, err error, duration time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.toolEnds = append(r.toolEnds, toolEndEvent{toolName: toolName, output: output, err: err, duration: duration})
 }
 
-func (r *recordingEventHook) OnThinking(ctx context.Context, chunk string) {
+func (r *recordingEventHook) OnThinking(_ *Context, chunk string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.thinkings = append(r.thinkings, thinkingEvent{chunk: chunk})
 }
 
-func (r *recordingEventHook) OnModelStart(ctx context.Context) {
+func (r *recordingEventHook) OnModelStart(_ *Context) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.modelStarts++
 }
 
-func (r *recordingEventHook) OnModelEnd(ctx context.Context, stopReason string) {
+func (r *recordingEventHook) OnModelEnd(_ *Context, stopReason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.modelEnds = append(r.modelEnds, modelEndEvent{stopReason: stopReason})
 }
 
 // ---------------------------------------------------------------------------
-// 4.1: Context-based EventHook — WithEventHook/eventHookFromContext
+// 4.1: Context-based EventHook — via *Context.WithEventHook
 // ---------------------------------------------------------------------------
 
 func TestEventHook_ContextNilByDefault(t *testing.T) {
-	ctx := context.Background()
-	if eventHookFromContext(ctx) != nil {
-		t.Error("expected nil EventHook from plain context")
+	c := Background()
+	if c.EventHook() != nil {
+		t.Error("expected nil EventHook from fresh context")
 	}
 }
 
 func TestEventHook_ContextRoundTrip(t *testing.T) {
 	hook := &recordingEventHook{}
-	ctx := WithEventHook(context.Background(), hook)
+	c := Background().WithEventHook(hook)
 
-	got := eventHookFromContext(ctx)
+	got := c.EventHook()
 	if got != hook {
-		t.Error("expected eventHookFromContext to return the hook set via WithEventHook")
+		t.Error("expected EventHook() to return the hook set via WithEventHook")
 	}
 }
 
@@ -107,13 +107,13 @@ func TestEventHook_BaseEventHookCompiles(t *testing.T) {
 
 func TestEventHook_NilDispatchSafety(t *testing.T) {
 	h := hooks{event: nil}
-	ctx := context.Background()
+	c := Background()
 
-	_, tf := h.onToolStart(ctx, "some_tool", json.RawMessage(`{"key":"value"}`))
+	_, tf := h.onToolStart(c, "some_tool", json.RawMessage(`{"key":"value"}`))
 	tf.finish(nil, "output")
 	tf.finish(fmt.Errorf("some error"), "")
 
-	_, pf := h.onProviderCallStart(ctx, ProviderCallParams{}, "model-id")
+	_, pf := h.onProviderCallStart(c, ProviderCallParams{}, "model-id")
 	pf.finish(nil, TokenUsage{}, 0, "text")
 	pf.finish(fmt.Errorf("provider error"), TokenUsage{}, 0, "")
 	pf.finish(nil, TokenUsage{}, 2, "")
@@ -126,10 +126,10 @@ func TestEventHook_NilDispatchSafety(t *testing.T) {
 func TestEventHook_OnToolCallStart(t *testing.T) {
 	hook := &recordingEventHook{}
 	h := hooks{event: hook}
-	ctx := context.Background()
+	c := Background()
 
 	input := json.RawMessage(`{"query":"hello world"}`)
-	_, tf := h.onToolStart(ctx, "web_search", input)
+	_, tf := h.onToolStart(c, "web_search", input)
 	tf.finish(nil, "result")
 
 	hook.mu.Lock()
@@ -154,9 +154,9 @@ func TestEventHook_OnToolCallStart(t *testing.T) {
 func TestEventHook_OnToolCallEnd_Success(t *testing.T) {
 	hook := &recordingEventHook{}
 	h := hooks{event: hook}
-	ctx := context.Background()
+	c := Background()
 
-	_, tf := h.onToolStart(ctx, "calculator", json.RawMessage(`{"expr":"2+2"}`))
+	_, tf := h.onToolStart(c, "calculator", json.RawMessage(`{"expr":"2+2"}`))
 	time.Sleep(5 * time.Millisecond)
 	tf.finish(nil, "4")
 
@@ -184,10 +184,10 @@ func TestEventHook_OnToolCallEnd_Success(t *testing.T) {
 func TestEventHook_OnToolCallEnd_Error(t *testing.T) {
 	hook := &recordingEventHook{}
 	h := hooks{event: hook}
-	ctx := context.Background()
+	c := Background()
 
 	toolErr := fmt.Errorf("division by zero")
-	_, tf := h.onToolStart(ctx, "calculator", json.RawMessage(`{"expr":"1/0"}`))
+	_, tf := h.onToolStart(c, "calculator", json.RawMessage(`{"expr":"1/0"}`))
 	time.Sleep(5 * time.Millisecond)
 	tf.finish(toolErr, "")
 
@@ -216,9 +216,9 @@ func TestEventHook_OnToolCallEnd_Error(t *testing.T) {
 func TestEventHook_OnModelEnd_EndTurn(t *testing.T) {
 	hook := &recordingEventHook{}
 	h := hooks{event: hook}
-	ctx := context.Background()
+	c := Background()
 
-	_, pf := h.onProviderCallStart(ctx, ProviderCallParams{}, "model-id")
+	_, pf := h.onProviderCallStart(c, ProviderCallParams{}, "model-id")
 	pf.finish(nil, TokenUsage{}, 0, "final answer")
 
 	hook.mu.Lock()
@@ -238,9 +238,9 @@ func TestEventHook_OnModelEnd_EndTurn(t *testing.T) {
 func TestEventHook_OnModelEnd_ToolUse(t *testing.T) {
 	hook := &recordingEventHook{}
 	h := hooks{event: hook}
-	ctx := context.Background()
+	c := Background()
 
-	_, pf := h.onProviderCallStart(ctx, ProviderCallParams{}, "model-id")
+	_, pf := h.onProviderCallStart(c, ProviderCallParams{}, "model-id")
 	pf.finish(nil, TokenUsage{}, 3, "")
 
 	hook.mu.Lock()
@@ -254,9 +254,9 @@ func TestEventHook_OnModelEnd_ToolUse(t *testing.T) {
 func TestEventHook_OnModelEnd_Error(t *testing.T) {
 	hook := &recordingEventHook{}
 	h := hooks{event: hook}
-	ctx := context.Background()
+	c := Background()
 
-	_, pf := h.onProviderCallStart(ctx, ProviderCallParams{}, "model-id")
+	_, pf := h.onProviderCallStart(c, ProviderCallParams{}, "model-id")
 	pf.finish(fmt.Errorf("timeout"), TokenUsage{}, 0, "")
 
 	hook.mu.Lock()
@@ -305,8 +305,8 @@ func TestEventHook_ThinkingForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := WithEventHook(context.Background(), hook)
-	_, err = a.Invoke(ctx, "what is the answer?")
+	c := Background().WithEventHook(hook)
+	_, err = a.Invoke(c, "what is the answer?")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestEventHook_NoHookNoThinking(t *testing.T) {
 	}
 
 	// No EventHook in context — should not panic.
-	_, err = a.Invoke(context.Background(), "think about this")
+	_, err = a.Invoke(Background(), "think about this")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -383,8 +383,8 @@ func TestEventHook_ParallelToolDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := WithEventHook(context.Background(), hook)
-	_, err = a.Invoke(ctx, "run all tools")
+	c := Background().WithEventHook(hook)
+	_, err = a.Invoke(c, "run all tools")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

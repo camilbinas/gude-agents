@@ -2,7 +2,7 @@
 //
 // A single Agent instance serves multiple concurrent conversations.
 // Each request provides a conversation_id, which is passed via
-// agent.WithConversationID on the context. The agent uses WithSharedMemory
+// c.WithConversationID on the context. The agent uses WithSharedMemory
 // so it doesn't bind to a single conversation at construction time.
 //
 // Flow:
@@ -46,7 +46,7 @@ func main() {
 
 	// Single agent instance shared across all requests.
 	// WithSharedMemory means no hardcoded conversationID — each request
-	// provides its own via agent.WithConversationID on the context.
+	// provides its own via c.WithConversationID on the context.
 	a, err := agent.New(provider, prompt.Text(
 		"You are a support agent. Use request_human_input when you need approval.",
 	), []tool.Tool{
@@ -101,14 +101,12 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
 		}
 
 		// Per-request conversation ID — the key to multi-tenancy.
-		ic := agent.NewInvocationContext()
-		ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-		ctx = agent.WithInvocationContext(ctx, ic)
+		c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
 
-		result, err := a.Invoke(ctx, req.Message)
+		result, err := a.Invoke(c, req.Message)
 
 		if errors.Is(err, agent.ErrHandoffRequested) {
-			hr, _ := agent.GetHandoffRequest(ic)
+			hr, _ := agent.GetHandoffRequest(c)
 
 			handoffMu.Lock()
 			pendingHandoffs[req.ConversationID] = hr
@@ -158,7 +156,8 @@ func handleResume(a *agent.Agent) http.HandlerFunc {
 		}
 
 		// Resume uses the ConversationID stored in the HandoffRequest.
-		result, err := a.ResumeInvoke(r.Context(), hr, req.HumanResponse)
+		c := agent.NewContext(r.Context())
+		result, err := a.ResumeInvoke(c, hr, req.HumanResponse)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

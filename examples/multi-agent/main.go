@@ -21,7 +21,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -139,5 +138,5 @@ func main() {
 	fmt.Println("Try: 'What Go repos do we have?' or 'Show me Tom's open PRs' or 'Who are the backend engineers?'")
 	fmt.Println("Type 'quit' to exit.")
 
-	utils.Chat(context.Background(), orchestrator)
+	utils.Chat(agent.Background(), orchestrator)
 }

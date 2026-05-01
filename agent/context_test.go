@@ -2,286 +2,286 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"testing"
+	"time"
 )
 
-func TestInvocationContext_SetGet(t *testing.T) {
-	ic := NewInvocationContext()
+func TestNewContext_WrapsParent_Deadline(t *testing.T) {
+	deadline := time.Now().Add(5 * time.Second)
+	parent, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 
-	ic.Set("key1", "value1")
-	ic.Set(42, true)
+	c := NewContext(parent)
 
-	v, ok := ic.Get("key1")
+	got, ok := c.Deadline()
+	if !ok {
+		t.Fatal("expected deadline to be set")
+	}
+	if !got.Equal(deadline) {
+		t.Fatalf("expected deadline %v, got %v", deadline, got)
+	}
+}
+
+func TestNewContext_WrapsParent_Values(t *testing.T) {
+	type ctxKey struct{}
+	parent := context.WithValue(context.Background(), ctxKey{}, "hello")
+
+	c := NewContext(parent)
+
+	v := c.Value(ctxKey{})
+	if v != "hello" {
+		t.Fatalf("expected parent value %q, got %v", "hello", v)
+	}
+}
+
+func TestNewContext_WrapsParent_Cancellation(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+
+	c := NewContext(parent)
+
+	cancel()
+
+	select {
+	case <-c.Done():
+		// expected
+	case <-time.After(time.Second):
+		t.Fatal("expected Done channel to close after parent cancel")
+	}
+
+	if c.Err() == nil {
+		t.Fatal("expected non-nil Err after parent cancel")
+	}
+}
+
+func TestBackground_EquivalentToNewContextBackground(t *testing.T) {
+	c := Background()
+
+	// Should have no deadline
+	_, ok := c.Deadline()
+	if ok {
+		t.Fatal("Background() should not have a deadline")
+	}
+
+	// Should not be done
+	select {
+	case <-c.Done():
+		t.Fatal("Background() should not be done")
+	default:
+		// expected
+	}
+
+	// Should have no error
+	if c.Err() != nil {
+		t.Fatalf("Background() Err should be nil, got %v", c.Err())
+	}
+
+	// Should have empty KV store
+	_, ok = c.Get("anything")
+	if ok {
+		t.Fatal("Background() should have empty KV store")
+	}
+}
+
+func TestNewContext_NilPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil parent, got none")
+		}
+	}()
+
+	NewContext(nil)
+}
+
+func TestWithConversationID_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+
+	got := c.WithConversationID("conv-123")
+
+	if got != c {
+		t.Fatal("WithConversationID should return the same pointer")
+	}
+	if c.ConversationID() != "conv-123" {
+		t.Fatalf("expected %q, got %q", "conv-123", c.ConversationID())
+	}
+}
+
+func TestWithImages_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+	imgs := []ImageBlock{
+		{Source: ImageSource{MIMEType: "image/png", Data: []byte{0x89}}},
+	}
+
+	got := c.WithImages(imgs)
+
+	if got != c {
+		t.Fatal("WithImages should return the same pointer")
+	}
+	if len(c.Images()) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(c.Images()))
+	}
+	if c.Images()[0].Source.MIMEType != "image/png" {
+		t.Fatalf("expected image/png, got %q", c.Images()[0].Source.MIMEType)
+	}
+}
+
+func TestWithDocuments_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+	docs := []DocumentBlock{
+		{Source: DocumentSource{MIMEType: "application/pdf", Data: []byte{0x25}}},
+	}
+
+	got := c.WithDocuments(docs)
+
+	if got != c {
+		t.Fatal("WithDocuments should return the same pointer")
+	}
+	if len(c.Documents()) != 1 {
+		t.Fatalf("expected 1 document, got %d", len(c.Documents()))
+	}
+	if c.Documents()[0].Source.MIMEType != "application/pdf" {
+		t.Fatalf("expected application/pdf, got %q", c.Documents()[0].Source.MIMEType)
+	}
+}
+
+func TestWithInferenceConfig_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+	temp := 0.7
+	cfg := &InferenceConfig{Temperature: &temp}
+
+	got := c.WithInferenceConfig(cfg)
+
+	if got != c {
+		t.Fatal("WithInferenceConfig should return the same pointer")
+	}
+	if c.InferenceConfig() != cfg {
+		t.Fatal("expected same InferenceConfig pointer")
+	}
+	if *c.InferenceConfig().Temperature != 0.7 {
+		t.Fatalf("expected temperature 0.7, got %f", *c.InferenceConfig().Temperature)
+	}
+}
+
+func TestWithEventHook_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+	hook := BaseEventHook{}
+
+	got := c.WithEventHook(hook)
+
+	if got != c {
+		t.Fatal("WithEventHook should return the same pointer")
+	}
+	if c.EventHook() == nil {
+		t.Fatal("expected non-nil EventHook")
+	}
+}
+
+func TestWithIdentifier_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+
+	got := c.WithIdentifier("user-42")
+
+	if got != c {
+		t.Fatal("WithIdentifier should return the same pointer")
+	}
+	if c.Identifier() != "user-42" {
+		t.Fatalf("expected %q, got %q", "user-42", c.Identifier())
+	}
+}
+
+func TestSetGet_RoundTrip(t *testing.T) {
+	c := Background()
+
+	c.Set("key1", "value1")
+	c.Set(42, true)
+
+	v, ok := c.Get("key1")
 	if !ok || v != "value1" {
 		t.Fatalf("expected (value1, true), got (%v, %v)", v, ok)
 	}
 
-	v, ok = ic.Get(42)
+	v, ok = c.Get(42)
 	if !ok || v != true {
 		t.Fatalf("expected (true, true), got (%v, %v)", v, ok)
 	}
 }
 
-func TestInvocationContext_GetNonExistent(t *testing.T) {
-	ic := NewInvocationContext()
+func TestSetGet_Overwrite(t *testing.T) {
+	c := Background()
 
-	v, ok := ic.Get("missing")
-	if ok || v != nil {
-		t.Fatalf("expected (nil, false), got (%v, %v)", v, ok)
-	}
-}
+	c.Set("key", "first")
+	c.Set("key", "second")
 
-func TestInvocationContext_OverwriteKey(t *testing.T) {
-	ic := NewInvocationContext()
-
-	ic.Set("key", "first")
-	ic.Set("key", "second")
-
-	v, ok := ic.Get("key")
+	v, ok := c.Get("key")
 	if !ok || v != "second" {
 		t.Fatalf("expected (second, true), got (%v, %v)", v, ok)
 	}
 }
 
-func TestInvocationContext_ConcurrentAccess(t *testing.T) {
-	ic := NewInvocationContext()
-	const goroutines = 50
+func TestGet_NonExistentKey(t *testing.T) {
+	c := Background()
 
-	var wg sync.WaitGroup
-	wg.Add(goroutines * 2)
-
-	// Concurrent writers
-	for i := range goroutines {
-		go func(i int) {
-			defer wg.Done()
-			ic.Set(fmt.Sprintf("key-%d", i), i)
-		}(i)
-	}
-
-	// Concurrent readers
-	for i := range goroutines {
-		go func(i int) {
-			defer wg.Done()
-			ic.Get(fmt.Sprintf("key-%d", i))
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify all writes landed
-	for i := range goroutines {
-		v, ok := ic.Get(fmt.Sprintf("key-%d", i))
-		if !ok || v != i {
-			t.Errorf("key-%d: expected (%d, true), got (%v, %v)", i, i, v, ok)
-		}
+	v, ok := c.Get("missing")
+	if ok || v != nil {
+		t.Fatalf("expected (nil, false), got (%v, %v)", v, ok)
 	}
 }
 
-func TestGetInvocationContext_NilWhenNoneAttached(t *testing.T) {
-	ctx := context.Background()
+func TestWithMethods_Chaining(t *testing.T) {
+	c := Background()
+	temp := 0.5
+	cfg := &InferenceConfig{Temperature: &temp}
+	hook := BaseEventHook{}
 
-	ic := GetInvocationContext(ctx)
-	if ic != nil {
-		t.Fatalf("expected nil, got %v", ic)
+	result := c.
+		WithConversationID("conv-1").
+		WithIdentifier("user-1").
+		WithInferenceConfig(cfg).
+		WithEventHook(hook)
+
+	if result != c {
+		t.Fatal("chained With* methods should return the same pointer")
 	}
-}
-
-func TestWithInvocationContext_RoundTrip(t *testing.T) {
-	ic := NewInvocationContext()
-	ic.Set("hello", "world")
-
-	ctx := WithInvocationContext(context.Background(), ic)
-	got := GetInvocationContext(ctx)
-
-	if got != ic {
-		t.Fatal("expected same InvocationContext instance")
+	if c.ConversationID() != "conv-1" {
+		t.Fatalf("expected conv-1, got %q", c.ConversationID())
 	}
-
-	v, ok := got.Get("hello")
-	if !ok || v != "world" {
-		t.Fatalf("expected (world, true), got (%v, %v)", v, ok)
+	if c.Identifier() != "user-1" {
+		t.Fatalf("expected user-1, got %q", c.Identifier())
 	}
-}
-
-func TestGetInferenceConfig_NilWhenNoneAttached(t *testing.T) {
-	ctx := context.Background()
-
-	cfg := GetInferenceConfig(ctx)
-	if cfg != nil {
-		t.Fatalf("expected nil, got %+v", cfg)
-	}
-}
-
-func TestWithInferenceConfig_RoundTrip(t *testing.T) {
-	temp := 0.7
-	topP := 0.9
-	topK := 50
-	maxTok := 1024
-	cfg := &InferenceConfig{
-		Temperature:   &temp,
-		TopP:          &topP,
-		TopK:          &topK,
-		StopSequences: []string{"STOP", "END"},
-		MaxTokens:     &maxTok,
-	}
-
-	ctx := WithInferenceConfig(context.Background(), cfg)
-	got := GetInferenceConfig(ctx)
-
-	if got != cfg {
+	if c.InferenceConfig() != cfg {
 		t.Fatal("expected same InferenceConfig pointer")
 	}
-	if *got.Temperature != temp {
-		t.Errorf("Temperature: expected %f, got %f", temp, *got.Temperature)
-	}
-	if *got.TopP != topP {
-		t.Errorf("TopP: expected %f, got %f", topP, *got.TopP)
-	}
-	if *got.TopK != topK {
-		t.Errorf("TopK: expected %d, got %d", topK, *got.TopK)
-	}
-	if *got.MaxTokens != maxTok {
-		t.Errorf("MaxTokens: expected %d, got %d", maxTok, *got.MaxTokens)
-	}
-	if len(got.StopSequences) != 2 || got.StopSequences[0] != "STOP" || got.StopSequences[1] != "END" {
-		t.Errorf("StopSequences: expected [STOP END], got %v", got.StopSequences)
+	if c.EventHook() == nil {
+		t.Fatal("expected non-nil EventHook")
 	}
 }
 
-func TestGetImages_NilWhenNoneAttached(t *testing.T) {
-	ctx := context.Background()
+func TestContext_SatisfiesContextInterface(t *testing.T) {
+	c := Background()
 
-	images := GetImages(ctx)
-	if images != nil {
-		t.Fatalf("expected nil, got %v", images)
+	// Verify *Context is assignable to context.Context
+	var _ context.Context = c
+}
+
+func TestContext_UsageDefaultsToZero(t *testing.T) {
+	c := Background()
+
+	usage := c.Usage()
+	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
+		t.Fatalf("expected zero usage, got %+v", usage)
 	}
 }
 
-func TestWithImages_RoundTrip(t *testing.T) {
-	want := []ImageBlock{
-		{Source: ImageSource{MIMEType: "image/jpeg", Data: []byte{0xFF, 0xD8}}},
-		{Source: ImageSource{MIMEType: "image/png", Data: []byte{0x89, 0x50}}},
+func TestContext_SetUsage(t *testing.T) {
+	c := Background()
+
+	c.setUsage(TokenUsage{InputTokens: 100, OutputTokens: 50})
+
+	usage := c.Usage()
+	if usage.InputTokens != 100 {
+		t.Fatalf("expected InputTokens=100, got %d", usage.InputTokens)
 	}
-
-	ctx := WithImages(context.Background(), want)
-	got := GetImages(ctx)
-
-	if len(got) != len(want) {
-		t.Fatalf("expected %d images, got %d", len(want), len(got))
-	}
-	for i, img := range got {
-		if img.Source.MIMEType != want[i].Source.MIMEType {
-			t.Errorf("image[%d] MIMEType: expected %q, got %q", i, want[i].Source.MIMEType, img.Source.MIMEType)
-		}
-	}
-}
-
-func TestWithImages_NilSlice(t *testing.T) {
-	ctx := WithImages(context.Background(), nil)
-
-	images := GetImages(ctx)
-	if images != nil {
-		t.Fatalf("expected nil, got %v", images)
-	}
-}
-
-func TestWithImages_EmptySlice(t *testing.T) {
-	ctx := WithImages(context.Background(), []ImageBlock{})
-
-	images := GetImages(ctx)
-	if images != nil {
-		t.Fatalf("expected nil, got %v", images)
-	}
-}
-
-func TestWithImages_ChainedCallsInnermostWins(t *testing.T) {
-	outer := []ImageBlock{
-		{Source: ImageSource{MIMEType: "image/gif", Data: []byte{0x47}}},
-	}
-	inner := []ImageBlock{
-		{Source: ImageSource{MIMEType: "image/webp", Data: []byte{0x52}}},
-		{Source: ImageSource{MIMEType: "image/png", Data: []byte{0x89}}},
-	}
-
-	ctx := WithImages(context.Background(), outer)
-	ctx = WithImages(ctx, inner)
-
-	got := GetImages(ctx)
-	if len(got) != len(inner) {
-		t.Fatalf("expected %d images from innermost call, got %d", len(inner), len(got))
-	}
-	for i, img := range got {
-		if img.Source.MIMEType != inner[i].Source.MIMEType {
-			t.Errorf("image[%d] MIMEType: expected %q, got %q", i, inner[i].Source.MIMEType, img.Source.MIMEType)
-		}
-	}
-}
-
-func TestWithIdentifier_RoundTrip(t *testing.T) {
-	ctx := WithIdentifier(context.Background(), "user-42")
-
-	got := GetIdentifier(ctx)
-	if got != "user-42" {
-		t.Fatalf("expected %q, got %q", "user-42", got)
-	}
-}
-
-func TestGetTokenUsage_FalseWhenNoneAttached(t *testing.T) {
-	ctx := context.Background()
-
-	_, ok := GetTokenUsage(ctx)
-	if ok {
-		t.Fatal("expected ok=false when no token usage attached")
-	}
-}
-
-func TestWithTokenUsage_RoundTrip(t *testing.T) {
-	usage := TokenUsage{InputTokens: 1500, OutputTokens: 300}
-
-	ctx := WithTokenUsage(context.Background(), usage)
-	got, ok := GetTokenUsage(ctx)
-
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if got.InputTokens != 1500 {
-		t.Errorf("InputTokens: expected 1500, got %d", got.InputTokens)
-	}
-	if got.OutputTokens != 300 {
-		t.Errorf("OutputTokens: expected 300, got %d", got.OutputTokens)
-	}
-}
-
-func TestWithTokenUsage_ValueSemantics(t *testing.T) {
-	usage := TokenUsage{InputTokens: 100, OutputTokens: 50}
-	ctx := WithTokenUsage(context.Background(), usage)
-
-	// Mutating the original should not affect what's in context.
-	usage.InputTokens = 9999
-
-	got, ok := GetTokenUsage(ctx)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if got.InputTokens != 100 {
-		t.Errorf("expected 100 (value copy), got %d", got.InputTokens)
-	}
-}
-
-func TestGetIdentifier_EmptyWhenNoneAttached(t *testing.T) {
-	got := GetIdentifier(context.Background())
-	if got != "" {
-		t.Fatalf("expected empty string, got %q", got)
-	}
-}
-
-func TestWithIdentifier_EmptyStringIgnored(t *testing.T) {
-	ctx := WithIdentifier(context.Background(), "")
-
-	got := GetIdentifier(ctx)
-	if got != "" {
-		t.Fatalf("expected empty string, got %q", got)
+	if usage.OutputTokens != 50 {
+		t.Fatalf("expected OutputTokens=50, got %d", usage.OutputTokens)
 	}
 }

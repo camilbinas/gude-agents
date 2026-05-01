@@ -3,7 +3,7 @@
 // Demonstrates two patterns:
 //  1. Role-based filtering — admin tools are hidden from regular users.
 //  2. Workflow-stage gating — a tool unlocks another tool mid-invocation
-//     by writing to the InvocationContext.
+//     by writing to the Context.
 //
 // Run:
 //
@@ -38,9 +38,9 @@ type DeleteAccountInput struct {
 }
 
 func validateCart(ctx context.Context, in ValidateCartInput) (string, error) {
-	// Mark the cart as validated on the InvocationContext.
-	ic := agent.GetInvocationContext(ctx)
-	ic.Set("cart_validated", true)
+	// Mark the cart as validated on the Context.
+	c := ctx.(*agent.Context)
+	c.Set("cart_validated", true)
 	return fmt.Sprintf("Cart %s validated successfully. Ready to submit.", in.CartID), nil
 }
 
@@ -65,22 +65,18 @@ func main() {
 	// A tool must pass ALL filters to be available (AND semantics).
 
 	// Filter 1: Workflow gating — submit_order requires prior validation.
-	workflowFilter := func(ctx context.Context, t tool.Tool) bool {
+	workflowFilter := func(c *agent.Context, t tool.Tool) bool {
 		if t.Spec.Name == "submit_order" {
-			ic := agent.GetInvocationContext(ctx)
-			if ic == nil {
-				return false
-			}
-			v, ok := ic.Get("cart_validated")
+			v, ok := c.Get("cart_validated")
 			return ok && v.(bool)
 		}
 		return true
 	}
 
 	// Filter 2: Role-based access — delete_account is admin-only.
-	roleFilter := func(ctx context.Context, t tool.Tool) bool {
+	roleFilter := func(c *agent.Context, t tool.Tool) bool {
 		if t.Spec.Name == "delete_account" {
-			role, _ := ctx.Value(userRoleKey{}).(string)
+			role, _ := c.Value(userRoleKey{}).(string)
 			return role == "admin"
 		}
 		return true
@@ -96,7 +92,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// --- Scenario 1: Workflow gating ---
 	// The user asks to checkout. The agent must validate first (submit_order is hidden),
@@ -121,7 +117,7 @@ func main() {
 
 	// Admin user can see delete_account.
 	fmt.Println("=== Scenario 3: Admin user ===")
-	adminCtx := context.WithValue(ctx, userRoleKey{}, "admin")
+	adminCtx := agent.NewContext(context.WithValue(ctx, userRoleKey{}, "admin"))
 	result, err = a.Invoke(adminCtx, "Delete account user-99.")
 	if err != nil {
 		log.Fatal(err)

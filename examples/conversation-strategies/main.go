@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -35,7 +34,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Multi-turn conversation through the composed pipeline.
 	result, err := a.Invoke(ctx, "My name is Alice. Remember that.")

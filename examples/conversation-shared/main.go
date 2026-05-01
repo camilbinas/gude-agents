@@ -6,7 +6,7 @@
 //
 // Key concepts demonstrated:
 //   - agent.WithSharedConversation — shared store, no default conversation ID
-//   - agent.WithConversationID     — per-invocation conversation scoping
+//   - c.WithConversationID         — per-invocation conversation scoping
 //   - conversation.NewStore        — in-memory conversation store
 //
 // Run:
@@ -43,11 +43,11 @@ func main() {
 	}
 
 	// Conversation A — Alice
-	ctxA := agent.WithConversationID(context.Background(), "conv-alice")
-	ctxB := agent.WithConversationID(context.Background(), "conv-bob")
+	ctxA := agent.Background().WithConversationID("conv-alice")
+	ctxB := agent.Background().WithConversationID("conv-bob")
 
-	invoke := func(ctx context.Context, label, msg string) string {
-		result, err := a.Invoke(ctx, msg)
+	invoke := func(c *agent.Context, label, msg string) string {
+		result, err := a.Invoke(c, msg)
 		if err != nil {
 			log.Fatalf("%s: %v", label, err)
 		}

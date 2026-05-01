@@ -14,7 +14,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -29,8 +28,6 @@ import (
 
 func main() {
 	godotenv.Load() //nolint
-
-	ctx := context.Background()
 
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: go run ./image-url <image-url>")
@@ -56,7 +53,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	imgCtx := agent.WithImages(ctx, []agent.ImageBlock{img})
+	imgCtx := agent.Background().WithImages([]agent.ImageBlock{img})
 
 	fmt.Printf("Image URL: %s\n", imageURL)
 	fmt.Println(strings.Repeat("─", 60))

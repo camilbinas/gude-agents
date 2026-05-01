@@ -17,7 +17,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -31,7 +30,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Connect to the MCP "everything" server — a test server that exercises
 	// the full MCP protocol with tools like echo, add, longRunningOperation, etc.

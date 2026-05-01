@@ -32,7 +32,6 @@ func main() {
 	godotenv.Load() //nolint
 
 	provider := bedrock.Must(bedrock.Standard())
-	ctx := context.Background()
 
 	// Summary with media preprocessing enabled.
 	// Threshold of 3 turns (6 messages internally, triggers at ~5).
@@ -69,8 +68,10 @@ func main() {
 	fmt.Printf("Got %d bytes of image data\n", len(img.Source.Data))
 	fmt.Println(strings.Repeat("─", 60))
 
+	ctx := agent.Background()
+
 	// Turn 1: send the image with a question.
-	imgCtx := agent.WithImages(ctx, []agent.ImageBlock{img})
+	imgCtx := agent.Background().WithImages([]agent.ImageBlock{img})
 	result, err := a.Invoke(imgCtx, "Describe this image in detail.")
 	if err != nil {
 		log.Fatal(err)
@@ -96,7 +97,7 @@ func main() {
 	summarized.Wait()
 
 	fmt.Println(strings.Repeat("─", 60))
-	msgs, _ := store.Load(ctx, "media-demo")
+	msgs, _ := store.Load(context.Background(), "media-demo")
 	fmt.Printf("Messages in store: %d\n", len(msgs))
 	for i, m := range msgs {
 		hasImage := false

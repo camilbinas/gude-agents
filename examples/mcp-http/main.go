@@ -30,7 +30,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// --- Start a local MCP server for demonstration ---
 	// In production, replace these URLs with your remote server:

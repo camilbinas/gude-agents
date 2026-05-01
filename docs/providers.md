@@ -89,8 +89,8 @@ provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
 Use `EventHook.OnThinking` to receive reasoning chunks in real-time:
 
 ```go
-ctx = agent.WithEventHook(ctx, myEventHook) // OnThinking receives reasoning chunks
-a.InvokeStream(ctx, message, streamCB)
+c := agent.Background().WithEventHook(myEventHook) // OnThinking receives reasoning chunks
+a.InvokeStream(c, message, streamCB)
 ```
 
 The thinking chunks arrive before the answer streams. OpenAI does not expose reasoning tokens in the stream, so `OnThinking` never fires for OpenAI providers.

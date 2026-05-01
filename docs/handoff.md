@@ -10,20 +10,19 @@ a, _ := agent.New(provider, instructions, []tool.Tool{
     // ... other tools
 })
 
-ic := agent.NewInvocationContext()
-ctx := agent.WithInvocationContext(context.Background(), ic)
+c := agent.Background()
 
-_, err := a.InvokeStream(ctx, "Process refund for order #1234", nil)
+_, err := a.InvokeStream(c, "Process refund for order #1234", nil)
 
 if errors.Is(err, agent.ErrHandoffRequested) {
-    hr, _ := agent.GetHandoffRequest(ic)
+    hr, _ := agent.GetHandoffRequest(c)
     fmt.Printf("Agent asks: %s\n", hr.Question)
 
     // Collect human input however you want
     humanInput := collectInput()
 
     // Resume where the agent left off
-    result, _, _ := a.ResumeInvoke(ctx, hr, humanInput)
+    result, err := a.ResumeInvoke(c, hr, humanInput)
     fmt.Println(result)
 }
 ```
@@ -33,7 +32,7 @@ if errors.Is(err, agent.ErrHandoffRequested) {
 1. You add `agent.NewHandoffTool(name, description)` to your agent's tool list
 2. The LLM decides it needs human input and calls the tool
 3. `InvokeStream` / `Invoke` returns `agent.ErrHandoffRequested`
-4. You extract the `HandoffRequest` from the `InvocationContext` — it contains the reason, question, and full `[]Message` history
+4. You extract the `HandoffRequest` from the `*Context` — it contains the reason, question, and full `[]Message` history
 5. You collect the human's response (stdin, HTTP, Slack, email, whatever)
 6. You call `agent.Resume()` or `agent.ResumeInvoke()` with the `HandoffRequest` and the human's answer
 7. The agent continues from where it stopped, with full context
@@ -49,7 +48,7 @@ The `description` parameter is appended to that base, letting you define exactly
 - `reason` — why it needs human input
 - `question` — the specific ask
 
-### `GetHandoffRequest(ic *InvocationContext) (*HandoffRequest, bool)`
+### `GetHandoffRequest(c *Context) (*HandoffRequest, bool)`
 
 Extracts the handoff details after `ErrHandoffRequested` is returned. The `HandoffRequest` contains:
 - `Reason` — why the agent paused
@@ -57,11 +56,11 @@ Extracts the handoff details after `ErrHandoffRequested` is returned. The `Hando
 - `ConversationID` — the conversation this handoff belongs to (resolved from context or agent default)
 - `Messages` — full conversation state at the point of handoff
 
-### `(*Agent) Resume(ctx, hr, humanResponse, cb) error`
+### `(*Agent) Resume(c, hr, humanResponse, cb) error`
 
 Continues the agent loop from the saved conversation state, appending the human's response as a new user message.
 
-### `(*Agent) ResumeInvoke(ctx, hr, humanResponse) (string, error)`
+### `(*Agent) ResumeInvoke(c, hr, humanResponse) (string, error)`
 
 Convenience wrapper that collects streamed output into a string.
 
@@ -80,29 +79,29 @@ Convenience wrapper that collects streamed output into a string.
 ### CLI (stdin)
 
 ```go
-_, err := a.InvokeStream(ctx, userMsg, streamToStdout)
+c := agent.Background()
+err := a.InvokeStream(c, userMsg, streamToStdout)
 if errors.Is(err, agent.ErrHandoffRequested) {
-    hr, _ := agent.GetHandoffRequest(ic)
+    hr, _ := agent.GetHandoffRequest(c)
     fmt.Printf("Agent asks: %s\n> ", hr.Question)
     scanner.Scan()
-    result, _, _ := a.ResumeInvoke(ctx, hr, scanner.Text())
+    result, _ := a.ResumeInvoke(c, hr, scanner.Text())
 }
 ```
 
 ### HTTP API
 
-Use `WithConversationID` so the handoff targets the correct conversation. The `HandoffRequest.ConversationID` is set automatically and used by `Resume`:
+Use `WithConversationID` on the `*Context` so the handoff targets the correct conversation. The `HandoffRequest.ConversationID` is set automatically and used by `Resume`:
 
 ```go
 // POST /chat → 202 Accepted + handoff JSON
 // POST /chat/resume → 200 OK + agent response
 
-ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-ctx = agent.WithInvocationContext(ctx, ic)
+c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
 
-_, _, err := a.Invoke(ctx, req.Message)
+_, err := a.Invoke(c, req.Message)
 if errors.Is(err, agent.ErrHandoffRequested) {
-    hr, _ := agent.GetHandoffRequest(ic)
+    hr, _ := agent.GetHandoffRequest(c)
     // hr.ConversationID is set automatically
     store[req.ConversationID] = hr
     w.WriteHeader(http.StatusAccepted)

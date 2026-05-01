@@ -426,7 +426,7 @@ func main() {
     }
 
     // 6. Query the agent.
-    result, _, err := a.Invoke(ctx, "What is Go?")
+    result, err := a.Invoke(agent.NewContext(ctx), "What is Go?")
     if err != nil {
         log.Fatal(err)
     }

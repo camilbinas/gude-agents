@@ -18,19 +18,19 @@ type ChatOptions struct {
 	// BeforeInvoke is called before each agent invocation with the user input.
 	// Use it to set up per-invocation context (e.g. override inference config).
 	// If it returns a non-nil context, that context is used for the invocation.
-	BeforeInvoke func(ctx context.Context, input string) context.Context
+	BeforeInvoke func(c *agent.Context, input string) *agent.Context
 
 	// AfterInvoke is called after each agent invocation with the error (if any).
 	// Use it for post-invocation work like flushing trace exporters or logging tokens.
-	// Token usage is available via agent.GetInvocationUsage on the InvocationContext.
-	AfterInvoke func(ctx context.Context, err error)
+	// Token usage is available via c.Usage() on the Context.
+	AfterInvoke func(c *agent.Context, err error)
 }
 
 // Chat runs an interactive chat loop with the given agent. It reads from stdin,
 // streams responses to stdout, and supports "quit" (exit) and optionally "clear"
 // (reset conversation). Use this in examples to avoid duplicating the interactive
 // loop boilerplate.
-func Chat(ctx context.Context, a *agent.Agent, opts ...ChatOptions) {
+func Chat(c *agent.Context, a *agent.Agent, opts ...ChatOptions) {
 	var o ChatOptions
 	if len(opts) > 0 {
 		o = opts[0]
@@ -50,7 +50,7 @@ func Chat(ctx context.Context, a *agent.Agent, opts ...ChatOptions) {
 			break
 		}
 		if strings.EqualFold(input, "clear") && o.ClearFunc != nil {
-			if err := o.ClearFunc(ctx); err != nil {
+			if err := o.ClearFunc(c); err != nil {
 				fmt.Printf("Error clearing: %v\n", err)
 			} else {
 				fmt.Println("Conversation cleared.")
@@ -58,10 +58,10 @@ func Chat(ctx context.Context, a *agent.Agent, opts ...ChatOptions) {
 			continue
 		}
 
-		invokeCtx := ctx
+		invokeCtx := c
 		if o.BeforeInvoke != nil {
-			if c := o.BeforeInvoke(ctx, input); c != nil {
-				invokeCtx = c
+			if updated := o.BeforeInvoke(c, input); updated != nil {
+				invokeCtx = updated
 			}
 		}
 
@@ -71,7 +71,7 @@ func Chat(ctx context.Context, a *agent.Agent, opts ...ChatOptions) {
 		fmt.Println()
 
 		if o.AfterInvoke != nil {
-			o.AfterInvoke(ctx, err)
+			o.AfterInvoke(c, err)
 		}
 
 		if err != nil {

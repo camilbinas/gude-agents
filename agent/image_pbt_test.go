@@ -96,7 +96,7 @@ func TestProperty_LoopPrependsImagesToFirstUserMessage(t *testing.T) {
 		}
 
 		// Invoke with images attached to the context.
-		ctx := WithImages(context.Background(), images)
+		ctx := Background().WithImages(images)
 		_, invokeErr := a.Invoke(ctx, msg)
 		if invokeErr != nil {
 			rt.Fatalf("unexpected error: %v", invokeErr)
@@ -208,7 +208,7 @@ func TestProperty_LoopWithImagesPersistsImageBlocksInMemory(t *testing.T) {
 		}
 
 		// Invoke with images attached to the context.
-		ctx := WithImages(context.Background(), images)
+		ctx := Background().WithImages(images)
 		_, invokeErr := a.Invoke(ctx, "hello")
 		if invokeErr != nil {
 			rt.Fatalf("unexpected error: %v", invokeErr)

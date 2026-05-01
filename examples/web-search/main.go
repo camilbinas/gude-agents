@@ -18,7 +18,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -60,5 +59,5 @@ func main() {
 	fmt.Println("Try: What are the latest Go releases?")
 	fmt.Println()
 
-	utils.Chat(context.Background(), a)
+	utils.Chat(agent.Background(), a)
 }

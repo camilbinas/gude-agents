@@ -18,7 +18,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -33,7 +32,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Write structured JSON logs to a file so they don't mix with chat output.
 	if err := os.MkdirAll("tmp", 0o755); err != nil {

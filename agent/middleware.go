@@ -1,12 +1,11 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 )
 
 // ToolHandlerFunc is the signature of a tool handler after middleware wrapping.
-type ToolHandlerFunc func(ctx context.Context, toolName string, input json.RawMessage) (string, error)
+type ToolHandlerFunc func(c *Context, toolName string, input json.RawMessage) (string, error)
 
 // Middleware wraps a tool handler to add cross-cutting behavior.
 type Middleware func(next ToolHandlerFunc) ToolHandlerFunc

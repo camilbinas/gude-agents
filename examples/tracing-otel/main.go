@@ -49,7 +49,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// 1. Set up tracing — tries OTLP first, falls back to console tree.
 	treeExp, shutdown, err := setupTracing(ctx)
@@ -117,7 +117,7 @@ func main() {
 	fmt.Println()
 
 	utils.Chat(ctx, a, utils.ChatOptions{
-		AfterInvoke: func(_ context.Context, _ error) {
+		AfterInvoke: func(_ *agent.Context, _ error) {
 			// Flush the tree exporter after each invocation so the trace
 			// prints immediately (only relevant for console mode).
 			if treeExp != nil {

@@ -241,7 +241,6 @@ provider, err := bedrock.Standard() // Claude Sonnet 4.6 (global)
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -266,7 +265,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "Explain goroutines in two sentences.")
+	result, err := a.Invoke(agent.Background(), "Explain goroutines in two sentences.")
 	if err != nil {
 		log.Fatal(err)
 	}

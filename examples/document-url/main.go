@@ -11,7 +11,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -26,8 +25,6 @@ import (
 
 func main() {
 	godotenv.Load() //nolint
-
-	ctx := context.Background()
 
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: go run ./document-url <document-url>")
@@ -52,7 +49,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	docCtx := agent.WithDocuments(ctx, []agent.DocumentBlock{doc})
+	docCtx := agent.Background().WithDocuments([]agent.DocumentBlock{doc})
 
 	fmt.Printf("Document URL: %s\n", docURL)
 	fmt.Println(strings.Repeat("─", 60))

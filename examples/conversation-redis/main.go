@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -48,7 +47,7 @@ func main() {
 
 	fmt.Println("Redis chat (type 'quit' to exit, 'clear' to reset)")
 
-	utils.Chat(context.Background(), a, utils.ChatOptions{
+	utils.Chat(agent.Background(), a, utils.ChatOptions{
 		ClearFunc: utils.ClearConversation(store, "demo-conversation"),
 	})
 }

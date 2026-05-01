@@ -36,7 +36,7 @@ func TestSwarmTracing_RunSpanCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := sw.Invoke(context.Background(), "hello")
+	result, err := sw.Invoke(agent.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestSwarmTracing_HandoffSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := sw.Invoke(context.Background(), "help me")
+	result, err := sw.Invoke(agent.Background(), "help me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestSwarmTracing_ErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = sw.Invoke(context.Background(), "hello")
+	_, err = sw.Invoke(agent.Background(), "hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}

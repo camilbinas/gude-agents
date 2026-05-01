@@ -280,7 +280,7 @@ type TokenUsage struct {
 func (u TokenUsage) Total() int
 ```
 
-Records token consumption for a single provider call. `Total()` returns `InputTokens + OutputTokens`. Use `GetInvocationUsage` on the `InvocationContext` to access cumulative usage across an invocation.
+Records token consumption for a single provider call. `Total()` returns `InputTokens + OutputTokens`. Use `c.Usage()` on the `*Context` to access cumulative usage across an invocation.
 
 ## StreamCallback
 

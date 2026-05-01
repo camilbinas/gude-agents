@@ -13,6 +13,14 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
+// identifierFromContext extracts the identifier from a context.Context.
+func identifierFromContext(ctx context.Context) string {
+	if c := agent.FromContext(ctx); c != nil {
+		return c.Identifier()
+	}
+	return ""
+}
+
 // Option configures NewRememberTool or NewRecallTool. Both ToolOption and
 // RecallOption satisfy this interface.
 type Option interface {
@@ -65,9 +73,9 @@ func NewRememberTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := agent.GetIdentifier(ctx)
+			id := identifierFromContext(ctx)
 			if id == "" {
-				return "", errors.New("redis: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
 
 			var value T
@@ -108,9 +116,9 @@ func NewUpdateTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := agent.GetIdentifier(ctx)
+			identifier := identifierFromContext(ctx)
 			if identifier == "" {
-				return "", errors.New("redis: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
 
 			var params struct {
@@ -167,9 +175,9 @@ func NewRecallTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := agent.GetIdentifier(ctx)
+			id := identifierFromContext(ctx)
 			if id == "" {
-				return "", errors.New("redis: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
 
 			var params struct {
@@ -223,9 +231,9 @@ func NewForgetTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := agent.GetIdentifier(ctx)
+			identifier := identifierFromContext(ctx)
 			if identifier == "" {
-				return "", errors.New("redis: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
 
 			var params struct {

@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -21,7 +20,7 @@ func main() {
 	// In-memory vector store for the example.
 	store := rag.NewMemoryStore()
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Ingest some documents.
 	docs := []string{

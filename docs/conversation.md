@@ -24,7 +24,7 @@ a, err := agent.Default(
 )
 ```
 
-For HTTP servers where a single agent serves multiple conversations, use `WithSharedConversation` instead and pass the conversation ID per-request via context:
+For HTTP servers where a single agent serves multiple conversations, use `WithSharedConversation` instead and pass the conversation ID per-request via the `*Context`:
 
 ```go
 a, err := agent.New(provider, instructions, tools,
@@ -32,8 +32,8 @@ a, err := agent.New(provider, instructions, tools,
 )
 
 // In each HTTP handler:
-ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-result, _, err := a.Invoke(ctx, req.Message)
+c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+result, err := a.Invoke(c, req.Message)
 ```
 
 See [HTTP & Multi-Tenant Environments](http.md) for the full pattern.
@@ -325,13 +325,13 @@ func main() {
 
 	ctx := context.Background()
 
-	result, _, err := a.Invoke(ctx, "My name is Alice. Remember that.")
+	result, err := a.Invoke(agent.Background(), "My name is Alice. Remember that.")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("Turn 1:", result)
 
-	result, _, err = a.Invoke(ctx, "What is my name?")
+	result, err = a.Invoke(agent.Background(), "What is my name?")
 	if err != nil {
 		log.Fatal(err)
 	}

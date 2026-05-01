@@ -14,33 +14,28 @@ import (
 
 // InvokeStream runs the agent loop, streaming the final text answer via cb.
 // It returns nil on success, or an error on failure.
-// Cumulative token usage is available via GetInvocationUsage on the InvocationContext.
+// Cumulative token usage is available via c.Usage() after the call returns.
 // If the agent calls the handoff tool, it returns ErrHandoffRequested — use
 // GetHandoffRequest to retrieve the request and Agent.Resume to continue.
-func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) error {
-	// Create a new InvocationContext if one isn't already attached.
-	if GetInvocationContext(ctx) == nil {
-		ctx = WithInvocationContext(ctx, NewInvocationContext())
-	}
+func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) error {
+	convID := resolveConversationID(c, a.conversationID)
+	h := a.hooks(c)
 
-	convID := ResolveConversationID(ctx, a.conversationID)
-	h := a.hooks(ctx)
-
-	ctx, invoke := h.onInvokeStart(ctx, a.invokeParams(convID, userMessage, ctx))
-	usage, err := a.invokeStreamInner(ctx, userMessage, convID, cb, &h)
+	c, invoke := h.onInvokeStart(c, a.invokeParams(convID, userMessage, c))
+	usage, err := a.invokeStreamInner(c, userMessage, convID, cb, &h)
 	invoke.finish(err, usage)
 
-	// Store cumulative usage on the InvocationContext for caller access.
-	setInvocationUsage(GetInvocationContext(ctx), usage)
+	// Store cumulative usage on the Context for caller access.
+	c.setUsage(usage)
 
 	return err
 }
 
 // Invoke is a convenience wrapper over InvokeStream that collects all
 // streamed chunks into a single string.
-func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, error) {
+func (a *Agent) Invoke(c *Context, userMessage string) (string, error) {
 	var sb strings.Builder
-	err := a.InvokeStream(ctx, userMessage, func(chunk string) {
+	err := a.InvokeStream(c, userMessage, func(chunk string) {
 		sb.WriteString(chunk)
 	})
 	if err != nil {
@@ -51,15 +46,15 @@ func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, error) 
 
 // invokeStreamInner contains the core InvokeStream logic, separated so that
 // the tracing finish function in InvokeStream can capture the final error and usage.
-func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convID string, cb StreamCallback, h *hooks) (TokenUsage, error) {
+func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string, cb StreamCallback, h *hooks) (TokenUsage, error) {
 	var cumulative TokenUsage
 
 	// Input guardrails.
 	msg := userMessage
 	for _, g := range a.inputGuardrails {
-		gCtx, gf := h.onGuardrailStart(ctx, "input", msg)
+		gC, gf := h.onGuardrailStart(c, "input", msg)
 		var err error
-		msg, err = g(gCtx, msg)
+		msg, err = g(gC, msg)
 		gf.finish(err, msg)
 		if err != nil {
 			return cumulative, &GuardrailError{Direction: "input", Cause: err}
@@ -69,8 +64,8 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 	// Load conversation history.
 	var messages []Message
 	if a.conversation != nil {
-		loadCtx, cf := h.onConversationStart(ctx, "load", convID)
-		history, err := a.conversation.Load(loadCtx, convID)
+		loadC, cf := h.onConversationStart(c, "load", convID)
+		history, err := a.conversation.Load(loadC, convID)
 		cf.finish(err, len(history))
 		if err != nil {
 			return cumulative, fmt.Errorf("conversation load: %w", err)
@@ -79,7 +74,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 	}
 
 	// Merge and validate inference config.
-	mergedCfg := mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx))
+	mergedCfg := mergeInferenceConfig(a.inferenceConfig, c.InferenceConfig())
 	if err := validateInferenceConfig(mergedCfg); err != nil {
 		return cumulative, fmt.Errorf("inference config: %w", err)
 	}
@@ -87,8 +82,8 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 	// RAG retrieval — inject context as a separate user/assistant turn.
 	ragOffset := 0
 	if a.retriever != nil {
-		retCtx, rf := h.onRetrieverStart(ctx, msg)
-		docs, err := a.retriever.Retrieve(retCtx, msg)
+		retC, rf := h.onRetrieverStart(c, msg)
+		docs, err := a.retriever.Retrieve(retC, msg)
 		rf.finish(err, len(docs))
 		if err != nil {
 			return cumulative, fmt.Errorf("retriever: %w", err)
@@ -109,7 +104,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 	}
 
 	// Validate and attach images.
-	images := GetImages(ctx)
+	images := c.Images()
 	for _, img := range images {
 		if err := img.Source.Validate(); err != nil {
 			return cumulative, err
@@ -120,7 +115,7 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 	}
 
 	// Validate and attach documents.
-	documents := GetDocuments(ctx)
+	documents := c.Documents()
 	for _, doc := range documents {
 		if err := doc.Source.Validate(); err != nil {
 			return cumulative, err
@@ -141,16 +136,16 @@ func (a *Agent) invokeStreamInner(ctx context.Context, userMessage string, convI
 	firstContent = append(firstContent, TextBlock{Text: msg})
 	messages = append(messages, Message{Role: RoleUser, Content: firstContent})
 
-	return a.runLoop(ctx, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h)
+	return a.runLoop(c, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h)
 }
 
 // runLoop is the core agent iteration loop shared by InvokeStream and Resume.
-func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback, h *hooks) (TokenUsage, error) {
+func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback, h *hooks) (TokenUsage, error) {
 	var cumulative TokenUsage
 	modelID := a.modelID()
 
 	for iteration := range a.maxIterations {
-		iterCtx, iterF := h.onIterationStart(ctx, iteration+1)
+		iterC, iterF := h.onIterationStart(c, iteration+1)
 
 		// Buffer chunks when output guardrails are configured.
 		hasOutputGuardrails := len(a.outputGuardrails) > 0
@@ -174,23 +169,23 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		}
 
 		// Call provider.
-		currentToolSpecs, availableTools := a.filterTools(iterCtx)
+		currentToolSpecs, availableTools := a.filterTools(iterC)
 
 		// Forward thinking chunks to EventHook.OnThinking when configured.
 		var thinkingCB ThinkingCallback
 		if h.event != nil {
 			thinkingCB = func(chunk string) {
-				h.event.OnThinking(iterCtx, chunk)
+				h.event.OnThinking(iterC, chunk)
 			}
 		}
 
-		provCtx, provF := h.onProviderCallStart(iterCtx, ProviderCallParams{
+		provC, provF := h.onProviderCallStart(iterC, ProviderCallParams{
 			System:          systemPrompt,
 			MessageCount:    len(converseMessages),
 			InferenceConfig: inferenceConfig,
 		}, modelID)
 
-		resp, err := a.callProviderWithRetry(provCtx, ConverseParams{
+		resp, err := a.callProviderWithRetry(provC, ConverseParams{
 			Messages:         converseMessages,
 			System:           systemPrompt,
 			ToolConfig:       currentToolSpecs,
@@ -233,7 +228,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			}
 			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
 
-			results := a.executeTools(iterCtx, resp.ToolCalls, availableTools, h)
+			results := a.executeTools(iterC, resp.ToolCalls, availableTools, h)
 			iterF.finish(len(resp.ToolCalls), false)
 
 			// Handle handoff.
@@ -249,13 +244,11 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 				}
 				messages = append(messages, Message{Role: RoleUser, Content: resultBlocks})
 
-				if ic := GetInvocationContext(ctx); ic != nil {
-					if hr, ok := GetHandoffRequest(ic); ok {
-						hr.Messages = messages
-						hr.ConversationID = convID
-					}
+				if hr, ok := GetHandoffRequest(c); ok {
+					hr.Messages = messages
+					hr.ConversationID = convID
 				}
-				a.saveConversation(ctx, convID, messages[ragOffset:], cumulative, h)
+				a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
 				return cumulative, ErrHandoffRequested
 			}
 
@@ -270,9 +263,9 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		// Final text response — apply output guardrails.
 		finalText := resp.Text
 		for _, g := range a.outputGuardrails {
-			gCtx, gf := h.onGuardrailStart(iterCtx, "output", finalText)
+			gC, gf := h.onGuardrailStart(iterC, "output", finalText)
 			var gErr error
-			finalText, gErr = g(gCtx, finalText)
+			finalText, gErr = g(gC, finalText)
 			gf.finish(gErr, finalText)
 			if gErr != nil {
 				iterF.finish(0, true)
@@ -294,13 +287,13 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
 		iterF.finish(0, true)
 
-		if err := a.saveConversation(ctx, convID, messages[ragOffset:], cumulative, h); err != nil {
+		if err := a.saveConversation(c, convID, messages[ragOffset:], cumulative, h); err != nil {
 			return cumulative, err
 		}
 		return cumulative, nil
 	}
 
-	h.onMaxIterationsExceeded(ctx, a.maxIterations)
+	h.onMaxIterationsExceeded(c, a.maxIterations)
 	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
 }
 
@@ -312,8 +305,15 @@ func (a *Agent) saveConversation(ctx context.Context, convID string, messages []
 		return nil
 	}
 	saveCtx := WithTokenUsage(ctx, cumulative)
-	saveCtx, cf := h.onConversationStart(saveCtx, "save", convID)
-	err := a.conversation.Save(saveCtx, convID, messages)
+	// Wrap saveCtx back into a *Context for the hook.
+	var saveC *Context
+	if c := FromContext(ctx); c != nil {
+		saveC = c.withContext(saveCtx)
+	} else {
+		saveC = NewContext(saveCtx)
+	}
+	saveC, cf := h.onConversationStart(saveC, "save", convID)
+	err := a.conversation.Save(saveC, convID, messages)
 	cf.finish(err, len(messages))
 	if err != nil {
 		return fmt.Errorf("conversation save: %w", err)
@@ -366,7 +366,7 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 }
 
 // executeTools runs tool calls either sequentially or in parallel.
-func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks) []ToolResultBlock {
+func (a *Agent) executeTools(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks) []ToolResultBlock {
 	results := make([]ToolResultBlock, len(calls))
 
 	exec := func(i int, tc tool.Call) {
@@ -380,7 +380,7 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, availableTo
 			return
 		}
 
-		toolCtx, tf := h.onToolStart(ctx, tc.Name, tc.Input)
+		toolC, tf := h.onToolStart(c, tc.Name, tc.Input)
 
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
@@ -391,7 +391,7 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, availableTo
 
 		// Rich handlers (returning images) take precedence.
 		if t.RichHandler != nil {
-			richOut, err := t.RichHandler(toolCtx, tc.Input)
+			richOut, err := t.RichHandler(toolC, tc.Input)
 			if err != nil {
 				toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 				tf.finish(err, "")
@@ -413,13 +413,14 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, availableTo
 		}
 
 		handler := ChainMiddleware(
-			func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
-				return t.Handler(ctx, input)
+			func(c *Context, toolName string, input json.RawMessage) (string, error) {
+				// Pass *Context directly — it satisfies context.Context via embedding.
+				return t.Handler(c, input)
 			},
 			a.middlewares...,
 		)
 
-		out, err := handler(toolCtx, tc.Name, tc.Input)
+		out, err := handler(toolC, tc.Name, tc.Input)
 		if err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			tf.finish(err, "")
@@ -451,8 +452,17 @@ func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, availableTo
 }
 
 // hooks returns the composite hook dispatcher for this agent.
-func (a *Agent) hooks(ctx context.Context) hooks {
-	return hooks{tracing: a.tracingHook, metrics: a.metricsHook, logging: a.loggingHook, event: eventHookFromContext(ctx)}
+func (a *Agent) hooks(c *Context) hooks {
+	return hooks{tracing: a.tracingHook, metrics: a.metricsHook, logging: a.loggingHook, event: c.EventHook()}
+}
+
+// resolveConversationID returns the per-invocation override from *Context if set,
+// otherwise falls back to the provided default.
+func resolveConversationID(c *Context, fallback string) string {
+	if id := c.ConversationID(); id != "" {
+		return id
+	}
+	return fallback
 }
 
 // modelID returns the provider's model ID, or empty string.
@@ -464,16 +474,16 @@ func (a *Agent) modelID() string {
 }
 
 // invokeParams builds InvokeSpanParams for observability hooks.
-func (a *Agent) invokeParams(convID, userMessage string, ctx context.Context) InvokeSpanParams {
+func (a *Agent) invokeParams(convID, userMessage string, c *Context) InvokeSpanParams {
 	return InvokeSpanParams{
 		MaxIterations:   a.maxIterations,
 		ModelID:         a.modelID(),
 		ConversationID:  convID,
 		UserMessage:     userMessage,
 		SystemPrompt:    a.instructions,
-		InferenceConfig: mergeInferenceConfig(a.inferenceConfig, GetInferenceConfig(ctx)),
+		InferenceConfig: mergeInferenceConfig(a.inferenceConfig, c.InferenceConfig()),
 		AgentName:       a.name,
-		ImageCount:      len(GetImages(ctx)),
-		DocumentCount:   len(GetDocuments(ctx)),
+		ImageCount:      len(c.Images()),
+		DocumentCount:   len(c.Documents()),
 	}
 }

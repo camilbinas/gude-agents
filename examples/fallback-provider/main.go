@@ -71,7 +71,7 @@ func main() {
 	fmt.Println("Sending request — primary will fail, backup (Bedrock) will handle it...")
 	fmt.Println()
 
-	result, err := a.Invoke(context.Background(), "What is 2 + 2?")
+	result, err := a.Invoke(agent.Background(), "What is 2 + 2?")
 	if err != nil {
 		log.Fatal(err)
 	}

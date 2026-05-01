@@ -220,7 +220,8 @@ func main() {
         log.Fatal(err)
     }
 
-    result, _, err := a.Invoke(context.Background(), "What's the weather in Berlin?")
+    c := agent.Background()
+    result, err := a.Invoke(c, "What's the weather in Berlin?")
     if err != nil {
         log.Fatal(err)
     }
@@ -247,6 +248,24 @@ The generated JSON Schema for `WeatherInput` looks like:
   "required": ["city"]
 }
 ```
+
+## Accessing Invocation State from Tool Handlers
+
+Tool handlers keep `context.Context` in their signature to avoid import cycles between the `tool` and `agent` packages. At runtime, the agent passes `*agent.Context` (which embeds `context.Context`) directly to tool handlers. Use `agent.FromContext` to safely extract it:
+
+```go
+lookup := tool.New("lookup_user", "Looks up a user by ID",
+    func(ctx context.Context, input LookupInput) (string, error) {
+        if c := agent.FromContext(ctx); c != nil {
+            userRole, _ := c.Get("user_role")
+            c.Set("last_lookup", input.UserID)
+        }
+        return fmt.Sprintf("User %s found", input.UserID), nil
+    },
+)
+```
+
+`FromContext` returns nil if `ctx` is not a `*Context` — no panic risk. Most tools don't need this; they just use `context.Context` for cancellation and deadlines.
 
 ## tool.NewRich — Rich Output (Text + Images)
 

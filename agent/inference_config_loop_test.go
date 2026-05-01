@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -21,7 +20,7 @@ func TestInvoke_AgentLevelInferenceConfigForwarded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,7 +59,7 @@ func TestInvoke_PerInvocationOverridesAgentLevel(t *testing.T) {
 	}
 
 	// Per-invocation override: temperature=0.9, leave TopP to fall back to agent-level.
-	ctx := WithInferenceConfig(context.Background(), &InferenceConfig{
+	ctx := Background().WithInferenceConfig(&InferenceConfig{
 		Temperature: ptrFloat(0.9),
 	})
 
@@ -93,7 +92,7 @@ func TestInvoke_NilInferenceConfigWhenNoneSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestInvoke_InvalidPerInvocationConfigReturnsError(t *testing.T) {
 	}
 
 	// Per-invocation config with invalid temperature.
-	ctx := WithInferenceConfig(context.Background(), &InferenceConfig{
+	ctx := Background().WithInferenceConfig(&InferenceConfig{
 		Temperature: ptrFloat(2.0), // invalid: > 1.0
 	})
 

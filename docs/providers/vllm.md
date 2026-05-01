@@ -54,7 +54,6 @@ Wraps a call to `New` and panics on error. Useful for examples and scripts.
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -78,7 +77,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "What is the capital of France?")
+	result, err := a.Invoke(agent.Background(), "What is the capital of France?")
 	if err != nil {
 		log.Fatal(err)
 	}

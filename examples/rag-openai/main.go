@@ -76,7 +76,7 @@ func main() {
 	fmt.Printf("Vector Store agent ready (vector store: %s)\n", vsID)
 	fmt.Println("Ask a question (or type 'quit' to exit):")
 
-	utils.Chat(context.Background(), a)
+	utils.Chat(agent.Background(), a)
 }
 
 // loggingRetriever wraps any agent.Retriever and prints each result to stdout.

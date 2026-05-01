@@ -62,7 +62,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := agent.WithIdentifier(context.Background(), "user-123")
+	ctx := agent.Background().WithIdentifier("user-123")
 
 	fmt.Println("Chat agent with in-memory memory. Type 'quit' to exit, 'clear' to forget all.")
 	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")

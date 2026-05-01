@@ -14,7 +14,7 @@ import (
 // collect the needed input, then call Agent.Resume to continue.
 var ErrHandoffRequested = errors.New("handoff requested")
 
-// handoffKey is the InvocationContext key for storing the HandoffRequest.
+// handoffKey is the Context key for storing the HandoffRequest.
 type handoffKey struct{}
 
 // handoffSentinelHuman is the magic result that signals a human handoff.
@@ -34,13 +34,13 @@ type HandoffRequest struct {
 	Messages []Message
 }
 
-// GetHandoffRequest extracts the HandoffRequest from an InvocationContext.
+// GetHandoffRequest extracts the HandoffRequest from a *Context.
 // Returns nil, false if no handoff was requested.
-func GetHandoffRequest(ic *InvocationContext) (*HandoffRequest, bool) {
-	if ic == nil {
+func GetHandoffRequest(c *Context) (*HandoffRequest, bool) {
+	if c == nil {
 		return nil, false
 	}
-	v, ok := ic.Get(handoffKey{})
+	v, ok := c.Get(handoffKey{})
 	if !ok {
 		return nil, false
 	}
@@ -91,8 +91,8 @@ func NewHandoffTool(name, description string) tool.Tool {
 				return "", fmt.Errorf("invalid handoff input: %w", err)
 			}
 
-			if ic := GetInvocationContext(ctx); ic != nil {
-				ic.Set(handoffKey{}, &HandoffRequest{
+			if c := FromContext(ctx); c != nil {
+				c.Set(handoffKey{}, &HandoffRequest{
 					Reason:   params.Reason,
 					Question: params.Question,
 				})
@@ -105,12 +105,8 @@ func NewHandoffTool(name, description string) tool.Tool {
 // Resume continues an agent invocation after a human provides input.
 // It restores the conversation from the HandoffRequest and appends the
 // human's response as a new user message before re-entering the agent loop.
-// Cumulative token usage is available via GetInvocationUsage on the InvocationContext.
-func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) error {
-	if GetInvocationContext(ctx) == nil {
-		ctx = WithInvocationContext(ctx, NewInvocationContext())
-	}
-
+// Cumulative token usage is available via c.Usage() after the call returns.
+func (a *Agent) Resume(c *Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) error {
 	messages := make([]Message, len(hr.Messages))
 	copy(messages, hr.Messages)
 
@@ -118,7 +114,7 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 	msg := humanResponse
 	for _, g := range a.inputGuardrails {
 		var err error
-		msg, err = g(ctx, msg)
+		msg, err = g(c, msg)
 		if err != nil {
 			return &GuardrailError{Direction: "input", Cause: err}
 		}
@@ -133,36 +129,31 @@ func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse st
 	// the correct conversation even when the agent has a different default.
 	convID := hr.ConversationID
 	if convID == "" {
-		convID = ResolveConversationID(ctx, a.conversationID)
+		convID = resolveConversationID(c, a.conversationID)
 	}
 
 	// Use base instructions — RAG context was already applied in the original invocation
 	// and is reflected in the conversation history.
 	// Resolve inference config for the resumed invocation.
-	perInvocationCfg := GetInferenceConfig(ctx)
-	mergedInferenceCfg := mergeInferenceConfig(a.inferenceConfig, perInvocationCfg)
+	mergedInferenceCfg := mergeInferenceConfig(a.inferenceConfig, c.InferenceConfig())
 	if err := validateInferenceConfig(mergedInferenceCfg); err != nil {
 		return fmt.Errorf("inference config: %w", err)
 	}
 
-	usage, err := a.runLoop(ctx, convID, messages, 0, a.instructions, mergedInferenceCfg, cb, &hooks{
-		tracing: a.tracingHook,
-		metrics: a.metricsHook,
-		logging: a.loggingHook,
-		event:   eventHookFromContext(ctx),
-	})
+	h := a.hooks(c)
+	usage, err := a.runLoop(c, convID, messages, 0, a.instructions, mergedInferenceCfg, cb, &h)
 
-	// Store cumulative usage on the InvocationContext for caller access.
-	setInvocationUsage(GetInvocationContext(ctx), usage)
+	// Store cumulative usage on the Context for caller access.
+	c.setUsage(usage)
 
 	return err
 }
 
 // ResumeInvoke is a convenience wrapper over Resume that collects streamed
 // chunks into a single string.
-func (a *Agent) ResumeInvoke(ctx context.Context, hr *HandoffRequest, humanResponse string) (string, error) {
+func (a *Agent) ResumeInvoke(c *Context, hr *HandoffRequest, humanResponse string) (string, error) {
 	var result string
-	err := a.Resume(ctx, hr, humanResponse, func(chunk string) {
+	err := a.Resume(c, hr, humanResponse, func(chunk string) {
 		result += chunk
 	})
 	return result, err

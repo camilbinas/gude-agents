@@ -24,7 +24,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -58,7 +57,7 @@ func main() {
 	fmt.Println("Conversations are saved to ./tmp/conversations/")
 	fmt.Println()
 
-	utils.Chat(context.Background(), a, utils.ChatOptions{
+	utils.Chat(agent.Background(), a, utils.ChatOptions{
 		ClearFunc: utils.ClearConversation(store, "default-session"),
 	})
 }

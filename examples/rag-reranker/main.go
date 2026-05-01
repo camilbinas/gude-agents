@@ -13,7 +13,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -25,7 +24,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// 1. Embedder — Titan Embed V2 (1024 dimensions).
 	embedder := bedrock.MustEmbedder(bedrock.TitanEmbedV2())

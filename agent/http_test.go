@@ -106,8 +106,8 @@ func TestConcurrentInvocations_DifferentConversations(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			convID := "conv-" + string(rune('A'+i))
-			ctx := WithConversationID(context.Background(), convID)
-			results[i], errs[i] = a.Invoke(ctx, "msg-"+convID)
+			c := Background().WithConversationID(convID)
+			results[i], errs[i] = a.Invoke(c, "msg-"+convID)
 		}(i)
 	}
 	wg.Wait()
@@ -187,8 +187,8 @@ func TestMultiTurn_WithSharedConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx1 := WithConversationID(context.Background(), "conv-1")
-	ctx2 := WithConversationID(context.Background(), "conv-2")
+	ctx1 := Background().WithConversationID("conv-1")
+	ctx2 := Background().WithConversationID("conv-2")
 
 	// Turn 1 for both conversations.
 	r1, _ := a.Invoke(ctx1, "I'm Alice")
@@ -247,16 +247,14 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ic := NewInvocationContext()
-	ctx := WithConversationID(context.Background(), "user-42-session")
-	ctx = WithInvocationContext(ctx, ic)
+	c := Background().WithConversationID("user-42-session")
 
-	err = a.InvokeStream(ctx, "Process refund", nil)
+	err = a.InvokeStream(c, "Process refund", nil)
 	if !errors.Is(err, ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got %v", err)
 	}
 
-	hr, ok := GetHandoffRequest(ic)
+	hr, ok := GetHandoffRequest(c)
 	if !ok {
 		t.Fatal("expected HandoffRequest")
 	}
@@ -273,7 +271,7 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 	}
 
 	// Resume — should save to the same conversation.
-	result, err := a.ResumeInvoke(context.Background(), hr, "Yes, approved")
+	result, err := a.ResumeInvoke(Background().WithConversationID("user-42-session"), hr, "Yes, approved")
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -306,8 +304,8 @@ func TestSwarm_WithPerInvocationConversationID(t *testing.T) {
 	}, WithSwarmConversation(mem, "default"))
 
 	// Two different conversations on the same swarm.
-	ctxX := WithConversationID(context.Background(), "conv-X")
-	ctxY := WithConversationID(context.Background(), "conv-Y")
+	ctxX := Background().WithConversationID("conv-X")
+	ctxY := Background().WithConversationID("conv-Y")
 
 	rX, err := sw.Invoke(ctxX, "hello X")
 	if err != nil {

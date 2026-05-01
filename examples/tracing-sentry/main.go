@@ -140,24 +140,22 @@ func main() {
 		// Per-invocation override: prefix "creative:" bumps temperature to 0.95.
 		// The overridden value appears on the agent.invoke span in Sentry as
 		// gen_ai.request.temperature=0.95 instead of the agent-level 0.3.
-		callCtx := ctx
+		c := agent.Background()
 		if after, ok := strings.CutPrefix(input, "creative:"); ok {
 			input = strings.TrimSpace(after)
 			temp := 0.95
-			callCtx = agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+			c = c.WithInferenceConfig(&agent.InferenceConfig{
 				Temperature: &temp,
 			})
 		}
 
 		fmt.Print("Agent: ")
-		ic := agent.NewInvocationContext()
-		invokeCtx := agent.WithInvocationContext(callCtx, ic)
-		err := a.InvokeStream(invokeCtx, input, func(chunk string) {
+		err := a.InvokeStream(c, input, func(chunk string) {
 			fmt.Print(chunk)
 		})
 		fmt.Println()
 
-		usage := agent.GetInvocationUsage(ic)
+		usage := c.Usage()
 		if err != nil {
 			// Capture invocation-level errors in Sentry with full context.
 			sentrytrace.CaptureAgentError(ctx, err, input, usage)

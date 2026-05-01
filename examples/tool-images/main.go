@@ -92,5 +92,5 @@ func main() {
 	fmt.Println("Try: generate a red swatch and a blue swatch")
 	fmt.Println()
 
-	utils.Chat(context.Background(), a)
+	utils.Chat(agent.Background(), a)
 }

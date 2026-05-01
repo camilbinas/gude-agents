@@ -20,7 +20,7 @@ import (
 func TestProperty_NilSafeDispatch(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		h := hooks{event: nil}
-		ctx := context.Background()
+		c := Background()
 
 		// Generate a random sequence of dispatch operations.
 		numOps := rapid.IntRange(1, 20).Draw(t, "numOps")
@@ -32,21 +32,21 @@ func TestProperty_NilSafeDispatch(t *testing.T) {
 				input := json.RawMessage(rapid.SampledFrom([]string{
 					`{}`, `{"key":"value"}`, `{"a":1}`, `null`,
 				}).Draw(t, fmt.Sprintf("input_%d", i)))
-				_, tf := h.onToolStart(ctx, name, input)
+				_, tf := h.onToolStart(c, name, input)
 				tf.finish(nil, rapid.String().Draw(t, fmt.Sprintf("output_%d", i)))
 			case 1: // tool start + finish error
 				name := rapid.StringMatching(`[a-z_]{1,20}`).Draw(t, fmt.Sprintf("toolNameErr_%d", i))
-				_, tf := h.onToolStart(ctx, name, json.RawMessage(`{}`))
+				_, tf := h.onToolStart(c, name, json.RawMessage(`{}`))
 				tf.finish(fmt.Errorf("error_%d", i), "")
 			case 2: // provider call start + finish success
-				_, pf := h.onProviderCallStart(ctx, ProviderCallParams{}, "model-id")
+				_, pf := h.onProviderCallStart(c, ProviderCallParams{}, "model-id")
 				toolCount := rapid.IntRange(0, 5).Draw(t, fmt.Sprintf("toolCount_%d", i))
 				pf.finish(nil, TokenUsage{}, toolCount, "text")
 			case 3: // provider call start + finish error
-				_, pf := h.onProviderCallStart(ctx, ProviderCallParams{}, "model-id")
+				_, pf := h.onProviderCallStart(c, ProviderCallParams{}, "model-id")
 				pf.finish(fmt.Errorf("provider_error_%d", i), TokenUsage{}, 0, "")
 			case 4: // invoke start + finish
-				_, inv := h.onInvokeStart(ctx, InvokeSpanParams{})
+				_, inv := h.onInvokeStart(c, InvokeSpanParams{})
 				inv.finish(nil, TokenUsage{})
 			}
 		}
@@ -63,7 +63,7 @@ func TestProperty_ToolCallStartDispatch(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		hook := &recordingEventHook{}
 		h := hooks{event: hook}
-		ctx := context.Background()
+		c := Background()
 
 		toolName := rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,30}`).Draw(t, "toolName")
 		jsonInput := rapid.SampledFrom([]string{
@@ -75,7 +75,7 @@ func TestProperty_ToolCallStartDispatch(t *testing.T) {
 		}).Draw(t, "jsonInput")
 		input := json.RawMessage(jsonInput)
 
-		_, tf := h.onToolStart(ctx, toolName, input)
+		_, tf := h.onToolStart(c, toolName, input)
 		tf.finish(nil, "output")
 
 		hook.mu.Lock()
@@ -104,12 +104,12 @@ func TestProperty_ToolCallEndDispatch(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		hook := &recordingEventHook{}
 		h := hooks{event: hook}
-		ctx := context.Background()
+		c := Background()
 
 		toolName := rapid.StringMatching(`[a-zA-Z_][a-zA-Z0-9_]{0,30}`).Draw(t, "toolName")
 		isSuccess := rapid.Bool().Draw(t, "isSuccess")
 
-		_, tf := h.onToolStart(ctx, toolName, json.RawMessage(`{}`))
+		_, tf := h.onToolStart(c, toolName, json.RawMessage(`{}`))
 		// Introduce a small sleep to ensure positive duration.
 		time.Sleep(1 * time.Millisecond)
 
@@ -229,16 +229,16 @@ type orderTrackingEventHook struct {
 	sequence *[]string
 }
 
-func (h *orderTrackingEventHook) OnToolCallStart(_ context.Context, _ string, _ json.RawMessage) {}
-func (h *orderTrackingEventHook) OnToolCallEnd(_ context.Context, _ string, _ string, _ error, _ time.Duration) {
+func (h *orderTrackingEventHook) OnToolCallStart(_ *Context, _ string, _ json.RawMessage) {}
+func (h *orderTrackingEventHook) OnToolCallEnd(_ *Context, _ string, _ string, _ error, _ time.Duration) {
 }
-func (h *orderTrackingEventHook) OnThinking(_ context.Context, _ string) {}
-func (h *orderTrackingEventHook) OnModelStart(_ context.Context) {
+func (h *orderTrackingEventHook) OnThinking(_ *Context, _ string) {}
+func (h *orderTrackingEventHook) OnModelStart(_ *Context) {
 	h.mu.Lock()
 	*h.sequence = append(*h.sequence, "modelStart")
 	h.mu.Unlock()
 }
-func (h *orderTrackingEventHook) OnModelEnd(_ context.Context, _ string) {}
+func (h *orderTrackingEventHook) OnModelEnd(_ *Context, _ string) {}
 
 func TestProperty_ModelStartOrdering(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -257,8 +257,8 @@ func TestProperty_ModelStartOrdering(t *testing.T) {
 			t.Fatalf("failed to create agent: %v", err)
 		}
 
-		ctx := WithEventHook(context.Background(), hook)
-		_, err = a.Invoke(ctx, "hello")
+		c := Background().WithEventHook(hook)
+		_, err = a.Invoke(c, "hello")
 		if err != nil {
 			t.Fatalf("invoke failed: %v", err)
 		}
@@ -313,8 +313,8 @@ func TestProperty_ThinkingChunkForwarding(t *testing.T) {
 			t.Fatalf("failed to create agent: %v", err)
 		}
 
-		ctx := WithEventHook(context.Background(), hook)
-		_, err = a.Invoke(ctx, "think")
+		c := Background().WithEventHook(hook)
+		_, err = a.Invoke(c, "think")
 		if err != nil {
 			t.Fatalf("invoke failed: %v", err)
 		}

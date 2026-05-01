@@ -199,7 +199,7 @@ func main() {
         log.Fatal(err)
     }
 
-    result, _, err := a.Invoke(ctx, "Use the echo tool to say hello")
+    result, err := a.Invoke(agent.NewContext(ctx), "Use the echo tool to say hello")
     if err != nil {
         log.Fatal(err)
     }
@@ -440,7 +440,7 @@ func main() {
                 return
             }
 
-            result, _, err := a.Invoke(ctx, "List the files in /tmp")
+            result, err := a.Invoke(agent.NewContext(ctx), "List the files in /tmp")
             if err != nil {
                 log.Printf("user %d: invoke error: %v", userID, err)
                 return

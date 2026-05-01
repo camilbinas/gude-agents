@@ -49,7 +49,7 @@ const totalRounds = 5
 func main() {
 	godotenv.Load() //nolint
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// ── Providers ─────────────────────────────────────────────────────────────
 	claudeProvider := anthropic.Must(anthropic.Standard())
@@ -269,7 +269,8 @@ func verboseChallenge(toolName, targetName string, child *agent.Agent) tool.Tool
 		// Stream the child's response so the audience sees the answer too.
 		fmt.Printf("    💬 %s's response:\n", targetName)
 		var result string
-		err := child.InvokeStream(ctx, args.Message, func(chunk string) {
+		c := agent.NewContext(ctx)
+		err := child.InvokeStream(c, args.Message, func(chunk string) {
 			fmt.Print(chunk)
 			result += chunk
 		})

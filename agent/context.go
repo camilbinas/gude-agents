@@ -5,101 +5,153 @@ import (
 	"sync"
 )
 
-// InvocationContext is a concurrency-safe typed key-value store
-// scoped to a single agent invocation.
-type InvocationContext struct {
-	mu   sync.RWMutex
-	data map[any]any
+// Context carries both stdlib context semantics and invocation-scoped state.
+// It embeds context.Context so *Context satisfies the context.Context interface.
+type Context struct {
+	context.Context
+
+	mu              sync.RWMutex
+	data            map[any]any
+	usage           TokenUsage
+	conversationID  string
+	images          []ImageBlock
+	documents       []DocumentBlock
+	inferenceConfig *InferenceConfig
+	eventHook       EventHook
+	identifier      string
 }
 
-// invCtxKey is the context key used to store the InvocationContext.
-type invCtxKey struct{}
-
-// NewInvocationContext creates a new empty InvocationContext.
-func NewInvocationContext() *InvocationContext {
-	return &InvocationContext{data: make(map[any]any)}
+// NewContext creates a new *Context wrapping the given parent.
+// It panics if parent is nil.
+func NewContext(parent context.Context) *Context {
+	if parent == nil {
+		panic("agent: cannot create Context from nil parent")
+	}
+	return &Context{
+		Context: parent,
+		data:    make(map[any]any),
+	}
 }
 
-// Set stores a value. Safe for concurrent use.
-func (ic *InvocationContext) Set(key, value any) {
-	ic.mu.Lock()
-	defer ic.mu.Unlock()
-	ic.data[key] = value
+// Background creates a new *Context wrapping context.Background().
+func Background() *Context {
+	return NewContext(context.Background())
 }
 
-// Get retrieves a value. Safe for concurrent use.
-func (ic *InvocationContext) Get(key any) (any, bool) {
-	ic.mu.RLock()
-	defer ic.mu.RUnlock()
-	v, ok := ic.data[key]
+// Set stores a value in the invocation-scoped key-value store.
+// Safe for concurrent use.
+func (c *Context) Set(key, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data[key] = value
+}
+
+// Get retrieves a value from the invocation-scoped key-value store.
+// Safe for concurrent use.
+func (c *Context) Get(key any) (any, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	v, ok := c.data[key]
 	return v, ok
 }
 
-// WithInvocationContext attaches an InvocationContext to a Go context.
-func WithInvocationContext(ctx context.Context, ic *InvocationContext) context.Context {
-	return context.WithValue(ctx, invCtxKey{}, ic)
+// Usage returns the cumulative token usage for the invocation.
+func (c *Context) Usage() TokenUsage {
+	return c.usage
 }
 
-// GetInvocationContext retrieves the InvocationContext from a Go context.
-// Returns nil if none is attached.
-func GetInvocationContext(ctx context.Context) *InvocationContext {
-	ic, _ := ctx.Value(invCtxKey{}).(*InvocationContext)
-	return ic
+// ConversationID returns the conversation ID for the invocation.
+func (c *Context) ConversationID() string {
+	return c.conversationID
 }
 
-// inferenceConfigKey is the context key for per-invocation inference config.
-type inferenceConfigKey struct{}
-
-// WithInferenceConfig attaches an InferenceConfig to a Go context for per-invocation override.
-func WithInferenceConfig(ctx context.Context, cfg *InferenceConfig) context.Context {
-	return context.WithValue(ctx, inferenceConfigKey{}, cfg)
+// Images returns the attached images for the invocation.
+func (c *Context) Images() []ImageBlock {
+	return c.images
 }
 
-// GetInferenceConfig retrieves the per-invocation InferenceConfig from a Go context.
-// Returns nil if none is attached.
-func GetInferenceConfig(ctx context.Context) *InferenceConfig {
-	cfg, _ := ctx.Value(inferenceConfigKey{}).(*InferenceConfig)
-	return cfg
+// Documents returns the attached documents for the invocation.
+func (c *Context) Documents() []DocumentBlock {
+	return c.documents
 }
 
-// imagesKey is the context key for per-invocation image slices.
-type imagesKey struct{}
-
-// WithImages attaches a slice of ImageBlock values to the context for the
-// current invocation. Pass nil or an empty slice to clear any previously
-// attached images.
-func WithImages(ctx context.Context, images []ImageBlock) context.Context {
-	return context.WithValue(ctx, imagesKey{}, images)
+// InferenceConfig returns the per-invocation inference config override.
+func (c *Context) InferenceConfig() *InferenceConfig {
+	return c.inferenceConfig
 }
 
-// GetImages retrieves the image slice from the context.
-// Returns nil if no images are attached or if an empty slice was stored.
-func GetImages(ctx context.Context) []ImageBlock {
-	images, _ := ctx.Value(imagesKey{}).([]ImageBlock)
-	if len(images) == 0 {
-		return nil
+// EventHook returns the per-invocation event hook.
+func (c *Context) EventHook() EventHook {
+	return c.eventHook
+}
+
+// Identifier returns the scoping identity for memory operations.
+func (c *Context) Identifier() string {
+	return c.identifier
+}
+
+// WithConversationID sets the conversation ID and returns the same *Context for chaining.
+func (c *Context) WithConversationID(id string) *Context {
+	c.conversationID = id
+	return c
+}
+
+// WithImages sets the attached images and returns the same *Context for chaining.
+func (c *Context) WithImages(imgs []ImageBlock) *Context {
+	c.images = imgs
+	return c
+}
+
+// WithDocuments sets the attached documents and returns the same *Context for chaining.
+func (c *Context) WithDocuments(docs []DocumentBlock) *Context {
+	c.documents = docs
+	return c
+}
+
+// WithInferenceConfig sets the per-invocation inference config and returns the same *Context for chaining.
+func (c *Context) WithInferenceConfig(cfg *InferenceConfig) *Context {
+	c.inferenceConfig = cfg
+	return c
+}
+
+// WithEventHook sets the per-invocation event hook and returns the same *Context for chaining.
+func (c *Context) WithEventHook(h EventHook) *Context {
+	c.eventHook = h
+	return c
+}
+
+// WithIdentifier sets the scoping identity and returns the same *Context for chaining.
+func (c *Context) WithIdentifier(id string) *Context {
+	c.identifier = id
+	return c
+}
+
+// FromContext extracts a *Context from a context.Context.
+// Returns nil if ctx is not a *Context. Use this in tool handlers that need
+// access to invocation state without risking a panic from a direct type assertion.
+func FromContext(ctx context.Context) *Context {
+	c, _ := ctx.(*Context)
+	return c
+}
+
+// setUsage sets the cumulative token usage. This is internal to the agent loop.
+func (c *Context) setUsage(u TokenUsage) {
+	c.usage = u
+}
+
+// withContext returns a shallow copy of c with a different embedded context.Context.
+func (c *Context) withContext(ctx context.Context) *Context {
+	return &Context{
+		Context:         ctx,
+		data:            c.data,
+		usage:           c.usage,
+		conversationID:  c.conversationID,
+		images:          c.images,
+		documents:       c.documents,
+		inferenceConfig: c.inferenceConfig,
+		eventHook:       c.eventHook,
+		identifier:      c.identifier,
 	}
-	return images
-}
-
-// documentsKey is the context key for per-invocation document slices.
-type documentsKey struct{}
-
-// WithDocuments attaches a slice of DocumentBlock values to the context for the
-// current invocation. Pass nil or an empty slice to clear any previously
-// attached documents.
-func WithDocuments(ctx context.Context, docs []DocumentBlock) context.Context {
-	return context.WithValue(ctx, documentsKey{}, docs)
-}
-
-// GetDocuments retrieves the document slice from the context.
-// Returns nil if no documents are attached or if an empty slice was stored.
-func GetDocuments(ctx context.Context) []DocumentBlock {
-	docs, _ := ctx.Value(documentsKey{}).([]DocumentBlock)
-	if len(docs) == 0 {
-		return nil
-	}
-	return docs
 }
 
 // tokenUsageKey is the context key for cumulative token usage.
@@ -122,45 +174,4 @@ func GetTokenUsage(ctx context.Context) (TokenUsage, bool) {
 		return TokenUsage{}, false
 	}
 	return *u, true
-}
-
-// invocationUsageKey is the InvocationContext key for cumulative token usage.
-type invocationUsageKey struct{}
-
-// GetInvocationUsage retrieves the cumulative TokenUsage from an InvocationContext.
-// Returns zero value if no usage has been recorded (e.g. invocation hasn't completed).
-func GetInvocationUsage(ic *InvocationContext) TokenUsage {
-	if ic == nil {
-		return TokenUsage{}
-	}
-	v, ok := ic.Get(invocationUsageKey{})
-	if !ok {
-		return TokenUsage{}
-	}
-	u, _ := v.(TokenUsage)
-	return u
-}
-
-// setInvocationUsage stores cumulative TokenUsage on the InvocationContext.
-func setInvocationUsage(ic *InvocationContext, usage TokenUsage) {
-	if ic != nil {
-		ic.Set(invocationUsageKey{}, usage)
-	}
-}
-
-// identifierKey is the context key for per-invocation scoping identity.
-type identifierKey struct{}
-
-// WithIdentifier attaches an identifier to the context. This is used by
-// memory tools to scope Remember and Recall operations to a specific
-// entity (user, team, project, tenant, etc.).
-func WithIdentifier(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, identifierKey{}, id)
-}
-
-// GetIdentifier retrieves the identifier from the context.
-// Returns an empty string if no identifier is attached.
-func GetIdentifier(ctx context.Context) string {
-	id, _ := ctx.Value(identifierKey{}).(string)
-	return id
 }

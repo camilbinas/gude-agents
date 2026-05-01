@@ -37,6 +37,7 @@ type testCase struct {
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	c := agent.NewContext(ctx)
 
 	// ── 1. Set up RAG pipeline ───────────────────────────────────────────────
 	fmt.Println("Setting up RAG pipeline...")
@@ -56,7 +57,7 @@ func main() {
 		"Acme Corp raised a $25 million Series B in March 2024, led by Sequoia Capital. Total funding is $40 million.",
 	}
 
-	if err := rag.Ingest(ctx, store, embedder, texts, nil, rag.WithChunkSize(300)); err != nil {
+	if err := rag.Ingest(c, store, embedder, texts, nil, rag.WithChunkSize(300)); err != nil {
 		log.Fatal(err)
 	}
 
@@ -101,13 +102,13 @@ func main() {
 	for i, tc := range goldenCases {
 		fmt.Printf("  [%d/%d] %s\n", i+1, len(goldenCases), tc.query)
 
-		result, err := a.Invoke(ctx, tc.query)
+		result, err := a.Invoke(c, tc.query)
 		if err != nil {
 			log.Fatalf("agent invoke failed for case %d: %v", i, err)
 		}
 
 		// Retrieve the documents the agent would have seen.
-		docs, err := retriever.Retrieve(ctx, tc.query)
+		docs, err := retriever.Retrieve(c, tc.query)
 		if err != nil {
 			log.Fatalf("retriever failed for case %d: %v", i, err)
 		}
@@ -154,7 +155,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	report, err := suite.Run(ctx)
+	report, err := suite.Run(c)
 	if err != nil {
 		log.Fatal(err)
 	}

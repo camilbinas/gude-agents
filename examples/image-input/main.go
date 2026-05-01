@@ -13,7 +13,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -30,8 +29,6 @@ import (
 
 func main() {
 	godotenv.Load() //nolint
-
-	ctx := context.Background()
 
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: go run ./image-input <image-path>")
@@ -66,14 +63,14 @@ func main() {
 	// Turn 1 — describe the image.
 	fmt.Printf("Image: %s (%s)\n", imagePath, mimeType)
 	fmt.Println(strings.Repeat("─", 60))
-	imgCtx := agent.WithImages(ctx, []agent.ImageBlock{img})
+	imgCtx := agent.Background().WithImages([]agent.ImageBlock{img})
 	if err := a.InvokeStream(imgCtx, "What is in this image?", func(c string) { fmt.Print(c) }); err != nil {
 		log.Fatal(err)
 	}
 
 	// Turn 2 — follow-up without re-attaching the image.
 	fmt.Println("\n" + strings.Repeat("─", 60))
-	if err := a.InvokeStream(ctx, "Suggest a caption for it.", func(c string) { fmt.Print(c) }); err != nil {
+	if err := a.InvokeStream(agent.Background(), "Suggest a caption for it.", func(c string) { fmt.Print(c) }); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println()

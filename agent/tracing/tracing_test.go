@@ -194,7 +194,7 @@ func TestWithTracing_NonNilProvider_SetsHook(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestWithTracing_NilProvider_UsesGlobalProvider(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestWithoutTracing_NoSpansCreated(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -265,14 +265,14 @@ func TestZeroOverhead_NoTracingNoSpans(t *testing.T) {
 
 	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool},
 		agent.WithConversation(mem, "conv-1"),
-		agent.WithInputGuardrail(func(_ context.Context, msg string) (string, error) { return msg, nil }),
-		agent.WithOutputGuardrail(func(_ context.Context, resp string) (string, error) { return resp, nil }),
+		agent.WithInputGuardrail(func(_ *agent.Context, msg string) (string, error) { return msg, nil }),
+		agent.WithOutputGuardrail(func(_ *agent.Context, resp string) (string, error) { return resp, nil }),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestWithTracing_AutoLoggerSelection(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestInvokeSpan_Created(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestInvokeSpan_Attributes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestInvokeSpan_OKStatusOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestInvokeSpan_ErrorStatusOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -526,7 +526,7 @@ func TestIterationSpans_Created(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +563,7 @@ func TestIterationSpans_ToolCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestIterationSpans_FinalTrue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestIterationSpans_ParentIsInvoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +664,7 @@ func TestProviderCallSpan_Created(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,7 +703,7 @@ func TestProviderCallSpan_ToolCallCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,7 +731,7 @@ func TestProviderCallSpan_ErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = a.Invoke(context.Background(), "hi")
+	_, _ = a.Invoke(agent.Background(), "hi")
 
 	spans := exp.GetSpans()
 	provSpan := findSpan(spans, "agent.provider.call")
@@ -761,7 +761,7 @@ func TestToolSpan_NameAndAttribute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +799,7 @@ func TestToolSpan_ErrorOnValidationFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -833,7 +833,7 @@ func TestToolSpan_ErrorOnHandlerError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -871,7 +871,7 @@ func TestToolSpan_ParallelToolsShareParent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -904,7 +904,7 @@ func TestGuardrailSpan_Input(t *testing.T) {
 
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithInputGuardrail(func(_ context.Context, msg string) (string, error) {
+		agent.WithInputGuardrail(func(_ *agent.Context, msg string) (string, error) {
 			return msg, nil
 		}),
 		WithTracing(tp),
@@ -913,7 +913,7 @@ func TestGuardrailSpan_Input(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -931,7 +931,7 @@ func TestGuardrailSpan_Output(t *testing.T) {
 
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithOutputGuardrail(func(_ context.Context, resp string) (string, error) {
+		agent.WithOutputGuardrail(func(_ *agent.Context, resp string) (string, error) {
 			return resp, nil
 		}),
 		WithTracing(tp),
@@ -940,7 +940,7 @@ func TestGuardrailSpan_Output(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -958,7 +958,7 @@ func TestGuardrailSpan_InputErrorStatus(t *testing.T) {
 
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithInputGuardrail(func(_ context.Context, msg string) (string, error) {
+		agent.WithInputGuardrail(func(_ *agent.Context, msg string) (string, error) {
 			return "", fmt.Errorf("blocked")
 		}),
 		WithTracing(tp),
@@ -967,7 +967,7 @@ func TestGuardrailSpan_InputErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = a.Invoke(context.Background(), "hi")
+	_, _ = a.Invoke(agent.Background(), "hi")
 
 	spans := exp.GetSpans()
 	gSpan := findSpan(spans, "agent.guardrail.input")
@@ -986,7 +986,7 @@ func TestGuardrailSpan_OutputErrorStatus(t *testing.T) {
 
 	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
 	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithOutputGuardrail(func(_ context.Context, resp string) (string, error) {
+		agent.WithOutputGuardrail(func(_ *agent.Context, resp string) (string, error) {
 			return "", fmt.Errorf("output blocked")
 		}),
 		WithTracing(tp),
@@ -995,7 +995,7 @@ func TestGuardrailSpan_OutputErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = a.Invoke(context.Background(), "hi")
+	_, _ = a.Invoke(agent.Background(), "hi")
 
 	spans := exp.GetSpans()
 	gSpan := findSpan(spans, "agent.guardrail.output")
@@ -1024,7 +1024,7 @@ func TestMemorySpan_LoadAndSave(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1065,7 +1065,7 @@ func TestMemorySpan_LoadErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = a.Invoke(context.Background(), "hi")
+	_, _ = a.Invoke(agent.Background(), "hi")
 
 	spans := exp.GetSpans()
 	loadSpan := findSpan(spans, "agent.conversation.load")
@@ -1095,7 +1095,7 @@ func TestMemorySpan_SaveErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := a.Invoke(context.Background(), "hi")
+	_, invokeErr := a.Invoke(agent.Background(), "hi")
 	if invokeErr == nil {
 		t.Fatal("expected error from memory save failure")
 	}
@@ -1131,7 +1131,7 @@ func TestRetrieverSpan_Created(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1161,7 +1161,7 @@ func TestRetrieverSpan_ErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = a.Invoke(context.Background(), "hi")
+	_, _ = a.Invoke(agent.Background(), "hi")
 
 	spans := exp.GetSpans()
 	retSpan := findSpan(spans, "agent.retriever.retrieve")
@@ -1194,7 +1194,7 @@ func TestMaxIterationsExceeded_EventRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := a.Invoke(context.Background(), "loop")
+	_, invokeErr := a.Invoke(agent.Background(), "loop")
 	if invokeErr == nil {
 		t.Fatal("expected max iteration error")
 	}
@@ -1258,7 +1258,7 @@ func TestMultiAgentComposition_ChildSpansUnderParentToolSpan(t *testing.T) {
 		t.Fatalf("creating parent agent: %v", err)
 	}
 
-	_, err = parentAgent.Invoke(context.Background(), "delegate to child")
+	_, err = parentAgent.Invoke(agent.Background(), "delegate to child")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1308,12 +1308,12 @@ func TestMiddleware_ContextPropagation_ChildSpanUnderToolSpan(t *testing.T) {
 
 	// Middleware that extracts the span from context and creates a child span.
 	mw := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
 			// Extract the active span from context and create a child span.
-			_, childSpan := tracer.Start(ctx, "middleware.custom")
+			_, childSpan := tracer.Start(c, "middleware.custom")
 			defer childSpan.End()
 
-			return next(ctx, toolName, input)
+			return next(c, toolName, input)
 		}
 	}
 
@@ -1331,7 +1331,7 @@ func TestMiddleware_ContextPropagation_ChildSpanUnderToolSpan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1400,7 +1400,7 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := a.Invoke(context.Background(), "go parallel")
+	result, err := a.Invoke(agent.Background(), "go parallel")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1469,7 +1469,7 @@ func TestInvokeSpan_InferenceConfigAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1527,7 +1527,7 @@ func TestInvokeSpan_NoInferenceConfigAttributes_WhenNoneSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1567,7 +1567,7 @@ func TestInvokeSpan_PerInvocationOverride_ReflectedInSpan(t *testing.T) {
 
 	// Per-invocation override: temperature=0.95
 	temp := 0.95
-	ctx := agent.WithInferenceConfig(context.Background(), &agent.InferenceConfig{
+	ctx := agent.Background().WithInferenceConfig(&agent.InferenceConfig{
 		Temperature: &temp,
 	})
 

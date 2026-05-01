@@ -99,7 +99,6 @@ provider, err := openai.Standard() // GPT-5 Mini
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -126,7 +125,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "Explain channels in Go.")
+	result, err := a.Invoke(agent.Background(), "Explain channels in Go.")
 	if err != nil {
 		log.Fatal(err)
 	}

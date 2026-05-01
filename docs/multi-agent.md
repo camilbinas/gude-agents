@@ -150,7 +150,7 @@ Route the user's question to the right specialist and synthesize the response.`)
         log.Fatal(err)
     }
 
-    result, _, err := orchestrator.Invoke(context.Background(), "What's the status of the Atlas project?")
+    result, err := orchestrator.Invoke(agent.Background(), "What's the status of the Atlas project?")
     if err != nil {
         log.Fatal(err)
     }

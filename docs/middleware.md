@@ -12,9 +12,9 @@ A middleware takes the next handler and returns a new handler that wraps it:
 
 ```go
 func loggingMiddleware(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-    return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+    return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
         log.Printf("calling tool: %s", toolName)
-        result, err := next(ctx, toolName, input)
+        result, err := next(c, toolName, input)
         log.Printf("tool done: %s err=%v", toolName, err)
         return result, err
     }
@@ -59,11 +59,11 @@ import (
 
 // loggingMiddleware logs tool name, input, duration, and errors.
 func loggingMiddleware(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-	return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+	return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
 		log.Printf("tool call: %s input=%s", toolName, string(input))
 		start := time.Now()
 
-		result, err := next(ctx, toolName, input)
+		result, err := next(c, toolName, input)
 
 		elapsed := time.Since(start)
 		if err != nil {
@@ -103,7 +103,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "Say hello to Alice")
+	c := agent.Background()
+	result, err := a.Invoke(c, "Say hello to Alice")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -122,5 +123,5 @@ tool done: greet elapsed=42µs
 
 - [Agent API Reference](agent-api.md) — `WithMiddleware` option function
 - [Guardrails](guardrails.md) — guardrails wrap the full invocation; middleware wraps individual tool calls
-- [InvocationContext](invocation-context.md) — sharing state between middleware and tool handlers
+- [Agent Context](invocation-context.md) — sharing state between middleware and tool handlers
 - [Tools](tools.md) — defining the tools that middleware wraps

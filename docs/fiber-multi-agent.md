@@ -131,9 +131,9 @@ func handleChat(a *agent.Agent) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "conversation_id is required"})
 		}
 
-		ctx := agent.WithConversationID(c.Context(), req.ConversationID)
+		ctx := agent.NewContext(c.Context()).WithConversationID(req.ConversationID)
 
-		result, _, err := a.Invoke(ctx, req.Message)
+		result, err := a.Invoke(ctx, req.Message)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -164,9 +164,9 @@ func handleStream(a *agent.Agent) fiber.Handler {
 		c.Set("Connection", "keep-alive")
 
 		return c.SendStreamWriter(func(w *bufio.Writer) {
-			ctx := agent.WithConversationID(c.Context(), convID)
+			ctx := agent.NewContext(c.Context()).WithConversationID(convID)
 
-			_, err := a.InvokeStream(ctx, msg, func(chunk string) {
+			err := a.InvokeStream(ctx, msg, func(chunk string) {
 				fmt.Fprintf(w, "data: %s\n\n", chunk)
 				w.Flush() //nolint:errcheck
 			})

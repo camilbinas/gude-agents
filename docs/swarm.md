@@ -52,12 +52,12 @@ You can also use `agent.Default`, `agent.Worker`, or `agent.New` directly — an
 
 ```go
 // Streaming
-result, err := swarm.Run(ctx, "I need a refund", func(chunk string) {
+result, err := swarm.Run(agent.Background(), "I need a refund", func(chunk string) {
     fmt.Print(chunk)
 })
 
 // Buffered
-result, err := swarm.Invoke(ctx, "I need a refund")
+result, err := swarm.Invoke(agent.Background(), "I need a refund")
 ```
 
 `SwarmResult` contains:
@@ -123,13 +123,13 @@ swarm, err := agent.NewSwarm(members,
 )
 
 // Turn 1: triage → billing
-swarm.Invoke(ctx, "I need a refund")
+swarm.Invoke(agent.Background(), "I need a refund")
 
 // Turn 2: continues with billing (remembered)
-swarm.Invoke(ctx, "My account ID is 12345")
+swarm.Invoke(agent.Background(), "My account ID is 12345")
 ```
 
-For HTTP servers, use `WithConversationID` on the context to serve multiple conversations from a single Swarm:
+For HTTP servers, use `WithConversationID` on the `*Context` to serve multiple conversations from a single Swarm:
 
 ```go
 swarm, _ := agent.NewSwarm(members,
@@ -137,8 +137,8 @@ swarm, _ := agent.NewSwarm(members,
 )
 
 // Each request provides its own conversation ID.
-ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-result, err := swarm.Invoke(ctx, req.Message)
+c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+result, err := swarm.Invoke(c, req.Message)
 ```
 
 See [HTTP & Multi-Tenant Environments](http.md) for the full pattern.

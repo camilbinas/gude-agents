@@ -21,7 +21,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -42,7 +41,7 @@ func main() {
 		log.Fatal("AWS_DYNAMODB_TABLE environment variable is required")
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {

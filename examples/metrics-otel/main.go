@@ -44,7 +44,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// 1. Set up the OTEL MeterProvider — tries OTLP first, falls back to stdout.
 	mp, shutdown, err := setupMeterProvider(ctx)

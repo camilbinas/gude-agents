@@ -50,7 +50,7 @@ func main() {
     }
 
     // Use the agent — metrics accumulate automatically.
-    a.Invoke(ctx, "Hello")
+    a.Invoke(agent.Background(), "Hello")
 }
 ```
 

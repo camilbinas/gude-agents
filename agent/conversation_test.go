@@ -20,8 +20,8 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 	}
 
 	// Invoke with per-request conversation ID "conv-A".
-	ctxA := WithConversationID(context.Background(), "conv-A")
-	result, err := a.Invoke(ctxA, "hello A")
+	cA := Background().WithConversationID("conv-A")
+	result, err := a.Invoke(cA, "hello A")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +30,8 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 	}
 
 	// Invoke with per-request conversation ID "conv-B".
-	ctxB := WithConversationID(context.Background(), "conv-B")
-	result, err = a.Invoke(ctxB, "hello B")
+	cB := Background().WithConversationID("conv-B")
+	result, err = a.Invoke(cB, "hello B")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestWithConversationID_FallsBackToDefault(t *testing.T) {
 	}
 
 	// Invoke without per-request override — should use "fallback".
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +89,14 @@ func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
 	}
 
 	// Two different users, same agent instance.
-	ctx1 := WithConversationID(context.Background(), "user-1")
-	ctx2 := WithConversationID(context.Background(), "user-2")
+	c1 := Background().WithConversationID("user-1")
+	c2 := Background().WithConversationID("user-2")
 
-	r1, err := a.Invoke(ctx1, "hi from user 1")
+	r1, err := a.Invoke(c1, "hi from user 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2, err := a.Invoke(ctx2, "hi from user 2")
+	r2, err := a.Invoke(c2, "hi from user 2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +119,24 @@ func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
 	}
 }
 
-func TestResolveConversationID_EmptyStringIgnored(t *testing.T) {
-	ctx := WithConversationID(context.Background(), "")
-	got := ResolveConversationID(ctx, "default")
-	if got != "default" {
-		t.Errorf("expected %q, got %q", "default", got)
+func TestConversationID_EmptyStringFallsBackToDefault(t *testing.T) {
+	sp := newScriptedProvider(&ProviderResponse{Text: "reply"})
+
+	store := newTestMemoryStore()
+	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "default"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty conversation ID should fall back to the agent's default.
+	c := Background().WithConversationID("")
+	_, err = a.Invoke(c, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, _ := store.Load(context.Background(), "default")
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages in default conv, got %d", len(msgs))
 	}
 }

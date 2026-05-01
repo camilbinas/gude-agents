@@ -104,7 +104,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := agent.WithIdentifier(context.Background(), "user-123")
+	ctx := agent.Background().WithIdentifier("user-123")
 
 	fmt.Println()
 	fmt.Println("Personal assistant with Redis memory. Type 'quit' to exit, 'clear' to forget all.")

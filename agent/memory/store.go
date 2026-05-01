@@ -226,9 +226,9 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	schema := generateMemSchema[T]()
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := agent.GetIdentifier(ctx)
+			id := identifierFromContext(ctx)
 			if id == "" {
-				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
 			var value T
 			if err := json.Unmarshal(input, &value); err != nil {
@@ -255,9 +255,9 @@ func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	}
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := agent.GetIdentifier(ctx)
+			identifier := identifierFromContext(ctx)
 			if identifier == "" {
-				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
 			var params struct {
 				ID string `json:"id"`
@@ -293,9 +293,9 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	}
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := agent.GetIdentifier(ctx)
+			id := identifierFromContext(ctx)
 			if id == "" {
-				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
 			var params struct {
 				Query string `json:"query"`
@@ -342,9 +342,9 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	}
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := agent.GetIdentifier(ctx)
+			identifier := identifierFromContext(ctx)
 			if identifier == "" {
-				return "", errors.New("memory: identifier not found in context; use agent.WithIdentifier")
+				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
 			var params struct {
 				ID string `json:"id"`
@@ -358,6 +358,14 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 }
 
 // --- Internal helpers ---
+
+// identifierFromContext extracts the identifier from a context.Context.
+func identifierFromContext(ctx context.Context) string {
+	if c := agent.FromContext(ctx); c != nil {
+		return c.Identifier()
+	}
+	return ""
+}
 
 func parseMemSchema[T any]() (*memSchema, error) {
 	var zero T

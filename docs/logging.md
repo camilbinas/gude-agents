@@ -141,7 +141,7 @@ Swarm logging emits entries for `swarm.run.start`, `swarm.run.end`, `swarm.agent
 
 ## Coexistence with Tracing, Metrics, and Event Hook
 
-Logging, tracing, metrics, and the event hook can all be enabled simultaneously. Tracing, metrics, and logging are agent-scoped (set at construction); the event hook is invocation-scoped (set via context):
+Logging, tracing, metrics, and the event hook can all be enabled simultaneously. Tracing, metrics, and logging are agent-scoped (set at construction); the event hook is invocation-scoped (set via `*Context`):
 
 ```go
 a, err := agent.New(provider, instructions, tools,
@@ -150,8 +150,8 @@ a, err := agent.New(provider, instructions, tools,
     agentslog.WithLogging(),
 )
 
-ctx = agent.WithEventHook(ctx, myUIHook)
-a.InvokeStream(ctx, message, streamCB)
+c := agent.Background().WithEventHook(myUIHook)
+a.InvokeStream(c, message, streamCB)
 ```
 
 All hooks are nil-checked independently. The logging hook does not modify context (unlike the tracing hook which injects spans), so there is no ordering dependency.

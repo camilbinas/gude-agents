@@ -62,7 +62,7 @@ func TestProperty2_InvokeStructured_ConverseParams(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err = InvokeStructured[SimpleStruct](context.Background(), a, userMsg)
+		_, err = InvokeStructured[SimpleStruct](Background(), a, userMsg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,9 +152,8 @@ func TestProperty3_InvokeStructured_DeserializationRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ic := NewInvocationContext()
-		ctx := WithInvocationContext(context.Background(), ic)
-		result, err := InvokeStructured[RoundTripStruct](ctx, a, "test")
+		ic := Background()
+		result, err := InvokeStructured[RoundTripStruct](ic, a, "test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -190,7 +189,7 @@ func TestProperty3_InvokeStructured_DeserializationRoundTrip(t *testing.T) {
 		}
 
 		// Verify usage is passed through.
-		usage := GetInvocationUsage(ic)
+		usage := ic.Usage()
 		if usage.InputTokens != 10 || usage.OutputTokens != 5 {
 			t.Errorf("Usage: got %+v, want {10, 5}", usage)
 		}
@@ -208,7 +207,7 @@ func TestInvokeStructured_NoToolCallReturned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for no tool call, got nil")
 	}
@@ -234,7 +233,7 @@ func TestInvokeStructured_WrongToolName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for wrong tool name, got nil")
 	}
@@ -260,7 +259,7 @@ func TestInvokeStructured_MalformedJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
@@ -285,7 +284,7 @@ func TestInvokeStructured_ProviderError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "test")
+	_, err = InvokeStructured[SimpleStruct](Background(), a, "test")
 	if err == nil {
 		t.Fatal("expected error for provider failure, got nil")
 	}
@@ -514,7 +513,7 @@ func TestInvokeStructured_MemoryLoadAndSaveCalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "hello")
+	_, err = InvokeStructured[SimpleStruct](Background(), a, "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -539,7 +538,7 @@ func TestInvokeStructured_InputGuardrailApplied(t *testing.T) {
 	}
 
 	a, err := New(sp, prompt.Text("sys"), nil,
-		WithInputGuardrail(func(_ context.Context, msg string) (string, error) {
+		WithInputGuardrail(func(_ *Context, msg string) (string, error) {
 			receivedMsg = msg
 			return msg + " [filtered]", nil
 		}),
@@ -548,7 +547,7 @@ func TestInvokeStructured_InputGuardrailApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = InvokeStructured[SimpleStruct](context.Background(), a, "original")
+	_, err = InvokeStructured[SimpleStruct](Background(), a, "original")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -570,7 +569,7 @@ func TestInvokeStructured_InputGuardrailError(t *testing.T) {
 	sp := &structuredTestProvider{}
 	cause := fmt.Errorf("blocked")
 	a, err := New(sp, prompt.Text("sys"), nil,
-		WithInputGuardrail(func(_ context.Context, msg string) (string, error) {
+		WithInputGuardrail(func(_ *Context, msg string) (string, error) {
 			return "", cause
 		}),
 	)
@@ -578,7 +577,7 @@ func TestInvokeStructured_InputGuardrailError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := InvokeStructured[SimpleStruct](context.Background(), a, "bad input")
+	_, invokeErr := InvokeStructured[SimpleStruct](Background(), a, "bad input")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -601,7 +600,7 @@ func TestInvokeStructured_OutputGuardrailApplied(t *testing.T) {
 
 	// Output guardrail replaces "alice" with "bob" in the raw JSON.
 	a, err := New(sp, prompt.Text("sys"), nil,
-		WithOutputGuardrail(func(_ context.Context, text string) (string, error) {
+		WithOutputGuardrail(func(_ *Context, text string) (string, error) {
 			return `{"name":"bob","count":5}`, nil
 		}),
 	)
@@ -609,7 +608,7 @@ func TestInvokeStructured_OutputGuardrailApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := InvokeStructured[SimpleStruct](context.Background(), a, "hello")
+	result, err := InvokeStructured[SimpleStruct](Background(), a, "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -629,7 +628,7 @@ func TestInvokeStructured_OutputGuardrailError(t *testing.T) {
 	}
 	cause := fmt.Errorf("output blocked")
 	a, err := New(sp, prompt.Text("sys"), nil,
-		WithOutputGuardrail(func(_ context.Context, text string) (string, error) {
+		WithOutputGuardrail(func(_ *Context, text string) (string, error) {
 			return "", cause
 		}),
 	)
@@ -637,7 +636,7 @@ func TestInvokeStructured_OutputGuardrailError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := InvokeStructured[SimpleStruct](context.Background(), a, "hello")
+	_, invokeErr := InvokeStructured[SimpleStruct](Background(), a, "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -664,7 +663,7 @@ func TestProperty9_InvokeStructured_InputGuardrailOrder(t *testing.T) {
 		guardrails := make([]InputGuardrail, n)
 		for i := range n {
 			idx := i
-			guardrails[i] = func(_ context.Context, msg string) (string, error) {
+			guardrails[i] = func(_ *Context, msg string) (string, error) {
 				return fmt.Sprintf("%s|%d", msg, idx), nil
 			}
 		}
@@ -679,7 +678,7 @@ func TestProperty9_InvokeStructured_InputGuardrailOrder(t *testing.T) {
 			rt.Fatal(err)
 		}
 
-		_, err = InvokeStructured[SimpleStruct](context.Background(), a, "start")
+		_, err = InvokeStructured[SimpleStruct](Background(), a, "start")
 		if err != nil {
 			rt.Fatalf("unexpected error: %v", err)
 		}
@@ -719,7 +718,7 @@ func TestProperty10_InvokeStructured_OutputGuardrailOrder(t *testing.T) {
 		guardrails := make([]OutputGuardrail, n)
 		for i := range n {
 			idx := i
-			guardrails[i] = func(_ context.Context, text string) (string, error) {
+			guardrails[i] = func(_ *Context, text string) (string, error) {
 				return fmt.Sprintf("%s|%d", text, idx), nil
 			}
 		}
@@ -742,7 +741,7 @@ func TestProperty10_InvokeStructured_OutputGuardrailOrder(t *testing.T) {
 		// To make this testable without a deserialization error, capture the text via a final
 		// guardrail that records it and returns the original valid JSON.
 		var capturedFinal string
-		recordGuardrail := WithOutputGuardrail(func(_ context.Context, text string) (string, error) {
+		recordGuardrail := WithOutputGuardrail(func(_ *Context, text string) (string, error) {
 			capturedFinal = text
 			return `"done"`, nil // return valid JSON so deserialization succeeds
 		})
@@ -752,7 +751,7 @@ func TestProperty10_InvokeStructured_OutputGuardrailOrder(t *testing.T) {
 			rt.Fatal(err)
 		}
 
-		_, err = InvokeStructured[string](context.Background(), a2, "hello")
+		_, err = InvokeStructured[string](Background(), a2, "hello")
 		if err != nil {
 			rt.Fatalf("unexpected error: %v", err)
 		}

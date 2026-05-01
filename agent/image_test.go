@@ -68,7 +68,7 @@ func TestLoop_NoImages_SingleTextBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestLoop_WithImages_PrependsImagesThenText(t *testing.T) {
 	img2 := ImageBlock{Source: ImageSource{MIMEType: "image/png", Data: []byte{0x89, 0x50}}}
 	images := []ImageBlock{img1, img2}
 
-	ctx := WithImages(context.Background(), images)
+	ctx := Background().WithImages(images)
 	_, err = a.Invoke(ctx, "describe these")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -168,7 +168,7 @@ func TestLoop_InvalidMIMEType_ReturnsErrorBeforeProvider(t *testing.T) {
 	}
 
 	badImage := ImageBlock{Source: ImageSource{MIMEType: "image/bmp", Data: []byte{0x42, 0x4D}}}
-	ctx := WithImages(context.Background(), []ImageBlock{badImage})
+	ctx := Background().WithImages([]ImageBlock{badImage})
 
 	_, invokeErr := a.Invoke(ctx, "hello")
 	if invokeErr == nil {

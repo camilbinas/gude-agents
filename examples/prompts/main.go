@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -80,7 +79,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	fmt.Println("\n=== APE Agent ===")
 	result, err := apeAgent.Invoke(ctx, "How do I reset my password?")

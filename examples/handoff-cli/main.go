@@ -41,16 +41,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ic := agent.NewInvocationContext()
-	ctx := agent.WithInvocationContext(context.Background(), ic)
+	c := agent.Background()
 
 	fmt.Println("Agent: Processing your request...")
-	err = a.InvokeStream(ctx, "I need a refund for order #1234", func(chunk string) {
+	err = a.InvokeStream(c, "I need a refund for order #1234", func(chunk string) {
 		fmt.Print(chunk)
 	})
 
 	if errors.Is(err, agent.ErrHandoffRequested) {
-		hr, _ := agent.GetHandoffRequest(ic)
+		hr, _ := agent.GetHandoffRequest(c)
 		fmt.Printf("\n\n--- HANDOFF ---\nReason: %s\nQuestion: %s\n", hr.Reason, hr.Question)
 		fmt.Print("\nYour response: ")
 
@@ -59,7 +58,7 @@ func main() {
 		humanInput := scanner.Text()
 
 		fmt.Println("\nAgent: Resuming...")
-		result, err := a.ResumeInvoke(ctx, hr, humanInput)
+		result, err := a.ResumeInvoke(c, hr, humanInput)
 		if err != nil {
 			log.Fatal(err)
 		}

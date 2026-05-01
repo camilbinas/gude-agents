@@ -21,7 +21,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -44,7 +43,7 @@ func main() {
 		log.Fatal("POSTGRES_URL is required")
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	pool, err := pgxpool.New(ctx, pgURL)
 	if err != nil {

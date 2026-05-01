@@ -83,7 +83,6 @@ provider, err := anthropic.Standard() // Claude Sonnet 4.6
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -108,7 +107,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "What are Go interfaces?")
+	result, err := a.Invoke(agent.Background(), "What are Go interfaces?")
 	if err != nil {
 		log.Fatal(err)
 	}

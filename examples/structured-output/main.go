@@ -8,7 +8,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -33,7 +32,7 @@ type Recipe struct {
 }
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	provider := bedrock.Must(bedrock.Standard())
 

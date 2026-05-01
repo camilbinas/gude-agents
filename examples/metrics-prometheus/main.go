@@ -17,7 +17,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -32,7 +31,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// 1. Create the metrics option and HTTP handler together.
 	//    NewHandler returns both so you can mount the handler on your

@@ -21,15 +21,14 @@ func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc {
 		if !ok {
 			return nil, fmt.Errorf("AgentNode: state[%q] is missing or not a string", inputKey)
 		}
-		ic := agent.NewInvocationContext()
-		ctx = agent.WithInvocationContext(ctx, ic)
-		result, err := a.Invoke(ctx, msg)
+		c := agent.NewContext(ctx)
+		result, err := a.Invoke(c, msg)
 		if err != nil {
 			return nil, err
 		}
 		out := CopyState(state)
 		out[outputKey] = result
-		out["__usage__"] = agent.GetInvocationUsage(ic)
+		out["__usage__"] = c.Usage()
 		return out, nil
 	}
 }
@@ -39,7 +38,8 @@ func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc {
 func LLMRouter(a Invoker, validTargets []string) RouterFunc {
 	return func(ctx context.Context, state State) (string, error) {
 		prompt := buildRouterPrompt(state, validTargets)
-		result, err := a.Invoke(ctx, prompt)
+		c := agent.NewContext(ctx)
+		result, err := a.Invoke(c, prompt)
 		if err != nil {
 			return "", err
 		}
@@ -71,7 +71,8 @@ func TypedLLMRouter[S any](a Invoker, validTargets []string, promptFn func(S) st
 	return func(ctx context.Context, state S) (string, error) {
 		input := promptFn(state)
 		prompt := buildTypedRouterPrompt(input, validTargets)
-		result, err := a.Invoke(ctx, prompt)
+		c := agent.NewContext(ctx)
+		result, err := a.Invoke(c, prompt)
 		if err != nil {
 			return "", err
 		}

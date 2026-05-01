@@ -174,7 +174,6 @@ This example creates a Redis-backed conversational agent with a 1-hour TTL and c
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -217,15 +216,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-
-	result, _, err := a.Invoke(ctx, "My name is Alice. Remember that.")
+	result, err := a.Invoke(agent.Background(), "My name is Alice. Remember that.")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("Turn 1:", result)
 
-	result, _, err = a.Invoke(ctx, "What is my name?")
+	result, err = a.Invoke(agent.Background(), "What is my name?")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -304,7 +301,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(ctx, "What is Redis used for?")
+	result, err := a.Invoke(agent.Background(), "What is Redis used for?")
 	if err != nil {
 		log.Fatal(err)
 	}

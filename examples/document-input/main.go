@@ -13,7 +13,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -29,8 +28,6 @@ import (
 
 func main() {
 	godotenv.Load() //nolint
-
-	ctx := context.Background()
 
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: go run ./document-input <document-path>")
@@ -67,7 +64,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	docCtx := agent.WithDocuments(ctx, []agent.DocumentBlock{doc})
+	docCtx := agent.Background().WithDocuments([]agent.DocumentBlock{doc})
 
 	fmt.Printf("Document: %s (%s, %d bytes)\n", filepath.Base(docPath), mimeType, len(data))
 	fmt.Println(strings.Repeat("─", 60))

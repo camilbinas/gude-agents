@@ -118,7 +118,8 @@ func main() {
 
 	// outline: drafts a structured outline from the topic
 	if err := g.AddNode("outline", func(ctx context.Context, s BlogState) (BlogState, error) {
-		outline, err := outliner.Invoke(ctx, s.Topic)
+		c := agent.NewContext(ctx)
+		outline, err := outliner.Invoke(c, s.Topic)
 		if err != nil {
 			return s, err
 		}
@@ -130,8 +131,9 @@ func main() {
 
 	// draft: writes the full post from the outline
 	if err := g.AddNode("draft", func(ctx context.Context, s BlogState) (BlogState, error) {
+		c := agent.NewContext(ctx)
 		input := fmt.Sprintf("Topic: %s\n\nOutline:\n%s", s.Topic, s.Outline)
-		post, err := writer.Invoke(ctx, input)
+		post, err := writer.Invoke(c, input)
 		if err != nil {
 			return s, err
 		}
@@ -143,7 +145,8 @@ func main() {
 
 	// review: scores the draft using structured output — typed, no JSON parsing
 	if err := g.AddNode("review", func(ctx context.Context, s BlogState) (BlogState, error) {
-		review, err := agent.InvokeStructured[ReviewResult](ctx, reviewer, s.Post)
+		c := agent.NewContext(ctx)
+		review, err := agent.InvokeStructured[ReviewResult](c, reviewer, s.Post)
 		if err != nil {
 			return s, err
 		}
@@ -164,8 +167,9 @@ func main() {
 
 	// revise: rewrites the post using the reviewer's feedback
 	if err := g.AddNode("revise", func(ctx context.Context, s BlogState) (BlogState, error) {
+		c := agent.NewContext(ctx)
 		input := fmt.Sprintf("Draft:\n%s\n\nFeedback: %s", s.Post, s.Feedback)
-		revised, err := reviser.Invoke(ctx, input)
+		revised, err := reviser.Invoke(c, input)
 		if err != nil {
 			return s, err
 		}
@@ -184,7 +188,8 @@ func main() {
 
 	// seo_meta: generates SEO title + description
 	if err := g.AddNode("seo_meta", func(ctx context.Context, s BlogState) (BlogState, error) {
-		seo, err := seoWriter.Invoke(ctx, s.Post)
+		c := agent.NewContext(ctx)
+		seo, err := seoWriter.Invoke(c, s.Post)
 		if err != nil {
 			return s, err
 		}
@@ -196,7 +201,8 @@ func main() {
 
 	// social_copy: generates LinkedIn copy
 	if err := g.AddNode("social_copy", func(ctx context.Context, s BlogState) (BlogState, error) {
-		social, err := socialWriter.Invoke(ctx, s.Post)
+		c := agent.NewContext(ctx)
+		social, err := socialWriter.Invoke(c, s.Post)
 		if err != nil {
 			return s, err
 		}

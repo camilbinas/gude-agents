@@ -17,18 +17,18 @@ func TestMiddleware_SingleWrapping(t *testing.T) {
 	// A single middleware that records the tool name and delegates to next.
 	var called string
 	mw := func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *Context, toolName string, input json.RawMessage) (string, error) {
 			called = toolName
-			return next(ctx, toolName, input)
+			return next(c, toolName, input)
 		}
 	}
 
-	base := func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+	base := ToolHandlerFunc(func(c *Context, toolName string, input json.RawMessage) (string, error) {
 		return "base-result", nil
-	}
+	})
 
 	handler := ChainMiddleware(base, mw)
-	result, err := handler(context.Background(), "my-tool", json.RawMessage(`{}`))
+	result, err := handler(Background(), "my-tool", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,30 +46,30 @@ func TestMiddleware_ChainExecutionOrder(t *testing.T) {
 	var order []string
 
 	mwA := func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *Context, toolName string, input json.RawMessage) (string, error) {
 			order = append(order, "before-A")
-			result, err := next(ctx, toolName, input)
+			result, err := next(c, toolName, input)
 			order = append(order, "after-A")
 			return result, err
 		}
 	}
 
 	mwB := func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *Context, toolName string, input json.RawMessage) (string, error) {
 			order = append(order, "before-B")
-			result, err := next(ctx, toolName, input)
+			result, err := next(c, toolName, input)
 			order = append(order, "after-B")
 			return result, err
 		}
 	}
 
-	base := func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+	base := ToolHandlerFunc(func(c *Context, toolName string, input json.RawMessage) (string, error) {
 		order = append(order, "handler")
 		return "ok", nil
-	}
+	})
 
 	handler := ChainMiddleware(base, mwA, mwB)
-	_, err := handler(context.Background(), "t", json.RawMessage(`{}`))
+	_, err := handler(Background(), "t", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,18 +91,18 @@ func TestMiddleware_ShortCircuit(t *testing.T) {
 	handlerCalled := false
 
 	mw := func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *Context, toolName string, input json.RawMessage) (string, error) {
 			return "short-circuited", nil // does NOT call next
 		}
 	}
 
-	base := func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+	base := ToolHandlerFunc(func(c *Context, toolName string, input json.RawMessage) (string, error) {
 		handlerCalled = true
 		return "base", nil
-	}
+	})
 
 	handler := ChainMiddleware(base, mw)
-	result, err := handler(context.Background(), "t", json.RawMessage(`{}`))
+	result, err := handler(Background(), "t", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,12 +116,12 @@ func TestMiddleware_ShortCircuit(t *testing.T) {
 
 func TestMiddleware_NoMiddlewares(t *testing.T) {
 	// chainMiddleware with no middlewares should just return the base handler.
-	base := func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+	base := ToolHandlerFunc(func(c *Context, toolName string, input json.RawMessage) (string, error) {
 		return "direct", nil
-	}
+	})
 
 	handler := ChainMiddleware(base)
-	result, err := handler(context.Background(), "t", json.RawMessage(`{}`))
+	result, err := handler(Background(), "t", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,9 +150,9 @@ func TestMiddleware_IntegrationWithAgent(t *testing.T) {
 	// Middleware records every tool invocation.
 	var invocations []string
 	logMW := func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *Context, toolName string, input json.RawMessage) (string, error) {
 			invocations = append(invocations, toolName)
-			return next(ctx, toolName, input)
+			return next(c, toolName, input)
 		}
 	}
 
@@ -161,7 +161,7 @@ func TestMiddleware_IntegrationWithAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

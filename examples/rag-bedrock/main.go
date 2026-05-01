@@ -16,7 +16,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -68,7 +67,7 @@ func main() {
 		log.Fatalf("agent: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	fmt.Printf("Knowledge Base agent ready (KB: %s)\n", kbID)
 	fmt.Println("Ask a question (or type 'quit' to exit):")

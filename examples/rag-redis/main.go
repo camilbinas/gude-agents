@@ -10,7 +10,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -43,7 +42,7 @@ func main() {
 	}
 	defer store.Close()
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	docs := []string{
 		"Go is a statically typed, compiled language designed at Google. It is syntactically similar to C but with memory safety and garbage collection.",

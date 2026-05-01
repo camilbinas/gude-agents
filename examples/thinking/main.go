@@ -16,7 +16,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -33,12 +32,10 @@ type thinkingHook struct {
 	agent.BaseEventHook
 }
 
-func (thinkingHook) OnThinking(_ context.Context, chunk string) { fmt.Print(chunk) }
+func (thinkingHook) OnThinking(_ *agent.Context, chunk string) { fmt.Print(chunk) }
 
 func main() {
 	godotenv.Load() //nolint
-
-	ctx := context.Background()
 
 	provider := anthropic.Must(anthropic.New("claude-sonnet-4-6", anthropic.WithThinking(pvdr.ThinkingLow)))
 
@@ -55,7 +52,7 @@ func main() {
 	question := "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?"
 
 	// Attach EventHook via context — scoped to this invocation.
-	ctx = agent.WithEventHook(ctx, thinkingHook{})
+	ctx := agent.Background().WithEventHook(thinkingHook{})
 
 	err = a.InvokeStream(ctx, question, func(chunk string) {
 		fmt.Print(chunk)

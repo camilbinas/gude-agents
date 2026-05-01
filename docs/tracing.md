@@ -60,7 +60,7 @@ func main() {
         log.Fatal(err)
     }
 
-    result, _, err := a.Invoke(ctx, "Hello")
+    result, err := a.Invoke(agent.NewContext(ctx), "Hello")
     if err != nil {
         log.Fatal(err)
     }
@@ -261,7 +261,6 @@ The attribute constants are exported so you can reference them in custom middlew
 
 ```go
 import (
-    "context"
     "encoding/json"
 
     "go.opentelemetry.io/otel"
@@ -272,11 +271,13 @@ import (
 
 func metricsMiddleware(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
     tracer := otel.Tracer("my-app")
-    return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
-        ctx, span := tracer.Start(ctx, "custom.metrics")
+    return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+        ctx, span := tracer.Start(c, "custom.metrics")
         span.SetAttributes(attribute.String(tracing.AttrToolName, toolName))
         defer span.End()
-        return next(ctx, toolName, input)
+        // Wrap ctx back into a *Context for the next handler
+        inner := agent.NewContext(ctx)
+        return next(inner, toolName, input)
     }
 }
 ```

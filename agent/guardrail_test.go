@@ -51,7 +51,7 @@ func (cp *capturingProvider) ConverseStream(ctx context.Context, params Converse
 func TestInputGuardrail_TransformsMessage(t *testing.T) {
 	cp := newCapturingProvider(&ProviderResponse{Text: "reply"})
 
-	upperGuardrail := func(_ context.Context, msg string) (string, error) {
+	upperGuardrail := func(_ *Context, msg string) (string, error) {
 		return strings.ToUpper(msg), nil
 	}
 
@@ -60,7 +60,7 @@ func TestInputGuardrail_TransformsMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestInputGuardrail_TransformsMessage(t *testing.T) {
 func TestOutputGuardrail_TransformsResponse(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "raw response"})
 
-	filterGuardrail := func(_ context.Context, resp string) (string, error) {
+	filterGuardrail := func(_ *Context, resp string) (string, error) {
 		return resp + " [filtered]", nil
 	}
 
@@ -101,7 +101,7 @@ func TestOutputGuardrail_TransformsResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestOutputGuardrail_TransformsResponse(t *testing.T) {
 func TestInputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "should not reach"})
 
-	blockGuardrail := func(_ context.Context, msg string) (string, error) {
+	blockGuardrail := func(_ *Context, msg string) (string, error) {
 		return "", fmt.Errorf("blocked content")
 	}
 
@@ -123,7 +123,7 @@ func TestInputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "bad input")
+	_, err = a.Invoke(Background(), "bad input")
 	if err == nil {
 		t.Fatal("expected error from input guardrail, got nil")
 	}
@@ -135,7 +135,7 @@ func TestInputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 func TestOutputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 	sp := newScriptedProvider(&ProviderResponse{Text: "some response"})
 
-	blockGuardrail := func(_ context.Context, resp string) (string, error) {
+	blockGuardrail := func(_ *Context, resp string) (string, error) {
 		return "", fmt.Errorf("response policy violation")
 	}
 
@@ -144,7 +144,7 @@ func TestOutputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hi")
+	_, err = a.Invoke(Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error from output guardrail, got nil")
 	}
@@ -156,10 +156,10 @@ func TestOutputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 func TestMultipleInputGuardrails_AppliedInOrder(t *testing.T) {
 	cp := newCapturingProvider(&ProviderResponse{Text: "done"})
 
-	appendA := func(_ context.Context, msg string) (string, error) {
+	appendA := func(_ *Context, msg string) (string, error) {
 		return msg + "-A", nil
 	}
-	appendB := func(_ context.Context, msg string) (string, error) {
+	appendB := func(_ *Context, msg string) (string, error) {
 		return msg + "-B", nil
 	}
 
@@ -171,7 +171,7 @@ func TestMultipleInputGuardrails_AppliedInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "start")
+	_, err = a.Invoke(Background(), "start")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

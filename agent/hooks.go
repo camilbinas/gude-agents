@@ -37,10 +37,15 @@ func (f *invokeFinisher) finish(err error, usage TokenUsage) {
 	}
 }
 
-func (h *hooks) onInvokeStart(ctx context.Context, params InvokeSpanParams) (context.Context, *invokeFinisher) {
+func (h *hooks) onInvokeStart(c *Context, params InvokeSpanParams) (*Context, *invokeFinisher) {
 	f := &invokeFinisher{start: time.Now()}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnInvokeStart(ctx, params)
+		newCtx, finish := h.tracing.OnInvokeStart(ctx, params)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+		}
 	}
 	if h.metrics != nil {
 		f.finishMetrics = h.metrics.OnInvokeStart()
@@ -49,7 +54,7 @@ func (h *hooks) onInvokeStart(ctx context.Context, params InvokeSpanParams) (con
 		h.logging.OnInvokeStart(params)
 		f.logging = h.logging
 	}
-	return ctx, f
+	return c, f
 }
 
 // iterationFinisher is returned by onIterationStart.
@@ -63,10 +68,15 @@ func (f *iterationFinisher) finish(toolCount int, isFinal bool) {
 	}
 }
 
-func (h *hooks) onIterationStart(ctx context.Context, iteration int) (context.Context, *iterationFinisher) {
+func (h *hooks) onIterationStart(c *Context, iteration int) (*Context, *iterationFinisher) {
 	f := &iterationFinisher{}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnIterationStart(ctx, iteration)
+		newCtx, finish := h.tracing.OnIterationStart(ctx, iteration)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+		}
 	}
 	if h.metrics != nil {
 		h.metrics.OnIterationStart()
@@ -74,7 +84,7 @@ func (h *hooks) onIterationStart(ctx context.Context, iteration int) (context.Co
 	if h.logging != nil {
 		h.logging.OnIterationStart(iteration)
 	}
-	return ctx, f
+	return c, f
 }
 
 // providerFinisher is returned by onProviderCallStart.
@@ -83,7 +93,7 @@ type providerFinisher struct {
 	finishMetrics func(err error, usage TokenUsage)
 	logging       LoggingHook
 	event         EventHook
-	ctx           context.Context
+	c             *Context
 	start         time.Time
 }
 
@@ -98,15 +108,20 @@ func (f *providerFinisher) finish(err error, usage TokenUsage, toolCallCount int
 		f.logging.OnProviderCallEnd(err, usage, toolCallCount, time.Since(f.start))
 	}
 	if f.event != nil {
-		f.event.OnModelEnd(f.ctx, deriveStopReason(toolCallCount, err))
+		f.event.OnModelEnd(f.c, deriveStopReason(toolCallCount, err))
 	}
 }
 
-func (h *hooks) onProviderCallStart(ctx context.Context, params ProviderCallParams, modelID string) (context.Context, *providerFinisher) {
-	f := &providerFinisher{start: time.Now(), ctx: ctx}
+func (h *hooks) onProviderCallStart(c *Context, params ProviderCallParams, modelID string) (*Context, *providerFinisher) {
+	f := &providerFinisher{start: time.Now(), c: c}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnProviderCallStart(ctx, params)
-		f.ctx = ctx
+		newCtx, finish := h.tracing.OnProviderCallStart(ctx, params)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+			f.c = c
+		}
 	}
 	if h.metrics != nil {
 		f.finishMetrics = h.metrics.OnProviderCallStart(modelID)
@@ -116,11 +131,11 @@ func (h *hooks) onProviderCallStart(ctx context.Context, params ProviderCallPara
 		f.logging = h.logging
 	}
 	if h.event != nil {
-		h.event.OnModelStart(ctx)
+		h.event.OnModelStart(c)
 		f.event = h.event
-		f.ctx = ctx
+		f.c = c
 	}
-	return ctx, f
+	return c, f
 }
 
 // toolFinisher is returned by onToolStart.
@@ -129,7 +144,7 @@ type toolFinisher struct {
 	finishMetrics func(err error)
 	logging       LoggingHook
 	event         EventHook
-	ctx           context.Context
+	c             *Context
 	toolName      string
 	start         time.Time
 }
@@ -145,15 +160,20 @@ func (f *toolFinisher) finish(err error, output string) {
 		f.logging.OnToolEnd(f.toolName, err, time.Since(f.start))
 	}
 	if f.event != nil {
-		f.event.OnToolCallEnd(f.ctx, f.toolName, output, err, time.Since(f.start))
+		f.event.OnToolCallEnd(f.c, f.toolName, output, err, time.Since(f.start))
 	}
 }
 
-func (h *hooks) onToolStart(ctx context.Context, toolName string, input json.RawMessage) (context.Context, *toolFinisher) {
-	f := &toolFinisher{toolName: toolName, start: time.Now(), ctx: ctx}
+func (h *hooks) onToolStart(c *Context, toolName string, input json.RawMessage) (*Context, *toolFinisher) {
+	f := &toolFinisher{toolName: toolName, start: time.Now(), c: c}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnToolStart(ctx, toolName, input)
-		f.ctx = ctx
+		newCtx, finish := h.tracing.OnToolStart(ctx, toolName, input)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+			f.c = c
+		}
 	}
 	if h.metrics != nil {
 		f.finishMetrics = h.metrics.OnToolStart(toolName)
@@ -163,11 +183,11 @@ func (h *hooks) onToolStart(ctx context.Context, toolName string, input json.Raw
 		f.logging = h.logging
 	}
 	if h.event != nil {
-		h.event.OnToolCallStart(ctx, toolName, input)
+		h.event.OnToolCallStart(c, toolName, input)
 		f.event = h.event
-		f.ctx = ctx
+		f.c = c
 	}
-	return ctx, f
+	return c, f
 }
 
 // guardrailFinisher is returned by onGuardrailStart.
@@ -190,12 +210,17 @@ func (f *guardrailFinisher) finish(err error, output string) {
 	}
 }
 
-func (h *hooks) onGuardrailStart(ctx context.Context, direction string, input string) (context.Context, *guardrailFinisher) {
+func (h *hooks) onGuardrailStart(c *Context, direction string, input string) (*Context, *guardrailFinisher) {
 	f := &guardrailFinisher{direction: direction, metrics: h.metrics, logging: h.logging}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnGuardrailStart(ctx, direction, input)
+		newCtx, finish := h.tracing.OnGuardrailStart(ctx, direction, input)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+		}
 	}
-	return ctx, f
+	return c, f
 }
 
 // conversationFinisher is returned by onConversationStart.
@@ -216,15 +241,20 @@ func (f *conversationFinisher) finish(err error, messageCount int) {
 	}
 }
 
-func (h *hooks) onConversationStart(ctx context.Context, operation string, convID string) (context.Context, *conversationFinisher) {
+func (h *hooks) onConversationStart(c *Context, operation string, convID string) (*Context, *conversationFinisher) {
 	f := &conversationFinisher{operation: operation, convID: convID, logging: h.logging, start: time.Now()}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnConversationStart(ctx, operation, convID)
+		newCtx, finish := h.tracing.OnConversationStart(ctx, operation, convID)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+		}
 	}
 	if h.logging != nil {
 		h.logging.OnConversationStart(operation, convID)
 	}
-	return ctx, f
+	return c, f
 }
 
 // retrieverFinisher is returned by onRetrieverStart.
@@ -243,15 +273,20 @@ func (f *retrieverFinisher) finish(err error, docCount int) {
 	}
 }
 
-func (h *hooks) onRetrieverStart(ctx context.Context, query string) (context.Context, *retrieverFinisher) {
+func (h *hooks) onRetrieverStart(c *Context, query string) (*Context, *retrieverFinisher) {
 	f := &retrieverFinisher{logging: h.logging, start: time.Now()}
+	ctx := context.Context(c)
 	if h.tracing != nil {
-		ctx, f.finishTracing = h.tracing.OnRetrieverStart(ctx, query)
+		newCtx, finish := h.tracing.OnRetrieverStart(ctx, query)
+		f.finishTracing = finish
+		if newCtx != ctx {
+			c = c.withContext(newCtx)
+		}
 	}
 	if h.logging != nil {
 		h.logging.OnRetrieverStart(query)
 	}
-	return ctx, f
+	return c, f
 }
 
 func (h *hooks) onImagesAttached(count int) {
@@ -272,9 +307,9 @@ func (h *hooks) onDocumentsAttached(count int) {
 	}
 }
 
-func (h *hooks) onMaxIterationsExceeded(ctx context.Context, limit int) {
+func (h *hooks) onMaxIterationsExceeded(c *Context, limit int) {
 	if h.tracing != nil {
-		h.tracing.OnMaxIterationsExceeded(ctx, limit)
+		h.tracing.OnMaxIterationsExceeded(c, limit)
 	}
 	if h.logging != nil {
 		h.logging.OnMaxIterationsExceeded(limit)

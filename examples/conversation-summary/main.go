@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -18,7 +17,7 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Threshold of 10 turns — summarization triggers at 80% (16 messages).
 	// WithPreserveRecentMessages(1) keeps the last turn out of the

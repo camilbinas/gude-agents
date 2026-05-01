@@ -17,7 +17,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -36,7 +35,7 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// 1. Set up Prometheus metrics — shared registry via NewHandler.
 	agentOpt, handler := prometheus.NewHandler()

@@ -10,7 +10,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
@@ -24,7 +23,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	provider := bedrock.Must(bedrock.Standard())
 

@@ -26,8 +26,16 @@ func AgentAsTool(name, description string, child *Agent) tool.Tool {
 		if err := json.Unmarshal(input, &args); err != nil {
 			return "", err
 		}
+
+		// The parent agent passes *Context as context.Context via embedding.
+		// Use FromContext to get the *Context, or wrap if called from a plain context.
+		c := FromContext(ctx)
+		if c == nil {
+			c = NewContext(ctx)
+		}
+
 		var result string
-		err := child.InvokeStream(ctx, args.Message, func(chunk string) {
+		err := child.InvokeStream(c, args.Message, func(chunk string) {
 			result += chunk
 		})
 		if err != nil {

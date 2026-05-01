@@ -200,7 +200,7 @@ func TestInvoke_TextOnlyResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "hi")
+	result, err := a.Invoke(Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestInvoke_SingleToolCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "call echo")
+	result, err := a.Invoke(Background(), "call echo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "go")
+	result, err := a.Invoke(Background(), "go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := a.Invoke(context.Background(), "go parallel")
+	result, err := a.Invoke(Background(), "go parallel")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -362,7 +362,7 @@ func TestInvoke_ToolErrorReturnedAsResultText(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "try it")
+	result, err := a.Invoke(Background(), "try it")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestInvoke_MaxIterationError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "loop forever")
+	_, err = a.Invoke(Background(), "loop forever")
 	if err == nil {
 		t.Fatal("expected max iteration error, got nil")
 	}
@@ -404,7 +404,7 @@ func TestInvokeStream_CallbackReceivesChunksInOrder(t *testing.T) {
 	}
 
 	var chunks []string
-	err = a.InvokeStream(context.Background(), "stream me", func(chunk string) {
+	err = a.InvokeStream(Background(), "stream me", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
@@ -445,7 +445,7 @@ func TestInvokeStream_SuppressesChunksDuringToolIteration(t *testing.T) {
 	}
 
 	var chunks []string
-	err = a.InvokeStream(context.Background(), "go", func(chunk string) {
+	err = a.InvokeStream(Background(), "go", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
@@ -487,7 +487,7 @@ func TestInvoke_MultiToolCallsResultOrderPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "go")
+	result, err := a.Invoke(Background(), "go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestInvoke_UnknownToolReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "call missing tool")
+	result, err := a.Invoke(Background(), "call missing tool")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -530,7 +530,7 @@ func TestInvokeStream_NilCallbackDoesNotPanic(t *testing.T) {
 	}
 
 	// Passing nil callback should not panic.
-	err = a.InvokeStream(context.Background(), "hi", nil)
+	err = a.InvokeStream(Background(), "hi", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestInvoke_ProviderErrorWrapped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := a.Invoke(context.Background(), "hello")
+	_, invokeErr := a.Invoke(Background(), "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -587,7 +587,7 @@ func TestInvoke_ToolErrorWrapped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "try boom")
+	result, err := a.Invoke(Background(), "try boom")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestInvoke_InputGuardrailErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("blocked by policy")
 	sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
 	a, err := New(sp, prompt.Text("sys"), nil,
-		WithInputGuardrail(func(_ context.Context, msg string) (string, error) {
+		WithInputGuardrail(func(_ *Context, msg string) (string, error) {
 			return "", cause
 		}),
 	)
@@ -629,7 +629,7 @@ func TestInvoke_InputGuardrailErrorWrapped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := a.Invoke(context.Background(), "bad input")
+	_, invokeErr := a.Invoke(Background(), "bad input")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -650,7 +650,7 @@ func TestInvoke_OutputGuardrailErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("output blocked")
 	sp := newScriptedProvider(&ProviderResponse{Text: "some response"})
 	a, err := New(sp, prompt.Text("sys"), nil,
-		WithOutputGuardrail(func(_ context.Context, msg string) (string, error) {
+		WithOutputGuardrail(func(_ *Context, msg string) (string, error) {
 			return "", cause
 		}),
 	)
@@ -658,7 +658,7 @@ func TestInvoke_OutputGuardrailErrorWrapped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := a.Invoke(context.Background(), "hello")
+	_, invokeErr := a.Invoke(Background(), "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error, got nil")
 	}

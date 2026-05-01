@@ -170,16 +170,16 @@ func WithSentry(opts ...tracing.TracingOption) agent.Option {
 // as Sentry issues linked to the active OTEL trace.
 func ErrorCaptureMiddleware() agent.Middleware {
 	return func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
-			result, err := next(ctx, toolName, input)
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+			result, err := next(c, toolName, input)
 			if err != nil {
 				gosentry.WithScope(func(scope *gosentry.Scope) {
 					scope.SetTag("agent.error_type", "tool_error")
 					scope.SetTag("tool.name", toolName)
-					setTraceContext(ctx, scope)
+					setTraceContext(c, scope)
 					client := gosentry.CurrentHub().Client()
 					if client != nil {
-						client.CaptureException(err, &gosentry.EventHint{Context: ctx}, scope)
+						client.CaptureException(err, &gosentry.EventHint{Context: c}, scope)
 					}
 				})
 			}
@@ -192,9 +192,9 @@ func ErrorCaptureMiddleware() agent.Middleware {
 // breadcrumb for every tool call.
 func BreadcrumbMiddleware() agent.Middleware {
 	return func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
 			start := time.Now()
-			result, err := next(ctx, toolName, input)
+			result, err := next(c, toolName, input)
 			elapsed := time.Since(start)
 
 			data := map[string]any{

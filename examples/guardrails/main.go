@@ -11,7 +11,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -25,7 +24,7 @@ import (
 
 // blocklist rejects messages containing any of the given words.
 func blocklist(words ...string) agent.InputGuardrail {
-	return func(_ context.Context, msg string) (string, error) {
+	return func(_ *agent.Context, msg string) (string, error) {
 		lower := strings.ToLower(msg)
 		for _, w := range words {
 			if strings.Contains(lower, strings.ToLower(w)) {
@@ -37,7 +36,7 @@ func blocklist(words ...string) agent.InputGuardrail {
 }
 
 // sanitize trims whitespace and collapses internal runs of whitespace.
-func sanitize(_ context.Context, msg string) (string, error) {
+func sanitize(_ *agent.Context, msg string) (string, error) {
 	msg = strings.TrimSpace(msg)
 	var b strings.Builder
 	prevSpace := false
@@ -56,7 +55,7 @@ func sanitize(_ context.Context, msg string) (string, error) {
 }
 
 // redactPII replaces anything that looks like an email address with [REDACTED].
-func redactPII(_ context.Context, resp string) (string, error) {
+func redactPII(_ *agent.Context, resp string) (string, error) {
 	words := strings.Fields(resp)
 	for i, w := range words {
 		if strings.Contains(w, "@") && strings.Contains(w, ".") {
@@ -68,7 +67,7 @@ func redactPII(_ context.Context, resp string) (string, error) {
 
 // maxLength rejects responses longer than n characters.
 func maxLength(n int) agent.OutputGuardrail {
-	return func(_ context.Context, resp string) (string, error) {
+	return func(_ *agent.Context, resp string) (string, error) {
 		if len(resp) > n {
 			return "", fmt.Errorf("response too long (%d chars, limit %d)", len(resp), n)
 		}
@@ -93,7 +92,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Normal message — passes all guardrails.
 	result, err := a.Invoke(ctx, "  What is the capital of France?  ")

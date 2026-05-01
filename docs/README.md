@@ -69,4 +69,4 @@ Each provider and driver is a separate module — you only pull the dependencies
 - [Handoffs](handoff.md) — Pausing agents for human input and resuming
 - [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern
 - [MCP Integration](mcp.md) — Connect to MCP servers and use their tools
-- [InvocationContext](invocation-context.md) — Per-invocation state sharing
+- [Agent Context](invocation-context.md) — Per-invocation state sharing

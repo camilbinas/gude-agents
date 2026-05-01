@@ -96,7 +96,7 @@ func main() {
 	fmt.Println("Try: Look up customer C-42 and log that I spoke with them about billing")
 	fmt.Println()
 
-	utils.Chat(context.Background(), a)
+	utils.Chat(agent.Background(), a)
 
 	// Give background goroutines a moment to finish logging.
 	fmt.Println("Waiting for background tasks...")

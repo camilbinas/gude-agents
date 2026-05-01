@@ -28,10 +28,10 @@ tools := []tool.Tool{
 }
 
 a, _ := agent.Default(provider, systemPrompt, tools)
-ctx := agent.WithIdentifier(context.Background(), "user-123")
+c := agent.Background().WithIdentifier("user-123")
 ```
 
-The identifier (set via `agent.WithIdentifier`) scopes all storage and retrieval — the LLM never sees or fabricates identifiers. The tool schema is auto-generated from struct tags.
+The identifier (set via `c.WithIdentifier()`) scopes all storage and retrieval — the LLM never sees or fabricates identifiers. The tool schema is auto-generated from struct tags.
 
 ## Struct Tags
 

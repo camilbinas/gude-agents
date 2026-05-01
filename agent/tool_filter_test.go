@@ -90,7 +90,7 @@ func TestWithToolFilter_FiltersToolSpecs(t *testing.T) {
 
 	// Filter out admin tools.
 	a, err := New(p, prompt.Text("test"), []tool.Tool{adminTool, publicTool},
-		WithToolFilter(func(_ context.Context, t tool.Tool) bool {
+		WithToolFilter(func(_ *Context, t tool.Tool) bool {
 			return t.Spec.Name != "admin_delete"
 		}),
 	)
@@ -98,7 +98,7 @@ func TestWithToolFilter_FiltersToolSpecs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +116,8 @@ func TestWithToolFilter_FiltersToolSpecs(t *testing.T) {
 	}
 }
 
-func TestWithToolFilter_DynamicViaInvocationContext(t *testing.T) {
-	// Simulate: first call triggers a tool that sets a flag on the IC,
+func TestWithToolFilter_DynamicViaContext(t *testing.T) {
+	// Simulate: first call triggers a tool that sets a flag on the Context,
 	// second loop iteration should see the new tool.
 	callCount := 0
 	p := &recordingProvider{responseFunc: func(params ConverseParams) *ProviderResponse {
@@ -144,8 +144,9 @@ func TestWithToolFilter_DynamicViaInvocationContext(t *testing.T) {
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		Handler: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			ic := GetInvocationContext(ctx)
-			ic.Set("unlocked", true)
+			// Type-assert to *Context to access the key-value store.
+			c := ctx.(*Context)
+			c.Set("unlocked", true)
 			return "unlocked", nil
 		},
 	}
@@ -161,13 +162,9 @@ func TestWithToolFilter_DynamicViaInvocationContext(t *testing.T) {
 	}
 
 	a, err := New(p, prompt.Text("test"), []tool.Tool{unlockTool, secretTool},
-		WithToolFilter(func(ctx context.Context, t tool.Tool) bool {
+		WithToolFilter(func(c *Context, t tool.Tool) bool {
 			if t.Spec.Name == "secret" {
-				ic := GetInvocationContext(ctx)
-				if ic == nil {
-					return false
-				}
-				v, ok := ic.Get("unlocked")
+				v, ok := c.Get("unlocked")
 				return ok && v.(bool)
 			}
 			return true
@@ -177,7 +174,7 @@ func TestWithToolFilter_DynamicViaInvocationContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "unlock and use secret")
+	result, err := a.Invoke(Background(), "unlock and use secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +202,7 @@ func TestWithToolFilter_Nil_AllToolsAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,13 +226,13 @@ func TestWithToolFilter_FilteredToolReturnsError(t *testing.T) {
 	}
 
 	a, err := New(p, prompt.Text("test"), []tool.Tool{blockedTool},
-		WithToolFilter(func(_ context.Context, _ tool.Tool) bool { return false }),
+		WithToolFilter(func(_ *Context, _ tool.Tool) bool { return false }),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "hello")
+	result, err := a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,11 +260,11 @@ func TestWithToolFilter_MultipleFilters_ANDSemantics(t *testing.T) {
 	}
 
 	// Filter 1: excludes "fails_first"
-	filter1 := func(_ context.Context, t tool.Tool) bool {
+	filter1 := func(_ *Context, t tool.Tool) bool {
 		return t.Spec.Name != "fails_first"
 	}
 	// Filter 2: excludes "fails_second"
-	filter2 := func(_ context.Context, t tool.Tool) bool {
+	filter2 := func(_ *Context, t tool.Tool) bool {
 		return t.Spec.Name != "fails_second"
 	}
 
@@ -278,7 +275,7 @@ func TestWithToolFilter_MultipleFilters_ANDSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,10 +306,10 @@ func TestWithToolFilter_AccumulatesAcrossMultipleCalls(t *testing.T) {
 
 	// Two separate WithToolFilter calls should accumulate.
 	a, err := New(p, prompt.Text("test"), []tool.Tool{t1, t2},
-		WithToolFilter(func(_ context.Context, t tool.Tool) bool {
+		WithToolFilter(func(_ *Context, t tool.Tool) bool {
 			return t.Spec.Name != "a"
 		}),
-		WithToolFilter(func(_ context.Context, t tool.Tool) bool {
+		WithToolFilter(func(_ *Context, t tool.Tool) bool {
 			return t.Spec.Name != "b"
 		}),
 	)
@@ -320,7 +317,7 @@ func TestWithToolFilter_AccumulatesAcrossMultipleCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(context.Background(), "hello")
+	_, err = a.Invoke(Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}

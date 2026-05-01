@@ -56,8 +56,8 @@ a, err := agent.Default(provider, instructions, tools,
 ```go
 a, _ := agent.New(provider, instructions, tools, agent.WithSharedConversation(store))
 
-ctx := agent.WithConversationID(r.Context(), req.ConversationID)
-result, _, err := a.Invoke(ctx, req.Message)
+c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+result, err := a.Invoke(c, req.Message)
 ```
 
 ### Inference Parameters
@@ -78,13 +78,13 @@ a, err := agent.Default(provider, instructions, tools,
 )
 ```
 
-These populate an `InferenceConfig` on the agent. When none are set, the provider uses its own defaults. Per-invocation overrides are supported via `WithInferenceConfig` on the context:
+These populate an `InferenceConfig` on the agent. When none are set, the provider uses its own defaults. Per-invocation overrides are supported via `WithInferenceConfig` on the `*Context`:
 
 ```go
-ctx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+c := agent.Background().WithInferenceConfig(&agent.InferenceConfig{
     Temperature: ptrFloat(0.9),
 })
-result, _, err := a.Invoke(ctx, "Be creative!")
+result, err := a.Invoke(c, "Be creative!")
 ```
 
 ### Retrieval
@@ -107,16 +107,15 @@ result, _, err := a.Invoke(ctx, "Be creative!")
 |---|---|
 | `WithToolFilter(filters...)` | Controls which tools are visible to the LLM per provider call. Multiple filters use AND semantics — a tool must pass all filters. Evaluated before each call in the loop. Accumulates across multiple calls. |
 
-Each filter receives the request context and a tool; return `true` to include it.
+Each filter receives the `*Context` and a tool; return `true` to include it.
 
 ```go
 a, err := agent.New(provider, instructions, tools,
     agent.WithToolFilter(
-        func(ctx context.Context, t tool.Tool) bool { return isAdmin(ctx) || t.Spec.Name != "delete_account" },
-        func(ctx context.Context, t tool.Tool) bool {
-            ic := agent.GetInvocationContext(ctx)
+        func(c *agent.Context, t tool.Tool) bool { return isAdmin(c) || t.Spec.Name != "delete_account" },
+        func(c *agent.Context, t tool.Tool) bool {
             if t.Spec.Name == "submit_order" {
-                v, ok := ic.Get("cart_validated")
+                v, ok := c.Get("cart_validated")
                 return ok && v.(bool)
             }
             return true
@@ -130,26 +129,26 @@ a, err := agent.New(provider, instructions, tools,
 Thinking chunks are delivered through `EventHook.OnThinking`. Only fires when the provider has thinking enabled:
 
 ```go
-ctx = agent.WithEventHook(ctx, myEventHook)
-a.InvokeStream(ctx, message, streamCB) // OnThinking fires during streaming
+c := agent.Background().WithEventHook(myEventHook)
+a.InvokeStream(c, message, streamCB) // OnThinking fires during streaming
 ```
 
 ### Event Hook
 
-`WithEventHook(ctx, h)` attaches an `EventHook` to a specific invocation via context. Designed for real-time UI event delivery — tool call start/end, model start/end, and thinking chunks. Invocation-scoped, so it's naturally concurrent-safe across HTTP handlers.
+`WithEventHook` on the `*Context` attaches an `EventHook` to a specific invocation. Designed for real-time UI event delivery — tool call start/end, model start/end, and thinking chunks. Invocation-scoped, so it's naturally concurrent-safe across HTTP handlers.
 
 ```go
-ctx = agent.WithEventHook(ctx, myHook)
-result, usage, _ := a.Invoke(ctx, message)
+c := agent.Background().WithEventHook(myHook)
+result, err := a.Invoke(c, message)
 ```
 
 | Method | Description |
 |---|---|
-| `OnToolCallStart(ctx, toolName, input)` | Called before a tool handler is invoked |
-| `OnToolCallEnd(ctx, toolName, output, err, duration)` | Called after a tool handler completes |
-| `OnThinking(ctx, chunk)` | Called for each thinking/reasoning chunk |
-| `OnModelStart(ctx)` | Called before the provider call |
-| `OnModelEnd(ctx, stopReason)` | Called after the provider call. `stopReason`: `"end_turn"`, `"tool_use"`, or `"error"` |
+| `OnToolCallStart(c, toolName, input)` | Called before a tool handler is invoked |
+| `OnToolCallEnd(c, toolName, output, err, duration)` | Called after a tool handler completes |
+| `OnThinking(c, chunk)` | Called for each thinking/reasoning chunk |
+| `OnModelStart(c)` | Called before the provider call |
+| `OnModelEnd(c, stopReason)` | Called after the provider call. `stopReason`: `"end_turn"`, `"tool_use"`, or `"error"` |
 
 Embed `agent.BaseEventHook` to only override the methods you need:
 
@@ -158,7 +157,7 @@ type myHook struct {
     agent.BaseEventHook
 }
 
-func (h *myHook) OnThinking(_ context.Context, chunk string) {
+func (h *myHook) OnThinking(_ *agent.Context, chunk string) {
     fmt.Print(chunk)
 }
 ```
@@ -168,7 +167,7 @@ func (h *myHook) OnThinking(_ context.Context, chunk string) {
 ### Invoke
 
 ```go
-func (a *Agent) Invoke(ctx context.Context, userMessage string) (string, error)
+func (a *Agent) Invoke(c *Context, userMessage string) (string, error)
 ```
 
 Runs the agent loop and returns the complete text response. Convenience wrapper over `InvokeStream` that collects all chunks.
@@ -176,7 +175,7 @@ Runs the agent loop and returns the complete text response. Convenience wrapper 
 ### InvokeStream
 
 ```go
-func (a *Agent) InvokeStream(ctx context.Context, userMessage string, cb StreamCallback) error
+func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) error
 ```
 
 Runs the agent loop, streaming the final text response via the callback. The callback receives chunks in real-time unless output guardrails are configured (in which case chunks are buffered).
@@ -187,37 +186,35 @@ For structured output, see [Structured Output](structured-output.md).
 
 ### Token Usage
 
-Cumulative token usage is stored on the `InvocationContext` after each invocation. Create one before calling `Invoke`/`InvokeStream` to access it:
+Cumulative token usage is stored on the `*Context` after each invocation. Read it via `c.Usage()`:
 
 ```go
-ic := agent.NewInvocationContext()
-ctx := agent.WithInvocationContext(ctx, ic)
-result, err := a.Invoke(ctx, "Hello")
-usage := agent.GetInvocationUsage(ic)
+c := agent.Background()
+result, err := a.Invoke(c, "Hello")
+usage := c.Usage()
 fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
 ```
 
-If no `InvocationContext` is attached, one is created internally — usage is still tracked for hooks and conversation strategies, but not accessible to the caller.
-
 ### Per-Invocation Context
 
-These functions return a new context with per-invocation overrides:
+Use chainable `With*` methods on the `*Context` to set per-invocation overrides:
 
-| Function | Description |
+| Method | Description |
 |---|---|
-| `WithConversationID(ctx, id)` | Override the default conversation ID for this call |
-| `WithIdentifier(ctx, id)` | Set the identifier for memory scoping (user, tenant, etc.) |
-| `WithImages(ctx, images)` | Attach images for vision-capable models |
-| `WithDocuments(ctx, docs)` | Attach PDFs, Word docs, spreadsheets for document reasoning |
-| `WithInferenceConfig(ctx, cfg)` | Override inference parameters for this call |
+| `c.WithConversationID(id)` | Override the default conversation ID for this call |
+| `c.WithIdentifier(id)` | Set the identifier for memory scoping (user, tenant, etc.) |
+| `c.WithImages(images)` | Attach images for vision-capable models |
+| `c.WithDocuments(docs)` | Attach PDFs, Word docs, spreadsheets for document reasoning |
+| `c.WithInferenceConfig(cfg)` | Override inference parameters for this call |
+| `c.WithEventHook(hook)` | Attach an event hook for real-time UI delivery |
 
 ```go
 // Attach an image for vision.
 img := agent.ImageBlock{
     Source: agent.ImageSource{Data: imageBytes, MIMEType: "image/jpeg"},
 }
-ctx := agent.WithImages(ctx, []agent.ImageBlock{img})
-result, err := a.Invoke(ctx, "What is in this image?")
+c := agent.Background().WithImages([]agent.ImageBlock{img})
+result, err := a.Invoke(c, "What is in this image?")
 ```
 
 Images and documents can also be passed by URL:
@@ -233,8 +230,8 @@ img := agent.ImageBlock{
 Continue an agent invocation after a human handoff:
 
 ```go
-func (a *Agent) Resume(ctx context.Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) error
-func (a *Agent) ResumeInvoke(ctx context.Context, hr *HandoffRequest, humanResponse string) (string, error)
+func (a *Agent) Resume(c *Context, hr *HandoffRequest, humanResponse string, cb StreamCallback) error
+func (a *Agent) ResumeInvoke(c *Context, hr *HandoffRequest, humanResponse string) (string, error)
 ```
 
 See [Handoffs](handoff.md) for the full workflow.
@@ -261,8 +258,8 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
 1. **Input guardrails** — the user message passes through all configured `InputGuardrail` functions in order. Any error aborts the invocation.
 2. **Conversation load** — if `WithConversation` is configured, conversation history is loaded.
 3. **RAG retrieval** — if `WithRetriever` is configured, relevant documents are retrieved and injected as context before the user message.
-4. **Image injection** — if `WithImages` was called on the context, images are prepended to the first user message.
-5. **Document injection** — if `WithDocuments` was called on the context, documents are prepended before images in the first user message.
+4. **Image injection** — if `WithImages` was called on the `*Context`, images are prepended to the first user message.
+5. **Document injection** — if `WithDocuments` was called on the `*Context`, documents are prepended before images in the first user message.
 6. **Agent loop** (up to `maxIterations`):
    - If a `ToolFilter` is set, it is evaluated to determine which tools are available for this call.
    - The provider is called with the current messages, system prompt, and tool specs.

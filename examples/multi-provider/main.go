@@ -19,7 +19,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
@@ -35,7 +34,7 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	ctx := context.Background()
+	ctx := agent.Background()
 	instructions := prompt.Text("You are a helpful assistant. Be concise.")
 
 	// Bedrock provider with cheapest model

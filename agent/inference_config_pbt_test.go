@@ -62,17 +62,15 @@ func genInferenceConfig(t *rapid.T) *InferenceConfig {
 // Property 1: InferenceConfig Context Round-Trip
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_InferenceConfigContextRoundTrip verifies that for any valid
 // InferenceConfig, attaching it to a context via WithInferenceConfig and then
 // retrieving it via GetInferenceConfig returns an equivalent InferenceConfig.
-//
 func TestProperty_InferenceConfigContextRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cfg := genInferenceConfig(rt)
 
-		ctx := WithInferenceConfig(context.Background(), cfg)
-		got := GetInferenceConfig(ctx)
+		c := Background().WithInferenceConfig(cfg)
+		got := c.InferenceConfig()
 
 		if !reflect.DeepEqual(cfg, got) {
 			rt.Fatalf("round-trip mismatch:\nput: %+v\ngot: %+v", cfg, got)
@@ -84,12 +82,10 @@ func TestProperty_InferenceConfigContextRoundTrip(t *testing.T) {
 // Property 2: Merge Precedence
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_MergePrecedence verifies that for any two InferenceConfig values
 // (agent-level and per-invocation), merging them produces a result where: for
 // each field, if the per-invocation value is non-nil, the result equals the
 // per-invocation value; otherwise the result equals the agent-level value.
-//
 func TestProperty_MergePrecedence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		agentCfg := genInferenceConfig(rt)
@@ -162,11 +158,9 @@ func TestProperty_MergePrecedence(t *testing.T) {
 // Property 3: Float Parameter Validation
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_FloatParameterValidation verifies that for any float64 value,
 // WithTemperature and WithTopP return an error if and only if the value is
 // outside the range [0.0, 1.0].
-//
 func TestProperty_FloatParameterValidation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		v := rapid.Float64Range(-10.0, 10.0).Draw(rt, "value")
@@ -198,12 +192,10 @@ func TestProperty_FloatParameterValidation(t *testing.T) {
 // Property 4: Integer Parameter Validation
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_IntegerParameterValidation verifies that for any integer value,
 // WithTopK returns an error if and only if the value is less than 1. Similarly,
 // validateInferenceConfig rejects an InferenceConfig whose MaxTokens is less
 // than 1.
-//
 func TestProperty_IntegerParameterValidation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		v := rapid.IntRange(-100, 1000).Draw(rt, "value")
@@ -299,12 +291,10 @@ func genInvalidInferenceConfig(t *rapid.T) *InferenceConfig {
 	return cfg
 }
 
-//
 // TestProperty_PerInvocationValidationBlocksProviderCall verifies that for any
 // InferenceConfig containing at least one invalid field, when set as a
 // per-invocation override, the agent returns a validation error without
 // invoking the provider.
-//
 func TestProperty_PerInvocationValidationBlocksProviderCall(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		invalidCfg := genInvalidInferenceConfig(rt)
@@ -315,7 +305,7 @@ func TestProperty_PerInvocationValidationBlocksProviderCall(t *testing.T) {
 			rt.Fatalf("failed to create agent: %v", err)
 		}
 
-		ctx := WithInferenceConfig(context.Background(), invalidCfg)
+		ctx := Background().WithInferenceConfig(invalidCfg)
 		_, invokeErr := a.Invoke(ctx, "hello")
 
 		if invokeErr == nil {

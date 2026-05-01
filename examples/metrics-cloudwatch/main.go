@@ -23,7 +23,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
@@ -38,7 +37,7 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Create the CloudWatch metrics option and shutdown function.
 	withMetrics, shutdown := cloudwatch.WithMetrics(

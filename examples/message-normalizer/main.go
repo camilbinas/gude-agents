@@ -10,7 +10,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -66,7 +65,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, err := a.Invoke(context.Background(), "What is 2 + 2?")
+	result, err := a.Invoke(agent.Background(), "What is 2 + 2?")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -86,7 +85,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result2, err := a2.Invoke(context.Background(), "What is 3 + 3?")
+	result2, err := a2.Invoke(agent.Background(), "What is 3 + 3?")
 	if err != nil {
 		log.Fatal(err)
 	}

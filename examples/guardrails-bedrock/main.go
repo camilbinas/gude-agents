@@ -20,7 +20,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -44,7 +43,7 @@ func main() {
 		guardrailVersion = "DRAFT"
 	}
 
-	ctx := context.Background()
+	ctx := agent.Background()
 
 	// Create a provider with the guardrail enabled.
 	// The guardrail is applied to every Converse/ConverseStream call.

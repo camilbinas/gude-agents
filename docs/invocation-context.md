@@ -1,133 +1,181 @@
-# InvocationContext
+# Agent Context
 
-`InvocationContext` is a concurrency-safe key-value store scoped to a single agent invocation. It lets you share state between middleware and tool handlers without global variables or custom context plumbing.
+`agent.Context` is the primary type for carrying invocation-scoped state through the agent pipeline. It embeds `context.Context` for full stdlib compatibility while providing direct method access to invocation state — key-value store, token usage, conversation ID, images, documents, inference config, event hook, and identifier.
 
 ## How It Works
 
-Every time you call `InvokeStream` (or `Invoke`, which wraps it), the agent creates a fresh `InvocationContext` and attaches it to the Go `context.Context` that flows through middleware and tool handlers. This means:
+When you call `Invoke` or `InvokeStream`, you pass a `*Context` directly. This context flows through middleware, guardrails, tool filters, and event hooks. Each invocation should get its own `*Context` — no cross-request leakage.
 
-- Each invocation gets its own isolated store — no cross-request leakage
-- Middleware can write values that tool handlers read (and vice versa)
-- Concurrent tool executions (when `WithParallelToolExecution` is enabled) can safely read and write to the same `InvocationContext`
+- Middleware can write values that tool handlers read (and vice versa) via `Set`/`Get`
+- Concurrent tool executions (when `WithParallelToolExecution` is enabled) can safely read and write to the same `*Context`
+- The `*Context` satisfies `context.Context`, so it works with database drivers, AWS SDKs, gRPC, and HTTP handlers
 
-## API Reference
+## Constructors
 
-### InvocationContext
+### Background
 
 ```go
-type InvocationContext struct {
-    // unexported: sync.RWMutex + map[any]any
+func Background() *Context
+```
+
+Creates a new `*Context` wrapping `context.Background()`. Use this for simple scripts and CLI tools.
+
+```go
+c := agent.Background()
+result, err := a.Invoke(c, "Hello")
+```
+
+### NewContext
+
+```go
+func NewContext(parent context.Context) *Context
+```
+
+Creates a new `*Context` wrapping the given parent. Use this when you have an existing `context.Context` (e.g. from an HTTP request) and want to carry its deadline, cancellation, and values through the agent invocation.
+
+```go
+c := agent.NewContext(r.Context())
+result, err := a.Invoke(c, req.Message)
+```
+
+Panics if `parent` is nil.
+
+### FromContext
+
+```go
+func FromContext(ctx context.Context) *Context
+```
+
+Safely extracts a `*Context` from a `context.Context`. Returns nil if `ctx` is not a `*Context`. Use this in tool handlers that need invocation state without risking a panic from a direct type assertion.
+
+```go
+func myToolHandler(ctx context.Context, input MyInput) (string, error) {
+    if c := agent.FromContext(ctx); c != nil {
+        c.Set("last_call", time.Now())
+    }
+    return "done", nil
 }
 ```
 
-#### NewInvocationContext
+## Key-Value Store
+
+The `*Context` includes a concurrency-safe key-value store scoped to the invocation. Use it to share state between middleware and tool handlers.
+
+### Set
 
 ```go
-func NewInvocationContext() *InvocationContext
+func (c *Context) Set(key, value any)
 ```
 
-Creates a new empty `InvocationContext`. You typically don't need to call this yourself — the agent creates one per invocation. It's useful in tests or if you're building custom invocation flows.
+Stores a value under the given key. Overwrites any existing value. Safe for concurrent use.
 
-#### Set
+### Get
 
 ```go
-func (ic *InvocationContext) Set(key, value any)
+func (c *Context) Get(key any) (any, bool)
 ```
 
-Stores a value under the given key. Overwrites any existing value for that key. Safe for concurrent use — guarded by a write lock.
+Retrieves a value by key. Returns `(value, true)` if found, or `(nil, false)` if the key doesn't exist. Safe for concurrent use.
 
-#### Get
+## Token Usage
+
+### Usage
 
 ```go
-func (ic *InvocationContext) Get(key any) (any, bool)
+func (c *Context) Usage() TokenUsage
 ```
 
-Retrieves a value by key. Returns `(value, true)` if found, or `(nil, false)` if the key doesn't exist. Safe for concurrent use — guarded by a read lock.
-
-### Context Helpers
-
-#### WithInvocationContext
+Returns the cumulative token usage after an invocation completes. Call this after `Invoke`/`InvokeStream` returns:
 
 ```go
-func WithInvocationContext(ctx context.Context, ic *InvocationContext) context.Context
+c := agent.Background()
+result, err := a.Invoke(c, "Hello")
+usage := c.Usage()
+fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
 ```
 
-Attaches an `InvocationContext` to a Go `context.Context`. The agent calls this internally at the start of each `InvokeStream`.
+## Chainable Mutators
 
-#### GetInvocationContext
+All `With*` methods mutate the `*Context` and return the same pointer for chaining:
 
 ```go
-func GetInvocationContext(ctx context.Context) *InvocationContext
+c := agent.Background().
+    WithConversationID("conv-123").
+    WithEventHook(myHook).
+    WithInferenceConfig(&agent.InferenceConfig{Temperature: &temp})
 ```
 
-Retrieves the `InvocationContext` from a Go `context.Context`. Returns `nil` if none is attached.
-
-### Inference Config Context Helpers
-
-The `agent` package also provides context helpers for per-invocation inference parameter overrides. These follow the same pattern as `InvocationContext` but carry an `InferenceConfig` instead.
-
-#### WithInferenceConfig
+### WithConversationID
 
 ```go
-func WithInferenceConfig(ctx context.Context, cfg *InferenceConfig) context.Context
+func (c *Context) WithConversationID(id string) *Context
 ```
 
-Attaches an `InferenceConfig` to a Go `context.Context` for per-invocation override. When the agent runs, it merges per-invocation values over agent-level values field by field — non-nil per-invocation fields take precedence, nil fields fall back to the agent-level value.
+Sets the conversation ID for this invocation. Used with `WithSharedConversation` to route to the correct conversation in multi-tenant setups.
+
+### WithImages
 
 ```go
-ctx := agent.WithInferenceConfig(context.Background(), &agent.InferenceConfig{
-    Temperature: &temp, // override just temperature for this call
+func (c *Context) WithImages(imgs []ImageBlock) *Context
+```
+
+Attaches images for vision-capable models.
+
+### WithDocuments
+
+```go
+func (c *Context) WithDocuments(docs []DocumentBlock) *Context
+```
+
+Attaches documents (PDFs, Word docs, spreadsheets) for document reasoning.
+
+### WithInferenceConfig
+
+```go
+func (c *Context) WithInferenceConfig(cfg *InferenceConfig) *Context
+```
+
+Overrides inference parameters for this invocation. Non-nil fields take precedence over agent-level values.
+
+```go
+temp := 0.9
+c := agent.Background().WithInferenceConfig(&agent.InferenceConfig{
+    Temperature: &temp,
 })
-result, _, err := a.Invoke(ctx, "Be creative!")
+result, err := a.Invoke(c, "Be creative!")
 ```
 
-#### GetInferenceConfig
+### WithEventHook
 
 ```go
-func GetInferenceConfig(ctx context.Context) *InferenceConfig
+func (c *Context) WithEventHook(h EventHook) *Context
 ```
 
-Retrieves the per-invocation `InferenceConfig` from a Go `context.Context`. Returns `nil` if none is attached.
+Attaches an event hook for real-time UI event delivery (tool call start/end, model start/end, thinking chunks).
 
-### Token Usage
-
-#### GetInvocationUsage
+### WithIdentifier
 
 ```go
-func GetInvocationUsage(ic *InvocationContext) TokenUsage
+func (c *Context) WithIdentifier(id string) *Context
 ```
 
-Retrieves the cumulative `TokenUsage` from an `InvocationContext` after an invocation completes. Returns zero value if no usage has been recorded. This is the primary way to access token usage from caller code:
+Sets the scoping identity for memory operations (user ID, tenant ID, etc.).
 
-```go
-ic := agent.NewInvocationContext()
-ctx := agent.WithInvocationContext(ctx, ic)
-result, err := a.Invoke(ctx, "Hello")
-usage := agent.GetInvocationUsage(ic)
-```
+## Accessors
 
-#### WithTokenUsage / GetTokenUsage (internal)
-
-The agent loop also attaches cumulative token usage to the Go `context.Context` before calling `Conversation.Save`. This lets conversation strategies (like `TokenSummary`) use actual provider-reported token counts to decide when to trigger compaction.
-
-```go
-func WithTokenUsage(ctx context.Context, usage TokenUsage) context.Context
-func GetTokenUsage(ctx context.Context) (TokenUsage, bool)
-```
-
-These are internal plumbing — prefer `GetInvocationUsage` for caller-facing code.
-
-## Per-Invocation Scoping
-
-Each call to `Invoke` or `InvokeStream` creates a fresh `InvocationContext` and attaches it to the Go context that flows through middleware and tool handlers. This means:
-
-- Each invocation gets its own isolated store — no cross-request leakage
-- Middleware can write values that tool handlers read (and vice versa)
-- Concurrent tool executions (when `WithParallelToolExecution` is enabled) can safely read and write to the same `InvocationContext`
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ConversationID()` | `string` | Conversation ID for this invocation |
+| `Images()` | `[]ImageBlock` | Attached images |
+| `Documents()` | `[]DocumentBlock` | Attached documents |
+| `InferenceConfig()` | `*InferenceConfig` | Per-invocation inference config |
+| `EventHook()` | `EventHook` | Per-invocation event hook |
+| `Identifier()` | `string` | Scoping identity for memory |
+| `Usage()` | `TokenUsage` | Cumulative token usage (populated after invocation) |
 
 ## Code Example
 
-This example shows a timing middleware that records when each tool call starts, and a tool handler that reads that timestamp to compute elapsed time:
+This example shows a timing middleware that records when each tool call starts, and a tool handler that reads that timestamp:
 
 ```go
 package main
@@ -145,16 +193,13 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// timingMiddleware stores the call start time in InvocationContext
+// timingMiddleware stores the call start time in the Context
 // so tool handlers can access it.
 func timingMiddleware(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-	return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
-		ic := agent.GetInvocationContext(ctx)
-		if ic != nil {
-			ic.Set("call_start", time.Now())
-			ic.Set("tool_name", toolName)
-		}
-		return next(ctx, toolName, input)
+	return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+		c.Set("call_start", time.Now())
+		c.Set("tool_name", toolName)
+		return next(c, toolName, input)
 	}
 }
 
@@ -168,19 +213,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Tool handler reads state set by middleware.
+	// Tool handler reads state set by middleware via FromContext.
 	lookup := tool.New("lookup_user", "Looks up a user by ID", func(ctx context.Context, input LookupInput) (string, error) {
-		ic := agent.GetInvocationContext(ctx)
-		if ic != nil {
-			if start, ok := ic.Get("call_start"); ok {
+		if c := agent.FromContext(ctx); c != nil {
+			if start, ok := c.Get("call_start"); ok {
 				elapsed := time.Since(start.(time.Time))
 				log.Printf("tool handler reached %s after %s", input.UserID, elapsed)
 			}
-
-			// Store a result for other middleware or tools to read later.
-			ic.Set("last_lookup", input.UserID)
+			c.Set("last_lookup", input.UserID)
 		}
-
 		return fmt.Sprintf("User %s: Alice (active)", input.UserID), nil
 	})
 
@@ -194,24 +235,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, _, err := a.Invoke(context.Background(), "Look up user u-123")
+	c := agent.Background()
+	result, err := a.Invoke(c, "Look up user u-123")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(result)
+	fmt.Printf("Tokens used: %d\n", c.Usage().Total())
 }
 ```
 
 The flow:
 
-1. `Invoke` creates a new `InvocationContext` and attaches it to `ctx`
+1. `Invoke` receives the `*Context` directly
 2. The LLM decides to call `lookup_user`
-3. `timingMiddleware` runs first — stores `call_start` and `tool_name` in the `InvocationContext`
-4. The `lookup_user` handler reads `call_start` to log elapsed time, and writes `last_lookup` for downstream use
-5. If there were additional middleware or tools, they could read `last_lookup` from the same `InvocationContext`
+3. `timingMiddleware` runs first — stores `call_start` and `tool_name` in the `*Context`
+4. The `lookup_user` handler uses `agent.FromContext(ctx)` to safely access the `*Context` and read `call_start`
+5. After `Invoke` returns, `c.Usage()` contains the cumulative token usage
 
 ## See Also
 
 - [Middleware](middleware.md) — defining middleware that wraps tool execution
-- [Agent API Reference](agent-api.md) — `WithMiddleware` and `WithParallelToolExecution` options
-- [Tools](tools.md) — defining tool handlers that receive the context
+- [Agent API Reference](agent-api.md) — `Invoke`, `InvokeStream`, and configuration options
+- [Tools](tools.md) — defining tool handlers and the `FromContext` pattern

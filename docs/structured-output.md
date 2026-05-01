@@ -7,11 +7,11 @@ Under the hood it uses tool forcing: it generates a JSON Schema from `T`, regist
 ## Function Signature
 
 ```go
-func InvokeStructured[T any](ctx context.Context, a *Agent, userMessage string) (T, error)
+func InvokeStructured[T any](c *Context, a *Agent, userMessage string) (T, error)
 ```
 
 - `T` — any Go struct type. The function generates a JSON Schema from `T` and uses it to constrain the LLM's response.
-- `ctx` — standard Go context for cancellation and deadlines.
+- `c` — an `*agent.Context` carrying cancellation, deadlines, and per-invocation state.
 - `a` — an existing `*Agent` (created via `agent.New`, `agent.Default`, etc.). The agent's provider and system instructions are used for the LLM call.
 - `userMessage` — the prompt sent to the LLM.
 
@@ -19,7 +19,7 @@ Returns:
 - A value of type `T` populated from the LLM's JSON response.
 - An error if the provider call fails, the LLM doesn't return the expected tool call, or JSON deserialization fails.
 
-Token usage is available via `GetInvocationUsage` on the `InvocationContext` (same pattern as `Invoke`).
+Token usage is available via `c.Usage()` after the call returns.
 
 ## How It Works
 
@@ -48,7 +48,6 @@ The function makes a single provider call — it does not enter the agent loop. 
 package main
 
 import (
-    "context"
     "fmt"
     "log"
 
@@ -83,9 +82,8 @@ func main() {
         log.Fatal(err)
     }
 
-    review, usage, err := agent.InvokeStructured[MovieReview](
-        context.Background(), a, "Review the movie Inception (2010).",
-    )
+    c := agent.Background()
+    review, err := agent.InvokeStructured[MovieReview](c, a, "Review the movie Inception (2010).")
     if err != nil {
         log.Fatal(err)
     }
@@ -95,7 +93,7 @@ func main() {
     fmt.Printf("Sentiment: %s\n", review.Sentiment)
     fmt.Printf("Summary:   %s\n", review.Summary)
     fmt.Printf("Themes:    %v\n", review.Themes)
-    fmt.Printf("Tokens:    %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
+    fmt.Printf("Tokens:    %d in, %d out\n", c.Usage().InputTokens, c.Usage().OutputTokens)
 }
 ```
 
@@ -118,5 +116,5 @@ The generated JSON Schema for `MovieReview` looks like:
 ## See Also
 
 - [Tool System](tools.md) — `tool.GenerateSchema[T]` and struct tag reference
-- [Agent API Reference](agent-api.md) — `agent.New`, `agent.Default`, and `GetInvocationUsage`
+- [Agent API Reference](agent-api.md) — `agent.New`, `agent.Default`, and `c.Usage()`
 - [Providers](providers.md) — configuring the LLM provider used by `InvokeStructured`
