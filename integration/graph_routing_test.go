@@ -17,6 +17,7 @@ import (
 //   go test -v -timeout=180s -run TestIntegration_Graph ./...
 
 func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
+	t.Parallel()
 	// Pure logic graph: route based on state value, no LLM needed.
 	g, err := graph.NewGraph()
 	if err != nil {
@@ -88,6 +89,7 @@ func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
 }
 
 func TestIntegration_Graph_ConditionalEndSignal(t *testing.T) {
+	t.Parallel()
 	g, err := graph.NewGraph()
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +148,7 @@ func TestIntegration_Graph_ConditionalEndSignal(t *testing.T) {
 }
 
 func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
+	t.Parallel()
 	g, err := graph.NewGraph()
 	if err != nil {
 		t.Fatal(err)
@@ -216,6 +219,7 @@ func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
 }
 
 func TestIntegration_Graph_AgentNode(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	a, err := agent.New(p,
@@ -274,6 +278,7 @@ func TestIntegration_Graph_AgentNode(t *testing.T) {
 }
 
 func TestIntegration_Graph_TypedGraph(t *testing.T) {
+	t.Parallel()
 	type PipelineState struct {
 		graph.GraphState
 		Input  string `json:"input"`
@@ -324,6 +329,7 @@ func TestIntegration_Graph_TypedGraph(t *testing.T) {
 }
 
 func TestIntegration_Graph_LLMRouter(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	routerAgent, err := agent.New(p,
@@ -388,6 +394,7 @@ func TestIntegration_Graph_LLMRouter(t *testing.T) {
 }
 
 func TestIntegration_Graph_MaxIterationsExceeded(t *testing.T) {
+	t.Parallel()
 	g, err := graph.NewGraph(graph.WithMaxIterations(3))
 	if err != nil {
 		t.Fatal(err)

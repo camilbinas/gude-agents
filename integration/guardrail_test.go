@@ -18,10 +18,11 @@ import (
 //   go test -v -timeout=120s -run TestIntegration_Guardrail ./...
 
 func TestIntegration_Guardrail_InputTransform(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Input guardrail that prepends a prefix to every message.
-	prefixGuardrail := func(_ context.Context, msg string) (string, error) {
+	prefixGuardrail := func(_ *agent.Context, msg string) (string, error) {
 		return "IMPORTANT CONTEXT: The user is a premium customer.\n\n" + msg, nil
 	}
 
@@ -37,7 +38,8 @@ func TestIntegration_Guardrail_InputTransform(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "Hello, what services do I have access to?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "Hello, what services do I have access to?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -51,10 +53,11 @@ func TestIntegration_Guardrail_InputTransform(t *testing.T) {
 }
 
 func TestIntegration_Guardrail_InputBlock(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Input guardrail that blocks messages containing "password".
-	blockGuardrail := func(_ context.Context, msg string) (string, error) {
+	blockGuardrail := func(_ *agent.Context, msg string) (string, error) {
 		if strings.Contains(strings.ToLower(msg), "password") {
 			return "", errors.New("messages containing sensitive information are not allowed")
 		}
@@ -73,8 +76,10 @@ func TestIntegration_Guardrail_InputBlock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	c := agent.NewContext(ctx)
+
 	// Should be blocked — never reaches the LLM.
-	_, err = a.Invoke(ctx, "My password is hunter2")
+	_, err = a.Invoke(c, "My password is hunter2")
 	if err == nil {
 		t.Fatal("expected guardrail error, got nil")
 	}
@@ -89,7 +94,7 @@ func TestIntegration_Guardrail_InputBlock(t *testing.T) {
 	t.Logf("Blocked as expected: %v", err)
 
 	// Should pass — no sensitive content.
-	result, err := a.Invoke(ctx, "What is the capital of France?")
+	result, err := a.Invoke(c, "What is the capital of France?")
 	if err != nil {
 		t.Fatalf("expected clean message to pass, got: %v", err)
 	}
@@ -99,10 +104,11 @@ func TestIntegration_Guardrail_InputBlock(t *testing.T) {
 }
 
 func TestIntegration_Guardrail_OutputTransform(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Output guardrail that appends a disclaimer.
-	disclaimerGuardrail := func(_ context.Context, response string) (string, error) {
+	disclaimerGuardrail := func(_ *agent.Context, response string) (string, error) {
 		return response + "\n\n---\nDisclaimer: This is not financial advice.", nil
 	}
 
@@ -118,7 +124,8 @@ func TestIntegration_Guardrail_OutputTransform(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "Should I invest in index funds?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "Should I invest in index funds?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -131,10 +138,11 @@ func TestIntegration_Guardrail_OutputTransform(t *testing.T) {
 }
 
 func TestIntegration_Guardrail_OutputBlock(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Output guardrail that blocks responses mentioning specific topics.
-	topicBlocker := func(_ context.Context, response string) (string, error) {
+	topicBlocker := func(_ *agent.Context, response string) (string, error) {
 		blocked := []string{"nuclear", "weapon", "explosive"}
 		lower := strings.ToLower(response)
 		for _, word := range blocked {
@@ -157,8 +165,10 @@ func TestIntegration_Guardrail_OutputBlock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	c := agent.NewContext(ctx)
+
 	// Safe question — should pass.
-	result, err := a.Invoke(ctx, "What is the capital of Japan?")
+	result, err := a.Invoke(c, "What is the capital of Japan?")
 	if err != nil {
 		t.Fatalf("safe question failed: %v", err)
 	}
@@ -170,22 +180,23 @@ func TestIntegration_Guardrail_OutputBlock(t *testing.T) {
 }
 
 func TestIntegration_Guardrail_ChainedGuardrails(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	callOrder := make([]string, 0)
 
 	// Two input guardrails run in order.
-	g1 := func(_ context.Context, msg string) (string, error) {
+	g1 := func(_ *agent.Context, msg string) (string, error) {
 		callOrder = append(callOrder, "input-1")
 		return strings.ToUpper(msg), nil
 	}
-	g2 := func(_ context.Context, msg string) (string, error) {
+	g2 := func(_ *agent.Context, msg string) (string, error) {
 		callOrder = append(callOrder, "input-2")
 		return msg + " [verified]", nil
 	}
 
 	// Output guardrail.
-	g3 := func(_ context.Context, resp string) (string, error) {
+	g3 := func(_ *agent.Context, resp string) (string, error) {
 		callOrder = append(callOrder, "output-1")
 		return resp + " [reviewed]", nil
 	}
@@ -203,7 +214,8 @@ func TestIntegration_Guardrail_ChainedGuardrails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "hello")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "hello")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}

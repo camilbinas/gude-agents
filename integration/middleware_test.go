@@ -20,17 +20,18 @@ import (
 //   go test -v -timeout=120s -run TestIntegration_Middleware ./...
 
 func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	var mu sync.Mutex
 	var order []string
 
 	mw1 := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
 			mu.Lock()
 			order = append(order, "mw1-before")
 			mu.Unlock()
-			result, err := next(ctx, toolName, input)
+			result, err := next(c, toolName, input)
 			mu.Lock()
 			order = append(order, "mw1-after")
 			mu.Unlock()
@@ -39,11 +40,11 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 	}
 
 	mw2 := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
 			mu.Lock()
 			order = append(order, "mw2-before")
 			mu.Unlock()
-			result, err := next(ctx, toolName, input)
+			result, err := next(c, toolName, input)
 			mu.Lock()
 			order = append(order, "mw2-after")
 			mu.Unlock()
@@ -70,7 +71,8 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What is 7 times 6?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -101,12 +103,13 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 }
 
 func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Middleware that appends a tag to every tool result.
 	tagger := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
-			result, err := next(ctx, toolName, input)
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+			result, err := next(c, toolName, input)
 			if err != nil {
 				return result, err
 			}
@@ -133,7 +136,8 @@ func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What's the weather in Paris?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What's the weather in Paris?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -148,17 +152,18 @@ func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
 }
 
 func TestIntegration_Middleware_LogsToolCalls(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	var mu sync.Mutex
 	var logged []string
 
 	logger := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(ctx context.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
 			mu.Lock()
 			logged = append(logged, fmt.Sprintf("tool=%s input=%s", toolName, string(input)))
 			mu.Unlock()
-			return next(ctx, toolName, input)
+			return next(c, toolName, input)
 		}
 	}
 
@@ -181,7 +186,8 @@ func TestIntegration_Middleware_LogsToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	_, err = a.Invoke(ctx, "What is 7 times 6?")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}

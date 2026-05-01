@@ -83,6 +83,7 @@ func gatherFamilyMap(reg *prom.Registry, t *testing.T) map[string]*dto.MetricFam
 // TestIntegration_Metrics_AgentInvocation verifies that Prometheus agent-level
 // metrics are recorded during a real LLM invocation.
 func TestIntegration_Metrics_AgentInvocation(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	reg := prom.NewRegistry()
@@ -96,7 +97,8 @@ func TestIntegration_Metrics_AgentInvocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What is 2+2? Answer with just the number.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is 2+2? Answer with just the number.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -128,6 +130,7 @@ func TestIntegration_Metrics_AgentInvocation(t *testing.T) {
 // TestIntegration_Metrics_SwarmWithHandoff verifies that Prometheus swarm metrics
 // are recorded during a real swarm invocation with handoff.
 func TestIntegration_Metrics_SwarmWithHandoff(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	reg := prom.NewRegistry()
@@ -163,7 +166,7 @@ func TestIntegration_Metrics_SwarmWithHandoff(t *testing.T) {
 		{Name: "billing", Description: "Handles refunds, invoices, and payments", Agent: billing},
 	},
 		swarm.WithMaxHandoffs(3),
-		
+
 		prometheus.WithSwarmMetrics(prometheus.WithRegisterer(reg)),
 	)
 	if err != nil {
@@ -202,6 +205,7 @@ func TestIntegration_Metrics_SwarmWithHandoff(t *testing.T) {
 // TestIntegration_Metrics_GraphPipeline verifies that Prometheus graph metrics
 // are recorded during a simple graph execution.
 func TestIntegration_Metrics_GraphPipeline(t *testing.T) {
+	t.Parallel()
 	reg := prom.NewRegistry()
 
 	g, err := graph.NewGraph(

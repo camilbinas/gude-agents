@@ -19,6 +19,7 @@ import (
 //   go test -v -timeout=180s -run TestIntegration_Handoff ./...
 
 func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type LookupInput struct {
@@ -47,17 +48,16 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 	defer cancel()
 
 	// Step 1: Agent should look up the order, then request human approval.
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
+	c := agent.NewContext(ctx)
 
-	err = a.InvokeStream(ctx, "I need a refund for order #5678", nil)
+	err = a.InvokeStream(c, "I need a refund for order #5678", nil)
 	if !errors.Is(err, agent.ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got: %v", err)
 	}
 
-	hr, ok := agent.GetHandoffRequest(ic)
+	hr, ok := agent.GetHandoffRequest(c)
 	if !ok {
-		t.Fatal("expected HandoffRequest in InvocationContext")
+		t.Fatal("expected HandoffRequest in Context")
 	}
 
 	t.Logf("Handoff reason: %s", hr.Reason)
@@ -75,7 +75,7 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 	}
 
 	// Step 2: Resume with manager approval.
-	result, err := a.ResumeInvoke(ctx, hr, "Approved. Process the refund.")
+	result, err := a.ResumeInvoke(c, hr, "Approved. Process the refund.")
 	if err != nil {
 		t.Fatalf("Resume error: %v", err)
 	}
@@ -89,6 +89,7 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 }
 
 func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	store := conversation.NewInMemory()
 
@@ -107,16 +108,14 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 	defer cancel()
 
 	convID := "handoff-conv-42"
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithConversationID(ctx, convID)
-	ctx = agent.WithInvocationContext(ctx, ic)
+	c := agent.NewContext(ctx).WithConversationID(convID)
 
-	err = a.InvokeStream(ctx, "I want to delete my account", nil)
+	err = a.InvokeStream(c, "I want to delete my account", nil)
 	if !errors.Is(err, agent.ErrHandoffRequested) {
 		t.Fatalf("expected ErrHandoffRequested, got: %v", err)
 	}
 
-	hr, _ := agent.GetHandoffRequest(ic)
+	hr, _ := agent.GetHandoffRequest(c)
 
 	// Verify the handoff captured the correct conversation ID.
 	if hr.ConversationID != convID {
@@ -131,7 +130,8 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 	t.Logf("Messages saved on handoff: %d", len(saved))
 
 	// Resume — should save the completed conversation to the same key.
-	result, err := a.ResumeInvoke(context.Background(), hr, "Supervisor approved the deletion.")
+	resumeCtx := agent.NewContext(context.Background()).WithConversationID(convID)
+	result, err := a.ResumeInvoke(resumeCtx, hr, "Supervisor approved the deletion.")
 	if err != nil {
 		t.Fatalf("Resume error: %v", err)
 	}
@@ -146,6 +146,7 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 }
 
 func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Give the agent a tool it CAN use, plus the handoff tool.
@@ -180,7 +181,8 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 	defer cancel()
 
 	// Normal question — should NOT trigger handoff.
-	result, err := a.Invoke(ctx, "What are your business hours?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What are your business hours?")
 	if errors.Is(err, agent.ErrHandoffRequested) {
 		t.Error("did not expect handoff for a simple FAQ question")
 	}
@@ -194,14 +196,13 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 	}
 
 	// Complex question — SHOULD trigger handoff.
-	ic := agent.NewInvocationContext()
-	ctx2 := agent.WithInvocationContext(ctx, ic)
+	c2 := agent.NewContext(ctx)
 
-	err = a.InvokeStream(ctx2, "I want to file a formal complaint about being overcharged $500", nil)
+	err = a.InvokeStream(c2, "I want to file a formal complaint about being overcharged $500", nil)
 	if !errors.Is(err, agent.ErrHandoffRequested) {
 		t.Errorf("expected handoff for a complaint, got: %v", err)
 	} else {
-		hr, _ := agent.GetHandoffRequest(ic)
+		hr, _ := agent.GetHandoffRequest(c2)
 		t.Logf("Handoff triggered — reason: %s, question: %s", hr.Reason, hr.Question)
 	}
 }

@@ -68,6 +68,7 @@ func newTestEmbedder(t *testing.T) agent.Embedder {
 // ---------------------------------------------------------------------------
 
 func TestIntegration_RAG_BedrockEmbedder(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EMBEDDER") != "" && os.Getenv("EMBEDDER") != "bedrock" {
 		t.Skip("skipping bedrock embedder test (EMBEDDER != bedrock)")
 	}
@@ -108,6 +109,7 @@ func TestIntegration_RAG_BedrockEmbedder(t *testing.T) {
 }
 
 func TestIntegration_RAG_OpenAIEmbedder(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EMBEDDER") != "openai" {
 		t.Skip("skipping openai embedder test (set EMBEDDER=openai)")
 	}
@@ -134,6 +136,7 @@ func TestIntegration_RAG_OpenAIEmbedder(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIntegration_RAG_SemanticSimilarity(t *testing.T) {
+	t.Parallel()
 	embedder := newTestEmbedder(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -184,6 +187,7 @@ func cosine(a, b []float64) float64 {
 // ---------------------------------------------------------------------------
 
 func TestIntegration_RAG_IngestAndRetrieve(t *testing.T) {
+	t.Parallel()
 	embedder := newTestEmbedder(t)
 	store := rag.NewMemoryStore()
 
@@ -240,6 +244,7 @@ func TestIntegration_RAG_IngestAndRetrieve(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIntegration_RAG_AgentWithRetriever(t *testing.T) {
+	t.Parallel()
 	embedder := newTestEmbedder(t)
 	store := rag.NewMemoryStore()
 	provider := newTestProvider(t)
@@ -273,7 +278,8 @@ func TestIntegration_RAG_AgentWithRetriever(t *testing.T) {
 		t.Fatalf("agent creation error: %v", err)
 	}
 
-	result, err := a.Invoke(ctx, "What is Project Aurora?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is Project Aurora?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -291,6 +297,7 @@ func TestIntegration_RAG_AgentWithRetriever(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIntegration_RAG_RetrieverTool(t *testing.T) {
+	t.Parallel()
 	embedder := newTestEmbedder(t)
 	store := rag.NewMemoryStore()
 	provider := newTestProvider(t)
@@ -323,7 +330,8 @@ func TestIntegration_RAG_RetrieverTool(t *testing.T) {
 		t.Fatalf("agent creation error: %v", err)
 	}
 
-	result, err := a.Invoke(ctx, "When is lunch served?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "When is lunch served?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -348,6 +356,7 @@ func truncate(s string, n int) string {
 // ---------------------------------------------------------------------------
 
 func TestIntegration_RAG_CohereEmbedEnglishV3(t *testing.T) {
+	t.Parallel()
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
 		region = "eu-central-1"
@@ -394,6 +403,7 @@ func TestIntegration_RAG_CohereEmbedEnglishV3(t *testing.T) {
 }
 
 func TestIntegration_RAG_CohereEmbedMultilingualV3(t *testing.T) {
+	t.Parallel()
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
 		region = "eu-central-1"
@@ -442,6 +452,7 @@ func TestIntegration_RAG_CohereEmbedMultilingualV3(t *testing.T) {
 }
 
 func TestIntegration_RAG_CohereEmbedV4(t *testing.T) {
+	t.Parallel()
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
 		region = "eu-central-1"

@@ -45,6 +45,7 @@ func (p *failNProvider) ConverseStream(ctx context.Context, params agent.Convers
 }
 
 func TestIntegration_Resilience_RetryRecovers(t *testing.T) {
+	t.Parallel()
 	real := newTestProvider(t)
 
 	// Fail the first 2 calls, succeed on the 3rd.
@@ -62,7 +63,8 @@ func TestIntegration_Resilience_RetryRecovers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What is 2+2? Reply with just the number.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is 2+2? Reply with just the number.")
 	if err != nil {
 		t.Fatalf("expected retry to recover, got error: %v", err)
 	}
@@ -74,6 +76,7 @@ func TestIntegration_Resilience_RetryRecovers(t *testing.T) {
 }
 
 func TestIntegration_Resilience_RetryExhausted(t *testing.T) {
+	t.Parallel()
 	real := newTestProvider(t)
 
 	// Fail more times than retries allow.
@@ -91,7 +94,8 @@ func TestIntegration_Resilience_RetryExhausted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = a.Invoke(ctx, "Hello")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "Hello")
 	if err == nil {
 		t.Fatal("expected error after retries exhausted, got nil")
 	}
@@ -100,6 +104,7 @@ func TestIntegration_Resilience_RetryExhausted(t *testing.T) {
 }
 
 func TestIntegration_Resilience_TimeoutEnforced(t *testing.T) {
+	t.Parallel()
 	real := newTestProvider(t)
 
 	// Use an absurdly short timeout that will expire before the provider responds.
@@ -115,7 +120,8 @@ func TestIntegration_Resilience_TimeoutEnforced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = a.Invoke(ctx, "Write a 1000 word essay.")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "Write a 1000 word essay.")
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -124,6 +130,7 @@ func TestIntegration_Resilience_TimeoutEnforced(t *testing.T) {
 }
 
 func TestIntegration_Resilience_FallbackProvider(t *testing.T) {
+	t.Parallel()
 	real := newTestProvider(t)
 
 	// Primary always fails, fallback is the real provider.
@@ -141,7 +148,8 @@ func TestIntegration_Resilience_FallbackProvider(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is the capital of France? Reply with just the city name.")
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got error: %v", err)
 	}
@@ -153,6 +161,7 @@ func TestIntegration_Resilience_FallbackProvider(t *testing.T) {
 }
 
 func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
+	t.Parallel()
 	real := newTestProvider(t)
 
 	fail1 := newFailNProvider(real, 1000)
@@ -170,7 +179,8 @@ func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = a.Invoke(ctx, "Hello")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "Hello")
 	if err == nil {
 		t.Fatal("expected error when all fallback providers fail, got nil")
 	}
@@ -182,6 +192,7 @@ func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
 }
 
 func TestIntegration_Resilience_RetryWithFallback(t *testing.T) {
+	t.Parallel()
 	real := newTestProvider(t)
 
 	// Primary fails first 2 calls, fallback is the real provider.
@@ -201,7 +212,8 @@ func TestIntegration_Resilience_RetryWithFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "Say hello in one word.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "Say hello in one word.")
 	if err != nil {
 		t.Fatalf("expected fallback to handle failure, got: %v", err)
 	}

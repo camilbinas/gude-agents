@@ -25,6 +25,7 @@ import (
 //   AWS_REGION      - AWS region (default: eu-central-1)
 
 func TestIntegration_SimpleTextResponse(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
 	if err != nil {
@@ -34,7 +35,8 @@ func TestIntegration_SimpleTextResponse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What is 2+2? Reply with just the number.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is 2+2? Reply with just the number.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -48,6 +50,7 @@ func TestIntegration_SimpleTextResponse(t *testing.T) {
 }
 
 func TestIntegration_Streaming(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
 	if err != nil {
@@ -57,8 +60,9 @@ func TestIntegration_Streaming(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	c := agent.NewContext(ctx)
 	var chunks []string
-	err = a.InvokeStream(ctx, "Say hello in one word.", func(chunk string) {
+	err = a.InvokeStream(c, "Say hello in one word.", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
@@ -73,6 +77,7 @@ func TestIntegration_Streaming(t *testing.T) {
 }
 
 func TestIntegration_StreamingWithMemory(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	store := conversation.NewInMemory()
 
@@ -88,9 +93,11 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	c := agent.NewContext(ctx)
+
 	// Turn 1: stream a response and establish context.
 	var chunks1 []string
-	err = a.InvokeStream(ctx, "My favorite number is 42. Remember that.", func(chunk string) {
+	err = a.InvokeStream(c, "My favorite number is 42. Remember that.", func(chunk string) {
 		chunks1 = append(chunks1, chunk)
 	})
 	if err != nil {
@@ -100,7 +107,7 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 
 	// Turn 2: stream again and verify memory continuity.
 	var chunks2 []string
-	err = a.InvokeStream(ctx, "What is my favorite number?", func(chunk string) {
+	err = a.InvokeStream(c, "What is my favorite number?", func(chunk string) {
 		chunks2 = append(chunks2, chunk)
 	})
 	if err != nil {
@@ -115,6 +122,7 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 }
 
 func TestIntegration_ToolCalling(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type CalcInput struct {
@@ -136,7 +144,8 @@ func TestIntegration_ToolCalling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What is 7 times 6?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -150,6 +159,7 @@ func TestIntegration_ToolCalling(t *testing.T) {
 }
 
 func TestIntegration_MultiToolCalls(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type LookupInput struct {
@@ -179,7 +189,8 @@ func TestIntegration_MultiToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "What's the weather in Paris and London?")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What's the weather in Paris and London?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -193,6 +204,7 @@ func TestIntegration_MultiToolCalls(t *testing.T) {
 }
 
 func TestIntegration_MemoryMultiTurn(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	store := conversation.NewInMemory()
 
@@ -208,12 +220,13 @@ func TestIntegration_MemoryMultiTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	_, err = a.Invoke(ctx, "My favorite color is blue. Remember that.")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "My favorite color is blue. Remember that.")
 	if err != nil {
 		t.Fatalf("first invoke error: %v", err)
 	}
 
-	result, err := a.Invoke(ctx, "What is my favorite color?")
+	result, err := a.Invoke(c, "What is my favorite color?")
 	if err != nil {
 		t.Fatalf("second invoke error: %v", err)
 	}
@@ -224,6 +237,7 @@ func TestIntegration_MemoryMultiTurn(t *testing.T) {
 }
 
 func TestIntegration_InvocationContext(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type EchoInput struct {
@@ -231,11 +245,11 @@ func TestIntegration_InvocationContext(t *testing.T) {
 	}
 
 	storeTool := tool.New("store_value", "Store a value for later use", func(ctx context.Context, in EchoInput) (string, error) {
-		ic := agent.GetInvocationContext(ctx)
-		if ic == nil {
+		c := agent.FromContext(ctx)
+		if c == nil {
 			return "error: no invocation context", nil
 		}
-		ic.Set("stored", in.Text)
+		c.Set("stored", in.Text)
 		return fmt.Sprintf("stored: %s", in.Text), nil
 	})
 
@@ -243,11 +257,11 @@ func TestIntegration_InvocationContext(t *testing.T) {
 		"type":       "object",
 		"properties": map[string]any{},
 	}, func(ctx context.Context, _ json.RawMessage) (string, error) {
-		ic := agent.GetInvocationContext(ctx)
-		if ic == nil {
+		c := agent.FromContext(ctx)
+		if c == nil {
 			return "error: no invocation context", nil
 		}
-		v, ok := ic.Get("stored")
+		v, ok := c.Get("stored")
 		if !ok {
 			return "nothing stored yet", nil
 		}
@@ -265,7 +279,8 @@ func TestIntegration_InvocationContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := a.Invoke(ctx, "Store the word 'banana' and then read it back.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "Store the word 'banana' and then read it back.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -276,6 +291,7 @@ func TestIntegration_InvocationContext(t *testing.T) {
 }
 
 func TestIntegration_InvokeStructured(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	a, err := agent.New(p, prompt.Text("You are a helpful assistant that extracts structured data."), nil)
 	if err != nil {
@@ -290,10 +306,8 @@ func TestIntegration_InvokeStructured(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
-
-	result, err := agent.InvokeStructured[Person](ctx, a, "Extract the person: John is 30 years old.")
+	c := agent.NewContext(ctx)
+	result, err := agent.InvokeStructured[Person](c, a, "Extract the person: John is 30 years old.")
 	if err != nil {
 		t.Fatalf("InvokeStructured error: %v", err)
 	}
@@ -307,11 +321,12 @@ func TestIntegration_InvokeStructured(t *testing.T) {
 	if result.Age != 30 {
 		t.Errorf("expected Age to be 30, got: %d", result.Age)
 	}
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	t.Logf("Structured result: %+v, usage: %+v", result, usage)
 }
 
 func TestIntegration_TokenUsage(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
 	if err != nil {
@@ -321,15 +336,13 @@ func TestIntegration_TokenUsage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
-
-	_, err = a.Invoke(ctx, "Say hello.")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "Say hello.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	if usage.InputTokens <= 0 {
 		t.Errorf("expected InputTokens > 0, got: %d", usage.InputTokens)
 	}
@@ -340,6 +353,7 @@ func TestIntegration_TokenUsage(t *testing.T) {
 }
 
 func TestIntegration_StreamingWithToolCalls(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type CalcInput struct {
@@ -361,18 +375,16 @@ func TestIntegration_StreamingWithToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
-
+	c := agent.NewContext(ctx)
 	var chunks []string
-	err = a.InvokeStream(ctx, "What is 7 times 6?", func(chunk string) {
+	err = a.InvokeStream(c, "What is 7 times 6?", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
 		t.Fatalf("InvokeStream error: %v", err)
 	}
 
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	full := strings.Join(chunks, "")
 	if !strings.Contains(full, "42") {
 		t.Errorf("expected streamed response to contain '42', got: %s", full)
@@ -388,6 +400,7 @@ func TestIntegration_StreamingWithToolCalls(t *testing.T) {
 }
 
 func TestIntegration_TokenUsageAccumulatesAcrossToolCalls(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type LookupInput struct {
@@ -409,16 +422,15 @@ func TestIntegration_TokenUsageAccumulatesAcrossToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
+	c := agent.NewContext(ctx)
 
 	// Ask about two cities to force multiple provider calls (tool call + final response).
-	_, err = a.Invoke(ctx, "What's the weather in Paris and Tokyo?")
+	_, err = a.Invoke(c, "What's the weather in Paris and Tokyo?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	// With tool calls, the agent makes at least 2 provider calls.
 	// Accumulated usage should be higher than a single-call scenario.
 	if usage.Total() <= 0 {
@@ -433,6 +445,7 @@ func TestIntegration_TokenUsageAccumulatesAcrossToolCalls(t *testing.T) {
 }
 
 func TestIntegration_TokenBudgetEnforcement(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	type CalcInput struct {
@@ -456,7 +469,8 @@ func TestIntegration_TokenBudgetEnforcement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = a.Invoke(ctx, "What is 2+2?")
+	c := agent.NewContext(ctx)
+	_, err = a.Invoke(c, "What is 2+2?")
 	if err == nil {
 		t.Fatal("expected ErrTokenBudgetExceeded, got nil")
 	}
@@ -467,6 +481,7 @@ func TestIntegration_TokenBudgetEnforcement(t *testing.T) {
 }
 
 func TestIntegration_StreamingTokenUsage(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
 	if err != nil {
@@ -476,15 +491,13 @@ func TestIntegration_StreamingTokenUsage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
-
-	err = a.InvokeStream(ctx, "Say hello.", func(_ string) {})
+	c := agent.NewContext(ctx)
+	err = a.InvokeStream(c, "Say hello.", func(_ string) {})
 	if err != nil {
 		t.Fatalf("InvokeStream error: %v", err)
 	}
 
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	if usage.InputTokens <= 0 {
 		t.Errorf("expected InputTokens > 0 from streaming, got: %d", usage.InputTokens)
 	}
@@ -496,6 +509,7 @@ func TestIntegration_StreamingTokenUsage(t *testing.T) {
 }
 
 func TestIntegration_ToolChoiceAny(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Use Converse directly to test ToolChoice modes.
@@ -533,6 +547,7 @@ func TestIntegration_ToolChoiceAny(t *testing.T) {
 }
 
 func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Low temperature should produce consistent, deterministic output.
@@ -549,17 +564,15 @@ func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ic := agent.NewInvocationContext()
-	ctx = agent.WithInvocationContext(ctx, ic)
-
-	result, err := a.Invoke(ctx, "What is the capital of France? Reply with just the city name.")
+	c := agent.NewContext(ctx)
+	result, err := a.Invoke(c, "What is the capital of France? Reply with just the city name.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 	if !strings.Contains(result, "Paris") {
 		t.Errorf("expected response to contain 'Paris', got: %s", result)
 	}
-	usage := agent.GetInvocationUsage(ic)
+	usage := c.Usage()
 	if usage.InputTokens <= 0 || usage.OutputTokens <= 0 {
 		t.Errorf("expected non-zero token usage, got: %+v", usage)
 	}
@@ -567,6 +580,7 @@ func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
 }
 
 func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Agent-level: low temperature.
@@ -584,11 +598,11 @@ func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
 
 	// Per-invocation override: high temperature for creative output.
 	temp := 0.9
-	creativeCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+	c := agent.NewContext(ctx).WithInferenceConfig(&agent.InferenceConfig{
 		Temperature: &temp,
 	})
 
-	result, err := a.Invoke(creativeCtx, "Write a one-sentence haiku about clouds.")
+	result, err := a.Invoke(c, "Write a one-sentence haiku about clouds.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -599,6 +613,7 @@ func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
 }
 
 func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	a, err := agent.New(p,
@@ -613,11 +628,11 @@ func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
 	defer cancel()
 
 	// Use stop sequences to cut generation after the first item.
-	stopCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+	c := agent.NewContext(ctx).WithInferenceConfig(&agent.InferenceConfig{
 		StopSequences: []string{"2."},
 	})
 
-	result, err := a.Invoke(stopCtx, "List 5 programming languages.")
+	result, err := a.Invoke(c, "List 5 programming languages.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -629,6 +644,7 @@ func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
 }
 
 func TestIntegration_InferenceConfig_InvalidPerInvocationReturnsError(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	a, err := agent.New(p,
@@ -644,11 +660,11 @@ func TestIntegration_InferenceConfig_InvalidPerInvocationReturnsError(t *testing
 
 	// Invalid temperature should fail before calling the provider.
 	badTemp := 5.0
-	badCtx := agent.WithInferenceConfig(ctx, &agent.InferenceConfig{
+	c := agent.NewContext(ctx).WithInferenceConfig(&agent.InferenceConfig{
 		Temperature: &badTemp,
 	})
 
-	_, err = a.Invoke(badCtx, "hello")
+	_, err = a.Invoke(c, "hello")
 	if err == nil {
 		t.Fatal("expected error for invalid per-invocation temperature, got nil")
 	}

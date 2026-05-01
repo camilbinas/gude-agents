@@ -17,6 +17,7 @@ import (
 //   go test -v -timeout=180s -run TestIntegration_Summary ./...
 
 func TestIntegration_Summary_DefaultSummaryFunc(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Use the provider-backed DefaultSummaryFunc.
@@ -64,6 +65,7 @@ func TestIntegration_Summary_DefaultSummaryFunc(t *testing.T) {
 }
 
 func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	store := conversation.NewInMemory()
 
@@ -94,6 +96,8 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
+	c := agent.NewContext(ctx)
+
 	// Have a multi-turn conversation that exceeds the threshold.
 	turns := []string{
 		"My name is Bob and I live in Berlin.",
@@ -103,7 +107,7 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	}
 
 	for i, msg := range turns {
-		result, err := a.Invoke(ctx, msg)
+		result, err := a.Invoke(c, msg)
 		if err != nil {
 			t.Fatalf("Turn %d error: %v", i+1, err)
 		}
@@ -130,7 +134,7 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 
 	// Verify the conversation still works after summarization —
 	// the agent should still know Bob's name from the summary.
-	result, err := a.Invoke(ctx, "What is my name?")
+	result, err := a.Invoke(c, "What is my name?")
 	if err != nil {
 		t.Fatalf("Post-summary invoke error: %v", err)
 	}
@@ -142,6 +146,7 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 }
 
 func TestIntegration_Summary_IndependentConversations(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	store := conversation.NewInMemory()
 
@@ -171,8 +176,8 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	defer cancel()
 
 	// Two independent conversations.
-	ctx1 := agent.WithConversationID(ctx, "conv-alice")
-	ctx2 := agent.WithConversationID(ctx, "conv-bob")
+	c1 := agent.NewContext(ctx).WithConversationID("conv-alice")
+	c2 := agent.NewContext(ctx).WithConversationID("conv-bob")
 
 	turns := []string{
 		"My name is %s.",
@@ -191,11 +196,11 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 			bobMsg = strings.Replace(tmpl, "%s", bobHobbies[i], 1)
 		}
 
-		_, err := a.Invoke(ctx1, aliceMsg)
+		_, err := a.Invoke(c1, aliceMsg)
 		if err != nil {
 			t.Fatalf("Alice turn %d error: %v", i+1, err)
 		}
-		_, err = a.Invoke(ctx2, bobMsg)
+		_, err = a.Invoke(c2, bobMsg)
 		if err != nil {
 			t.Fatalf("Bob turn %d error: %v", i+1, err)
 		}
@@ -219,11 +224,11 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	}
 
 	// Verify each conversation remembers the right person.
-	aliceResult, err := a.Invoke(ctx1, "What is my name?")
+	aliceResult, err := a.Invoke(c1, "What is my name?")
 	if err != nil {
 		t.Fatalf("Alice recall error: %v", err)
 	}
-	bobResult, err := a.Invoke(ctx2, "What is my name?")
+	bobResult, err := a.Invoke(c2, "What is my name?")
 	if err != nil {
 		t.Fatalf("Bob recall error: %v", err)
 	}

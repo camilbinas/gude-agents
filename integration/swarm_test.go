@@ -19,6 +19,7 @@ import (
 //   go test -v -timeout=180s -run TestIntegration_Swarm ./...
 
 func TestIntegration_Swarm_SingleHandoff(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	triage, err := agent.SwarmAgent(p, prompt.Text(
@@ -79,6 +80,7 @@ func TestIntegration_Swarm_SingleHandoff(t *testing.T) {
 }
 
 func TestIntegration_Swarm_MemoryAcrossTurns(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	greeter, err := agent.SwarmAgent(p, prompt.Text(
@@ -140,6 +142,7 @@ func TestIntegration_Swarm_MemoryAcrossTurns(t *testing.T) {
 }
 
 func TestIntegration_Swarm_WithPerRequestConversationID(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	alpha, err := agent.SwarmAgent(p, prompt.Text(
@@ -171,8 +174,9 @@ func TestIntegration_Swarm_WithPerRequestConversationID(t *testing.T) {
 	defer cancel()
 
 	// Two separate conversations on the same swarm.
-	ctx1 := agent.WithConversationID(ctx, "user-alice")
-	ctx2 := agent.WithConversationID(ctx, "user-bob")
+	// Swarm.Invoke takes context.Context; *agent.Context satisfies that interface.
+	ctx1 := agent.NewContext(ctx).WithConversationID("user-alice")
+	ctx2 := agent.NewContext(ctx).WithConversationID("user-bob")
 
 	r1, err := sw.Invoke(ctx1, "My name is Alice.")
 	if err != nil {

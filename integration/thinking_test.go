@@ -29,18 +29,19 @@ type collectingEventHook struct {
 	chunks []string
 }
 
-func (h *collectingEventHook) OnToolCallStart(_ context.Context, _ string, _ json.RawMessage) {}
-func (h *collectingEventHook) OnToolCallEnd(_ context.Context, _ string, _ string, _ error, _ time.Duration) {
+func (h *collectingEventHook) OnToolCallStart(_ *agent.Context, _ string, _ json.RawMessage) {}
+func (h *collectingEventHook) OnToolCallEnd(_ *agent.Context, _ string, _ string, _ error, _ time.Duration) {
 }
-func (h *collectingEventHook) OnThinking(_ context.Context, chunk string) {
+func (h *collectingEventHook) OnThinking(_ *agent.Context, chunk string) {
 	h.mu.Lock()
 	h.chunks = append(h.chunks, chunk)
 	h.mu.Unlock()
 }
-func (h *collectingEventHook) OnModelStart(_ context.Context)         {}
-func (h *collectingEventHook) OnModelEnd(_ context.Context, _ string) {}
+func (h *collectingEventHook) OnModelStart(_ *agent.Context)         {}
+func (h *collectingEventHook) OnModelEnd(_ *agent.Context, _ string) {}
 
 func TestIntegration_Thinking_CallbackFires(t *testing.T) {
+	t.Parallel()
 	// Thinking is only supported on Claude 4-series (Bedrock) and Gemini 2.5+.
 	// Skip for providers that don't support it.
 	providerName := os.Getenv("MODEL_PROVIDER")
@@ -68,9 +69,9 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	ctx = agent.WithEventHook(ctx, hook)
+	c := agent.NewContext(ctx).WithEventHook(hook)
 
-	result, err := a.Invoke(ctx, "What is 17 * 23? Show your reasoning.")
+	result, err := a.Invoke(c, "What is 17 * 23? Show your reasoning.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -98,6 +99,7 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 }
 
 func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
+	t.Parallel()
 	providerName := os.Getenv("MODEL_PROVIDER")
 	if providerName != "" && providerName != "bedrock" && providerName != "gemini" {
 		t.Skipf("skipping thinking test for provider %q (not supported)", providerName)
@@ -123,9 +125,9 @@ func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	ctx = agent.WithEventHook(ctx, hook)
+	c := agent.NewContext(ctx).WithEventHook(hook)
 
-	err = a.InvokeStream(ctx, "Explain why the sky is blue in one sentence.", func(chunk string) {
+	err = a.InvokeStream(c, "Explain why the sky is blue in one sentence.", func(chunk string) {
 		mu.Lock()
 		responseChunks = append(responseChunks, chunk)
 		mu.Unlock()

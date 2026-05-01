@@ -17,6 +17,7 @@ import (
 //   go test -v -timeout=180s -run TestIntegration_MultiAgent ./...
 
 func TestIntegration_MultiAgent_OrchestratorDelegatesToWorker(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Worker: a specialist that "looks up" project data.
@@ -57,7 +58,8 @@ func TestIntegration_MultiAgent_OrchestratorDelegatesToWorker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	result, err := orchestrator.Invoke(ctx, "What's the status of the Atlas project?")
+	c := agent.NewContext(ctx)
+	result, err := orchestrator.Invoke(c, "What's the status of the Atlas project?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -71,6 +73,7 @@ func TestIntegration_MultiAgent_OrchestratorDelegatesToWorker(t *testing.T) {
 }
 
 func TestIntegration_MultiAgent_ParallelSpecialists(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 
 	// Two workers with different specialties.
@@ -109,7 +112,8 @@ func TestIntegration_MultiAgent_ParallelSpecialists(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	result, err := orchestrator.Invoke(ctx,
+	c := agent.NewContext(ctx)
+	result, err := orchestrator.Invoke(c,
 		"Give me the status and revenue for the Atlas project.",
 	)
 	if err != nil {
