@@ -51,7 +51,7 @@ func MarshalMessages(messages []agent.Message) ([]byte, error) {
 	for i, msg := range messages {
 		blocks := make([]jsonContentBlock, len(msg.Content))
 		for j, cb := range msg.Content {
-			blocks[j] = ContentBlockToJSON(cb)
+			blocks[j] = contentBlockToJSON(cb)
 		}
 		jmsgs[i] = jsonMessage{
 			Role:    string(msg.Role),
@@ -71,7 +71,7 @@ func UnmarshalMessages(data []byte) ([]agent.Message, error) {
 	for i, jm := range jmsgs {
 		blocks := make([]agent.ContentBlock, len(jm.Content))
 		for j, jcb := range jm.Content {
-			blocks[j] = JSONToContentBlock(jcb)
+			blocks[j] = jsonToContentBlock(jcb)
 		}
 		messages[i] = agent.Message{
 			Role:    agent.Role(jm.Role),
@@ -81,9 +81,9 @@ func UnmarshalMessages(data []byte) ([]agent.Message, error) {
 	return messages, nil
 }
 
-// ContentBlockToJSON converts an agent.ContentBlock to its JSON envelope
+// contentBlockToJSON converts an agent.ContentBlock to its JSON envelope
 // representation.
-func ContentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
+func contentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 	switch b := cb.(type) {
 	case agent.TextBlock:
 		return jsonContentBlock{Type: "text", Text: b.Text}
@@ -122,8 +122,8 @@ func ContentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 	}
 }
 
-// JSONToContentBlock converts a JSON envelope back to an agent.ContentBlock.
-func JSONToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
+// jsonToContentBlock converts a JSON envelope back to an agent.ContentBlock.
+func jsonToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 	switch jcb.Type {
 	case "text":
 		return agent.TextBlock{Text: jcb.Text}

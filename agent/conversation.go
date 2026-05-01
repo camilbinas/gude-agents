@@ -19,7 +19,7 @@ type Conversation interface {
 
 // ConversationWaiter is an optional interface that Conversation implementations
 // can satisfy to signal that they perform background work after Save. When the
-// agent option WithSynchronousConversation is set, the agent calls Wait after
+// agent option WithSyncConversation is set, the agent calls Wait after
 // each Save, blocking until all background work (e.g. summarization) is complete.
 type ConversationWaiter interface {
 	Wait()

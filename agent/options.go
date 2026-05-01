@@ -128,10 +128,10 @@ func WithContextFormatter(f ContextFormatter) Option {
 	}
 }
 
-// WithSynchronousConversation makes the agent call Wait() on the conversation after each Save,
+// WithSyncConversation makes the agent call Wait() on the conversation after each Save,
 // blocking until any background work (e.g. summarization) is complete before
 // returning from Invoke. Only has an effect if the conversation implements ConversationWaiter.
-func WithSynchronousConversation() Option {
+func WithSyncConversation() Option {
 	return func(a *Agent) error {
 		a.syncConversation = true
 		return nil

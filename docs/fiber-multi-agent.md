@@ -225,7 +225,7 @@ Replace `conversation.NewInMemory()` with Redis so conversations persist across 
 import redismemory "github.com/camilbinas/gude-agents/agent/conversation/redis"
 
 store, err := redismemory.New(
-    redismemory.RedisOptions{Addr: "127.0.0.1:6379"},
+    redismemory.Options{Addr: "127.0.0.1:6379"},
     redismemory.WithTTL(1 * time.Hour),
     redismemory.WithKeyPrefix("agency:conv:"),
 )

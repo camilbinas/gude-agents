@@ -53,7 +53,7 @@ func main() {
 		prompt.Text("You are a helpful assistant with vision capabilities. Be concise."),
 		nil,
 		agent.WithConversation(summarized, "media-demo"),
-		agent.WithSynchronousConversation(),
+		agent.WithSyncConversation(),
 		auto.WithLogging(),
 	)
 	if err != nil {

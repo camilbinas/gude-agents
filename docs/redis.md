@@ -1,16 +1,16 @@
 # Redis Providers
 
-The `agent/conversation/redis` package provides a persistent, Redis-backed implementation of `agent.Conversation`. Use `RedisConversation` for multi-turn conversation storage that survives restarts.
+The `agent/conversation/redis` package provides a persistent, Redis-backed implementation of `agent.Conversation`. Use it for multi-turn conversation storage that survives restarts.
 
 For Redis-backed vector search, see `agent/rag/redis` — it provides `VectorStore` (formerly `RedisVectorStore`) for similarity search powered by Redis Stack's HNSW indexing.
 
-## RedisOptions
+## Options
 
-Both packages define their own connection configuration struct with the same fields. The conversation package uses `RedisOptions` and the RAG package uses `Options`:
+Both packages define their own connection configuration struct with the same fields:
 
 ```go
 // agent/conversation/redis
-type RedisOptions struct {
+type Options struct {
     Addr      string      // Redis address. Default: "127.0.0.1:6379"
     Password  string      // AUTH password. Empty string means no auth.
     DB        int         // Database number. Default: 0
@@ -28,26 +28,26 @@ type Options struct {
 
 If `Addr` is empty, it defaults to `"127.0.0.1:6379"`. Pass a `*tls.Config` to enable TLS — leave it `nil` for unencrypted connections.
 
-## RedisConversation
+## Conversation
 
-`RedisConversation` implements `agent.Conversation` and `conversation.ConversationManager`. It stores conversation history as JSON in Redis string keys, with optional TTL and key prefix configuration.
+`Conversation` implements `agent.Conversation`. It stores conversation history as JSON in Redis string keys, with optional TTL and key prefix configuration.
 
 Import: `github.com/camilbinas/gude-agents/agent/conversation/redis`
 
 ### New
 
 ```go
-func New(opts RedisOptions, mopts ...RedisConversationOption) (*RedisConversation, error)
+func New(opts Options, mopts ...Option) (*Conversation, error)
 ```
 
-Creates a new `RedisConversation`. Pings Redis on creation to verify connectivity — returns an error if the connection fails. The default key prefix is `"gude:"` and TTL is 0 (no expiration).
+Creates a new `Conversation`. Pings Redis on creation to verify connectivity — returns an error if the connection fails. The default key prefix is `"gude:"` and TTL is 0 (no expiration).
 
 ### Options
 
 #### WithTTL
 
 ```go
-func WithTTL(d time.Duration) RedisConversationOption
+func WithTTL(d time.Duration) Option
 ```
 
 Sets the TTL for conversation keys. Each `Save` call resets the TTL. Pass `0` to disable expiration (the default).
@@ -55,14 +55,14 @@ Sets the TTL for conversation keys. Each `Save` call resets the TTL. Pass `0` to
 #### WithKeyPrefix
 
 ```go
-func WithKeyPrefix(prefix string) RedisConversationOption
+func WithKeyPrefix(prefix string) Option
 ```
 
 Sets the key prefix used for all conversation keys. Default: `"gude:"`. The final Redis key is `prefix + conversationID`.
 
 ### Methods
 
-`RedisConversation` satisfies both `agent.Conversation` and `conversation.ConversationManager`:
+`Conversation` satisfies `agent.Conversation`:
 
 - `Load(ctx, conversationID)` — retrieves the message history. Returns an empty slice if the key doesn't exist.
 - `Save(ctx, conversationID, messages)` — persists the full message slice as JSON. Resets the TTL if one is configured.
@@ -72,7 +72,7 @@ Sets the key prefix used for all conversation keys. Default: `"gude:"`. The fina
 ### Close
 
 ```go
-func (m *RedisConversation) Close() error
+func (m *Conversation) Close() error
 ```
 
 Closes the underlying Redis client. Call this when you're done with the conversation store (typically via `defer`).
@@ -193,7 +193,7 @@ func main() {
 	}
 
 	mem, err := redismemory.New(
-		redismemory.RedisOptions{Addr: redisAddr},
+		redismemory.Options{Addr: redisAddr},
 		redismemory.WithTTL(1*time.Hour),
 		redismemory.WithKeyPrefix("example:"),
 	)

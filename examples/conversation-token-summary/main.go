@@ -38,7 +38,7 @@ func main() {
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
 		agent.WithConversation(summarized, "token-summary-demo"),
-		agent.WithSynchronousConversation(),
+		agent.WithSyncConversation(),
 	)
 	if err != nil {
 		log.Fatal(err)

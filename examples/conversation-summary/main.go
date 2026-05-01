@@ -38,7 +38,7 @@ func main() {
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
 		agent.WithConversation(summarized, "summary-demo"),
-		agent.WithSynchronousConversation(),
+		agent.WithSyncConversation(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -63,7 +63,7 @@ func main() {
 		fmt.Printf("Turn %d: %s\n", i+1, result)
 	}
 
-	// With WithSynchronousMemory(), each Invoke blocks until background
+	// With WithSyncConversation(), each Invoke blocks until background
 	// summarization finishes before returning — no manual Wait() needed.
 	// This demonstrates that summarization is transparent: the agent still
 	// knows everything about Bob despite the condensed message count.

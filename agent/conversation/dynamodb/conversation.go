@@ -64,7 +64,7 @@ type Conversation struct {
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if table is empty.
-func New(cfg aws.Config, table string, opts ...ConversationOption) (*Conversation, error) {
+func New(cfg aws.Config, table string, opts ...Option) (*Conversation, error) {
 	if table == "" {
 		return nil, fmt.Errorf("dynamodb conversation: table name is required")
 	}

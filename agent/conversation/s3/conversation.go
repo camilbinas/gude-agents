@@ -43,7 +43,7 @@ type Conversation struct {
 // construction time; connectivity errors surface on the first Save/Load call.
 //
 // Returns an error if bucket is empty.
-func New(cfg aws.Config, bucket string, opts ...ConversationOption) (*Conversation, error) {
+func New(cfg aws.Config, bucket string, opts ...Option) (*Conversation, error) {
 	if bucket == "" {
 		return nil, fmt.Errorf("s3 conversation: bucket name is required")
 	}
