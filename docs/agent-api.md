@@ -225,6 +225,49 @@ img := agent.ImageBlock{
 }
 ```
 
+### RunLoop
+
+Low-level entry point that runs the agent's iteration loop with caller-supplied messages. Unlike `Invoke`/`InvokeStream`, it skips input guardrails, conversation loading, RAG retrieval, and image/document attachment — the caller owns all of that.
+
+```go
+func (a *Agent) RunLoop(c *Context, params LoopParams) (TokenUsage, string, error)
+```
+
+`LoopParams` fields:
+
+| Field | Description |
+|---|---|
+| `Messages` | Conversation history to send to the provider |
+| `SystemPrompt` | Overrides the agent's instructions if non-empty |
+| `InferenceConfig` | Overrides the agent's inference config if non-nil |
+| `StreamCallback` | Receives streamed text chunks |
+| `Config` | Optional `LoopConfig` for behavior overrides |
+
+`LoopConfig` fields:
+
+| Field | Description |
+|---|---|
+| `ExtraMiddleware` | Prepended (outermost) to the agent's middleware chain without mutating it |
+| `ToolResultInterceptor` | Called after each tool batch; return `true` to stop the loop (returns `ErrLoopStopped`) |
+| `SkipConversationSave` | Prevents the loop from persisting conversation history |
+
+```go
+usage, text, err := a.RunLoop(c, agent.LoopParams{
+    Messages:       messages,
+    StreamCallback: cb,
+    Config: agent.LoopConfig{
+        ExtraMiddleware:      swarmMiddleware,
+        SkipConversationSave: true,
+        ToolResultInterceptor: func(results []agent.ToolResultBlock) bool {
+            return containsHandoff(results)
+        },
+    },
+})
+if errors.Is(err, agent.ErrLoopStopped) {
+    // interceptor signaled stop
+}
+```
+
 ### Resume / ResumeInvoke
 
 Continue an agent invocation after a human handoff:

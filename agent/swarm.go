@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -471,346 +472,30 @@ func (s *Swarm) Run(ctx context.Context, userMessage string, cb StreamCallback) 
 // runAgent executes a single agent's loop, returning whether a handoff was triggered.
 func (s *Swarm) runAgent(c *Context, entry *swarmEntry, messages []Message, cb StreamCallback) (TokenUsage, string, bool, error) {
 	a := entry.member.Agent
-	th := a.TracingHook() // may be nil
-	var cumulative TokenUsage
 
-	systemPrompt := a.Instructions()
-
-	for iteration := range a.MaxIterations() {
-
-		// Start iteration span.
-		iterC := c
-		var finishIteration func(toolCount int, isFinal bool)
-		if th != nil {
-			newCtx, finish := th.OnIterationStart(c, iteration+1)
-			finishIteration = finish
-			if newCtx != context.Context(c) {
-				iterC = c.withContext(newCtx)
+	interceptor := func(results []ToolResultBlock) bool {
+		for _, r := range results {
+			if r.Content == handoffSentinel {
+				return true // stop the loop
 			}
 		}
-
-		// Log iteration start on the member agent's hook.
-		lh := a.LoggingHook()
-		if lh != nil {
-			lh.OnIterationStart(iteration + 1)
-		}
-
-		var bufferedChunks []string
-		hasOutputGuardrails := len(a.OutputGuardrails()) > 0
-
-		streamCB := func(chunk string) {
-			if hasOutputGuardrails {
-				bufferedChunks = append(bufferedChunks, chunk)
-			} else if cb != nil {
-				cb(chunk)
-			}
-		}
-
-		// Start provider call span.
-		provC := iterC
-		var finishProvider func(err error, usage TokenUsage, toolCallCount int, responseText string)
-		if th != nil {
-			newCtx, finish := th.OnProviderCallStart(iterC, ProviderCallParams{
-				System:       systemPrompt,
-				MessageCount: len(messages),
-			})
-			finishProvider = finish
-			if newCtx != context.Context(iterC) {
-				provC = iterC.withContext(newCtx)
-			}
-		}
-
-		var providerModelID string
-		if mi, ok := a.provider.(ModelIdentifier); ok {
-			providerModelID = mi.ModelID()
-		}
-		if lh != nil {
-			lh.OnProviderCallStart(providerModelID)
-		}
-
-		providerCallStart := time.Now()
-		resp, err := a.CallProvider(provC, ConverseParams{
-			Messages:        messages,
-			System:          systemPrompt,
-			ToolConfig:      a.ToolSpecs(),
-			InferenceConfig: a.InferenceConfig(),
-		}, streamCB)
-		if err != nil {
-			providerDur := time.Since(providerCallStart)
-			if finishProvider != nil {
-				finishProvider(err, TokenUsage{}, 0, "")
-			}
-			if lh != nil {
-				lh.OnProviderCallEnd(err, TokenUsage{}, 0, providerDur)
-			}
-			if finishIteration != nil {
-				finishIteration(0, false)
-			}
-			return cumulative, "", false, err
-		}
-
-		// Finish provider call span.
-		if finishProvider != nil {
-			finishProvider(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
-		}
-		if lh != nil {
-			lh.OnProviderCallEnd(nil, resp.Usage, len(resp.ToolCalls), time.Since(providerCallStart))
-		}
-
-		cumulative.InputTokens += resp.Usage.InputTokens
-		cumulative.OutputTokens += resp.Usage.OutputTokens
-
-		if a.TokenBudget() > 0 && cumulative.Total() > a.TokenBudget() {
-			if finishIteration != nil {
-				finishIteration(0, false)
-			}
-			return cumulative, "", false, ErrTokenBudgetExceeded
-		}
-
-		if len(resp.ToolCalls) > 0 {
-			// Build assistant message with tool calls.
-			assistantContent := make([]ContentBlock, 0, len(resp.ToolCalls)+1)
-			if resp.Text != "" {
-				assistantContent = append(assistantContent, TextBlock{Text: resp.Text})
-			}
-			for _, tc := range resp.ToolCalls {
-				assistantContent = append(assistantContent, ToolUseBlock{
-					ToolUseID: tc.ToolUseID,
-					Name:      tc.Name,
-					Input:     tc.Input,
-				})
-			}
-			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
-
-			// Execute tools and check for handoff.
-			results, handedOff := s.executeToolsWithHandoff(iterC, a, resp.ToolCalls)
-
-			// Finish iteration span.
-			if finishIteration != nil {
-				finishIteration(len(resp.ToolCalls), false)
-			}
-
-			resultBlocks := make([]ContentBlock, len(results))
-			for i, r := range results {
-				resultBlocks[i] = r
-			}
-			messages = append(messages, Message{Role: RoleUser, Content: resultBlocks})
-
-			if handedOff {
-				return cumulative, "", true, nil
-			}
-			continue
-		}
-
-		// No tool calls — final response.
-		finalText := resp.Text
-		for _, g := range a.OutputGuardrails() {
-			finalText, err = g(iterC, finalText)
-			if err != nil {
-				if finishIteration != nil {
-					finishIteration(0, true)
-				}
-				return cumulative, "", false, fmt.Errorf("output guardrail: %w", err)
-			}
-		}
-
-		if hasOutputGuardrails && cb != nil {
-			if finalText == resp.Text {
-				for _, chunk := range bufferedChunks {
-					cb(chunk)
-				}
-			} else {
-				cb(finalText)
-			}
-		}
-
-		// Finish iteration span — final iteration.
-		if finishIteration != nil {
-			finishIteration(0, true)
-		}
-
-		return cumulative, finalText, false, nil
+		return false
 	}
 
-	return cumulative, "", false, fmt.Errorf("max iterations (%d) exceeded", a.MaxIterations())
-}
+	usage, text, err := a.RunLoop(c, LoopParams{
+		Messages:       messages,
+		StreamCallback: cb,
+		Config: LoopConfig{
+			ExtraMiddleware:       s.middlewares,
+			ToolResultInterceptor: interceptor,
+			SkipConversationSave:  true,
+		},
+	})
 
-// executeToolsWithHandoff runs tool calls and detects if any was a handoff.
-func (s *Swarm) executeToolsWithHandoff(c *Context, a *Agent, calls []tool.Call) ([]ToolResultBlock, bool) {
-	results := make([]ToolResultBlock, len(calls))
-	handedOff := false
-	var mu sync.Mutex
-	th := a.TracingHook() // may be nil
-
-	exec := func(i int, tc tool.Call) {
-
-		t, ok := a.LookupTool(tc.Name)
-		if !ok {
-			results[i] = ToolResultBlock{
-				ToolUseID: tc.ToolUseID,
-				Content:   fmt.Sprintf("unknown tool: %s", tc.Name),
-				IsError:   true,
-			}
-			return
-		}
-
-		// Start tool span.
-		toolC := c
-		var finishTool func(error, string)
-		if th != nil {
-			newCtx, finish := th.OnToolStart(c, tc.Name, tc.Input)
-			finishTool = finish
-			if newCtx != context.Context(c) {
-				toolC = c.withContext(newCtx)
-			}
-		}
-
-		// Log tool start on the member agent's hook.
-		lh := a.LoggingHook()
-		if lh != nil {
-			lh.OnToolStart(tc.Name)
-		}
-
-		toolStart := time.Now()
-
-		// Validate tool input against the declared schema.
-		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
-			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
-			if finishTool != nil {
-				finishTool(err, "")
-			}
-			if lh != nil {
-				lh.OnToolEnd(tc.Name, err, time.Since(toolStart))
-			}
-			results[i] = ToolResultBlock{
-				ToolUseID: tc.ToolUseID,
-				Content:   toolErr.Error(),
-				IsError:   true,
-			}
-			return
-		}
-
-		// Rich handlers (returning images) take precedence.
-		if t.RichHandler != nil {
-			richOut, err := t.RichHandler(toolC, tc.Input)
-			if err != nil {
-				if finishTool != nil {
-					finishTool(err, "")
-				}
-				if lh != nil {
-					lh.OnToolEnd(tc.Name, err, time.Since(toolStart))
-				}
-				results[i] = ToolResultBlock{
-					ToolUseID: tc.ToolUseID,
-					Content:   err.Error(),
-					IsError:   true,
-				}
-				return
-			}
-			if finishTool != nil {
-				finishTool(nil, richOut.Text)
-			}
-			if lh != nil {
-				lh.OnToolEnd(tc.Name, nil, time.Since(toolStart))
-			}
-			result := ToolResultBlock{ToolUseID: tc.ToolUseID, Content: richOut.Text}
-			for _, img := range richOut.Images {
-				result.Images = append(result.Images, ImageBlock{
-					Source: ImageSource{
-						Data: img.Data, Base64: img.Base64,
-						URL: img.URL, MIMEType: img.MIMEType,
-					},
-				})
-			}
-			results[i] = result
-			return
-		}
-
-		// Apply both swarm-level and agent-level middleware.
-		// Copy to avoid mutating s.middlewares when append has spare capacity.
-		allMiddleware := make([]Middleware, 0, len(s.middlewares)+len(a.Middlewares()))
-		allMiddleware = append(allMiddleware, s.middlewares...)
-		allMiddleware = append(allMiddleware, a.Middlewares()...)
-		handler := ChainMiddleware(
-			func(c *Context, toolName string, input json.RawMessage) (string, error) {
-				// Pass *Context directly — it satisfies context.Context via embedding.
-				return t.Handler(c, input)
-			},
-			allMiddleware...,
-		)
-
-		out, err := handler(toolC, tc.Name, tc.Input)
-		if err != nil {
-			if finishTool != nil {
-				finishTool(err, "")
-			}
-			if lh != nil {
-				lh.OnToolEnd(tc.Name, err, time.Since(toolStart))
-			}
-			results[i] = ToolResultBlock{
-				ToolUseID: tc.ToolUseID,
-				Content:   err.Error(),
-				IsError:   true,
-			}
-			return
-		}
-
-		if out == handoffSentinel {
-			if finishTool != nil {
-				finishTool(nil, "handoff")
-			}
-			if lh != nil {
-				lh.OnToolEnd(tc.Name, nil, time.Since(toolStart))
-			}
-			mu.Lock()
-			handedOff = true
-			mu.Unlock()
-			results[i] = ToolResultBlock{
-				ToolUseID: tc.ToolUseID,
-				Content:   "Handoff accepted. Transferring conversation.",
-			}
-			return
-		}
-
-		if finishTool != nil {
-			finishTool(nil, out)
-		}
-		if lh != nil {
-			lh.OnToolEnd(tc.Name, nil, time.Since(toolStart))
-		}
-		results[i] = ToolResultBlock{
-			ToolUseID: tc.ToolUseID,
-			Content:   out,
-		}
+	if errors.Is(err, ErrLoopStopped) {
+		return usage, "", true, nil
 	}
-
-	if a.ParallelTools() {
-		var wg sync.WaitGroup
-		for i, tc := range calls {
-			wg.Add(1)
-			go func(i int, tc tool.Call) {
-				defer wg.Done()
-				exec(i, tc)
-			}(i, tc)
-		}
-		wg.Wait()
-	} else {
-		for i, tc := range calls {
-			exec(i, tc)
-			if handedOff {
-				// Fill remaining results with cancellation notices.
-				for j := i + 1; j < len(calls); j++ {
-					results[j] = ToolResultBlock{
-						ToolUseID: calls[j].ToolUseID,
-						Content:   "Skipped — handoff in progress.",
-					}
-				}
-				break
-			}
-		}
-	}
-
-	return results, handedOff
+	return usage, text, false, err
 }
 
 // Invoke is a convenience wrapper that collects streamed output into a string.

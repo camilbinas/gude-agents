@@ -136,11 +136,21 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 	firstContent = append(firstContent, TextBlock{Text: msg})
 	messages = append(messages, Message{Role: RoleUser, Content: firstContent})
 
-	return a.runLoop(c, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h)
+	usage, _, err := a.runLoop(c, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h, nil)
+	return usage, err
 }
 
-// runLoop is the core agent iteration loop shared by InvokeStream and Resume.
-func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback, h *hooks) (TokenUsage, error) {
+// runLoopConfig holds internal options for runLoop that are not part of the
+// public API. Used by RunLoop to pass extra behavior without changing the
+// core runLoop signature for existing callers.
+type runLoopConfig struct {
+	extraMiddleware       []Middleware
+	toolResultInterceptor func(results []ToolResultBlock) bool
+	skipConversationSave  bool
+}
+
+// runLoop is the core agent iteration loop shared by InvokeStream, Resume, and RunLoop.
+func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback, h *hooks, cfg *runLoopConfig) (TokenUsage, string, error) {
 	var cumulative TokenUsage
 	modelID := a.modelID()
 
@@ -198,9 +208,9 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			iterF.finish(0, false)
 			var pe *ProviderError
 			if errors.As(err, &pe) {
-				return cumulative, err
+				return cumulative, "", err
 			}
-			return cumulative, &ProviderError{Cause: err}
+			return cumulative, "", &ProviderError{Cause: err}
 		}
 
 		provF.finish(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
@@ -210,7 +220,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 
 		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
 			iterF.finish(0, false)
-			return cumulative, ErrTokenBudgetExceeded
+			return cumulative, "", ErrTokenBudgetExceeded
 		}
 
 		// Tool calls — execute and loop.
@@ -228,8 +238,27 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			}
 			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
 
-			results := a.executeTools(iterC, resp.ToolCalls, availableTools, h)
+			// Determine middleware for tool execution.
+			var extraMW []Middleware
+			if cfg != nil {
+				extraMW = cfg.extraMiddleware
+			}
+			results := a.executeToolsWithMiddleware(iterC, resp.ToolCalls, availableTools, h, extraMW)
 			iterF.finish(len(resp.ToolCalls), false)
+
+			// Tool result interceptor — allows callers (e.g. swarm) to inspect
+			// results and signal the loop to stop.
+			if cfg != nil && cfg.toolResultInterceptor != nil {
+				if cfg.toolResultInterceptor(results) {
+					// Append tool results to messages before returning.
+					resultBlocks := make([]ContentBlock, len(results))
+					for i, r := range results {
+						resultBlocks[i] = r
+					}
+					messages = append(messages, Message{Role: RoleUser, Content: resultBlocks})
+					return cumulative, "", ErrLoopStopped
+				}
+			}
 
 			// Handle handoff.
 			if isHandoffResult(results) {
@@ -248,8 +277,10 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 					hr.Messages = messages
 					hr.ConversationID = convID
 				}
-				a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
-				return cumulative, ErrHandoffRequested
+				if cfg == nil || !cfg.skipConversationSave {
+					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
+				}
+				return cumulative, "", ErrHandoffRequested
 			}
 
 			resultBlocks := make([]ContentBlock, len(results))
@@ -269,7 +300,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			gf.finish(gErr, finalText)
 			if gErr != nil {
 				iterF.finish(0, true)
-				return cumulative, &GuardrailError{Direction: "output", Cause: gErr}
+				return cumulative, "", &GuardrailError{Direction: "output", Cause: gErr}
 			}
 		}
 
@@ -287,14 +318,107 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 		messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
 		iterF.finish(0, true)
 
-		if err := a.saveConversation(c, convID, messages[ragOffset:], cumulative, h); err != nil {
-			return cumulative, err
+		if cfg == nil || !cfg.skipConversationSave {
+			if err := a.saveConversation(c, convID, messages[ragOffset:], cumulative, h); err != nil {
+				return cumulative, "", err
+			}
 		}
-		return cumulative, nil
+		return cumulative, finalText, nil
 	}
 
 	h.onMaxIterationsExceeded(c, a.maxIterations)
-	return cumulative, fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
+	return cumulative, "", fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
+}
+
+// executeToolsWithMiddleware runs tool calls with optional extra middleware prepended.
+// If extraMiddleware is nil or empty, behaves identically to executeTools.
+func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks, extraMiddleware []Middleware) []ToolResultBlock {
+	results := make([]ToolResultBlock, len(calls))
+
+	exec := func(i int, tc tool.Call) {
+		t, ok := availableTools[tc.Name]
+		if !ok {
+			results[i] = ToolResultBlock{
+				ToolUseID: tc.ToolUseID,
+				Content:   fmt.Sprintf("unknown tool: %s", tc.Name),
+				IsError:   true,
+			}
+			return
+		}
+
+		toolC, tf := h.onToolStart(c, tc.Name, tc.Input)
+
+		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
+			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+			tf.finish(err, "")
+			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
+			return
+		}
+
+		// Rich handlers (returning images) take precedence.
+		if t.RichHandler != nil {
+			richOut, err := t.RichHandler(toolC, tc.Input)
+			if err != nil {
+				toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+				tf.finish(err, "")
+				results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
+				return
+			}
+			tf.finish(nil, richOut.Text)
+			result := ToolResultBlock{ToolUseID: tc.ToolUseID, Content: richOut.Text}
+			for _, img := range richOut.Images {
+				result.Images = append(result.Images, ImageBlock{
+					Source: ImageSource{
+						Data: img.Data, Base64: img.Base64,
+						URL: img.URL, MIMEType: img.MIMEType,
+					},
+				})
+			}
+			results[i] = result
+			return
+		}
+
+		// Build middleware chain: extra middleware (outermost) + agent middleware.
+		allMiddleware := make([]Middleware, 0, len(extraMiddleware)+len(a.middlewares))
+		allMiddleware = append(allMiddleware, extraMiddleware...)
+		allMiddleware = append(allMiddleware, a.middlewares...)
+
+		handler := ChainMiddleware(
+			func(c *Context, toolName string, input json.RawMessage) (string, error) {
+				return t.Handler(c, input)
+			},
+			allMiddleware...,
+		)
+
+		out, err := handler(toolC, tc.Name, tc.Input)
+		if err != nil {
+			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
+			tf.finish(err, "")
+			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
+			return
+		}
+
+		tf.finish(nil, out)
+		results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: out}
+	}
+
+	if a.parallelTools {
+		var wg sync.WaitGroup
+		for i, tc := range calls {
+			wg.Add(1)
+			go func(i int, tc tool.Call) {
+				defer wg.Done()
+				exec(i, tc)
+			}(i, tc)
+		}
+		wg.Wait()
+	} else {
+		for i, tc := range calls {
+			exec(i, tc)
+		}
+	}
+
+	return results
 }
 
 // saveConversation persists conversation history if configured.
@@ -363,92 +487,6 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 	}
 
 	return nil, lastErr
-}
-
-// executeTools runs tool calls either sequentially or in parallel.
-func (a *Agent) executeTools(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks) []ToolResultBlock {
-	results := make([]ToolResultBlock, len(calls))
-
-	exec := func(i int, tc tool.Call) {
-		t, ok := availableTools[tc.Name]
-		if !ok {
-			results[i] = ToolResultBlock{
-				ToolUseID: tc.ToolUseID,
-				Content:   fmt.Sprintf("unknown tool: %s", tc.Name),
-				IsError:   true,
-			}
-			return
-		}
-
-		toolC, tf := h.onToolStart(c, tc.Name, tc.Input)
-
-		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
-			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
-			tf.finish(err, "")
-			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
-			return
-		}
-
-		// Rich handlers (returning images) take precedence.
-		if t.RichHandler != nil {
-			richOut, err := t.RichHandler(toolC, tc.Input)
-			if err != nil {
-				toolErr := &ToolError{ToolName: tc.Name, Cause: err}
-				tf.finish(err, "")
-				results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
-				return
-			}
-			tf.finish(nil, richOut.Text)
-			result := ToolResultBlock{ToolUseID: tc.ToolUseID, Content: richOut.Text}
-			for _, img := range richOut.Images {
-				result.Images = append(result.Images, ImageBlock{
-					Source: ImageSource{
-						Data: img.Data, Base64: img.Base64,
-						URL: img.URL, MIMEType: img.MIMEType,
-					},
-				})
-			}
-			results[i] = result
-			return
-		}
-
-		handler := ChainMiddleware(
-			func(c *Context, toolName string, input json.RawMessage) (string, error) {
-				// Pass *Context directly — it satisfies context.Context via embedding.
-				return t.Handler(c, input)
-			},
-			a.middlewares...,
-		)
-
-		out, err := handler(toolC, tc.Name, tc.Input)
-		if err != nil {
-			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
-			tf.finish(err, "")
-			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
-			return
-		}
-
-		tf.finish(nil, out)
-		results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: out}
-	}
-
-	if a.parallelTools {
-		var wg sync.WaitGroup
-		for i, tc := range calls {
-			wg.Add(1)
-			go func(i int, tc tool.Call) {
-				defer wg.Done()
-				exec(i, tc)
-			}(i, tc)
-		}
-		wg.Wait()
-	} else {
-		for i, tc := range calls {
-			exec(i, tc)
-		}
-	}
-
-	return results
 }
 
 // hooks returns the composite hook dispatcher for this agent.
