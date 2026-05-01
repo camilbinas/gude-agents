@@ -77,6 +77,19 @@ func (c *Context) Get(key any) (any, bool)
 
 Retrieves a value by key. Returns `(value, true)` if found, or `(nil, false)` if the key doesn't exist. Safe for concurrent use.
 
+### GetTyped
+
+```go
+func GetTyped[T any](c *Context, key any) (T, bool)
+```
+
+Type-safe retrieval — returns the zero value and false if the key is missing or the value isn't assignable to `T`. Eliminates manual type assertions on `Get` results.
+
+```go
+role, ok := agent.GetTyped[string](c, "user_role")
+count, ok := agent.GetTyped[int](c, "retry_count")
+```
+
 ## Token Usage
 
 ### Usage
@@ -160,6 +173,35 @@ func (c *Context) WithIdentifier(id string) *Context
 ```
 
 Sets the scoping identity for memory operations (user ID, tenant ID, etc.).
+
+### WithValue
+
+```go
+func (c *Context) WithValue(key, val any) *Context
+```
+
+Attaches a key-value pair to the embedded `context.Context` (readable via `ctx.Value`). Use this to pass request IDs, trace baggage, or other values that downstream libraries expect on the stdlib context. Unlike `Set`/`Get` which use the invocation-scoped store, `WithValue` returns a new `*Context` wrapping a derived context.
+
+```go
+c := agent.Background().
+    WithValue(requestIDKey{}, "req-abc").
+    WithConversationID("conv-1")
+```
+
+## Clone
+
+```go
+func (c *Context) Clone() *Context
+```
+
+Returns a new `*Context` that shares the parent `context.Context` and typed fields (conversation ID, images, documents, inference config, event hook, identifier) but has an independent key-value store. Use this when forking parallel sub-invocations that should not share mutable KV state.
+
+```go
+for _, topic := range topics {
+    sub := c.Clone().WithConversationID(topic.ID)
+    go func() { agent.Invoke(sub, topic.Question) }()
+}
+```
 
 ## Accessors
 

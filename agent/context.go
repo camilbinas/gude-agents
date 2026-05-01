@@ -134,6 +134,43 @@ func FromContext(ctx context.Context) *Context {
 	return c
 }
 
+// GetTyped retrieves a typed value from the invocation-scoped key-value store.
+// Returns the zero value and false if the key doesn't exist or the value is not
+// assignable to T. Eliminates the need for manual type assertions on Get results.
+func GetTyped[T any](c *Context, key any) (T, bool) {
+	v, ok := c.Get(key)
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	t, ok := v.(T)
+	return t, ok
+}
+
+// WithValue returns a new *Context that carries the given key-value pair in the
+// embedded context.Context. Use this to pass values that downstream libraries
+// read via ctx.Value (e.g. request IDs, trace baggage).
+func (c *Context) WithValue(key, val any) *Context {
+	return c.withContext(context.WithValue(c.Context, key, val))
+}
+
+// Clone returns a new *Context that shares the parent context.Context and typed
+// fields (conversation ID, images, documents, inference config, event hook,
+// identifier) but has an independent key-value store. Use this when forking
+// parallel sub-invocations that should not share mutable KV state.
+func (c *Context) Clone() *Context {
+	return &Context{
+		Context:         c.Context,
+		data:            make(map[any]any),
+		conversationID:  c.conversationID,
+		images:          c.images,
+		documents:       c.documents,
+		inferenceConfig: c.inferenceConfig,
+		eventHook:       c.eventHook,
+		identifier:      c.identifier,
+	}
+}
+
 // setUsage sets the cumulative token usage. This is internal to the agent loop.
 func (c *Context) setUsage(u TokenUsage) {
 	c.usage = u
