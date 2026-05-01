@@ -12,7 +12,6 @@ import (
 )
 
 // Feature: llm-evaluation, Property 6: Threshold determines pass/fail
-// Validates: Requirements 12.2, 12.3
 func TestProperty_ThresholdPassFail(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		score := rapid.Float64Range(0.0, 1.0).Draw(t, "score")
@@ -110,7 +109,6 @@ func genEvalSummary(t *rapid.T, label string) EvalSummary {
 }
 
 // Feature: llm-evaluation, Property 8: EvalReport JSON round-trip
-// Validates: Requirements 15.2
 func TestProperty_EvalReportRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate random EvalReport.

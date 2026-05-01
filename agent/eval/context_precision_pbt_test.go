@@ -12,7 +12,6 @@ import (
 )
 
 // Feature: llm-evaluation, Property 5: Context precision score equals average precision over relevance judgments
-// Validates: Requirements 9.2
 func TestProperty_ContextPrecisionAP(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate 1-10 documents.

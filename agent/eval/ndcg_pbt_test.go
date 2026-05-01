@@ -10,7 +10,6 @@ import (
 )
 
 // Feature: llm-evaluation, Property 3: NDCG score is in [0, 1] and perfect ranking yields 1.0
-// Validates: Requirements 6.1, 6.2
 func TestProperty_NDCGRangeAndPerfect(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate 1-10 distinct expected IDs using a prefix pattern to guarantee uniqueness.

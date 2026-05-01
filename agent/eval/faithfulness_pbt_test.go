@@ -12,7 +12,6 @@ import (
 )
 
 // Feature: llm-evaluation, Property 4: Faithfulness score equals fraction of supported claims
-// Validates: Requirements 7.2, 7.4
 func TestProperty_FaithfulnessClaimFraction(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate 0-10 claims.

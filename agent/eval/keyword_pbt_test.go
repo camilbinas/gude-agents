@@ -11,7 +11,6 @@ import (
 )
 
 // Feature: llm-evaluation, Property 1: Keyword grounding score equals fraction of keywords found (case-insensitive)
-// Validates: Requirements 5.1, 5.2
 func TestProperty_KeywordGroundingFraction(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate 1-10 distinct keywords using a prefix pattern to avoid substring collisions.

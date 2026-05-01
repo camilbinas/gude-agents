@@ -37,7 +37,6 @@ func (d *deterministicEvaluator) Name() string {
 }
 
 // Feature: llm-evaluation, Property 7: Suite produces complete and correct report
-// Validates: Requirements 10.2, 10.3, 10.4, 11.1, 11.2, 11.3
 func TestProperty_SuiteCompleteness(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		n := rapid.IntRange(1, 20).Draw(t, "numCases")
@@ -120,7 +119,6 @@ func TestProperty_SuiteCompleteness(t *testing.T) {
 }
 
 // Feature: llm-evaluation, Property 9: Concurrent execution produces deterministic results
-// Validates: Requirements 16.4
 func TestProperty_ConcurrentDeterminism(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		n := rapid.IntRange(1, 15).Draw(t, "numCases")

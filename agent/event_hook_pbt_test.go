@@ -14,8 +14,6 @@ import (
 
 // ---------------------------------------------------------------------------
 // Feature: event-hook, Property 1: Nil-safe dispatch
-// Validates: Requirements 3.2, 7.1
-//
 // For any sequence of dispatch operations with nil EventHook, no panics occur.
 // ---------------------------------------------------------------------------
 
@@ -58,8 +56,6 @@ func TestProperty_NilSafeDispatch(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Feature: event-hook, Property 2: Tool call start dispatch
-// Validates: Requirements 4.1
-//
 // For any tool name and JSON input, OnToolCallStart receives exact values.
 // ---------------------------------------------------------------------------
 
@@ -100,8 +96,6 @@ func TestProperty_ToolCallStartDispatch(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Feature: event-hook, Property 3: Tool call end dispatch
-// Validates: Requirements 4.2, 4.3
-//
 // For any tool result (success or failure), OnToolCallEnd receives correct
 // output/error/duration.
 // ---------------------------------------------------------------------------
@@ -169,8 +163,6 @@ func TestProperty_ToolCallEndDispatch(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Feature: event-hook, Property 4: Stop reason derivation
-// Validates: Requirements 5.2, 5.3, 8.1, 8.2, 8.3
-//
 // For any provider response shape, correct stop reason is derived.
 // ---------------------------------------------------------------------------
 
@@ -204,8 +196,6 @@ func TestProperty_StopReasonDerivation(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Feature: event-hook, Property 5: Model start ordering
-// Validates: Requirements 5.1
-//
 // For any invocation, OnModelStart is called before provider.
 // ---------------------------------------------------------------------------
 
@@ -305,8 +295,6 @@ func TestProperty_ModelStartOrdering(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Feature: event-hook, Property 6: Thinking chunk forwarding
-// Validates: Requirements 6.1
-//
 // For any chunk string, EventHook.OnThinking receives the exact chunk.
 // ---------------------------------------------------------------------------
 

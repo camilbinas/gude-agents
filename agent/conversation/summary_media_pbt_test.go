@@ -59,8 +59,6 @@ func genMessageWithMedia(t *rapid.T) agent.Message {
 
 // TestProperty5_StripNonTextBlocks_GracefulDegradation verifies that for any message,
 // stripNonTextBlocks returns the same Role and only TextBlock content.
-//
-// **Validates: Requirements 1.2**
 func TestProperty5_StripNonTextBlocks_GracefulDegradation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msg := genMessageWithMedia(rt)
@@ -82,8 +80,6 @@ func TestProperty5_StripNonTextBlocks_GracefulDegradation(t *testing.T) {
 
 // TestProperty3_PreprocessMediaMessages_LengthPreservation verifies that for any
 // message slice, preprocessMediaMessages returns a slice of the same length.
-//
-// **Validates: Requirements 1.2**
 func TestProperty3_PreprocessMediaMessages_LengthPreservation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessagesWithMedia(rt)
@@ -100,8 +96,6 @@ func TestProperty3_PreprocessMediaMessages_LengthPreservation(t *testing.T) {
 
 // TestProperty4_PreprocessMediaMessages_TextOnlyUnchanged verifies that text-only
 // messages pass through preprocessMediaMessages without modification.
-//
-// **Validates: Requirements 1.2**
 func TestProperty4_PreprocessMediaMessages_TextOnlyUnchanged(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a text-only message
@@ -138,8 +132,6 @@ func TestProperty4_PreprocessMediaMessages_TextOnlyUnchanged(t *testing.T) {
 
 // TestProperty6_PreprocessMediaMessages_NoMutationOfInput verifies that
 // preprocessMediaMessages does not mutate the input message slice.
-//
-// **Validates: Requirements 1.2**
 func TestProperty6_PreprocessMediaMessages_NoMutationOfInput(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessagesWithMedia(rt)
@@ -174,8 +166,6 @@ func TestProperty6_PreprocessMediaMessages_NoMutationOfInput(t *testing.T) {
 
 // TestProperty1_PreprocessMediaMessages_RolePreservation verifies that messages
 // with non-text content have the same Role in the result after preprocessing.
-//
-// **Validates: Requirements 1.2**
 func TestProperty1_PreprocessMediaMessages_RolePreservation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a message with non-text content
@@ -202,8 +192,6 @@ func TestProperty1_PreprocessMediaMessages_RolePreservation(t *testing.T) {
 
 // TestProperty2_PreprocessMediaMessages_TextOnlyOutput verifies that messages
 // with non-text content have only TextBlock in the result after preprocessing.
-//
-// **Validates: Requirements 1.2**
 func TestProperty2_PreprocessMediaMessages_TextOnlyOutput(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate messages that contain non-text content
@@ -239,8 +227,6 @@ func TestProperty2_PreprocessMediaMessages_TextOnlyOutput(t *testing.T) {
 // TestProperty7_DisabledByDefault verifies that when mediaSummaryFunc is nil,
 // the summarization flow behaves identically to the current implementation.
 // Messages are passed to SummaryFunc without any media preprocessing.
-//
-// **Validates: Requirements 1.2**
 func TestProperty7_DisabledByDefault(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a threshold and message count that will trigger summarization

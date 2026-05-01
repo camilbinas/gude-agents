@@ -10,7 +10,6 @@ import (
 )
 
 // Feature: llm-evaluation, Property 2: JSON structure evaluator returns binary score with explanation on failure
-// Validates: Requirements 4.1, 4.2
 func TestProperty_JSONStructureBinaryScore(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a random set of key-value pairs for a JSON object.
