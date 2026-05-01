@@ -89,6 +89,15 @@ func WithOutputGuardrail(g ...OutputGuardrail) Option {
 	}
 }
 
+// WithToolFilter adds tool filter(s) evaluated before each provider call (AND semantics).
+// A tool must pass all filters to be included. Accumulates across multiple calls.
+func WithToolFilter(filters ...ToolFilter) Option {
+	return func(a *Agent) error {
+		a.toolFilters = append(a.toolFilters, filters...)
+		return nil
+	}
+}
+
 // WithTokenBudget sets a maximum token budget for each invocation.
 // If cumulative token usage exceeds maxTokens, the invocation is aborted
 // with ErrTokenBudgetExceeded. A value of 0 means no budget (default).

@@ -45,6 +45,7 @@ type Agent struct {
 	middlewares      []Middleware
 	inputGuardrails  []InputGuardrail
 	outputGuardrails []OutputGuardrail
+	toolFilters      []ToolFilter
 
 	// Resilience
 	providerTimeout time.Duration // 0 = no timeout

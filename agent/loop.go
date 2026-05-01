@@ -174,10 +174,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 		}
 
 		// Call provider.
-		a.toolsMu.RLock()
-		currentToolSpecs := make([]tool.Spec, len(a.toolSpecs))
-		copy(currentToolSpecs, a.toolSpecs)
-		a.toolsMu.RUnlock()
+		currentToolSpecs, availableTools := a.filterTools(iterCtx)
 
 		// Forward thinking chunks to EventHook.OnThinking when configured.
 		var thinkingCB ThinkingCallback
@@ -236,7 +233,7 @@ func (a *Agent) runLoop(ctx context.Context, convID string, messages []Message, 
 			}
 			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
 
-			results := a.executeTools(iterCtx, resp.ToolCalls, h)
+			results := a.executeTools(iterCtx, resp.ToolCalls, availableTools, h)
 			iterF.finish(len(resp.ToolCalls), false)
 
 			// Handle handoff.
@@ -369,13 +366,11 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 }
 
 // executeTools runs tool calls either sequentially or in parallel.
-func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, h *hooks) []ToolResultBlock {
+func (a *Agent) executeTools(ctx context.Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks) []ToolResultBlock {
 	results := make([]ToolResultBlock, len(calls))
 
 	exec := func(i int, tc tool.Call) {
-		a.toolsMu.RLock()
-		t, ok := a.tools[tc.Name]
-		a.toolsMu.RUnlock()
+		t, ok := availableTools[tc.Name]
 		if !ok {
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,

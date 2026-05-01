@@ -2,14 +2,14 @@
 
 gude-agents ships with four built-in LLM providers: AWS Bedrock, Anthropic, OpenAI, and Google Gemini. It also supports local model servers (Ollama, vLLM) via the OpenAI provider's compatible endpoint constructors. Each provider implements the `Provider` interface, so they're interchangeable — swap one for another without changing your agent code.
 
-| Provider | Import | Details |
-|----------|--------|---------|
-| AWS Bedrock | `agent/provider/bedrock` | [Bedrock docs](providers/bedrock.md) |
-| Anthropic | `agent/provider/anthropic` | [Anthropic docs](providers/anthropic.md) |
-| OpenAI | `agent/provider/openai` | [OpenAI docs](providers/openai.md) |
-| Google Gemini | `agent/provider/gemini` | [Gemini docs](providers/gemini.md) |
-| Ollama (local) | `agent/provider/ollama` | [Ollama docs](providers/ollama.md) |
-| vLLM (local) | `agent/provider/vllm` | [vLLM docs](providers/vllm.md) |
+| Provider       | Import                     | Details                                  |
+| -------------- | -------------------------- | ---------------------------------------- |
+| AWS Bedrock    | `agent/provider/bedrock`   | [Bedrock docs](providers/bedrock.md)     |
+| Anthropic      | `agent/provider/anthropic` | [Anthropic docs](providers/anthropic.md) |
+| OpenAI         | `agent/provider/openai`    | [OpenAI docs](providers/openai.md)       |
+| Google Gemini  | `agent/provider/gemini`    | [Gemini docs](providers/gemini.md)       |
+| Ollama (local) | `agent/provider/ollama`    | [Ollama docs](providers/ollama.md)       |
+| vLLM (local)   | `agent/provider/vllm`      | [vLLM docs](providers/vllm.md)           |
 
 ## Quick Start
 
@@ -68,19 +68,19 @@ provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
 
 ### Effort Levels
 
-| Constant | Value | Anthropic/Bedrock Claude | Bedrock Nova 2 | OpenAI |
-|---|---|---|---|---|
-| `pvdr.ThinkingLow` | `"low"` | 2 048 token budget | `low` effort | `low` effort |
-| `pvdr.ThinkingMedium` | `"medium"` | 8 192 token budget | `medium` effort | `medium` effort |
-| `pvdr.ThinkingHigh` | `"high"` | 16 384 token budget | `high` effort | `high` effort |
+| Constant              | Value      | Anthropic/Bedrock Claude | Bedrock Nova 2  | OpenAI          |
+| --------------------- | ---------- | ------------------------ | --------------- | --------------- |
+| `pvdr.ThinkingLow`    | `"low"`    | 2 048 token budget       | `low` effort    | `low` effort    |
+| `pvdr.ThinkingMedium` | `"medium"` | 8 192 token budget       | `medium` effort | `medium` effort |
+| `pvdr.ThinkingHigh`   | `"high"`   | 16 384 token budget      | `high` effort   | `high` effort   |
 
 ### Supported Models
 
-| Provider | Supported models |
-|---|---|
+| Provider  | Supported models                                                                 |
+| --------- | -------------------------------------------------------------------------------- |
 | Anthropic | All Claude 4-series (`claude-haiku-4-5`, `claude-sonnet-4-*`, `claude-opus-4-*`) |
-| Bedrock | Same Claude 4-series via Bedrock + `Nova2Lite` |
-| OpenAI | `o3`, `o3-mini`, `o4-mini` and other o-series reasoning models |
+| Bedrock   | Same Claude 4-series via Bedrock + `Nova2Lite`                                   |
+| OpenAI    | `o3`, `o3-mini`, `o4-mini` and other o-series reasoning models                   |
 
 `WithThinking` is silently ignored for models that don't support it.
 

@@ -101,6 +101,30 @@ result, _, err := a.Invoke(ctx, "Be creative!")
 | `WithOutputGuardrail(g...)` | Functions that validate/transform the final response. When configured, streamed chunks are buffered until guardrails pass |
 | `WithMiddleware(mws...)` | Functions that wrap tool execution. Applied in order (first = outermost). Accumulates across multiple calls |
 
+### Tool Filtering
+
+| Option | Description |
+|---|---|
+| `WithToolFilter(filters...)` | Controls which tools are visible to the LLM per provider call. Multiple filters use AND semantics — a tool must pass all filters. Evaluated before each call in the loop. Accumulates across multiple calls. |
+
+Each filter receives the request context and a tool; return `true` to include it.
+
+```go
+a, err := agent.New(provider, instructions, tools,
+    agent.WithToolFilter(
+        func(ctx context.Context, t tool.Tool) bool { return isAdmin(ctx) || t.Spec.Name != "delete_account" },
+        func(ctx context.Context, t tool.Tool) bool {
+            ic := agent.GetInvocationContext(ctx)
+            if t.Spec.Name == "submit_order" {
+                v, ok := ic.Get("cart_validated")
+                return ok && v.(bool)
+            }
+            return true
+        },
+    ),
+)
+```
+
 ### Thinking
 
 Thinking chunks are delivered through `EventHook.OnThinking`. Only fires when the provider has thinking enabled:
@@ -240,6 +264,7 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
 4. **Image injection** — if `WithImages` was called on the context, images are prepended to the first user message.
 5. **Document injection** — if `WithDocuments` was called on the context, documents are prepended before images in the first user message.
 6. **Agent loop** (up to `maxIterations`):
+   - If a `ToolFilter` is set, it is evaluated to determine which tools are available for this call.
    - The provider is called with the current messages, system prompt, and tool specs.
    - If the provider returns **tool calls**: the agent executes them and loops back.
    - If the provider returns a **text response**: the loop exits.
