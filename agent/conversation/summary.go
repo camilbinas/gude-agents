@@ -240,8 +240,6 @@ func NewMediaSummaryFunc(provider agent.Provider, systemPrompt string) MediaSumm
 			return agent.Message{}, fmt.Errorf("media summary: %w", err)
 		}
 
-		fmt.Println("Media summary:", resp.Text)
-
 		return agent.Message{
 			Role:    msg.Role,
 			Content: []agent.ContentBlock{agent.TextBlock{Text: resp.Text}},
