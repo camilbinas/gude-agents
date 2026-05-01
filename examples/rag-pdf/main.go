@@ -77,7 +77,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a knowledgeable document assistant with access to reference documents provided as context.",
 			Instructions: "Answer questions based on the provided reference documents. Cite the source filename when possible.",
-			Steps:        "1. Read the retrieved context carefully.\n2. Find the most relevant information.\n3. Formulate a concise answer grounded in the documents.",
+			Steps:        []string{"Read the retrieved context carefully", "Find the most relevant information", "Formulate a concise answer grounded in the documents"},
 			EndGoal:      "Provide accurate, concise answers that reference the source material.",
 			Narrowing:    "Only use information from the provided documents. If the documents don't contain relevant information, say so.",
 		},

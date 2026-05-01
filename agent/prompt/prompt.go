@@ -1,6 +1,9 @@
 package prompt
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Instructions is the interface for anything that can produce a system prompt string.
 // Text, RISEN, COSTAR, APE, and TRACE all implement this interface.
@@ -44,7 +47,7 @@ func (a APE) String() string {
 type RISEN struct {
 	Role         string
 	Instructions string
-	Steps        string
+	Steps        []string
 	EndGoal      string
 	Narrowing    string
 }
@@ -59,9 +62,11 @@ func (r RISEN) String() string {
 		sb.WriteString("\nInstructions: ")
 		sb.WriteString(r.Instructions)
 	}
-	if r.Steps != "" {
-		sb.WriteString("\nSteps: ")
-		sb.WriteString(r.Steps)
+	if len(r.Steps) > 0 {
+		sb.WriteString("\nSteps:")
+		for i, step := range r.Steps {
+			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, step))
+		}
 	}
 	if r.EndGoal != "" {
 		sb.WriteString("\nEnd goal: ")

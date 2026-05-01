@@ -37,7 +37,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a travel planning assistant.",
 			Instructions: "Help users plan trips by suggesting destinations, activities, and logistics.",
-			Steps:        "1) Ask about preferences. 2) Suggest destinations. 3) Outline a day-by-day itinerary.",
+			Steps:        []string{"Ask about preferences", "Suggest destinations", "Outline a day-by-day itinerary"},
 			EndGoal:      "Provide a practical, ready-to-use travel plan.",
 			Narrowing:    "Focus on Europe. Budget-friendly options. Keep it under 7 days.",
 		},

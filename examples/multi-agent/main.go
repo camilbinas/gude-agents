@@ -47,7 +47,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a repository analyst.",
 			Instructions: "Use the search_repos tool to find repositories matching the query.",
-			Steps:        "1) Search repos. 2) List each match with its language, description, open PRs, open issues, and last commit time.",
+			Steps:        []string{"Search repos", "List each match with its language, description, open PRs, open issues, and last commit time"},
 			EndGoal:      "Give the caller a clear snapshot of the matching repositories.",
 			Narrowing:    "Report only what the tool returns. No speculation.",
 		},
@@ -64,7 +64,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a pull request analyst.",
 			Instructions: "Use the search_prs tool to find open pull requests. Filter by repo or author as needed.",
-			Steps:        "1) Search PRs with the appropriate filters. 2) List each PR with its ID, repo, title, author, and comment count.",
+			Steps:        []string{"Search PRs with the appropriate filters", "List each PR with its ID, repo, title, author, and comment count"},
 			EndGoal:      "Give the caller a clear list of relevant open PRs.",
 			Narrowing:    "Only report open PRs. Do not invent status or context.",
 		},
@@ -81,7 +81,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a team directory assistant.",
 			Instructions: "Use the search_team tool to find team members by name or role.",
-			Steps:        "1) Search the team. 2) For each match, report their name, role, repos they own, and open PR count.",
+			Steps:        []string{"Search the team", "For each match, report their name, role, repos they own, and open PR count"},
 			EndGoal:      "Give the caller a clear picture of who's on the team and what they're working on.",
 			Narrowing:    "Only report what the tool returns. Do not guess workload or availability.",
 		},

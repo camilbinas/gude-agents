@@ -1,6 +1,6 @@
 # Prompt System
 
-The prompt system provides structured ways to define agent instructions. Every agent needs a system prompt — the `Instructions` interface lets you pass anything from a plain string to a full prompt framework like RISEN, COSTAR, APE, or TRACE.
+The `prompt` package provides structured ways to define agent system prompts. All types implement the `Instructions` interface and can be passed as the second argument to any agent constructor.
 
 ## Instructions Interface
 
@@ -10,9 +10,7 @@ type Instructions interface {
 }
 ```
 
-`Instructions` is the interface for anything that can produce a system prompt string. All prompt types in the `prompt` package implement this interface, and you can implement it yourself for custom prompt builders.
-
-The agent constructors (`agent.New`, `agent.Default`, `agent.Worker`, `agent.Orchestrator`) all accept an `Instructions` value as their second parameter.
+Implement this for custom prompt builders. The built-in types below all satisfy it.
 
 ## prompt.Text
 
@@ -20,13 +18,7 @@ The agent constructors (`agent.New`, `agent.Default`, `agent.Worker`, `agent.Orc
 type Text string
 ```
 
-`Text` is the simplest prompt type — a plain string that implements `Instructions`. Use it when your system prompt is a single block of text and you don't need structured sections.
-
-```go
-func (t Text) String() string
-```
-
-`String()` returns the underlying string value.
+Plain string prompt. Use when you don't need structured sections.
 
 ## prompt.RISEN
 
@@ -34,27 +26,19 @@ func (t Text) String() string
 type RISEN struct {
     Role         string
     Instructions string
-    Steps        string
+    Steps        []string
     EndGoal      string
     Narrowing    string
 }
 ```
 
-`RISEN` builds a system prompt using the RISEN framework: Role, Instructions, Steps, End goal, Narrowing. Each non-empty field is rendered as a labeled section in the output string.
-
-| Field          | Purpose                                                    |
-|----------------|------------------------------------------------------------|
-| `Role`         | Who the agent is (persona or job title)                    |
-| `Instructions` | What the agent should do                                   |
-| `Steps`        | Ordered steps the agent should follow                      |
-| `EndGoal`      | The desired outcome of the interaction                     |
-| `Narrowing`    | Constraints, scope limits, or guardrails on the response   |
-
-```go
-func (r RISEN) String() string
-```
-
-`String()` concatenates the non-empty fields with labels like `Role:`, `Instructions:`, `Steps:`, `End goal:`, and `Narrowing:`, separated by newlines.
+| Field          | Purpose                                                  |
+|----------------|----------------------------------------------------------|
+| `Role`         | Who the agent is                                         |
+| `Instructions` | What the agent should do                                 |
+| `Steps`        | Ordered steps to follow (rendered as a numbered list)    |
+| `EndGoal`      | Desired outcome                                          |
+| `Narrowing`    | Constraints or guardrails                                |
 
 ## prompt.COSTAR
 
@@ -69,22 +53,14 @@ type COSTAR struct {
 }
 ```
 
-`COSTAR` builds a system prompt using the CO-STAR framework: Context, Objective, Style, Tone, Audience, Response format. It's well-suited for user-facing assistants where tone and audience matter.
-
-| Field       | Purpose                                                  |
-|-------------|----------------------------------------------------------|
-| `Context`   | Background information or situational context            |
-| `Objective` | The primary goal the agent should accomplish             |
-| `Style`     | Writing style (e.g., structured, conversational, formal) |
-| `Tone`      | Emotional tone (e.g., friendly, professional, empathetic)|
-| `Audience`  | Who the agent is talking to                              |
-| `Response`  | Output format constraints (length, structure, etc.)      |
-
-```go
-func (c COSTAR) String() string
-```
-
-`String()` concatenates the non-empty fields with labels like `Context:`, `Objective:`, `Style:`, `Tone:`, `Audience:`, and `Response format:`, separated by newlines.
+| Field       | Purpose                                    |
+|-------------|--------------------------------------------|
+| `Context`   | Background or situational context          |
+| `Objective` | Primary goal                               |
+| `Style`     | Writing style                              |
+| `Tone`      | Emotional tone                             |
+| `Audience`  | Who the agent is talking to                |
+| `Response`  | Output format constraints                  |
 
 ## prompt.APE
 
@@ -96,19 +72,11 @@ type APE struct {
 }
 ```
 
-`APE` builds a system prompt using the APE framework: Action, Purpose, Expectation. A concise format that works well for tool-heavy agents where you want to be direct about what the agent does and how.
-
-| Field         | Purpose                                                  |
-|---------------|----------------------------------------------------------|
-| `Action`      | What the agent should do                                 |
-| `Purpose`     | Why it's doing it (the business goal)                    |
-| `Expectation` | What good output looks like (constraints, format, tone)  |
-
-```go
-func (a APE) String() string
-```
-
-`String()` concatenates the non-empty fields with labels like `Action:`, `Purpose:`, and `Expectation:`, separated by newlines.
+| Field         | Purpose                              |
+|---------------|--------------------------------------|
+| `Action`      | What the agent should do             |
+| `Purpose`     | Why (the business goal)              |
+| `Expectation` | What good output looks like          |
 
 ## prompt.TRACE
 
@@ -122,21 +90,13 @@ type TRACE struct {
 }
 ```
 
-`TRACE` builds a system prompt using the TRACE framework: Task, Request, Action, Context, Example. Useful when you want to show the model what good output looks like via an example.
-
-| Field     | Purpose                                                    |
-|-----------|------------------------------------------------------------|
-| `Task`    | The agent's role or identity                               |
-| `Request` | What the agent is being asked to do                        |
-| `Action`  | How the agent should approach the task                     |
-| `Context` | Background information about the domain or codebase        |
-| `Example` | A concrete input/output example of the desired behavior    |
-
-```go
-func (tr TRACE) String() string
-```
-
-`String()` concatenates the non-empty fields with labels like `Task:`, `Request:`, `Action:`, `Context:`, and `Example:`, separated by newlines.
+| Field     | Purpose                                          |
+|-----------|--------------------------------------------------|
+| `Task`    | The agent's role or identity                     |
+| `Request` | What the agent is being asked to do              |
+| `Action`  | How to approach the task                         |
+| `Context` | Domain background                                |
+| `Example` | Concrete input/output example                    |
 
 ## Example
 
@@ -145,7 +105,7 @@ a, _ := agent.Default(provider,
     prompt.RISEN{
         Role:         "You are a travel planning assistant.",
         Instructions: "Help users plan trips by suggesting destinations and logistics.",
-        Steps:        "1) Ask about preferences. 2) Suggest destinations. 3) Outline itinerary.",
+        Steps:        []string{"Ask about preferences", "Suggest destinations", "Outline itinerary"},
         EndGoal:      "Provide a practical, ready-to-use travel plan.",
         Narrowing:    "Focus on Europe. Budget-friendly. Under 7 days.",
     },
@@ -153,10 +113,11 @@ a, _ := agent.Default(provider,
 )
 ```
 
-All prompt types work the same way — pass them as the second argument to any agent constructor.
+## Rendering
+
+All types render non-empty fields as labeled sections separated by newlines. Empty/nil fields are omitted. The `String()` method on each type produces the final system prompt string.
 
 ## See Also
 
 - [Agent API Reference](agent-api.md) — agent constructors that accept `Instructions`
 - [Getting Started](getting-started.md) — `Default`, `Worker`, and `Orchestrator` preset constructors
-- [Structured Output](structured-output.md) — combining prompts with typed responses

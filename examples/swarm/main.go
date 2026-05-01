@@ -30,7 +30,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a customer support triage agent.",
 			Instructions: "Determine what the user needs and hand off to the appropriate specialist. Use transfer_to_billing for payment/invoice questions, transfer_to_technical for bugs/errors/how-to questions.",
-			Steps:        "1) Read the user message. 2) Decide which specialist handles it. 3) Transfer with a brief summary.",
+			Steps:        []string{"Read the user message", "Decide which specialist handles it", "Transfer with a brief summary"},
 			EndGoal:      "Route every request to the right specialist quickly.",
 			Narrowing:    "Never try to answer questions yourself — always hand off.",
 		},
@@ -48,7 +48,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a billing support specialist.",
 			Instructions: "Help users with invoices, payments, refunds, and subscription questions. Use the check_balance tool to look up account info.",
-			Steps:        "1) Understand the billing question. 2) Look up relevant data. 3) Provide a clear answer.",
+			Steps:        []string{"Understand the billing question", "Look up relevant data", "Provide a clear answer"},
 			EndGoal:      "Resolve billing questions accurately and helpfully.",
 			Narrowing:    "If the question is not about billing, use transfer_to_triage to route it back.",
 		},
@@ -66,7 +66,7 @@ func main() {
 		prompt.RISEN{
 			Role:         "You are a technical support specialist.",
 			Instructions: "Help users with bugs, errors, configuration, and how-to questions. Use the search_docs tool to find relevant documentation.",
-			Steps:        "1) Understand the technical issue. 2) Search docs if needed. 3) Provide a solution.",
+			Steps:        []string{"Understand the technical issue", "Search docs if needed", "Provide a solution"},
 			EndGoal:      "Resolve technical issues with clear, actionable guidance.",
 			Narrowing:    "If the question is not technical, use transfer_to_triage to route it back.",
 		},

@@ -31,7 +31,7 @@ func TestRISEN_AllFields(t *testing.T) {
 	r := RISEN{
 		Role:         "Travel planner",
 		Instructions: "Help users plan trips",
-		Steps:        "1) Ask preferences 2) Suggest destinations",
+		Steps:        []string{"Ask preferences", "Suggest destinations"},
 		EndGoal:      "A practical travel plan",
 		Narrowing:    "Europe only, under 7 days",
 	}
@@ -43,7 +43,7 @@ func TestRISEN_AllFields(t *testing.T) {
 	}{
 		{"Role", "Role: Travel planner"},
 		{"Instructions", "Instructions: Help users plan trips"},
-		{"Steps", "Steps: 1) Ask preferences 2) Suggest destinations"},
+		{"Steps", "Steps:\n  1. Ask preferences\n  2. Suggest destinations"},
 		{"EndGoal", "End goal: A practical travel plan"},
 		{"Narrowing", "Narrowing: Europe only, under 7 days"},
 	}
@@ -86,7 +86,7 @@ func TestRISEN_FieldOrder(t *testing.T) {
 	r := RISEN{
 		Role:         "A",
 		Instructions: "B",
-		Steps:        "C",
+		Steps:        []string{"C"},
 		EndGoal:      "D",
 		Narrowing:    "E",
 	}
