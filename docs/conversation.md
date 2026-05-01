@@ -195,6 +195,56 @@ func WithSummaryTimeout(d time.Duration) SummaryOption
 
 Sets a per-summarization timeout. Each background goroutine gets a context with this deadline. If the LLM call doesn't complete in time, the summarization is cancelled. Default: no timeout.
 
+#### Media Summarization
+
+Messages containing non-text content (images, documents) are normally opaque to the `SummaryFunc` — it only extracts text blocks. With media summarization enabled, these messages are individually converted to text-only equivalents before the main summary runs, preserving visual/document context.
+
+```go
+type MediaSummaryFunc func(ctx context.Context, msg agent.Message) (agent.Message, error)
+```
+
+`MediaSummaryFunc` takes a message with non-text blocks and returns a text-only message with the same role.
+
+#### DefaultMediaSummaryFunc
+
+```go
+func DefaultMediaSummaryFunc(provider agent.Provider) MediaSummaryFunc
+```
+
+Returns a `MediaSummaryFunc` using a default prompt that describes images and documents as concise text.
+
+#### NewMediaSummaryFunc
+
+```go
+func NewMediaSummaryFunc(provider agent.Provider, systemPrompt string) MediaSummaryFunc
+```
+
+Returns a `MediaSummaryFunc` with a custom system prompt for domain-specific media descriptions.
+
+#### WithMediaSummaryFunc
+
+```go
+func WithMediaSummaryFunc(fn MediaSummaryFunc) SummaryOption
+```
+
+Enables media preprocessing before the main `SummaryFunc`. On error per-message, falls back to stripping non-text blocks (current default behavior).
+
+#### WithMediaSummaryConcurrency
+
+```go
+func WithMediaSummaryConcurrency(n int) SummaryOption
+```
+
+Sets the max parallel media summary LLM calls. Default: 3.
+
+```go
+s, err := conversation.NewSummary(store, 10,
+    conversation.DefaultSummaryFunc(provider),
+    conversation.WithMediaSummaryFunc(conversation.DefaultMediaSummaryFunc(provider)),
+    conversation.WithMediaSummaryConcurrency(5),
+)
+```
+
 ### TokenSummary
 
 ```go
@@ -217,6 +267,8 @@ s, err := conversation.NewTokenSummary(store, 100_000,
 | `WithTokenPreserveRecentMessages(n)` | Turns to keep out of summarization | 0 |
 | `WithTokenTriggerThreshold(pct)` | Percentage of token threshold to trigger at | 80 |
 | `WithTokenSummaryTimeout(d)` | Per-summarization timeout | no timeout |
+| `WithTokenMediaSummaryFunc(fn)` | Preprocess media messages into text before summarizing | nil (disabled) |
+| `WithTokenMediaSummaryConcurrency(n)` | Max parallel media summary calls | 3 |
 
 ## Composable Middleware Pattern
 

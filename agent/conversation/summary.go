@@ -24,6 +24,11 @@ type SummaryFunc func(ctx context.Context, messages []agent.Message) ([2]agent.M
 // Returns an error if the configuration is invalid.
 type SummaryOption func(*Summary) error
 
+// MediaSummaryFunc takes a message containing non-text content blocks and
+// returns a text-only message with the same role. The returned message must
+// contain only TextBlock content.
+type MediaSummaryFunc func(ctx context.Context, msg agent.Message) (agent.Message, error)
+
 // WithSummaryLogger sets an optional logger for error reporting during
 // background summarization.
 func WithSummaryLogger(l agent.Logger) SummaryOption {
@@ -74,6 +79,31 @@ func WithSummaryTimeout(d time.Duration) SummaryOption {
 	}
 }
 
+// WithMediaSummaryFunc sets a function that summarizes messages containing
+// non-text content (images, documents) into text-only equivalents before
+// the main SummaryFunc runs.
+func WithMediaSummaryFunc(fn MediaSummaryFunc) SummaryOption {
+	return func(s *Summary) error {
+		if fn == nil {
+			return fmt.Errorf("media summary function must not be nil")
+		}
+		s.mediaSummaryFunc = fn
+		return nil
+	}
+}
+
+// WithMediaSummaryConcurrency sets the maximum number of parallel media
+// summary calls. Defaults to 3 when not set.
+func WithMediaSummaryConcurrency(n int) SummaryOption {
+	return func(s *Summary) error {
+		if n < 1 {
+			return fmt.Errorf("media summary concurrency must be >= 1, got %d", n)
+		}
+		s.mediaSummaryConcurrency = n
+		return nil
+	}
+}
+
 // summaryState tracks per-conversation summarization progress.
 type summaryState struct {
 	cutoffIndex int
@@ -90,6 +120,9 @@ type Summary struct {
 	logger         agent.Logger
 	preserveRecent int           // number of recent messages to always keep out of summarization
 	timeout        time.Duration // per-summarization timeout; 0 = no timeout
+
+	mediaSummaryFunc        MediaSummaryFunc // nil = disabled (current behavior: drop non-text)
+	mediaSummaryConcurrency int              // max parallel media summary calls (default: 3)
 
 	ctx    context.Context // cancelled by Close to stop in-flight summarization
 	cancel context.CancelFunc
@@ -191,6 +224,38 @@ func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
 	return NewSummaryFunc(provider,
 		"Summarize the following conversation into a single concise paragraph. "+
 			"Preserve all key facts, names, and decisions.",
+	)
+}
+
+// NewMediaSummaryFunc returns a MediaSummaryFunc that uses the given Provider
+// and system prompt to summarize messages containing non-text content into
+// text-only equivalents.
+func NewMediaSummaryFunc(provider agent.Provider, systemPrompt string) MediaSummaryFunc {
+	return func(ctx context.Context, msg agent.Message) (agent.Message, error) {
+		resp, err := provider.Converse(ctx, agent.ConverseParams{
+			System:   systemPrompt,
+			Messages: []agent.Message{msg},
+		})
+		if err != nil {
+			return agent.Message{}, fmt.Errorf("media summary: %w", err)
+		}
+
+		fmt.Println("Media summary:", resp.Text)
+
+		return agent.Message{
+			Role:    msg.Role,
+			Content: []agent.ContentBlock{agent.TextBlock{Text: resp.Text}},
+		}, nil
+	}
+}
+
+// DefaultMediaSummaryFunc returns a MediaSummaryFunc that uses the given
+// Provider with a default system prompt to summarize non-text content.
+func DefaultMediaSummaryFunc(provider agent.Provider) MediaSummaryFunc {
+	return NewMediaSummaryFunc(provider,
+		"Describe the non-text content in this message (images, documents) "+
+			"as concise text. Preserve all key visual details, data, and context. "+
+			"Combine with any existing text in the message into a single coherent summary.",
 	)
 }
 
@@ -301,9 +366,15 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		return
 	}
 
+	// Preprocess media messages: summarize non-text content into text-only equivalents.
+	toSummarize := preSummarize[:summarizeUntil]
+	if s.mediaSummaryFunc != nil {
+		toSummarize = s.preprocessMediaMessages(ctx, toSummarize)
+	}
+
 	// Call SummaryFunc on the messages up to summarizeUntil.
 	// This may be slow (LLM call) — no locks held during this.
-	summaryPair, err := s.summarize(ctx, preSummarize[:summarizeUntil])
+	summaryPair, err := s.summarize(ctx, toSummarize)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("summary: summarization failed for %s: %v", conversationID, err)
@@ -377,6 +448,91 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		s.wg.Add(1)
 		go s.runSummarize(conversationID, newCutoff)
 	}
+}
+
+// hasNonTextContent reports whether msg contains any ImageBlock or DocumentBlock.
+func hasNonTextContent(msg agent.Message) bool {
+	for _, block := range msg.Content {
+		switch block.(type) {
+		case agent.ImageBlock, agent.DocumentBlock:
+			return true
+		}
+	}
+	return false
+}
+
+// stripNonTextBlocks returns a new message with the same Role containing only
+// TextBlock content. If no text blocks exist, Content is nil.
+func stripNonTextBlocks(msg agent.Message) agent.Message {
+	var textBlocks []agent.ContentBlock
+	for _, b := range msg.Content {
+		if _, ok := b.(agent.TextBlock); ok {
+			textBlocks = append(textBlocks, b)
+		}
+	}
+	return agent.Message{
+		Role:    msg.Role,
+		Content: textBlocks,
+	}
+}
+
+// preprocessMediaMessages summarizes messages containing non-text content
+// (images, documents) into text-only equivalents using the configured
+// MediaSummaryFunc. Concurrency is bounded by mediaSummaryConcurrency.
+func (s *Summary) preprocessMediaMessages(ctx context.Context, msgs []agent.Message) []agent.Message {
+	type indexedResult struct {
+		idx int
+		msg agent.Message
+		err error
+	}
+
+	var needsSummary []int
+	for i, m := range msgs {
+		if hasNonTextContent(m) {
+			needsSummary = append(needsSummary, i)
+		}
+	}
+
+	if len(needsSummary) == 0 {
+		return msgs
+	}
+
+	// Semaphore limits concurrent media summary calls.
+	concurrency := s.mediaSummaryConcurrency
+	if concurrency < 1 {
+		concurrency = 3 // default
+	}
+	sem := make(chan struct{}, concurrency)
+
+	// Run media summaries concurrently with bounded parallelism.
+	results := make(chan indexedResult, len(needsSummary))
+	for _, idx := range needsSummary {
+		go func(i int) {
+			sem <- struct{}{}        // acquire
+			defer func() { <-sem }() // release
+			summarized, err := s.mediaSummaryFunc(ctx, msgs[i])
+			results <- indexedResult{idx: i, msg: summarized, err: err}
+		}(idx)
+	}
+
+	// Collect results into a copy of the message slice.
+	processed := make([]agent.Message, len(msgs))
+	copy(processed, msgs)
+
+	for range needsSummary {
+		r := <-results
+		if r.err != nil {
+			// Fallback: strip non-text blocks, keep text
+			if s.logger != nil {
+				s.logger.Printf("summary: media summarization failed for message %d: %v", r.idx, r.err)
+			}
+			processed[r.idx] = stripNonTextBlocks(msgs[r.idx])
+		} else {
+			processed[r.idx] = r.msg
+		}
+	}
+
+	return processed
 }
 
 // Close cancels in-flight summarization goroutines and waits for them to finish.

@@ -60,6 +60,31 @@ func WithTokenSummaryTimeout(d time.Duration) TokenSummaryOption {
 	}
 }
 
+// WithTokenMediaSummaryFunc sets a function that summarizes messages containing
+// non-text content (images, documents) into text-only equivalents before
+// the main SummaryFunc runs.
+func WithTokenMediaSummaryFunc(fn MediaSummaryFunc) TokenSummaryOption {
+	return func(s *TokenSummary) error {
+		if fn == nil {
+			return fmt.Errorf("media summary function must not be nil")
+		}
+		s.mediaSummaryFunc = fn
+		return nil
+	}
+}
+
+// WithTokenMediaSummaryConcurrency sets the maximum number of parallel media
+// summary calls. Defaults to 3 when not set.
+func WithTokenMediaSummaryConcurrency(n int) TokenSummaryOption {
+	return func(s *TokenSummary) error {
+		if n < 1 {
+			return fmt.Errorf("media summary concurrency must be >= 1, got %d", n)
+		}
+		s.mediaSummaryConcurrency = n
+		return nil
+	}
+}
+
 // TokenSummary wraps a Conversation and triggers background summarization when
 // the provider-reported input token count exceeds a configured threshold. Unlike
 // Summary (which triggers on message count), TokenSummary uses actual token
@@ -76,6 +101,9 @@ type TokenSummary struct {
 	logger         agent.Logger
 	preserveRecent int
 	timeout        time.Duration
+
+	mediaSummaryFunc        MediaSummaryFunc // nil = disabled
+	mediaSummaryConcurrency int              // max parallel media summary calls (default: 3)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -213,8 +241,14 @@ func (s *TokenSummary) runSummarize(conversationID string, msgs []agent.Message,
 		return
 	}
 
+	// Preprocess media messages: summarize non-text content into text-only equivalents.
+	toSummarize := current[:summarizeUntil]
+	if s.mediaSummaryFunc != nil {
+		toSummarize = s.preprocessMediaMessages(ctx, toSummarize)
+	}
+
 	// Call SummaryFunc on the messages to summarize.
-	summaryPair, err := s.summarize(ctx, current[:summarizeUntil])
+	summaryPair, err := s.summarize(ctx, toSummarize)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("token_summary: summarization failed for %s: %v", conversationID, err)
@@ -261,6 +295,60 @@ func (s *TokenSummary) runSummarize(conversationID string, msgs []agent.Message,
 		s.logger.Printf("token_summary: condensed %d messages → %d (conversation %q, triggered at %d input tokens)",
 			len(current), len(newMsgs), conversationID, inputTokens)
 	}
+}
+
+// preprocessMediaMessages summarizes messages containing non-text content
+// using the configured MediaSummaryFunc with bounded concurrency.
+func (s *TokenSummary) preprocessMediaMessages(ctx context.Context, msgs []agent.Message) []agent.Message {
+	type indexedResult struct {
+		idx int
+		msg agent.Message
+		err error
+	}
+
+	var needsSummary []int
+	for i, m := range msgs {
+		if hasNonTextContent(m) {
+			needsSummary = append(needsSummary, i)
+		}
+	}
+
+	if len(needsSummary) == 0 {
+		return msgs
+	}
+
+	concurrency := s.mediaSummaryConcurrency
+	if concurrency < 1 {
+		concurrency = 3
+	}
+	sem := make(chan struct{}, concurrency)
+
+	results := make(chan indexedResult, len(needsSummary))
+	for _, idx := range needsSummary {
+		go func(i int) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			summarized, err := s.mediaSummaryFunc(ctx, msgs[i])
+			results <- indexedResult{idx: i, msg: summarized, err: err}
+		}(idx)
+	}
+
+	processed := make([]agent.Message, len(msgs))
+	copy(processed, msgs)
+
+	for range needsSummary {
+		r := <-results
+		if r.err != nil {
+			if s.logger != nil {
+				s.logger.Printf("token_summary: media summarization failed for message %d: %v", r.idx, r.err)
+			}
+			processed[r.idx] = stripNonTextBlocks(msgs[r.idx])
+		} else {
+			processed[r.idx] = r.msg
+		}
+	}
+
+	return processed
 }
 
 // Close cancels in-flight summarization and waits for completion.
