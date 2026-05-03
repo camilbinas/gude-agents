@@ -10,6 +10,7 @@ import (
 func Default(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(5),
+		WithParallelToolExecution(),
 	}
 	return New(prov, inst, tools, append(defaults, opts...)...)
 }
@@ -19,6 +20,7 @@ func Default(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ..
 func Worker(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(3),
+		WithParallelToolExecution(),
 	}
 	return New(prov, inst, tools, append(defaults, opts...)...)
 }
@@ -38,6 +40,7 @@ func Orchestrator(prov Provider, inst prompt.Instructions, tools []tool.Tool, op
 func SwarmAgent(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
 	defaults := []Option{
 		WithMaxIterations(5),
+		WithParallelToolExecution(),
 	}
 	return New(prov, inst, tools, append(defaults, opts...)...)
 }
@@ -48,6 +51,7 @@ func RAGAgent(prov Provider, inst prompt.Instructions, r Retriever, tools []tool
 	defaults := []Option{
 		WithMaxIterations(5),
 		WithRetriever(r),
+		WithParallelToolExecution(),
 	}
 	return New(prov, inst, tools, append(defaults, opts...)...)
 }
