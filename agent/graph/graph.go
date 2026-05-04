@@ -44,15 +44,24 @@ type Graph[S any] struct {
 	joins       map[string][]string // node → required predecessors
 	maxIter     int
 	ops         stateOps[S]
-	tracingHook GraphTracingHook // nil = no tracing
-	metricsHook GraphMetricsHook // nil = no metrics
-	loggingHook GraphLoggingHook // nil = no structured logging
+	nodeMeta    map[string]NodeMeta // optional metadata per node
+	tracingHook GraphTracingHook    // nil = no tracing
+	metricsHook GraphMetricsHook    // nil = no metrics
+	loggingHook GraphLoggingHook    // nil = no structured logging
 
 	checkpointer              GraphCheckpointer // nil = no checkpointing
 	checkpointOnInterruptOnly bool
 	interruptBefore           map[string]bool
 	interruptAfter            map[string]bool
 	eventHook                 GraphEventHook // nil = no event emission
+}
+
+// NodeMeta holds optional metadata for a node.
+type NodeMeta struct {
+	Label    string `json:"label,omitempty"`    // human-readable name
+	Agent    string `json:"agent,omitempty"`    // agent name
+	Provider string `json:"provider,omitempty"` // provider name
+	Model    string `json:"model,omitempty"`    // model ID
 }
 
 // --- GraphConfigurator implementation for Graph[S] ---
@@ -122,6 +131,7 @@ func New[S any](opts ...GraphOption) (*Graph[S], error) {
 		routes:          make(map[string]route[S]),
 		joins:           make(map[string][]string),
 		maxIter:         100,
+		nodeMeta:        make(map[string]NodeMeta),
 		interruptBefore: make(map[string]bool),
 		interruptAfter:  make(map[string]bool),
 	}
@@ -399,6 +409,12 @@ func (g *Graph[S]) SetGraphLoggingHook(h GraphLoggingHook) {
 // GetGraphLoggingHook returns the graph's logging hook, or nil if none is set.
 func (g *Graph[S]) GetGraphLoggingHook() GraphLoggingHook {
 	return g.loggingHook
+}
+
+// SetNodeMeta attaches display metadata to a registered node.
+// This metadata is included in Structure() for visualization tools.
+func (g *Graph[S]) SetNodeMeta(name string, meta NodeMeta) {
+	g.nodeMeta[name] = meta
 }
 
 // InterruptBefore marks a node to pause execution before it runs.
