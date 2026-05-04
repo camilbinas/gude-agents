@@ -1,17 +1,26 @@
 // Run:
 //
 //	go run ./graph-blog-pipeline
+//
+// Supports Ctrl+C: the pipeline checkpoints after each node, so you can
+// interrupt and resume later. State is persisted to disk.
 
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
+	rediscp "github.com/camilbinas/gude-agents/agent/graph/checkpointer/redis"
+	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
@@ -107,10 +116,22 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// --- Build the typed graph ---
+	// --- Build the typed graph with checkpointing ---
+
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "127.0.0.1:6379"
+	}
+	cp, err := rediscp.New(rediscp.Options{Addr: redisAddr})
+	if err != nil {
+		log.Fatalf("redis checkpointer: %v", err)
+	}
+	defer cp.Close()
 
 	g, err := graph.New[BlogState](
 		graph.WithMaxIterations(30),
+		graph.WithCheckpointer(cp),
+		auto.WithGraphLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -237,7 +258,7 @@ func main() {
 	mustEdge(g.AddEdge("draft", "review"))
 	mustEdge(g.AddEdge("review", "gate"))
 	mustEdge(g.AddConditionalEdge("gate", func(_ context.Context, s BlogState) (string, error) {
-		if s.Score < 7 {
+		if s.Score < 8 {
 			return "revise", nil
 		}
 		return "finalize", nil
@@ -246,12 +267,28 @@ func main() {
 	mustEdge(g.AddFork("finalize", []string{"seo_meta", "social_copy"}))
 	mustEdge(g.AddJoin("publish", []string{"seo_meta", "social_copy"}))
 
-	// --- Run ---
+	// --- Run with graceful shutdown ---
 
 	topic := "Why Go is the best language for building AI agents in 2026"
+	threadID := "blog-pipeline-1"
+
+	// Ctrl+C cancels the context; the engine finishes the current node and stops.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	log.Printf("[pipeline] starting for topic: %q", topic)
 
-	result, err := g.Run(context.Background(), BlogState{Topic: topic})
+	// Try to resume from a previous checkpoint first.
+	result, err := g.Resume(ctx, threadID, nil)
+	if errors.Is(err, graph.ErrCheckpointNotFound) {
+		// No previous run — start fresh.
+		result, err = g.Run(ctx, BlogState{Topic: topic}, graph.WithThreadID(threadID))
+	}
+
+	if errors.Is(err, context.Canceled) {
+		log.Printf("[pipeline] interrupted — resume later with the same threadID")
+		return
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -261,6 +298,9 @@ func main() {
 		result.Usage.InputTokens,
 		result.Usage.OutputTokens,
 	)
+
+	// Clean up checkpoint after successful completion.
+	_ = cp.Delete(context.Background(), threadID)
 }
 
 func mustEdge(err error) {

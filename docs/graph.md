@@ -372,6 +372,7 @@ g, _ := graph.New[graph.State](
 | Backend | Import | Use Case |
 |---------|--------|----------|
 | InMemory | `graph/checkpointer/memory` | Testing and development |
+| Redis | `graph/checkpointer/redis` | Multi-process, low-latency persistence |
 | DynamoDB | `graph/checkpointer/dynamodb` | Serverless production workloads |
 | Postgres | `graph/checkpointer/postgres` | Traditional server deployments |
 

@@ -10,6 +10,7 @@ use (
 	./agent/eval
 	./agent/graph/checkpointer/dynamodb
 	./agent/graph/checkpointer/postgres
+	./agent/graph/checkpointer/redis
 	./agent/logging/debug
 	./agent/logging/slog
 	./agent/mcp
