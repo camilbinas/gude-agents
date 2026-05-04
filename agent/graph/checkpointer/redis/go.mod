@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/graph/checkpointer/redis
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.48.0
+	github.com/camilbinas/gude-agents v0.49.0
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
