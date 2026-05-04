@@ -11,7 +11,7 @@
 //
 // Run:
 //
-//	go run ./web-search-markdown
+//	go run ./web-search-md
 
 package main
 

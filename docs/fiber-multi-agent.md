@@ -9,7 +9,7 @@ If you haven't read [HTTP & Multi-Tenant Environments](http.md) yet, start there
 ```
                     ┌─────────────────────────────────┐
   POST /chat ──────▶│         Fiber v3 Server         │
-  GET  /chat/stream │                                 │
+                    │         (SSE streaming)         │
                     │  ┌───────────────────────────┐  │
                     │  │      Orchestrator         │  │
                     │  │   (Sonnet, shared mem)    │  │
@@ -43,8 +43,12 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
+type ChatRequest struct {
+	Message        string `json:"message"`
+	ConversationID string `json:"conversation_id"`
+}
+
 func main() {
-	// --- Providers ---
 	haiku, err := bedrock.Cheapest()
 	if err != nil {
 		log.Fatal(err)
@@ -54,7 +58,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// --- Workers ---
 	projectWorker, err := agent.Worker(haiku,
 		prompt.Text("You are a project researcher. Look up project details and summarize them."),
 		[]tool.Tool{projectSearchTool()},
@@ -71,10 +74,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// --- Shared memory ---
-	store := conversation.NewInMemory() // Use redis for production
+	store := conversation.NewInMemory() // Use redis, postgres... for production
 
-	// --- Orchestrator (single instance, shared across all requests) ---
 	orchestrator, err := agent.Orchestrator(sonnet,
 		prompt.Text(
 			"You are a helpful assistant for a digital agency. "+
@@ -92,35 +93,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// --- Fiber app ---
 	app := fiber.New()
-
 	app.Post("/chat", handleChat(orchestrator))
-	app.Get("/chat/stream", handleStream(orchestrator))
-
 	log.Fatal(app.Listen(":3000"))
 }
-```
 
-## Request / Response Types
-
-```go
-type ChatRequest struct {
-	Message        string `json:"message"`
-	ConversationID string `json:"conversation_id"`
-}
-
-type ChatResponse struct {
-	Response       string `json:"response"`
-	ConversationID string `json:"conversation_id"`
-}
-```
-
-## JSON Endpoint (POST /chat)
-
-The simplest approach — collect the full response and return it as JSON.
-
-```go
 func handleChat(a *agent.Agent) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		var req ChatRequest
@@ -131,42 +108,14 @@ func handleChat(a *agent.Agent) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "conversation_id is required"})
 		}
 
-		ctx := agent.NewContext(c.Context()).WithConversationID(req.ConversationID)
-
-		result, err := a.Invoke(ctx, req.Message)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		return c.JSON(ChatResponse{
-			Response:       result,
-			ConversationID: req.ConversationID,
-		})
-	}
-}
-```
-
-## Streaming Endpoint (GET /chat/stream)
-
-For real-time output, use Fiber v3's `SendStreamWriter` with `InvokeStream`. Tokens are flushed to the client as they arrive from the LLM.
-
-```go
-func handleStream(a *agent.Agent) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		msg := c.Query("message")
-		convID := c.Query("conversation_id")
-		if msg == "" || convID == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "message and conversation_id required"})
-		}
-
 		c.Set("Content-Type", "text/event-stream")
 		c.Set("Cache-Control", "no-cache")
 		c.Set("Connection", "keep-alive")
 
 		return c.SendStreamWriter(func(w *bufio.Writer) {
-			ctx := agent.NewContext(c.Context()).WithConversationID(convID)
+			ctx := agent.NewContext(c.Context()).WithConversationID(req.ConversationID)
 
-			err := a.InvokeStream(ctx, msg, func(chunk string) {
+			err := a.InvokeStream(ctx, req.Message, func(chunk string) {
 				fmt.Fprintf(w, "data: %s\n\n", chunk)
 				w.Flush() //nolint:errcheck
 			})
@@ -180,22 +129,7 @@ func handleStream(a *agent.Agent) fiber.Handler {
 		})
 	}
 }
-```
 
-### Client-Side Consumption
-
-```javascript
-const source = new EventSource("/chat/stream?conversation_id=abc&message=Hello");
-source.onmessage = (e) => console.log(e.data);
-source.addEventListener("done", () => source.close());
-source.addEventListener("error", (e) => console.error(e.data));
-```
-
-## Stub Tools
-
-For the example above, here are minimal tool stubs. Replace these with real database queries in production.
-
-```go
 func projectSearchTool() tool.Tool {
 	return tool.NewString("search_projects", "Search projects by name",
 		"query", "Search term to match against project names",
@@ -215,41 +149,36 @@ func revenueTool() tool.Tool {
 }
 ```
 
-Note the use of `tool.NewString` — for tools with a single string parameter, this is cleaner than defining a struct or writing a raw schema.
+### Client-Side Consumption
 
-## Adding Redis for Production
-
-Replace `conversation.NewInMemory()` with Redis so conversations persist across restarts and scale horizontally:
-
-```go
-import redismemory "github.com/camilbinas/gude-agents/agent/conversation/redis"
-
-store, err := redismemory.New(
-    redismemory.Options{Addr: "127.0.0.1:6379"},
-    redismemory.WithTTL(1 * time.Hour),
-    redismemory.WithKeyPrefix("agency:conv:"),
-)
-if err != nil {
-    log.Fatal(err)
+```javascript
+const res = await fetch("/chat", {
+  method: "POST",
+  headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({message: "Hello", conversation_id: "abc"}),
+});
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+while (true) {
+  const {done, value} = await reader.read();
+  if (done) break;
+  console.log(decoder.decode(value));
 }
 ```
 
-Then wrap it with summary conversation to keep long conversations manageable:
+Wrap with summary conversation to keep long conversations manageable:
 
 ```go
 summary, err := conversation.NewSummary(store, 10, conversation.DefaultSummaryFunc(sonnet),
     conversation.WithPreserveRecentMessages(2),
 )
-if err != nil {
-    log.Fatal(err)
-}
 
 orchestrator, err := agent.Orchestrator(sonnet, instructions, tools,
     agent.WithSharedConversation(summary),
 )
 ```
 
-## Thread Safety Recap
+## Thread Safety
 
 All of these are safe for concurrent use from multiple Fiber handlers:
 
