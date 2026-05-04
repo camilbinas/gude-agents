@@ -1,9 +1,8 @@
 // Example: LLM-powered router graph.
 //
 // An LLM classifies the user's question and routes it to the right specialist
-// agent using graph.LLMRouter. Unlike a swarm (where agents hand off to each
-// other), the graph controls the flow — the router picks the next node, and
-// the specialist runs once and produces the final answer.
+// agent using graph.LLMRouter. The graph controls the flow — the router picks
+// the next node, and the specialist runs once and produces the final answer.
 //
 // Graph:
 //
@@ -74,7 +73,7 @@ func main() {
 	}
 
 	// Build the graph.
-	g, err := graph.NewGraph()
+	g, err := graph.New[graph.State]()
 	if err != nil {
 		log.Fatal(err)
 	}

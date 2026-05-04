@@ -81,33 +81,6 @@ func Chat(c *agent.Context, a *agent.Agent, opts ...ChatOptions) {
 	}
 }
 
-// SwarmChat runs an interactive chat loop with a swarm. Same UX as Chat but
-// also prints which agent handled the request and handoff count.
-func SwarmChat(ctx context.Context, sw *agent.Swarm) {
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("\nYou: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") || strings.EqualFold(input, "exit") {
-			break
-		}
-
-		_, err := sw.Run(ctx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		if err != nil {
-			fmt.Printf("\nError: %v\n", err)
-			continue
-		}
-	}
-}
-
 // ClearConversation returns a ClearFunc that deletes a conversation.
 func ClearConversation(m agent.Conversation, conversationID string) func(ctx context.Context) error {
 	return func(ctx context.Context) error {

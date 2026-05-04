@@ -17,9 +17,9 @@ func TestGraphTracing_RunSpanCreated(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	g, err := graph.NewGraph(WithGraphTracing(tp))
+	g, err := graph.New[graph.State](WithGraphTracing(tp))
 	if err != nil {
-		t.Fatalf("NewGraph: %v", err)
+		t.Fatalf("New[graph.State]: %v", err)
 	}
 
 	if err := g.AddNode("start", func(_ context.Context, s graph.State) (graph.State, error) {
@@ -47,12 +47,12 @@ func TestGraphTracing_NodeChildSpans(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	g, err := graph.NewGraph(WithGraphTracing(tp))
+	g, err := graph.New[graph.State](WithGraphTracing(tp))
 	if err != nil {
-		t.Fatalf("NewGraph: %v", err)
+		t.Fatalf("New[graph.State]: %v", err)
 	}
 
-	setter := func(key, val string) graph.NodeFunc {
+	setter := func(key, val string) graph.NodeFunc[graph.State] {
 		return func(_ context.Context, s graph.State) (graph.State, error) {
 			out := graph.CopyState(s)
 			out[key] = val
@@ -118,9 +118,9 @@ func TestGraphTracing_IterationsAttribute(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	g, err := graph.NewGraph(WithGraphTracing(tp))
+	g, err := graph.New[graph.State](WithGraphTracing(tp))
 	if err != nil {
-		t.Fatalf("NewGraph: %v", err)
+		t.Fatalf("New[graph.State]: %v", err)
 	}
 
 	noop := func(_ context.Context, s graph.State) (graph.State, error) { return s, nil }
@@ -162,9 +162,9 @@ func TestGraphTracing_ErrorStatusOnNodeFailure(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	g, err := graph.NewGraph(WithGraphTracing(tp))
+	g, err := graph.New[graph.State](WithGraphTracing(tp))
 	if err != nil {
-		t.Fatalf("NewGraph: %v", err)
+		t.Fatalf("New[graph.State]: %v", err)
 	}
 
 	if err := g.AddNode("ok_node", func(_ context.Context, s graph.State) (graph.State, error) {
@@ -215,13 +215,13 @@ func TestGraphTracing_ForkNodeSpansShareParent(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	g, err := graph.NewGraph(WithGraphTracing(tp))
+	g, err := graph.New[graph.State](WithGraphTracing(tp))
 	if err != nil {
-		t.Fatalf("NewGraph: %v", err)
+		t.Fatalf("New[graph.State]: %v", err)
 	}
 
 	noop := func(_ context.Context, s graph.State) (graph.State, error) { return s, nil }
-	setter := func(key, val string) graph.NodeFunc {
+	setter := func(key, val string) graph.NodeFunc[graph.State] {
 		return func(_ context.Context, s graph.State) (graph.State, error) {
 			out := graph.CopyState(s)
 			out[key] = val

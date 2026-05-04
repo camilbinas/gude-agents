@@ -15,7 +15,7 @@ type Invoker = agent.Invoker
 // AgentNode wraps an agent.Invoker (typically *agent.Agent) as a NodeFunc.
 // inputKey is the state key to read the user message from.
 // outputKey is the state key to write the agent response to.
-func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc {
+func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc[State] {
 	return func(ctx context.Context, state State) (State, error) {
 		msg, ok := state[inputKey].(string)
 		if !ok {
@@ -35,7 +35,7 @@ func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc {
 
 // LLMRouter returns a RouterFunc that uses an Invoker to choose the next node.
 // validTargets is the list of node names the LLM may choose from.
-func LLMRouter(a Invoker, validTargets []string) RouterFunc {
+func LLMRouter(a Invoker, validTargets []string) RouterFunc[State] {
 	return func(ctx context.Context, state State) (string, error) {
 		prompt := buildRouterPrompt(state, validTargets)
 		c := agent.NewContext(ctx)
@@ -56,18 +56,18 @@ func LLMRouter(a Invoker, validTargets []string) RouterFunc {
 	}
 }
 
-// TypedLLMRouter returns a TypedRouterFunc that uses an Invoker to choose the
+// LLMRouterFunc returns a RouterFunc[S] that uses an Invoker to choose the
 // next node. promptFn extracts the text to send to the LLM from the typed state.
 // validTargets is the list of node names the LLM may choose from.
 //
 // Example:
 //
-//	g.AddConditionalEdge("classify", graph.TypedLLMRouter[MyState](
+//	g.AddConditionalEdge("classify", graph.LLMRouterFunc[MyState](
 //	    routerAgent,
 //	    []string{"code_expert", "devops_expert"},
 //	    func(s MyState) string { return s.Question },
 //	))
-func TypedLLMRouter[S any](a Invoker, validTargets []string, promptFn func(S) string) TypedRouterFunc[S] {
+func LLMRouterFunc[S any](a Invoker, validTargets []string, promptFn func(S) string) RouterFunc[S] {
 	return func(ctx context.Context, state S) (string, error) {
 		input := promptFn(state)
 		prompt := buildTypedRouterPrompt(input, validTargets)
@@ -85,7 +85,7 @@ func TypedLLMRouter[S any](a Invoker, validTargets []string, promptFn func(S) st
 				return next, nil
 			}
 		}
-		return "", fmt.Errorf("TypedLLMRouter: model returned unknown node %q", next)
+		return "", fmt.Errorf("LLMRouterFunc: model returned unknown node %q", next)
 	}
 }
 

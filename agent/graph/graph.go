@@ -2,74 +2,137 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"sort"
-	"sync"
 	"time"
-
-	"github.com/camilbinas/gude-agents/agent"
 )
 
 // State is the shared data container passed between nodes.
-type State map[string]any
+// It is the default type parameter for untyped graphs: Graph[State].
+type State = map[string]any
 
-// NodeFunc is the unit of work executed by a node.
-type NodeFunc func(ctx context.Context, state State) (State, error)
-
-// RouterFunc decides the next node at runtime.
-// Returning "" signals end-of-graph.
-type RouterFunc func(ctx context.Context, state State) (string, error)
-
-// GraphResult is returned by Graph.Run on success.
-type GraphResult struct {
-	State State
-	Usage agent.TokenUsage
+// route[S] is a sealed union: exactly one field is set.
+type route[S any] struct {
+	static      string        // static edge target
+	conditional RouterFunc[S] // conditional edge router
+	fork        []string      // fork targets
 }
 
-// route is a sealed union: exactly one field is set.
-type route struct {
-	static      string     // static edge target
-	conditional RouterFunc // conditional edge router
-	fork        []string   // fork targets
+// GraphConfigurator is implemented by Graph[S] for any S.
+// GraphOption functions call methods on this interface, allowing options
+// to remain non-generic while working with Graph[S] for any S.
+type GraphConfigurator interface {
+	setMaxIter(n int)
+	setCheckpointer(cp GraphCheckpointer)
+	setCheckpointOnInterruptOnly()
+	setEventHook(hook GraphEventHook)
+	SetGraphTracingHook(h GraphTracingHook)
+	SetGraphMetricsHook(h GraphMetricsHook)
+	SetGraphLoggingHook(h GraphLoggingHook)
 }
 
-// Graph is a directed graph of named nodes connected by routing rules.
+// Graph[S] is a directed graph of named nodes connected by routing rules.
+// S is the state type passed between nodes.
+// When S is State (map[string]any), operations are zero-cost direct map manipulations.
+// When S is a custom struct, JSON serialization occurs only at checkpoint/event boundaries.
 // Fields are written only during construction; after that they are read-only,
 // making concurrent Run calls safe.
-type Graph struct {
-	nodes       map[string]NodeFunc
+type Graph[S any] struct {
+	nodes       map[string]NodeFunc[S]
 	entry       string
-	routes      map[string]route    // one route per source node
+	routes      map[string]route[S] // one route per source node
 	joins       map[string][]string // node → required predecessors
 	maxIter     int
+	ops         stateOps[S]
 	tracingHook GraphTracingHook // nil = no tracing
 	metricsHook GraphMetricsHook // nil = no metrics
 	loggingHook GraphLoggingHook // nil = no structured logging
+
+	checkpointer              GraphCheckpointer // nil = no checkpointing
+	checkpointOnInterruptOnly bool
+	interruptBefore           map[string]bool
+	interruptAfter            map[string]bool
+	eventHook                 GraphEventHook // nil = no event emission
 }
 
-// GraphOption configures a Graph.
-type GraphOption func(*Graph) error
+// --- GraphConfigurator implementation for Graph[S] ---
+
+func (g *Graph[S]) setMaxIter(n int)                     { g.maxIter = n }
+func (g *Graph[S]) setCheckpointer(cp GraphCheckpointer) { g.checkpointer = cp }
+func (g *Graph[S]) setCheckpointOnInterruptOnly()        { g.checkpointOnInterruptOnly = true }
+func (g *Graph[S]) setEventHook(hook GraphEventHook)     { g.eventHook = hook }
+
+// GraphOption configures a Graph[S] for any S.
+// It operates on the GraphConfigurator interface so that options remain non-generic.
+type GraphOption func(GraphConfigurator) error
 
 // WithMaxIterations sets the maximum number of node executions per Run.
 // Returns an error if n < 1.
 func WithMaxIterations(n int) GraphOption {
-	return func(g *Graph) error {
+	return func(g GraphConfigurator) error {
 		if n < 1 {
 			return &GraphValidationError{Message: "MaxIterations must be >= 1"}
 		}
-		g.maxIter = n
+		g.setMaxIter(n)
 		return nil
 	}
 }
 
-// NewGraph creates an empty, unconfigured Graph with default maxIter of 100.
-func NewGraph(opts ...GraphOption) (*Graph, error) {
-	g := &Graph{
-		nodes:   make(map[string]NodeFunc),
-		routes:  make(map[string]route),
-		joins:   make(map[string][]string),
-		maxIter: 100,
+// WithCheckpointer sets the GraphCheckpointer for persistent execution.
+func WithCheckpointer(cp GraphCheckpointer) GraphOption {
+	return func(g GraphConfigurator) error {
+		if cp == nil {
+			return &GraphValidationError{Message: "WithCheckpointer: checkpointer must not be nil"}
+		}
+		g.setCheckpointer(cp)
+		return nil
 	}
+}
+
+// WithCheckpointOnInterruptOnly limits checkpointing to interrupt points only.
+// Requires WithCheckpointer to also be set.
+func WithCheckpointOnInterruptOnly() GraphOption {
+	return func(g GraphConfigurator) error {
+		g.setCheckpointOnInterruptOnly()
+		return nil
+	}
+}
+
+// WithEventHook sets the GraphEventHook for receiving structured execution events.
+// When set, the graph emits GraphEvent values at each lifecycle point (graph start/end,
+// node start/end, checkpoint saves, interrupts, resume, rewind).
+// When nil or not set, no events are emitted and there is zero overhead.
+func WithEventHook(hook GraphEventHook) GraphOption {
+	return func(g GraphConfigurator) error {
+		if hook == nil {
+			return &GraphValidationError{Message: "WithEventHook: hook must not be nil"}
+		}
+		g.setEventHook(hook)
+		return nil
+	}
+}
+
+// New creates a configured Graph[S]. The strategy for state operations is
+// selected at construction time based on S:
+// - When S is State (map[string]any): uses mapStateOps (zero-cost)
+// - When S is any other type: uses jsonStateOps[S] (JSON at boundaries only)
+func New[S any](opts ...GraphOption) (*Graph[S], error) {
+	g := &Graph[S]{
+		nodes:           make(map[string]NodeFunc[S]),
+		routes:          make(map[string]route[S]),
+		joins:           make(map[string][]string),
+		maxIter:         100,
+		interruptBefore: make(map[string]bool),
+		interruptAfter:  make(map[string]bool),
+	}
+
+	// Strategy selection: detect if S is map[string]any at construction time.
+	if isMapStringAny[S]() {
+		g.ops = any(mapStateOps{}).(stateOps[S])
+	} else {
+		g.ops = jsonStateOps[S]{}
+	}
+
 	for _, opt := range opts {
 		if err := opt(g); err != nil {
 			return nil, err
@@ -79,7 +142,7 @@ func NewGraph(opts ...GraphOption) (*Graph, error) {
 }
 
 // AddNode registers a named node. Returns an error on empty name, nil fn, or duplicate name.
-func (g *Graph) AddNode(name string, fn NodeFunc) error {
+func (g *Graph[S]) AddNode(name string, fn NodeFunc[S]) error {
 	if name == "" {
 		return &GraphValidationError{Message: "node name must not be empty"}
 	}
@@ -94,50 +157,50 @@ func (g *Graph) AddNode(name string, fn NodeFunc) error {
 }
 
 // SetEntry designates the entry node. Validated at Run time.
-func (g *Graph) SetEntry(name string) {
+func (g *Graph[S]) SetEntry(name string) {
 	g.entry = name
 }
 
 // AddEdge registers a static edge from → to. Returns an error on empty from or to.
-func (g *Graph) AddEdge(from, to string) error {
+func (g *Graph[S]) AddEdge(from, to string) error {
 	if from == "" {
 		return &GraphValidationError{Message: "AddEdge: from must not be empty"}
 	}
 	if to == "" {
 		return &GraphValidationError{Message: "AddEdge: to must not be empty"}
 	}
-	g.routes[from] = route{static: to}
+	g.routes[from] = route[S]{static: to}
 	return nil
 }
 
 // AddConditionalEdge registers a conditional edge from the given node.
-func (g *Graph) AddConditionalEdge(from string, router RouterFunc) error {
+func (g *Graph[S]) AddConditionalEdge(from string, router RouterFunc[S]) error {
 	if from == "" {
 		return &GraphValidationError{Message: "AddConditionalEdge: from must not be empty"}
 	}
 	if router == nil {
 		return &GraphValidationError{Message: fmt.Sprintf("AddConditionalEdge: router for %q must not be nil", from)}
 	}
-	g.routes[from] = route{conditional: router}
+	g.routes[from] = route[S]{conditional: router}
 	return nil
 }
 
 // AddFork registers a parallel fork from one node to multiple targets.
 // Returns an error if fewer than 2 targets are provided.
-func (g *Graph) AddFork(from string, targets []string) error {
+func (g *Graph[S]) AddFork(from string, targets []string) error {
 	if from == "" {
 		return &GraphValidationError{Message: "AddFork: from must not be empty"}
 	}
 	if len(targets) < 2 {
 		return &GraphValidationError{Message: fmt.Sprintf("AddFork: node %q requires at least 2 targets", from)}
 	}
-	g.routes[from] = route{fork: targets}
+	g.routes[from] = route[S]{fork: targets}
 	return nil
 }
 
 // AddJoin registers a join barrier: node waits for all predecessors.
 // Returns an error if fewer than 2 predecessors are provided.
-func (g *Graph) AddJoin(node string, predecessors []string) error {
+func (g *Graph[S]) AddJoin(node string, predecessors []string) error {
 	if node == "" {
 		return &GraphValidationError{Message: "AddJoin: node must not be empty"}
 	}
@@ -166,7 +229,7 @@ func (e *GraphIterationError) Error() string {
 
 // validate checks the graph structure before execution.
 // It is called at the start of every Run.
-func (g *Graph) validate() error {
+func (g *Graph[S]) validate() error {
 	// 1. Entry node must be registered.
 	if _, ok := g.nodes[g.entry]; !ok {
 		return &GraphValidationError{Message: fmt.Sprintf("entry node %q is not registered", g.entry)}
@@ -219,277 +282,30 @@ func (g *Graph) validate() error {
 		return &GraphValidationError{Message: "MaxIterations must be >= 1"}
 	}
 
-	return nil
-}
-
-// CopyState returns a shallow copy of s.
-func CopyState(s State) State {
-	out := make(State, len(s))
-	for k, v := range s {
-		out[k] = v
-	}
-	return out
-}
-
-// mergeState merges patch into base (mutates base).
-func mergeState(base, patch State) {
-	for k, v := range patch {
-		base[k] = v
-	}
-}
-
-// runExec holds all mutable state for a single Graph.Run call.
-type runExec struct {
-	graph      *Graph
-	state      State
-	mu         sync.Mutex
-	usage      agent.TokenUsage
-	completed  map[string]bool
-	iterations int
-	// isBranch is true for isolated branch execs created inside forkStep.
-	// Branch execs skip the join barrier check because their completed map is
-	// partial — the parent exec fires joins after merging all branch results.
-	isBranch bool
-}
-
-// step executes a single node and dispatches to the next node(s).
-func (e *runExec) step(ctx context.Context, nodeName string) error {
-	// Check context cancellation.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	// Check and increment iteration counter.
-	e.mu.Lock()
-	if e.iterations >= e.graph.maxIter {
-		e.mu.Unlock()
-		return &GraphIterationError{Limit: e.graph.maxIter}
-	}
-	e.iterations++
-	e.mu.Unlock()
-
-	fn := e.graph.nodes[nodeName]
-
-	// Execute node with a copy of current state.
-	e.mu.Lock()
-	stateCopy := CopyState(e.state)
-	e.mu.Unlock()
-
-	// Start node tracing span if hook is set.
-	var finishNode func(err error)
-	if e.graph.tracingHook != nil {
-		ctx, finishNode = e.graph.tracingHook.OnNodeStart(ctx, nodeName)
-	}
-
-	// Start node metrics tracking if metrics hook is set.
-	var finishNodeMetrics func(err error)
-	if e.graph.metricsHook != nil {
-		finishNodeMetrics = e.graph.metricsHook.OnNodeStart(nodeName)
-	}
-
-	// Start node logging if logging hook is set.
-	var nodeStart time.Time
-	if e.graph.loggingHook != nil {
-		e.graph.loggingHook.OnNodeStart(nodeName)
-		nodeStart = time.Now()
-	}
-
-	result, err := fn(ctx, stateCopy)
-
-	if finishNode != nil {
-		finishNode(err)
-	}
-	if finishNodeMetrics != nil {
-		finishNodeMetrics(err)
-	}
-	if e.graph.loggingHook != nil {
-		e.graph.loggingHook.OnNodeEnd(nodeName, err, time.Since(nodeStart))
-	}
-
-	if err != nil {
-		return err
-	}
-
-	// Extract __usage__ key and accumulate, then merge result into shared state.
-	e.mu.Lock()
-	if u, ok := result["__usage__"].(agent.TokenUsage); ok {
-		e.usage.InputTokens += u.InputTokens
-		e.usage.OutputTokens += u.OutputTokens
-		delete(result, "__usage__")
-	}
-	mergeState(e.state, result)
-	e.completed[nodeName] = true
-	e.mu.Unlock()
-
-	// Dispatch to next node(s) via routing rule.
-	r, hasRoute := e.graph.routes[nodeName]
-	if hasRoute {
-		switch {
-		case r.static != "":
-			if err := e.step(ctx, r.static); err != nil {
-				return err
-			}
-		case r.conditional != nil:
-			e.mu.Lock()
-			currentState := CopyState(e.state)
-			e.mu.Unlock()
-			next, err := r.conditional(ctx, currentState)
-			if err != nil {
-				return fmt.Errorf("graph: conditional router for %q: %w", nodeName, err)
-			}
-			if next != "" {
-				if _, ok := e.graph.nodes[next]; !ok {
-					return &GraphValidationError{Message: fmt.Sprintf("router returned unknown node %q", next)}
-				}
-				if err := e.step(ctx, next); err != nil {
-					return err
-				}
-			}
-		case len(r.fork) > 0:
-			if err := e.forkStep(ctx, r.fork); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Check join barrier only when NOT inside a fork branch.
-	if !e.isBranch {
-		if err := e.checkJoins(ctx, nodeName); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// checkJoins fires any join node whose all predecessors are now complete.
-func (e *runExec) checkJoins(ctx context.Context, nodeName string) error {
-	for joinNode, preds := range e.graph.joins {
-		isPred := false
-		for _, p := range preds {
-			if p == nodeName {
-				isPred = true
-				break
-			}
-		}
-		if !isPred {
-			continue
-		}
-		e.mu.Lock()
-		allDone := true
-		alreadyFired := e.completed[joinNode]
-		for _, p := range preds {
-			if !e.completed[p] {
-				allDone = false
-				break
-			}
-		}
-		e.mu.Unlock()
-		if allDone && !alreadyFired {
-			if err := e.step(ctx, joinNode); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// forkStep executes multiple nodes concurrently and merges their states in sorted order.
-func (e *runExec) forkStep(ctx context.Context, targets []string) error {
-	forkCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Snapshot current state for all branches.
-	e.mu.Lock()
-	snapshot := CopyState(e.state)
-	e.mu.Unlock()
-
-	// Sort targets for deterministic merge order.
-	sorted := make([]string, len(targets))
-	copy(sorted, targets)
-	sort.Strings(sorted)
-
-	type branchResult struct {
-		state  State
-		branch *runExec
-		err    error
-	}
-	branchResults := make([]branchResult, len(sorted))
-
-	var wg sync.WaitGroup
-	var firstErr error
-	var errMu sync.Mutex
-
-	for i, target := range sorted {
-		wg.Add(1)
-		go func(idx int, name string) {
-			defer wg.Done()
-
-			// Each branch gets its own runExec with a copy of the snapshot state.
-			e.mu.Lock()
-			completedCopy := make(map[string]bool, len(e.completed))
-			for k, v := range e.completed {
-				completedCopy[k] = v
-			}
-			e.mu.Unlock()
-
-			branch := &runExec{
-				graph:     e.graph,
-				state:     CopyState(snapshot),
-				completed: completedCopy,
-				isBranch:  true,
-			}
-
-			err := branch.step(forkCtx, name)
-
-			errMu.Lock()
-			if err != nil && firstErr == nil {
-				firstErr = err
-				cancel()
-			}
-			errMu.Unlock()
-
-			branchResults[idx] = branchResult{state: branch.state, branch: branch, err: err}
-		}(i, target)
-	}
-
-	wg.Wait()
-
-	if firstErr != nil {
-		return firstErr
-	}
-
-	// Merge branch metadata (completed, usage, iterations) and states into parent.
-	e.mu.Lock()
-	for _, br := range branchResults {
-		if br.err != nil {
-			continue
-		}
-		mergeState(e.state, br.state)
-		for k, v := range br.branch.completed {
-			e.completed[k] = v
-		}
-		e.usage.InputTokens += br.branch.usage.InputTokens
-		e.usage.OutputTokens += br.branch.usage.OutputTokens
-		e.iterations += br.branch.iterations
-	}
-	e.mu.Unlock()
-
-	// Now that all branch completions are merged into the parent's completed map,
-	// check join barriers for each branch target.
-	for _, name := range sorted {
-		if err := e.checkJoins(ctx, name); err != nil {
-			return err
-		}
+	// 7. checkpointOnInterruptOnly requires a checkpointer.
+	if g.checkpointOnInterruptOnly && g.checkpointer == nil {
+		return &GraphValidationError{Message: "WithCheckpointOnInterruptOnly requires a checkpointer to be configured"}
 	}
 
 	return nil
 }
 
 // Run validates the graph and executes it from the entry node.
-func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
+// It accepts optional RunOption values to configure the execution (e.g., WithThreadID).
+func (g *Graph[S]) Run(ctx context.Context, initial S, opts ...RunOption) (Result[S], error) {
 	if err := g.validate(); err != nil {
-		return GraphResult{}, err
+		return Result[S]{}, err
+	}
+
+	// Parse run options.
+	var cfg runConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	// When a checkpointer is configured, a thread ID is required.
+	if g.checkpointer != nil && cfg.threadID == "" {
+		return Result[S]{}, ErrThreadIDRequired
 	}
 
 	// Start graph tracing span if hook is set.
@@ -511,13 +327,31 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 		graphRunStart = time.Now()
 	}
 
-	exec := &runExec{
+	exec := &runExec[S]{
 		graph:     g,
-		state:     CopyState(initial),
+		state:     g.ops.copy(initial),
+		ops:       g.ops,
+		nodes:     g.nodes,
+		routes:    g.routes,
 		completed: make(map[string]bool),
+		workQueue: []string{g.entry},
+		threadID:  cfg.threadID,
 	}
 
-	err := exec.step(ctx, g.entry)
+	err := exec.execute(ctx)
+
+	// Emit GraphCompleted event with final state, usage, and error (if any).
+	if g.eventHook != nil {
+		snapshot, _ := g.ops.toMap(exec.state)
+		g.eventHook.OnEvent(GraphEvent{
+			Type:          EventGraphCompleted,
+			Timestamp:     time.Now(),
+			StateSnapshot: snapshot,
+			Usage:         exec.usage,
+			ThreadID:      cfg.threadID,
+			Error:         err,
+		})
+	}
 
 	if finishTrace != nil {
 		finishTrace(err, exec.iterations)
@@ -530,11 +364,111 @@ func (g *Graph) Run(ctx context.Context, initial State) (GraphResult, error) {
 	}
 
 	if err != nil {
-		return GraphResult{}, err
+		return Result[S]{}, err
 	}
 
-	return GraphResult{
+	return Result[S]{
 		State: exec.state,
 		Usage: exec.usage,
 	}, nil
+}
+
+// SetGraphTracingHook sets the tracing hook on the graph.
+// Called by the tracing submodule's GraphOption.
+func (g *Graph[S]) SetGraphTracingHook(h GraphTracingHook) {
+	g.tracingHook = h
+}
+
+// SetGraphMetricsHook sets the metrics hook on the graph.
+// Called by the metrics submodule's GraphOption.
+func (g *Graph[S]) SetGraphMetricsHook(h GraphMetricsHook) {
+	g.metricsHook = h
+}
+
+// GetGraphMetricsHook returns the graph's metrics hook, or nil if none is set.
+func (g *Graph[S]) GetGraphMetricsHook() GraphMetricsHook {
+	return g.metricsHook
+}
+
+// SetGraphLoggingHook sets the logging hook on the graph.
+// Called by the logging submodule's GraphOption.
+func (g *Graph[S]) SetGraphLoggingHook(h GraphLoggingHook) {
+	g.loggingHook = h
+}
+
+// GetGraphLoggingHook returns the graph's logging hook, or nil if none is set.
+func (g *Graph[S]) GetGraphLoggingHook() GraphLoggingHook {
+	return g.loggingHook
+}
+
+// InterruptBefore marks a node to pause execution before it runs.
+// Returns an error if the node is not registered.
+func (g *Graph[S]) InterruptBefore(name string) error {
+	if _, ok := g.nodes[name]; !ok {
+		return &GraphValidationError{
+			Message: fmt.Sprintf("InterruptBefore: node %q is not registered", name),
+		}
+	}
+	g.interruptBefore[name] = true
+	return nil
+}
+
+// InterruptAfter marks a node to pause execution after it completes.
+// Returns an error if the node is not registered.
+func (g *Graph[S]) InterruptAfter(name string) error {
+	if _, ok := g.nodes[name]; !ok {
+		return &GraphValidationError{
+			Message: fmt.Sprintf("InterruptAfter: node %q is not registered", name),
+		}
+	}
+	g.interruptAfter[name] = true
+	return nil
+}
+
+// CopyState returns a shallow copy of s.
+func CopyState(s State) State {
+	out := make(State, len(s))
+	for k, v := range s {
+		out[k] = v
+	}
+	return out
+}
+
+// mergeState merges patch into base (mutates base).
+func mergeState(base, patch State) {
+	for k, v := range patch {
+		base[k] = v
+	}
+}
+
+// mergeDiff merges only the keys from branch that differ from snapshot into base.
+// This prevents fork branches from overwriting each other's results with zero values.
+func mergeDiff(base, snapshot, branch State) {
+	for k, v := range branch {
+		snapshotVal, existed := snapshot[k]
+		if !existed {
+			// New key added by branch.
+			base[k] = v
+		} else if !jsonEqual(snapshotVal, v) {
+			// Key existed but value changed.
+			base[k] = v
+		}
+	}
+}
+
+// jsonEqual compares two values by JSON representation.
+// Used for fork/join diff detection.
+func jsonEqual(a, b any) bool {
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	return string(aj) == string(bj)
+}
+
+// copyCompleted returns a shallow copy of a completed-nodes map.
+func copyCompleted(m map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }

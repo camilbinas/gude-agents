@@ -246,7 +246,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			results := a.executeToolsWithMiddleware(iterC, resp.ToolCalls, availableTools, h, extraMW)
 			iterF.finish(len(resp.ToolCalls), false)
 
-			// Tool result interceptor — allows callers (e.g. swarm) to inspect
+			// Tool result interceptor — allows callers to inspect
 			// results and signal the loop to stop.
 			if cfg != nil && cfg.toolResultInterceptor != nil {
 				if cfg.toolResultInterceptor(results) {

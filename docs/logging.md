@@ -2,7 +2,7 @@
 
 The `agent/logging/slog` module adds structured logging to gude-agents using the standard library's `log/slog` package. It lives in a separate Go module with its own `go.mod`, keeping the core `agent/` package free of logging implementation dependencies. You opt in by importing the logging submodule and passing `slog.WithLogging()` as an `agent.Option`.
 
-The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, graph workflows, and swarm coordination.
+The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, and graph workflows.
 
 ## Enabling Logging
 
@@ -48,7 +48,6 @@ a, err := agent.New(provider, instructions, tools,
 |----------|---------|-------------|
 | `WithLogging(opts...)` | `agent.Option` | Installs slog-based logging hook on an agent |
 | `WithGraphLogging(opts...)` | `graph.GraphOption` | Installs slog-based logging hook on a graph |
-| `WithSwarmLogging(opts...)` | `agent.SwarmOption` | Installs slog-based logging hook on a swarm |
 | `WithHandler(h slog.Handler)` | `Option` | Sets a custom slog handler (default: `slog.Default()`) |
 | `WithMinLevel(level slog.Level)` | `Option` | Minimum log level (default: `slog.LevelDebug`) |
 
@@ -73,13 +72,12 @@ Each lifecycle point maps to a log level:
 | GuardrailComplete (blocked) | Warn | Error |
 | MaxIterationsExceeded | Warn | — |
 
-For graph and swarm hooks:
+For graph hooks:
 
 | Lifecycle Point | Default Level | With Error |
 |---|---|---|
-| GraphRunStart, NodeStart, SwarmRunStart, SwarmAgentStart | Debug | — |
-| GraphRunEnd, NodeEnd, SwarmRunEnd, SwarmAgentEnd | Info | Error |
-| SwarmHandoff | Info | — |
+| GraphRunStart, NodeStart | Debug | — |
+| GraphRunEnd, NodeEnd | Info | Error |
 
 ## Structured Attributes
 
@@ -94,7 +92,6 @@ Each log entry includes relevant key-value attributes:
 | `iteration` | IterationStart | 1-based iteration number |
 | `tool.name` | ToolStart, ToolEnd | Tool being executed |
 | `node.name` | NodeStart, NodeEnd | Graph node name |
-| `agent.from` / `agent.to` | SwarmHandoff | Handoff source and target |
 | `duration_ms` | All end events | Operation duration in milliseconds |
 | `error` | End events with error | Error message |
 | `input_tokens` / `output_tokens` | InvokeEnd, ProviderCallEnd, GraphRunEnd | Token usage |
@@ -106,8 +103,6 @@ Each log entry includes relevant key-value attributes:
 | `message_count` | ConversationEnd | Number of messages loaded or saved |
 | `direction` | GuardrailComplete | Guardrail direction (`input` or `output`) |
 | `blocked` | GuardrailComplete | Whether the guardrail blocked |
-| `initial_agent` / `member_count` / `max_handoffs` | SwarmRunStart | Swarm configuration |
-| `final_agent` / `handoff_count` | SwarmRunEnd | Swarm outcome |
 
 ## Graph Logging
 
@@ -117,27 +112,12 @@ import (
     agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
 )
 
-g, err := graph.NewGraph(
+g, err := graph.New[graph.State](
     agentslog.WithGraphLogging(),
 )
 ```
 
 Graph logging emits entries for `graph.run.start`, `graph.run.end`, `graph.node.start`, and `graph.node.end`.
-
-## Swarm Logging
-
-```go
-import (
-    "github.com/camilbinas/gude-agents/agent"
-    agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
-)
-
-swarm, err := agent.NewSwarm(members,
-    agentslog.WithSwarmLogging(),
-)
-```
-
-Swarm logging emits entries for `swarm.run.start`, `swarm.run.end`, `swarm.agent.start`, `swarm.agent.end`, and `swarm.handoff`.
 
 ## Coexistence with Tracing, Metrics, and Event Hook
 

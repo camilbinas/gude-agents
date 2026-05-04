@@ -71,22 +71,6 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
 }
 ```
 
-## Swarm in HTTP
-
-Swarms also support per-request conversation IDs. The `WithSwarmConversation` default is overridden by `WithConversationID` on the `*Context`:
-
-```go
-swarm, _ := agent.NewSwarm(members,
-    agent.WithSwarmConversation(store, ""), // empty default, override per-request
-)
-
-// In handler:
-c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
-result, err := swarm.Invoke(c, req.Message)
-```
-
-The swarm persists both the conversation history and the active agent per conversation ID, so follow-up requests route to the correct agent automatically.
-
 ## Handoffs in HTTP
 
 When an agent triggers a handoff, the `HandoffRequest` includes the `ConversationID` so `Resume` targets the correct conversation:
@@ -139,7 +123,7 @@ a.Invoke(c, msg)
 
 ## Thread Safety
 
-All components are safe for concurrent use from multiple goroutines. A single `Agent`, `Swarm`, or conversation store can handle many simultaneous requests — conversation isolation comes from the per-request conversation ID, not from separate instances.
+All components are safe for concurrent use from multiple goroutines. A single `Agent` or conversation store can handle many simultaneous requests — conversation isolation comes from the per-request conversation ID, not from separate instances.
 
 ## Production Recommendations
 

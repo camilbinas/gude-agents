@@ -73,7 +73,7 @@ func (h *graphPrometheusHook) OnNodeStart(nodeName string) func(err error) {
 // WithGraphMetrics returns a graph.GraphOption that enables Prometheus metrics
 // for graph execution.
 func WithGraphMetrics(opts ...Option) graph.GraphOption {
-	return func(g *graph.Graph) error {
+	return func(g graph.GraphConfigurator) error {
 		h := &graphPrometheusHook{}
 		// Apply options via a proxy to extract namespace and registerer.
 		proxy := &prometheusHook{}

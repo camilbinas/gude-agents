@@ -35,16 +35,6 @@ func Orchestrator(prov Provider, inst prompt.Instructions, tools []tool.Tool, op
 	return New(prov, inst, tools, append(defaults, opts...)...)
 }
 
-// SwarmAgent creates an agent optimized for participation in a Swarm:
-// 5 max iterations. Handoff tools are injected automatically by NewSwarm.
-func SwarmAgent(prov Provider, inst prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
-	defaults := []Option{
-		WithMaxIterations(5),
-		WithParallelToolExecution(),
-	}
-	return New(prov, inst, tools, append(defaults, opts...)...)
-}
-
 // RAGAgent creates an agent with a retriever for retrieval-augmented generation:
 // 5 max iterations. The Retriever is a required parameter to enforce correct setup.
 func RAGAgent(prov Provider, inst prompt.Instructions, r Retriever, tools []tool.Tool, opts ...Option) (*Agent, error) {

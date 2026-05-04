@@ -8,6 +8,8 @@ use (
 	./agent/conversation/s3
 	./agent/conversation/sqlite
 	./agent/eval
+	./agent/graph/checkpointer/dynamodb
+	./agent/graph/checkpointer/postgres
 	./agent/logging/debug
 	./agent/logging/slog
 	./agent/mcp

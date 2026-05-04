@@ -1,13 +1,15 @@
-// Example: Traced graph workflow with fork/join, tools, and memory.
+// Example: Traced graph workflow with fork/join, tools, memory, and checkpointing.
 //
-// Builds a content-review pipeline as a graph and traces every node execution.
-// The graph forks into parallel enrich + summarise + sentiment, then joins
-// into a final report.
+// Builds a content-review pipeline as a graph and traces every node execution,
+// checkpoint save, interrupt, and resume.
 //
-//	fetch → [enrich, summarise, sentiment] → report
+//	fetch → [enrich, summarise, sentiment] → report (interrupt) → publish
 //
 // The trace tree shows:
 //   - graph.run / graph.node.* spans for the graph workflow
+//   - graph.checkpoint.save spans for each checkpoint
+//   - graph.interrupt span when the interrupt fires
+//   - graph.resume span when execution resumes
 //   - agent.invoke / agent.iteration / agent.provider.call for each agent
 //   - agent.tool.word_count for the enrich agent's tool call
 //   - agent.conversation.load / agent.conversation.save for the summarise agent's memory
@@ -21,6 +23,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -31,6 +34,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/graph"
+	"github.com/camilbinas/gude-agents/agent/graph/checkpointer/memory"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -111,9 +115,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 4. Build the graph with tracing.
-	g, err := graph.NewGraph(
+	// 4. Build the graph with tracing and checkpointing.
+	cp := memory.New()
+	g, err := graph.New[graph.State](
 		graph.WithMaxIterations(20),
+		graph.WithCheckpointer(cp),
 		tracing.WithGraphTracing(nil),
 	)
 	if err != nil {
@@ -174,11 +180,28 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 5. Run the graph.
+	// Interrupt before report for human review, then publish.
+	if err := g.InterruptBefore("report"); err != nil {
+		log.Fatal(err)
+	}
+
+	// 5. Run the graph until interrupt.
 	fmt.Println("Running traced graph pipeline...")
 	fmt.Println()
 
-	result, err := g.Run(ctx, graph.State{})
+	threadID := "traced-thread-1"
+	_, err = g.Run(ctx, graph.State{}, graph.WithThreadID(threadID))
+
+	var intErr *graph.GraphInterruptError
+	if !errors.As(err, &intErr) {
+		log.Fatalf("expected interrupt, got: %v", err)
+	}
+
+	fmt.Printf("⏸  Interrupted before node %q (version %d)\n\n", intErr.Result.NodeName, intErr.Result.Checkpoint.Version)
+
+	// 6. Resume execution past the interrupt.
+	fmt.Println("Resuming...")
+	result, err := g.Resume(ctx, threadID, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

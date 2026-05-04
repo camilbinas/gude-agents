@@ -19,7 +19,7 @@ import (
 func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
 	t.Parallel()
 	// Pure logic graph: route based on state value, no LLM needed.
-	g, err := graph.NewGraph()
+	g, err := graph.New[graph.State]()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
 
 func TestIntegration_Graph_ConditionalEndSignal(t *testing.T) {
 	t.Parallel()
-	g, err := graph.NewGraph()
+	g, err := graph.New[graph.State]()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestIntegration_Graph_ConditionalEndSignal(t *testing.T) {
 
 func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
 	t.Parallel()
-	g, err := graph.NewGraph()
+	g, err := graph.New[graph.State]()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestIntegration_Graph_AgentNode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := graph.NewGraph()
+	g, err := graph.New[graph.State]()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestIntegration_Graph_AgentNode(t *testing.T) {
 	}
 }
 
-func TestIntegration_Graph_TypedGraph(t *testing.T) {
+func TestIntegration_Graph_TypedState(t *testing.T) {
 	t.Parallel()
 	type PipelineState struct {
 		graph.GraphState
@@ -286,7 +286,7 @@ func TestIntegration_Graph_TypedGraph(t *testing.T) {
 		Length int    `json:"length"`
 	}
 
-	g, err := graph.NewTypedGraph[PipelineState]()
+	g, err := graph.New[PipelineState]()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestIntegration_Graph_LLMRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := graph.NewGraph()
+	g, err := graph.New[graph.State]()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestIntegration_Graph_LLMRouter(t *testing.T) {
 
 func TestIntegration_Graph_MaxIterationsExceeded(t *testing.T) {
 	t.Parallel()
-	g, err := graph.NewGraph(graph.WithMaxIterations(3))
+	g, err := graph.New[graph.State](graph.WithMaxIterations(3))
 	if err != nil {
 		t.Fatal(err)
 	}

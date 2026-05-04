@@ -165,12 +165,12 @@ Not intended for production — the colored output is designed to be read while 
 
 All presets accept `(provider, instructions, tools, ...Option)` and return `(*Agent, error)`. Options passed after the defaults override them.
 
-| Preset | Max Iterations | Logging | Parallel Tools | Use Case |
-|--------|---------------|---------|----------------|----------|
-| `Default` | 5 | off | off | Standalone agents |
-| `Worker` | 3 | on | off | Sub-agents in multi-agent setups |
-| `Orchestrator` | 5 | on | on | Parent agent routing to specialists |
-| `RAGAgent` | 5 | on | off | Retrieval-augmented generation (takes a `Retriever` parameter before tools) |
+| Preset | Max Iterations | Parallel Tools | Use Case |
+|--------|---------------|----------------|----------|
+| `Default` | 5 | on | Standalone agents |
+| `Worker` | 3 | on | Sub-agents in multi-agent setups |
+| `Orchestrator` | 5 | on | Parent agent routing to specialists |
+| `RAGAgent` | 5 | on | Retrieval-augmented generation (takes a `Retriever` parameter before tools) |
 
 ```go
 a, err := agent.Default(provider, instructions, tools,

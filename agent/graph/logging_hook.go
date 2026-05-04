@@ -22,14 +22,3 @@ type GraphLoggingHook interface {
 	// OnNodeEnd is called after each node execution with the outcome.
 	OnNodeEnd(nodeName string, err error, duration time.Duration)
 }
-
-// SetGraphLoggingHook sets the logging hook on the graph.
-// Called by the logging submodule's GraphOption.
-func (g *Graph) SetGraphLoggingHook(h GraphLoggingHook) {
-	g.loggingHook = h
-}
-
-// GraphLoggingHook returns the graph's logging hook, or nil if none is set.
-func (g *Graph) GraphLoggingHook() GraphLoggingHook {
-	return g.loggingHook
-}

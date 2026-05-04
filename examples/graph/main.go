@@ -50,7 +50,7 @@ func main() {
 
 	// --- Build the graph ---
 
-	g, err := graph.NewGraph(
+	g, err := graph.New[graph.State](
 		graph.WithMaxIterations(20),
 		auto.WithGraphLogging(),
 	)

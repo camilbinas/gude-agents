@@ -1,6 +1,6 @@
 // Package debug provides a human-readable colored logging hook for local
-// development. It implements agent.LoggingHook, graph.GraphLoggingHook, and
-// agent.SwarmLoggingHook with a trace-style output designed to be readable
+// development. It implements agent.LoggingHook and graph.GraphLoggingHook
+// with a trace-style output designed to be readable
 // while an agent is running.
 //
 // Not intended for production use — use agent/logging/slog with a JSON handler
@@ -56,7 +56,6 @@ func (h *debugHook) p(format string, args ...any) {
 // Compile-time interface checks.
 var _ agent.LoggingHook = (*debugHook)(nil)
 var _ graph.GraphLoggingHook = (*debugHook)(nil)
-var _ agent.SwarmLoggingHook = (*debugHook)(nil)
 
 // ---------------------------------------------------------------------------
 // LoggingHook — agent lifecycle
@@ -204,47 +203,6 @@ func (h *debugHook) OnNodeEnd(nodeName string, err error, duration time.Duration
 }
 
 // ---------------------------------------------------------------------------
-// SwarmLoggingHook — swarm lifecycle
-// ---------------------------------------------------------------------------
-
-func (h *debugHook) OnSwarmRunStart(initialAgent string, memberCount int, _ int) {
-	h.p("\n%s▸ swarm run%s  %s%s  %d agents%s\n\n",
-		bold+purple, reset,
-		dim, initialAgent, memberCount, reset,
-	)
-}
-
-func (h *debugHook) OnSwarmRunEnd(err error, result agent.SwarmResult, duration time.Duration) {
-	if err != nil {
-		h.p("\n%s✗ swarm run%s  %s  %s\n%s\n\n", bold+red, reset, fmtDur(duration), fmtErr(err), divider)
-		return
-	}
-	h.p("\n%s✓ swarm run%s  %s  %sfinal: %s  %d handoffs  ↑%d ↓%d%s\n%s\n\n",
-		bold+purple, reset,
-		fmtDur(duration),
-		dim, result.FinalAgent, len(result.HandoffHistory),
-		result.Usage.InputTokens, result.Usage.OutputTokens, reset,
-		divider,
-	)
-}
-
-func (h *debugHook) OnSwarmAgentStart(agentName string) {
-	h.p("\n%s▸ agent: %s%s\n", bold+blue, agentName, reset)
-}
-
-func (h *debugHook) OnSwarmAgentEnd(agentName string, err error, duration time.Duration) {
-	if err != nil {
-		h.p("\n%s✗ agent: %s%s  %s  %s\n", bold+red, agentName, reset, fmtDur(duration), fmtErr(err))
-		return
-	}
-	h.p("\n%s✓ agent: %s%s  %s\n", bold+green, agentName, reset, fmtDur(duration))
-}
-
-func (h *debugHook) OnSwarmHandoff(from, to string) {
-	h.p("%s↪ %s → %s%s\n", cyan, from, to, reset)
-}
-
-// ---------------------------------------------------------------------------
 // Option functions
 // ---------------------------------------------------------------------------
 
@@ -262,19 +220,9 @@ func WithLogging() agent.Option {
 // WithGraphLogging returns a graph.GraphOption that installs the colored
 // debug logging hook on a graph.
 func WithGraphLogging() graph.GraphOption {
-	return func(g *graph.Graph) error {
+	return func(g graph.GraphConfigurator) error {
 		h := newDebugHook(os.Stdout)
 		g.SetGraphLoggingHook(h)
-		return nil
-	}
-}
-
-// WithSwarmLogging returns an agent.SwarmOption that installs the colored
-// debug logging hook on a swarm.
-func WithSwarmLogging() agent.SwarmOption {
-	return func(s *agent.Swarm) error {
-		h := newDebugHook(os.Stdout)
-		s.SetSwarmLoggingHook(h)
 		return nil
 	}
 }

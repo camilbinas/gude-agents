@@ -11,34 +11,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// mockSwarmProvider is a simple mock that returns canned responses in sequence.
-type mockSwarmProvider struct {
-	responses []*ProviderResponse
-	callIndex int
-}
-
-func (m *mockSwarmProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	return m.nextResp(), nil
-}
-
-func (m *mockSwarmProvider) ConverseStream(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
-	resp := m.nextResp()
-	if cb != nil && resp.Text != "" {
-		cb(resp.Text)
-	}
-	return resp, nil
-}
-
-func (m *mockSwarmProvider) nextResp() *ProviderResponse {
-	if m.callIndex >= len(m.responses) {
-		return &ProviderResponse{Text: "no more responses"}
-	}
-	r := m.responses[m.callIndex]
-	m.callIndex++
-	return r
-}
-
-// inMemoryStore is a simple in-memory Memory implementation for testing.
+// inMemoryStore is a simple in-memory Conversation implementation for testing.
 type inMemoryStore struct {
 	data map[string][]Message
 }
@@ -283,58 +256,5 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 	saved, _ = store.Load(context.Background(), "user-42-session")
 	if len(saved) < 3 { // original msgs + human response + assistant response
 		t.Errorf("expected at least 3 messages after resume, got %d", len(saved))
-	}
-}
-
-// TestSwarm_WithPerInvocationConversationID verifies that a Swarm can serve
-// different conversations via context-based conversation IDs.
-func TestSwarm_WithPerInvocationConversationID(t *testing.T) {
-	alphaProvider := &mockSwarmProvider{responses: []*ProviderResponse{
-		{Text: "Alpha reply for conv-X"},
-		{Text: "Alpha reply for conv-Y"},
-	}}
-
-	a1, _ := New(alphaProvider, prompt.Text("alpha"), nil)
-	a2, _ := New(&mockSwarmProvider{}, prompt.Text("beta"), nil)
-
-	mem := newInMemoryStore()
-	sw, _ := NewSwarm([]SwarmMember{
-		{Name: "alpha", Description: "first", Agent: a1},
-		{Name: "beta", Description: "second", Agent: a2},
-	}, WithSwarmConversation(mem, "default"))
-
-	// Two different conversations on the same swarm.
-	ctxX := Background().WithConversationID("conv-X")
-	ctxY := Background().WithConversationID("conv-Y")
-
-	rX, err := sw.Invoke(ctxX, "hello X")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rY, err := sw.Invoke(ctxY, "hello Y")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if rX.Response != "Alpha reply for conv-X" {
-		t.Errorf("conv-X: expected %q, got %q", "Alpha reply for conv-X", rX.Response)
-	}
-	if rY.Response != "Alpha reply for conv-Y" {
-		t.Errorf("conv-Y: expected %q, got %q", "Alpha reply for conv-Y", rY.Response)
-	}
-
-	// Verify conversations were saved separately.
-	msgsX := mem.data["conv-X"]
-	msgsY := mem.data["conv-Y"]
-	msgsDefault := mem.data["default"]
-
-	if len(msgsX) != 2 {
-		t.Errorf("conv-X: expected 2 messages, got %d", len(msgsX))
-	}
-	if len(msgsY) != 2 {
-		t.Errorf("conv-Y: expected 2 messages, got %d", len(msgsY))
-	}
-	if len(msgsDefault) != 0 {
-		t.Errorf("default: expected 0 messages, got %d", len(msgsDefault))
 	}
 }

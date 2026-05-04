@@ -71,7 +71,6 @@ Convenience wrapper that collects streamed output into a string.
 | Default, Worker | Yes |
 | Orchestrator | Yes |
 | RAGAgent | Yes — RAG runs on the initial query, context carries through |
-| Swarm | Not yet — swarm has its own loop; use agent-to-agent handoffs for now |
 | InvokeStructured | No — single-shot, no iterative loop |
 
 ## Environment Patterns

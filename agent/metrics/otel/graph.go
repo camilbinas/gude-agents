@@ -80,7 +80,7 @@ func (h *graphOtelHook) OnNodeStart(nodeName string) func(err error) {
 // WithGraphMetrics returns a graph.GraphOption that enables OTEL metrics for graph execution.
 // If mp is nil, the global MeterProvider is used.
 func WithGraphMetrics(mp metric.MeterProvider, opts ...Option) graph.GraphOption {
-	return func(g *graph.Graph) error {
+	return func(g graph.GraphConfigurator) error {
 		if mp == nil {
 			mp = otelglobal.GetMeterProvider()
 		}

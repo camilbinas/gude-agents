@@ -45,7 +45,7 @@ func WithGraphMetrics(opts ...Option) (graph.GraphOption, func(context.Context) 
 	var hook *graphCloudwatchHook
 	var shutdownFn func(context.Context) error
 
-	graphOpt := func(g *graph.Graph) error {
+	graphOpt := func(g graph.GraphConfigurator) error {
 		inner := &cloudwatchHook{
 			namespace:     defaultNamespace,
 			flushInterval: defaultFlushInterval,

@@ -38,15 +38,6 @@ func WithGraphLogging() graph.GraphOption {
 	return agentslog.WithGraphLogging()
 }
 
-// WithSwarmLogging returns an agent.SwarmOption that installs the appropriate
-// logging hook based on the ENV environment variable.
-func WithSwarmLogging() agent.SwarmOption {
-	if isDev() {
-		return debug.WithSwarmLogging()
-	}
-	return agentslog.WithSwarmLogging()
-}
-
 func isDev() bool {
 	for _, key := range []string{"APP_ENV", "ENV", "ENVIRONMENT"} {
 		if env := strings.ToLower(os.Getenv(key)); env != "" {

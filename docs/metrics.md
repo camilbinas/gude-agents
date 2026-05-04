@@ -201,11 +201,11 @@ a, err := agent.New(provider, instructions, tools,
 families, _ := reg.Gather()
 ```
 
-## Swarm and Graph Metrics
+## Graph Metrics
 
-The core `agent` package also defines `SwarmMetricsHook` and `GraphMetricsHook` interfaces for swarm-level and graph-level metrics (handoff counts, agent turn durations, node execution durations, graph run durations). These are wired into `Swarm.Run` and `Graph.Run` alongside the existing tracing and logging hooks.
+The core `agent` package also defines `GraphMetricsHook` interface for graph-level metrics (node execution durations, graph run durations). This is wired into `Graph.Run` alongside the existing tracing and logging hooks.
 
-Metrics exporters can implement these interfaces to add orchestration-level counters and histograms on top of the per-agent metrics that `MetricsHook` already provides.
+Metrics exporters can implement this interface to add orchestration-level counters and histograms on top of the per-agent metrics that `MetricsHook` already provides.
 
 ## See Also
 

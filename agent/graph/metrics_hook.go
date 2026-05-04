@@ -12,14 +12,3 @@ type GraphMetricsHook interface {
 	// Returns a finish function called with the outcome.
 	OnNodeStart(nodeName string) func(err error)
 }
-
-// SetGraphMetricsHook sets the metrics hook on the graph.
-// Called by the metrics submodule's GraphOption.
-func (g *Graph) SetGraphMetricsHook(h GraphMetricsHook) {
-	g.metricsHook = h
-}
-
-// GraphMetricsHook returns the graph's metrics hook, or nil if none is set.
-func (g *Graph) GraphMetricsHook() GraphMetricsHook {
-	return g.metricsHook
-}

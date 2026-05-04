@@ -78,40 +78,13 @@ func TestWithGraphLogging_InstallsHook(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithGraphLogging(WithHandler(ch))
 
-	g, err := graph.NewGraph(opt)
+	g, err := graph.New[graph.State](opt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if g.GraphLoggingHook() == nil {
 		t.Fatal("expected GraphLoggingHook to be set after WithGraphLogging")
-	}
-}
-
-// TestWithSwarmLogging_InstallsHook verifies WithSwarmLogging sets SwarmLoggingHook on swarm.
-func TestWithSwarmLogging_InstallsHook(t *testing.T) {
-	ch := &captureHandler{}
-	opt := WithSwarmLogging(WithHandler(ch))
-
-	a1, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "ok"})), prompt.Text("agent1"), nil)
-	if err != nil {
-		t.Fatalf("unexpected error creating agent1: %v", err)
-	}
-	a2, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "ok"})), prompt.Text("agent2"), nil)
-	if err != nil {
-		t.Fatalf("unexpected error creating agent2: %v", err)
-	}
-
-	s, err := agent.NewSwarm([]agent.SwarmMember{
-		{Name: "a1", Description: "first", Agent: a1},
-		{Name: "a2", Description: "second", Agent: a2},
-	}, opt)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if s.SwarmLoggingHook() == nil {
-		t.Fatal("expected SwarmLoggingHook to be set after WithSwarmLogging")
 	}
 }
 
@@ -185,12 +158,10 @@ func TestLogLevel_DebugForStarts(t *testing.T) {
 	h.OnRetrieverStart("query")
 	h.OnGraphRunStart()
 	h.OnNodeStart("node-a")
-	h.OnSwarmRunStart("agent-1", 3, 10)
-	h.OnSwarmAgentStart("agent-1")
 
 	records := ch.getRecords()
-	if len(records) != 10 {
-		t.Fatalf("expected 10 records, got %d", len(records))
+	if len(records) != 8 {
+		t.Fatalf("expected 8 records, got %d", len(records))
 	}
 	for i, r := range records {
 		if r.Level != slog.LevelDebug {
@@ -214,13 +185,10 @@ func TestLogLevel_InfoForEnds(t *testing.T) {
 	h.OnRetrieverEnd(nil, 3, dur)
 	h.OnGraphRunEnd(nil, 5, agent.TokenUsage{InputTokens: 100, OutputTokens: 50}, dur)
 	h.OnNodeEnd("node-a", nil, dur)
-	h.OnSwarmRunEnd(nil, agent.SwarmResult{FinalAgent: "a1"}, dur)
-	h.OnSwarmAgentEnd("agent-1", nil, dur)
-	h.OnSwarmHandoff("a1", "a2")
 
 	records := ch.getRecords()
-	if len(records) != 10 {
-		t.Fatalf("expected 10 records, got %d", len(records))
+	if len(records) != 7 {
+		t.Fatalf("expected 7 records, got %d", len(records))
 	}
 	for i, r := range records {
 		if r.Level != slog.LevelInfo {
@@ -245,13 +213,11 @@ func TestLogLevel_ErrorOnFailure(t *testing.T) {
 	h.OnRetrieverEnd(testErr, 0, dur)
 	h.OnGraphRunEnd(testErr, 0, agent.TokenUsage{}, dur)
 	h.OnNodeEnd("node-a", testErr, dur)
-	h.OnSwarmRunEnd(testErr, agent.SwarmResult{}, dur)
-	h.OnSwarmAgentEnd("agent-1", testErr, dur)
 	h.OnGuardrailComplete("input", false, testErr)
 
 	records := ch.getRecords()
-	if len(records) != 10 {
-		t.Fatalf("expected 10 records, got %d", len(records))
+	if len(records) != 8 {
+		t.Fatalf("expected 8 records, got %d", len(records))
 	}
 	for i, r := range records {
 		if r.Level != slog.LevelError {

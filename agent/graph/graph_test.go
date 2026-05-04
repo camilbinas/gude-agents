@@ -12,7 +12,7 @@ import (
 
 func noop(_ context.Context, s State) (State, error) { return s, nil }
 
-func setter(key, val string) NodeFunc {
+func setter(key, val string) NodeFunc[State] {
 	return func(_ context.Context, s State) (State, error) {
 		out := CopyState(s)
 		out[key] = val
@@ -20,11 +20,11 @@ func setter(key, val string) NodeFunc {
 	}
 }
 
-func mustGraph(t *testing.T, opts ...GraphOption) *Graph {
+func mustGraph(t *testing.T, opts ...GraphOption) *Graph[State] {
 	t.Helper()
-	g, err := NewGraph(opts...)
+	g, err := New[State](opts...)
 	if err != nil {
-		t.Fatalf("NewGraph: %v", err)
+		t.Fatalf("New[State]: %v", err)
 	}
 	return g
 }
@@ -33,7 +33,6 @@ func isValidationError(err error) bool {
 	var ve *GraphValidationError
 	return errors.As(err, &ve)
 }
-
 
 func TestGraphBuilder(t *testing.T) {
 	t.Run("6.1 AddNode rejects empty name", func(t *testing.T) {
@@ -95,11 +94,11 @@ func TestGraphBuilder(t *testing.T) {
 	})
 
 	t.Run("6.5 WithMaxIterations rejects value < 1", func(t *testing.T) {
-		_, err := NewGraph(WithMaxIterations(0))
+		_, err := New[State](WithMaxIterations(0))
 		if !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError for 0, got %v", err)
 		}
-		_, err = NewGraph(WithMaxIterations(-5))
+		_, err = New[State](WithMaxIterations(-5))
 		if !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError for -5, got %v", err)
 		}
@@ -189,14 +188,13 @@ func TestGraphValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Directly set fork on the same route to create a conflict.
-		g.routes["a"] = route{static: "b", fork: []string{"b", "c"}}
+		g.routes["a"] = route[State]{static: "b", fork: []string{"b", "c"}}
 		_, err := g.Run(context.Background(), State{})
 		if !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError for conflicting rules, got %v", err)
 		}
 	})
 }
-
 
 func TestGraphExecution(t *testing.T) {
 	t.Run("7.1 linear chain A→B→C", func(t *testing.T) {
@@ -378,7 +376,7 @@ func TestGraphExecution(t *testing.T) {
 		g.SetEntry("a")
 
 		const n = 10
-		results := make([]GraphResult, n)
+		results := make([]Result[State], n)
 		errs := make([]error, n)
 		var wg sync.WaitGroup
 		for i := 0; i < n; i++ {
@@ -442,14 +440,14 @@ func TestGraphExecution(t *testing.T) {
 
 // ── small helpers to reduce boilerplate ──────────────────────────────────────
 
-func mustAddNode(t *testing.T, g *Graph, name string, fn NodeFunc) {
+func mustAddNode(t *testing.T, g *Graph[State], name string, fn NodeFunc[State]) {
 	t.Helper()
 	if err := g.AddNode(name, fn); err != nil {
 		t.Fatalf("AddNode(%q): %v", name, err)
 	}
 }
 
-func mustAddEdge(t *testing.T, g *Graph, from, to string) {
+func mustAddEdge(t *testing.T, g *Graph[State], from, to string) {
 	t.Helper()
 	if err := g.AddEdge(from, to); err != nil {
 		t.Fatalf("AddEdge(%q→%q): %v", from, to, err)

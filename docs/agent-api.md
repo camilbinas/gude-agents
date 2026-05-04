@@ -256,7 +256,7 @@ usage, text, err := a.RunLoop(c, agent.LoopParams{
     Messages:       messages,
     StreamCallback: cb,
     Config: agent.LoopConfig{
-        ExtraMiddleware:      swarmMiddleware,
+        ExtraMiddleware:      extraMiddleware,
         SkipConversationSave: true,
         ToolResultInterceptor: func(results []agent.ToolResultBlock) bool {
             return containsHandoff(results)

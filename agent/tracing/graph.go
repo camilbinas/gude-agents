@@ -24,7 +24,7 @@ var _ graph.GraphTracingHook = (*graphOtelHook)(nil)
 // for graph execution. If tp is nil, the global TracerProvider is used.
 // Creates spans named "graph.run" and "graph.node.<node_name>" with appropriate attributes.
 func WithGraphTracing(tp trace.TracerProvider) graph.GraphOption {
-	return func(g *graph.Graph) error {
+	return func(g graph.GraphConfigurator) error {
 		if tp == nil {
 			tp = otel.GetTracerProvider()
 		}
@@ -57,4 +57,47 @@ func (h *graphOtelHook) OnNodeStart(ctx context.Context, nodeName string) (conte
 		}
 		span.End()
 	}
+}
+
+func (h *graphOtelHook) OnCheckpointSave(ctx context.Context, nodeName string, version int) func(err error) {
+	_, span := h.tracer.Start(ctx, "graph.checkpoint.save")
+	span.SetAttributes(
+		attribute.String("graph.checkpoint.node", nodeName),
+		attribute.Int("graph.checkpoint.version", version),
+	)
+	return func(err error) {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}
+}
+
+func (h *graphOtelHook) OnInterrupt(ctx context.Context, nodeName string, interruptType graph.InterruptType, version int) {
+	_, span := h.tracer.Start(ctx, "graph.interrupt")
+	span.SetAttributes(
+		attribute.String("graph.interrupt.node", nodeName),
+		attribute.String("graph.interrupt.type", string(interruptType)),
+		attribute.Int("graph.interrupt.version", version),
+	)
+	span.End()
+}
+
+func (h *graphOtelHook) OnResume(ctx context.Context, threadID string, version int) {
+	_, span := h.tracer.Start(ctx, "graph.resume")
+	span.SetAttributes(
+		attribute.String("graph.thread_id", threadID),
+		attribute.Int("graph.resume.from_version", version),
+	)
+	span.End()
+}
+
+func (h *graphOtelHook) OnRewind(ctx context.Context, threadID string, targetVersion int) {
+	_, span := h.tracer.Start(ctx, "graph.rewind")
+	span.SetAttributes(
+		attribute.String("graph.thread_id", threadID),
+		attribute.Int("graph.rewind.target_version", targetVersion),
+	)
+	span.End()
 }

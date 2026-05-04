@@ -1,7 +1,7 @@
 // Example: Typed graph for a simple research → summarise → score pipeline.
 //
-// TypedGraph wraps the untyped Graph with generics so nodes work directly
-// with a concrete state struct — no map[string]any, no type assertions.
+// Graph[S] uses generics so nodes work directly with a concrete state struct
+// — no map[string]any, no type assertions.
 //
 // Embedding graph.GraphState enables automatic token usage accumulation via
 // s.AddUsage(usage) — no manual token fields needed on the state struct.
@@ -84,7 +84,7 @@ func main() {
 	}
 
 	// Build the typed graph — nodes receive and return State directly.
-	g, err := graph.NewTypedGraph[State](
+	g, err := graph.New[State](
 		graph.WithMaxIterations(20),
 	)
 	if err != nil {

@@ -112,7 +112,7 @@ func TestAgentNode(t *testing.T) {
 		}
 	})
 
-	t.Run("8.3 accumulates TokenUsage into GraphResult", func(t *testing.T) {
+	t.Run("8.3 accumulates TokenUsage into Result", func(t *testing.T) {
 		sp := newScriptedProvider(&agent.ProviderResponse{
 			Text:  "response",
 			Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
@@ -122,9 +122,9 @@ func TestAgentNode(t *testing.T) {
 			t.Fatalf("New: %v", err)
 		}
 
-		g, err := graph.NewGraph()
+		g, err := graph.New[graph.State]()
 		if err != nil {
-			t.Fatalf("NewGraph: %v", err)
+			t.Fatalf("New[State]: %v", err)
 		}
 		if err := g.AddNode("agent", graph.AgentNode(a, "input", "output")); err != nil {
 			t.Fatalf("AddNode: %v", err)

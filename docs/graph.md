@@ -13,7 +13,7 @@ A graph has:
 ## Creating a Graph
 
 ```go
-g, err := graph.NewGraph()
+g, err := graph.New[graph.State]()
 if err != nil {
     log.Fatal(err)
 }
@@ -32,20 +32,20 @@ fmt.Println(result.State["output"])
 `State` is `map[string]any` — a shared data container passed between nodes. Each node receives a copy of the current state and returns an updated copy. The graph engine merges the returned state back into the shared state.
 
 ```go
-type State map[string]any
+type State = map[string]any
 ```
 
 Use `graph.CopyState(s)` to create a shallow copy when needed.
 
 ## NodeFunc
 
-Every node is a `NodeFunc`:
+Every node is a `NodeFunc[S]`:
 
 ```go
-type NodeFunc func(ctx context.Context, state State) (State, error)
+type NodeFunc[S any] func(ctx context.Context, state S) (S, error)
 ```
 
-The function receives the current state, does its work, and returns the updated state. Return an error to abort the graph.
+For untyped graphs, use `NodeFunc[graph.State]`. The function receives the current state, does its work, and returns the updated state. Return an error to abort the graph.
 
 ```go
 classifyFn := func(ctx context.Context, state graph.State) (graph.State, error) {
@@ -104,13 +104,13 @@ g.AddJoin("synthesize", []string{"research", "analyze"})
 
 Requires at least 2 predecessors. The join node fires automatically when all predecessors are done.
 
-## GraphResult
+## Result
 
-`Graph.Run` returns a `GraphResult`:
+`Graph[S].Run` returns a `Result[S]`:
 
 ```go
-type GraphResult struct {
-    State State
+type Result[S any] struct {
+    State S
     Usage agent.TokenUsage
 }
 ```
@@ -120,14 +120,14 @@ type GraphResult struct {
 ## Options
 
 ```go
-g, err := graph.NewGraph(
-    graph.WithGraphMaxIterations(50),  // default: 100
+g, err := graph.New[graph.State](
+    graph.WithMaxIterations(50),  // default: 100
 )
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `WithGraphMaxIterations(n)` | 100 | Max node executions per Run. Returns error if n < 1. |
+| `WithMaxIterations(n)` | 100 | Max node executions per Run. Returns error if n < 1. |
 
 ## AgentNode
 
@@ -151,25 +151,27 @@ router := graph.LLMRouter(routerAgent, []string{"billing", "technical"})
 g.AddConditionalEdge("classify", router)
 ```
 
-The LLM receives the current state as context and must respond with one of the allowed node names.
+The LLM receives the current state as context and must respond with one of the allowed node names. For typed graphs, use `graph.LLMRouterFunc[S]` with a prompt extraction function.
 
-## TypedGraph
+## Typed State
 
-`TypedGraph[S]` provides type-safe state instead of `map[string]any`:
+`Graph[S]` works directly with custom struct types — no `map[string]any`, no type assertions. Use `graph.New[S]()` with any struct type:
 
 ```go
 type MyState struct {
-    Input    string
-    Category string
-    Output   string
+    graph.GraphState                   // embed for automatic token tracking
+    Input    string `json:"input"`
+    Category string `json:"category"`
+    Output   string `json:"output"`
 }
 
-tg := graph.NewTypedGraph[MyState](g)
-result, err := tg.Run(ctx, MyState{Input: "Hello"})
+g, err := graph.New[MyState]()
+// ... add nodes, edges, set entry ...
+result, err := g.Run(ctx, MyState{Input: "Hello"})
 fmt.Println(result.State.Output)
 ```
 
-The typed graph wraps the underlying `Graph` and handles serialization between your struct and `State`.
+JSON serialization occurs only at checkpoint boundaries and event snapshots — not between nodes.
 
 ## Validation
 
@@ -198,7 +200,7 @@ import (
 )
 
 func main() {
-    g, err := graph.NewGraph()
+    g, err := graph.New[graph.State]()
     if err != nil {
         log.Fatal(err)
     }
@@ -237,6 +239,151 @@ func main() {
     }
     fmt.Println(result.State["output"])
 }
+```
+
+## Checkpointing
+
+Checkpointing persists execution state after each node, enabling step-by-step execution, interrupt-based human-in-the-loop flows, and rewind/replay. When no checkpointer is configured, the graph runs identically to before with zero overhead.
+
+```go
+import "github.com/camilbinas/gude-agents/agent/graph/checkpointer/memory"
+
+cp := memory.New()
+g, _ := graph.New[graph.State](
+    graph.WithCheckpointer(cp),
+)
+
+// ... add nodes, edges, set entry ...
+
+result, err := g.Run(ctx, graph.State{"input": "hello"}, graph.WithThreadID("thread-1"))
+```
+
+| Option | Description |
+|--------|-------------|
+| `WithCheckpointer(cp)` | Sets the `GraphCheckpointer` backend. Required for Step/Resume/RewindTo. |
+| `WithCheckpointOnInterruptOnly()` | Only save checkpoints at interrupt points, not after every node. |
+| `WithThreadID(id)` | Run option that sets the thread ID. Required when a checkpointer is configured. |
+
+### Interrupts
+
+Mark nodes to pause execution before or after they run. Requires a checkpointer.
+
+```go
+g.AddNode("review", reviewFn)
+g.InterruptBefore("review") // pause before review runs
+
+result, err := g.Run(ctx, state, graph.WithThreadID("t1"))
+// err is *graph.GraphInterruptError
+var intErr *graph.GraphInterruptError
+if errors.As(err, &intErr) {
+    fmt.Println(intErr.Result.NodeName) // "review"
+    fmt.Println(intErr.Result.Type)     // "before"
+}
+```
+
+`InterruptBefore` saves a checkpoint with the node NOT in the completed set. `InterruptAfter` saves a checkpoint with the node IN the completed set.
+
+### Step
+
+Execute one node at a time. Returns a `StepResult[S]` with the executed node name, version, and whether the graph is done.
+
+```go
+res, err := g.Step(ctx, graph.State{"input": "hello"}, "thread-1")
+fmt.Println(res.NodeName, res.Version, res.Done)
+
+// Continue stepping until done
+for !res.Done {
+    res, err = g.Step(ctx, nil, "thread-1")
+}
+```
+
+### Resume
+
+Continue execution from the latest checkpoint. Optionally merge state updates before resuming.
+
+```go
+// After an interrupt, provide human feedback and resume
+updates := graph.State{"approved": true}
+result, err := g.Resume(ctx, "thread-1", &updates)
+```
+
+Returns `Result[S]` on completion or `*GraphInterruptError` if another interrupt is hit.
+
+### RewindTo
+
+Reset execution position to a previous checkpoint version. Does not delete later checkpoints — versions after rewind continue from the global max.
+
+```go
+err := g.RewindTo(ctx, "thread-1", 2)
+// Next Resume/Step starts from the state at version 2
+result, err := g.Resume(ctx, "thread-1", nil)
+```
+
+### Typed Checkpointing
+
+`Graph[S]` supports all checkpointing APIs with type-safe state:
+
+```go
+g, _ := graph.New[MyState](graph.WithCheckpointer(cp))
+// ... add nodes ...
+g.InterruptBefore("review")
+
+res, _ := g.Step(ctx, MyState{Input: "hello"}, "thread-1")
+fmt.Println(res.State.Input) // typed access
+
+result, _ := g.Resume(ctx, "thread-1", &MyState{Approved: true})
+_ = g.RewindTo(ctx, "thread-1", 2)
+```
+
+### Event Hook
+
+`WithEventHook` receives structured events at each lifecycle point — useful for frontend visualization, logging, or metrics.
+
+```go
+type MyHook struct {
+    events []graph.GraphEvent
+}
+
+func (h *MyHook) OnEvent(e graph.GraphEvent) {
+    h.events = append(h.events, e)
+}
+
+g, _ := graph.New[graph.State](
+    graph.WithCheckpointer(cp),
+    graph.WithEventHook(&MyHook{}),
+)
+```
+
+| Event Type | When |
+|------------|------|
+| `EventGraphStarted` | Beginning of execution |
+| `EventNodeStarted` | Before each node function runs |
+| `EventNodeCompleted` | After each node function completes |
+| `EventCheckpointSaved` | After each checkpoint save |
+| `EventInterruptFired` | When an interrupt pauses execution |
+| `EventResumed` | When Resume is called |
+| `EventRewindCompleted` | When RewindTo completes |
+| `EventGraphCompleted` | End of execution (success or error) |
+
+`OnEvent` is called synchronously — implementations must not block (use buffered channels or async dispatch).
+
+### Backends
+
+| Backend | Import | Use Case |
+|---------|--------|----------|
+| InMemory | `graph/checkpointer/memory` | Testing and development |
+| DynamoDB | `graph/checkpointer/dynamodb` | Serverless production workloads |
+| Postgres | `graph/checkpointer/postgres` | Traditional server deployments |
+
+All backends implement `GraphCheckpointer` and are safe for concurrent use.
+
+### State Serialization
+
+All values in `State` must be JSON-serializable. The graph validates this before every checkpoint save. Non-serializable values (channels, functions, complex numbers) cause a `StateSerializationError` identifying the offending key and type.
+
+```go
+// This will fail at checkpoint time:
+state["bad"] = make(chan int) // StateSerializationError{Key: "bad", Type: "chan int"}
 ```
 
 ## See Also

@@ -9,8 +9,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/graph"
 )
 
-// slogHook implements agent.LoggingHook, graph.GraphLoggingHook, and
-// agent.SwarmLoggingHook using the standard library's log/slog package.
+// slogHook implements agent.LoggingHook and graph.GraphLoggingHook
+// using the standard library's log/slog package.
 type slogHook struct {
 	logger    *slog.Logger
 	minLevel  slog.Level
@@ -20,7 +20,6 @@ type slogHook struct {
 // Compile-time interface checks.
 var _ agent.LoggingHook = (*slogHook)(nil)
 var _ graph.GraphLoggingHook = (*slogHook)(nil)
-var _ agent.SwarmLoggingHook = (*slogHook)(nil)
 
 // log emits a structured log entry if the level meets the minimum threshold.
 func (h *slogHook) log(level slog.Level, msg string, attrs ...slog.Attr) {
@@ -221,59 +220,7 @@ func (h *slogHook) OnNodeEnd(nodeName string, err error, duration time.Duration)
 }
 
 // ---------------------------------------------------------------------------
-// SwarmLoggingHook — swarm lifecycle
-// ---------------------------------------------------------------------------
-
-func (h *slogHook) OnSwarmRunStart(initialAgent string, memberCount int, maxHandoffs int) {
-	h.log(slog.LevelDebug, "swarm.run.start",
-		slog.String("initial_agent", initialAgent),
-		slog.Int("member_count", memberCount),
-		slog.Int("max_handoffs", maxHandoffs),
-	)
-}
-
-func (h *slogHook) OnSwarmRunEnd(err error, result agent.SwarmResult, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.String("final_agent", result.FinalAgent),
-		slog.Int("handoff_count", len(result.HandoffHistory)),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "swarm.run.end", attrs...)
-}
-
-func (h *slogHook) OnSwarmAgentStart(agentName string) {
-	h.log(slog.LevelDebug, "swarm.agent.start",
-		slog.String("agent.name", agentName),
-	)
-}
-
-func (h *slogHook) OnSwarmAgentEnd(agentName string, err error, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.String("agent.name", agentName),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "swarm.agent.end", attrs...)
-}
-
-func (h *slogHook) OnSwarmHandoff(from, to string) {
-	h.log(slog.LevelInfo, "swarm.handoff",
-		slog.String("agent.from", from),
-		slog.String("agent.to", to),
-	)
-}
-
-// ---------------------------------------------------------------------------
-// Option functions — wire the hook into agent, graph, and swarm
+// Option functions — wire the hook into agent and graph
 // ---------------------------------------------------------------------------
 
 // newSlogHook creates a slogHook with defaults and applies the given options.
@@ -300,18 +247,9 @@ func WithLogging(opts ...Option) agent.Option {
 
 // WithGraphLogging returns a graph.GraphOption that installs the slog-based GraphLoggingHook.
 func WithGraphLogging(opts ...Option) graph.GraphOption {
-	return func(g *graph.Graph) error {
+	return func(g graph.GraphConfigurator) error {
 		h := newSlogHook(opts)
 		g.SetGraphLoggingHook(h)
-		return nil
-	}
-}
-
-// WithSwarmLogging returns an agent.SwarmOption that installs the slog-based SwarmLoggingHook.
-func WithSwarmLogging(opts ...Option) agent.SwarmOption {
-	return func(s *agent.Swarm) error {
-		h := newSlogHook(opts)
-		s.SetSwarmLoggingHook(h)
 		return nil
 	}
 }

@@ -109,7 +109,7 @@ func main() {
 
 	// --- Build the typed graph ---
 
-	g, err := graph.NewTypedGraph[BlogState](
+	g, err := graph.New[BlogState](
 		graph.WithMaxIterations(30),
 	)
 	if err != nil {

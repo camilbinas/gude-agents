@@ -13,10 +13,17 @@ type GraphTracingHook interface {
 	// OnNodeStart is called before each node execution.
 	// Returns a context with the node span and a finish function.
 	OnNodeStart(ctx context.Context, nodeName string) (context.Context, func(err error))
-}
 
-// SetGraphTracingHook sets the tracing hook on the graph.
-// Called by the tracing submodule's GraphOption.
-func (g *Graph) SetGraphTracingHook(h GraphTracingHook) {
-	g.tracingHook = h
+	// OnCheckpointSave is called when a checkpoint is saved.
+	// Returns a finish function called after the save completes.
+	OnCheckpointSave(ctx context.Context, nodeName string, version int) func(err error)
+
+	// OnInterrupt is called when an interrupt fires.
+	OnInterrupt(ctx context.Context, nodeName string, interruptType InterruptType, version int)
+
+	// OnResume is called when execution resumes from a checkpoint.
+	OnResume(ctx context.Context, threadID string, version int)
+
+	// OnRewind is called when execution rewinds to a previous version.
+	OnRewind(ctx context.Context, threadID string, targetVersion int)
 }

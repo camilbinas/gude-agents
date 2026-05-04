@@ -141,7 +141,7 @@ import (
     "github.com/camilbinas/gude-agents/agent/tracing"
 )
 
-g, err := graph.NewGraph(
+g, err := graph.New[graph.State](
     tracing.WithGraphTracing(tp), // or nil for global provider
 )
 if err != nil {
@@ -161,74 +161,19 @@ Graph tracing produces a parallel span hierarchy:
 graph.run
 ├── graph.node.<node_name>         (per node, may be concurrent for forks)
 │   └── agent.invoke               (if node wraps an agent)
-└── graph.iterations attribute
+├── graph.checkpoint.save          (per checkpoint, with node and version attributes)
+├── graph.interrupt                (when an interrupt fires)
+├── graph.resume                   (when Resume is called)
+└── graph.rewind                   (when RewindTo is called)
 ```
 
 - `graph.run` wraps the entire graph execution and records `graph.iterations` on completion.
 - Each node gets a `graph.node.<name>` child span.
 - Fork nodes execute concurrently, producing concurrent child spans under `graph.run`.
 - If a node wraps an agent (via `graph.AgentNode`), the agent's spans nest under the node span.
-
-## Swarm Tracing
-
-For swarm workflows, use `WithSwarmTracing` to instrument `Swarm.Run`, each agent's turn, and handoff events:
-
-```go
-import (
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/tracing"
-)
-
-swarm, err := agent.NewSwarm(members,
-    tracing.WithSwarmTracing(tp), // or nil for global provider
-    agent.WithSwarmMaxHandoffs(5),
-)
-```
-
-Swarm tracing produces the following span hierarchy:
-
-```
-swarm.run
-├── swarm.agent.<name>             (per agent turn)
-│   └── agent.invoke               (if agent has tracing enabled)
-├── swarm.handoff event            (per handoff between agents)
-└── swarm.run attributes           (final agent, handoff count, token usage)
-```
-
-### Span Attributes
-
-| Constant | Key | Description |
-|----------|-----|-------------|
-| `AttrSwarmInitialAgent` | `swarm.initial_agent` | Name of the first active agent |
-| `AttrSwarmFinalAgent` | `swarm.final_agent` | Name of the agent that produced the final response |
-| `AttrSwarmMemberCount` | `swarm.member_count` | Number of agents in the swarm |
-| `AttrSwarmMaxHandoffs` | `swarm.max_handoffs` | Configured max handoffs |
-| `AttrSwarmHandoffCount` | `swarm.handoff_count` | Number of handoffs that occurred |
-| `AttrSwarmAgentName` | `swarm.agent.name` | Agent name on each agent turn span |
-
-Handoff events are recorded on the `swarm.run` span with `swarm.handoff.from` and `swarm.handoff.to` attributes.
-
-### Combined with Agent Tracing
-
-For full visibility, enable tracing on both the swarm and individual agents:
-
-```go
-triage, _ := agent.SwarmAgent(provider, triagePrompt, nil,
-    tracing.WithTracing(tp),
-)
-billing, _ := agent.SwarmAgent(provider, billingPrompt, billingTools,
-    tracing.WithTracing(tp),
-)
-
-swarm, _ := agent.NewSwarm([]agent.SwarmMember{
-    {Name: "triage", Description: "Routes requests", Agent: triage},
-    {Name: "billing", Description: "Handles payments", Agent: billing},
-},
-    tracing.WithSwarmTracing(tp),
-)
-```
-
-This produces nested spans: `swarm.run` → `swarm.agent.triage` → `agent.invoke` → `agent.provider.call`.
+- `graph.checkpoint.save` records `graph.checkpoint.node` and `graph.checkpoint.version`.
+- `graph.interrupt` records `graph.interrupt.node`, `graph.interrupt.type`, and `graph.interrupt.version`.
+- `graph.resume` and `graph.rewind` record `graph.thread_id` and the relevant version.
 
 ## Multi-Agent Trace Propagation
 

@@ -93,7 +93,7 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 }
 
 // ---------------------------------------------------------------------------
-// Accessor methods — used by subpackages (graph, swarm) that need read access
+// Accessor methods — used by subpackages (graph) that need read access
 // to agent internals without touching unexported fields.
 // ---------------------------------------------------------------------------
 
@@ -104,8 +104,8 @@ func (a *Agent) Name() string { return a.name }
 func (a *Agent) Provider() Provider { return a.provider }
 
 // CallProvider calls the agent's provider with timeout and retry applied.
-// Used by the swarm to ensure swarm agents benefit from WithTimeout and
-// WithRetry without duplicating the retry logic.
+// Useful for subpackages that need to invoke the provider with the agent's
+// retry and timeout settings without duplicating the logic.
 func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
 	return a.callProviderWithRetry(ctx, params, cb)
 }

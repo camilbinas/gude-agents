@@ -64,7 +64,7 @@ type lifecycleEvent struct {
 // genLifecycleEvent generates a random lifecycle event with random parameters.
 func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 	prefix := fmt.Sprintf("evt_%d", idx)
-	eventType := rapid.IntRange(0, 16).Draw(t, prefix+"_type")
+	eventType := rapid.IntRange(0, 15).Draw(t, prefix+"_type")
 
 	switch eventType {
 	case 0: // InvokeStart
@@ -245,14 +245,13 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			fire:          func(h *slogHook) { h.OnGraphRunEnd(err, iterations, agent.TokenUsage{}, dur) },
 			err:           err,
 		}
-	case 15: // SwarmHandoff
-		from := genString(t, prefix+"_from")
-		to := genString(t, prefix+"_to")
+	case 15: // NodeStart
+		nodeName := genString(t, prefix+"_node")
 		return lifecycleEvent{
-			name:          "swarm.handoff",
-			category:      "handoff",
-			expectedLevel: slog.LevelInfo,
-			fire:          func(h *slogHook) { h.OnSwarmHandoff(from, to) },
+			name:          "graph.node.start",
+			category:      "start",
+			expectedLevel: slog.LevelDebug,
+			fire:          func(h *slogHook) { h.OnNodeStart(nodeName) },
 		}
 	default: // NodeEnd
 		nodeName := genString(t, prefix+"_node")
@@ -276,7 +275,6 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 // Property 1: Log level mapping correctness
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_1_LogLevelMappingCorrectness verifies that for any random
 // lifecycle event with random error/nil outcomes, the slog implementation
 // maps to the correct log level:
@@ -285,8 +283,6 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 //   - MaxIterationsExceeded always emits at Warn
 //   - GuardrailComplete(blocked=true) emits at Warn when err==nil
 //   - Any event with err!=nil escalates to Error
-//   - SwarmHandoff always emits at Info
-//
 func TestProperty_1_LogLevelMappingCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 30).Draw(rt, "numEvents")
@@ -328,12 +324,10 @@ func TestProperty_1_LogLevelMappingCorrectness(t *testing.T) {
 // Property 2: MinLevel filtering completeness
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_2_MinLevelFilteringCompleteness verifies that for any random
 // minimum level and any random sequence of lifecycle events:
 //   - No log entry is emitted below the configured min level
 //   - All entries at or above the min level are emitted
-//
 func TestProperty_2_MinLevelFilteringCompleteness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		minLevel := genSlogLevel(rt, "minLevel")
@@ -401,7 +395,6 @@ func TestProperty_2_MinLevelFilteringCompleteness(t *testing.T) {
 // Property 3: Structured attribute presence
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_3_StructuredAttributePresence verifies that for random
 // invoke/tool/provider events with random parameters, every log entry
 // contains the expected structured attributes for its lifecycle point:
@@ -413,7 +406,6 @@ func TestProperty_2_MinLevelFilteringCompleteness(t *testing.T) {
 //   - memory.start/memory.end contain "operation", "conversation_id"
 //   - guardrail.complete contains "direction", "blocked"
 //   - max_iterations_exceeded contains "limit"
-//
 func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		ch := &captureHandler{}

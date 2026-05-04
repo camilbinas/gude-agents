@@ -9,8 +9,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/metrics/prometheus"
 	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/swarm"
-	"github.com/camilbinas/gude-agents/agent/tool"
 
 	prom "github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -127,88 +125,13 @@ func TestIntegration_Metrics_AgentInvocation(t *testing.T) {
 	}
 }
 
-// TestIntegration_Metrics_SwarmWithHandoff verifies that Prometheus swarm metrics
-// are recorded during a real swarm invocation with handoff.
-func TestIntegration_Metrics_SwarmWithHandoff(t *testing.T) {
-	t.Parallel()
-	p := newTestProvider(t)
-
-	reg := prom.NewRegistry()
-
-	triage, err := agent.SwarmAgent(p, prompt.Text(
-		"You are a triage agent. You CANNOT answer billing questions yourself. "+
-			"If the user asks about refunds, invoices, or payments, you MUST transfer to billing immediately. "+
-			"Do not attempt to answer — just transfer.",
-	), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	type RefundInput struct {
-		OrderID string `json:"order_id" description:"The order ID to refund" required:"true"`
-	}
-	refundTool := tool.New("process_refund", "Process a refund for an order",
-		func(_ context.Context, in RefundInput) (string, error) {
-			return `{"status":"refunded","order":"` + in.OrderID + `","amount":"$49.99"}`, nil
-		},
-	)
-
-	billing, err := agent.SwarmAgent(p, prompt.Text(
-		"You are a billing specialist. Help users with refunds and payments. "+
-			"Use the process_refund tool when asked. Be brief.",
-	), []tool.Tool{refundTool})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sw, err := swarm.New([]swarm.Member{
-		{Name: "triage", Description: "Routes requests to the right specialist", Agent: triage},
-		{Name: "billing", Description: "Handles refunds, invoices, and payments", Agent: billing},
-	},
-		swarm.WithMaxHandoffs(3),
-
-		prometheus.WithSwarmMetrics(prometheus.WithRegisterer(reg)),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	result, err := sw.Invoke(ctx, "I need a refund for order #1234")
-	if err != nil {
-		t.Fatalf("Invoke error: %v", err)
-	}
-	t.Logf("Final agent: %s", result.FinalAgent)
-	t.Logf("Handoffs: %v", result.HandoffHistory)
-	t.Logf("Response: %s", result.Response)
-
-	familyMap := gatherFamilyMap(reg, t)
-
-	// Verify swarm_run_total{status="success"} >= 1.
-	if v := sumCounter(familyMap, "swarm_run_total", t); v < 1 {
-		t.Errorf("swarm_run_total: expected >= 1, got %v", v)
-	}
-
-	// Verify swarm_handoff_total >= 1 (triage should hand off to billing).
-	if v := sumCounter(familyMap, "swarm_handoff_total", t); v < 1 {
-		t.Errorf("swarm_handoff_total: expected >= 1, got %v", v)
-	}
-
-	// Verify swarm_agent_turn_total >= 2 (at least triage + billing turns).
-	if v := sumCounter(familyMap, "swarm_agent_turn_total", t); v < 2 {
-		t.Errorf("swarm_agent_turn_total: expected >= 2, got %v", v)
-	}
-}
-
 // TestIntegration_Metrics_GraphPipeline verifies that Prometheus graph metrics
 // are recorded during a simple graph execution.
 func TestIntegration_Metrics_GraphPipeline(t *testing.T) {
 	t.Parallel()
 	reg := prom.NewRegistry()
 
-	g, err := graph.NewGraph(
+	g, err := graph.New[graph.State](
 		prometheus.WithGraphMetrics(prometheus.WithRegisterer(reg)),
 	)
 	if err != nil {
