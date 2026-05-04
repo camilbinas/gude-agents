@@ -83,7 +83,7 @@ func TestWithGraphLogging_InstallsHook(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if g.GraphLoggingHook() == nil {
+	if g.GetGraphLoggingHook() == nil {
 		t.Fatal("expected GraphLoggingHook to be set after WithGraphLogging")
 	}
 }
