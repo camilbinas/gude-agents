@@ -234,6 +234,8 @@ type noCallProvider struct {
 	called bool
 }
 
+func (p *noCallProvider) Name() string { return "mock" }
+
 func (p *noCallProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	p.called = true
 	return &ProviderResponse{Text: "should not reach"}, nil

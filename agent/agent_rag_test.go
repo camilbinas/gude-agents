@@ -117,6 +117,8 @@ type iteratingProvider struct {
 	callIndex      int
 }
 
+func (p *iteratingProvider) Name() string { return "mock" }
+
 func (p *iteratingProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	return p.ConverseStream(ctx, params, nil)
 }

@@ -22,6 +22,8 @@ type textOnlyProvider struct {
 	text string
 }
 
+func (p *textOnlyProvider) Name() string { return "mock" }
+
 func (p *textOnlyProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	return &ProviderResponse{Text: p.text}, nil
 }
@@ -105,6 +107,8 @@ type toolCallProvider struct {
 	finalText string   // text returned after tool execution
 	callCount atomic.Int32
 }
+
+func (p *toolCallProvider) Name() string { return "mock" }
 
 func (p *toolCallProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	call := p.callCount.Add(1)
@@ -241,6 +245,8 @@ type highUsageProvider struct {
 	usagePerCall int
 }
 
+func (p *highUsageProvider) Name() string { return "mock" }
+
 func (p *highUsageProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	return &ProviderResponse{
 		ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "noop", Input: json.RawMessage(`{}`)}},
@@ -306,6 +312,8 @@ func TestProperty_TokenBudgetEnforcement(t *testing.T) {
 type alwaysToolCallProvider struct {
 	callCount atomic.Int32
 }
+
+func (p *alwaysToolCallProvider) Name() string { return "mock" }
 
 func (p *alwaysToolCallProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	p.callCount.Add(1)
@@ -744,6 +752,8 @@ type fixedUsageTextProvider struct {
 	text  string
 	usage TokenUsage
 }
+
+func (p *fixedUsageTextProvider) Name() string { return "mock" }
 
 func (p *fixedUsageTextProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	return &ProviderResponse{Text: p.text, Usage: p.usage}, nil

@@ -21,6 +21,8 @@ type slowProvider struct {
 	response *ProviderResponse
 }
 
+func (p *slowProvider) Name() string { return "mock" }
+
 func (p *slowProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	select {
 	case <-time.After(p.delay):
@@ -122,6 +124,8 @@ type failNProvider struct {
 	calls     atomic.Int32
 	response  *ProviderResponse
 }
+
+func (p *failNProvider) Name() string { return "mock" }
 
 func (p *failNProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	return p.ConverseStream(ctx, params, nil)

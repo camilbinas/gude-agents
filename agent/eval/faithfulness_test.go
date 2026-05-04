@@ -25,6 +25,8 @@ func newScriptedProvider(responses []*agent.ProviderResponse, errs []error) *scr
 	}
 }
 
+func (sp *scriptedProvider) Name() string { return "mock" }
+
 func (sp *scriptedProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	idx := sp.callCount
 	sp.callCount++

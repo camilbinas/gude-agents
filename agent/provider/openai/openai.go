@@ -25,6 +25,9 @@ type OpenAIProvider struct {
 	thinkingLevel string // "low", "medium", "high" — mapped to OpenAI's reasoning_effort
 }
 
+// Name returns a human-readable identifier for this provider instance.
+func (p *OpenAIProvider) Name() string { return "openai" }
+
 // Option configures the OpenAIProvider.
 type Option func(*options)
 

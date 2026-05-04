@@ -112,6 +112,8 @@ type funcProvider struct {
 	fn func(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
 }
 
+func (f *funcProvider) Name() string { return "mock" }
+
 func (f *funcProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	return f.fn(ctx, params, nil)
 }

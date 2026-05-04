@@ -100,6 +100,7 @@ type ThinkingCallback func(chunk string)
 
 // Provider abstracts an LLM backend.
 type Provider interface {
+	Name() string
 	Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error)
 	ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
 }

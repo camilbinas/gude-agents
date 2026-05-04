@@ -18,6 +18,8 @@ type stubProvider struct {
 	resp *agent.ProviderResponse
 }
 
+func (s *stubProvider) Name() string { return "mock" }
+
 func (s *stubProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	return s.resp, s.err
 }

@@ -185,6 +185,9 @@ func (p *BedrockProvider) Client() *bedrockruntime.Client { return p.client }
 // Converse (non-streaming)
 // ---------------------------------------------------------------------------
 
+// Name returns a human-readable identifier for this provider instance.
+func (p *BedrockProvider) Name() string { return "bedrock" }
+
 // Converse sends messages to Bedrock and returns a complete response.
 func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)

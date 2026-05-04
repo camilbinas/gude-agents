@@ -32,6 +32,8 @@ type trackingProvider struct {
 	inner agent.Provider
 }
 
+func (tp *trackingProvider) Name() string { return tp.inner.Name() }
+
 func (tp *trackingProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	resp, err := tp.inner.Converse(ctx, params)
 	if resp != nil {

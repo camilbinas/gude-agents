@@ -102,6 +102,8 @@ func newMockProviderWithModel(modelID string, responses ...*agent.ProviderRespon
 
 type errorProvider struct{ err error }
 
+func (ep *errorProvider) Name() string { return "mock" }
+
 func (ep *errorProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	return nil, ep.err
 }

@@ -10,6 +10,8 @@ import (
 // fakeProvider is a minimal provider for testing.
 type fakeProvider struct{ name string }
 
+func (f *fakeProvider) Name() string { return "mock/" + f.name }
+
 func (f *fakeProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	return &agent.ProviderResponse{Text: f.name}, nil
 }

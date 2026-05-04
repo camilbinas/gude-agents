@@ -206,6 +206,8 @@ type orderTrackingProvider struct {
 	response *ProviderResponse
 }
 
+func (p *orderTrackingProvider) Name() string { return "mock" }
+
 func (p *orderTrackingProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	p.mu.Lock()
 	p.sequence = append(p.sequence, "provider")

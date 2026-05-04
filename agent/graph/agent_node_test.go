@@ -24,6 +24,8 @@ func newScriptedProvider(responses ...*agent.ProviderResponse) *scriptedProvider
 	return &scriptedProvider{responses: responses}
 }
 
+func (sp *scriptedProvider) Name() string { return "mock" }
+
 func (sp *scriptedProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
@@ -58,6 +60,8 @@ func (sp *scriptedProvider) ConverseStream(_ context.Context, _ agent.ConversePa
 
 // errorProvider always returns an error from ConverseStream.
 type errorProvider struct{ err error }
+
+func (ep errorProvider) Name() string { return "mock" }
 
 func (ep errorProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	return nil, ep.err

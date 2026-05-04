@@ -25,6 +25,9 @@ type GeminiProvider struct {
 	thinkingLevel string // "low", "medium", "high" — empty = disabled
 }
 
+// Name returns a human-readable identifier for this provider instance.
+func (p *GeminiProvider) Name() string { return "gemini" }
+
 // Option configures the GeminiProvider.
 type Option func(*options)
 

@@ -20,6 +20,8 @@ type recordingProvider struct {
 	callIndex    int
 }
 
+func (rp *recordingProvider) Name() string { return "mock" }
+
 func (rp *recordingProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
 	rp.mu.Lock()
 	defer rp.mu.Unlock()

@@ -82,6 +82,10 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 		thinkingLevel: o.thinkingLevel,
 	}, nil
 }
+
+// Name returns a human-readable identifier for this provider instance.
+func (p *AnthropicProvider) Name() string { return "anthropic" }
+
 func (p *AnthropicProvider) ModelID() string { return string(p.model) }
 
 // Client returns the underlying Anthropic SDK client.

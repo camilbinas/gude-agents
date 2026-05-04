@@ -33,6 +33,9 @@ func New(primary agent.Provider, fallbacks ...agent.Provider) *Provider {
 	return &Provider{chain: chain}
 }
 
+// Name returns a human-readable identifier for this provider instance.
+func (p *Provider) Name() string { return "fallback" }
+
 // Converse tries each provider in order, returning the first success.
 func (p *Provider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	var lastErr error

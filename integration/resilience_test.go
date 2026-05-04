@@ -30,6 +30,8 @@ func newFailNProvider(inner agent.Provider, failCount int) *failNProvider {
 	return p
 }
 
+func (p *failNProvider) Name() string { return "mock" }
+
 func (p *failNProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	if p.failsLeft.Add(-1) >= 0 {
 		return nil, errors.New("simulated transient error")

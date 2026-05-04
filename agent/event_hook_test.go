@@ -277,6 +277,8 @@ type thinkingProvider struct {
 	response *ProviderResponse
 }
 
+func (tp *thinkingProvider) Name() string { return "mock" }
+
 func (tp *thinkingProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
 	return tp.response, nil
 }

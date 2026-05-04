@@ -33,6 +33,8 @@ import (
 // fakeProvider simulates a provider that is always unavailable.
 type fakeProvider struct{ name string }
 
+func (f *fakeProvider) Name() string { return f.name }
+
 func (f *fakeProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
 	fmt.Printf("→ %s: ", f.name)
 	fmt.Println("failed, falling back...")

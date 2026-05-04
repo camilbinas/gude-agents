@@ -147,12 +147,13 @@ Implement the `Provider` interface:
 
 ```go
 type Provider interface {
+    Name() string
     Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error)
     ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
 }
 ```
 
-`ConverseParams` contains the messages, system prompt, tool configuration, and tool choice. `ProviderResponse` contains the text response, tool calls, and token usage. See [Message Types](message-types.md) for full type definitions.
+`Name()` returns the provider identifier (e.g. `"bedrock"`, `"anthropic"`, `"openai"`) — used by logging, tracing, and devtools. `ConverseParams` contains the messages, system prompt, tool configuration, and tool choice. `ProviderResponse` contains the text response, tool calls, and token usage. See [Message Types](message-types.md) for full type definitions.
 
 ## Provider Registry
 

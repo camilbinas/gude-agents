@@ -254,6 +254,8 @@ type erroringProvider struct {
 	err error
 }
 
+func (p *erroringProvider) Name() string { return "mock" }
+
 func (p *erroringProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	return nil, p.err
 }

@@ -17,6 +17,8 @@ import (
 // mockProvider is a minimal Provider for construction tests (never called).
 type mockProvider struct{}
 
+func (mockProvider) Name() string { return "mock" }
+
 func (mockProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	return &ProviderResponse{Text: "ok"}, nil
 }
@@ -37,6 +39,8 @@ type scriptedProvider struct {
 func newScriptedProvider(responses ...*ProviderResponse) *scriptedProvider {
 	return &scriptedProvider{responses: responses}
 }
+
+func (sp *scriptedProvider) Name() string { return "mock" }
 
 func (sp *scriptedProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	sp.mu.Lock()
@@ -538,6 +542,8 @@ func TestInvokeStream_NilCallbackDoesNotPanic(t *testing.T) {
 
 // errorProvider always returns an error from ConverseStream.
 type errorProvider struct{ err error }
+
+func (ep errorProvider) Name() string { return "mock" }
 
 func (ep errorProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	return nil, ep.err

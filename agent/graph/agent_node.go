@@ -33,6 +33,32 @@ func AgentNode(a Invoker, inputKey, outputKey string) NodeFunc[State] {
 	}
 }
 
+// modelIdentifier is implemented by providers that expose their model ID.
+type modelIdentifier interface {
+	ModelID() string
+}
+
+// AddAgentNode registers a node backed by an *agent.Agent on a Graph[State] and
+// automatically captures metadata (agent name, provider, model ID) for Structure().
+func AddAgentNode(g *Graph[State], name string, a *agent.Agent, inputKey, outputKey string) error {
+	if err := g.AddNode(name, AgentNode(a, inputKey, outputKey)); err != nil {
+		return err
+	}
+
+	meta := NodeMeta{Label: name}
+	if agentName := a.Name(); agentName != "" {
+		meta.Label = agentName
+		meta.Agent = agentName
+	}
+	prov := a.Provider()
+	meta.Model = prov.Name()
+	if mi, ok := prov.(modelIdentifier); ok {
+		meta.Model += "/" + mi.ModelID()
+	}
+	g.SetNodeMeta(name, meta)
+	return nil
+}
+
 // LLMRouter returns a RouterFunc that uses an Invoker to choose the next node.
 // validTargets is the list of node names the LLM may choose from.
 func LLMRouter(a Invoker, validTargets []string) RouterFunc[State] {

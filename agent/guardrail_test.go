@@ -20,6 +20,8 @@ func newCapturingProvider(responses ...*ProviderResponse) *capturingProvider {
 	return &capturingProvider{responses: responses}
 }
 
+func (cp *capturingProvider) Name() string { return "mock" }
+
 func (cp *capturingProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
 	cp.captured = append(cp.captured, params)
 	if cp.callIndex >= len(cp.responses) {

@@ -150,6 +150,8 @@ func TestLoop_WithImages_PrependsImagesThenText(t *testing.T) {
 // panicProvider panics if called — used to verify the provider is never reached.
 type panicProvider struct{}
 
+func (panicProvider) Name() string { return "mock" }
+
 func (panicProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
 	panic("panicProvider.Converse called — should not have reached provider")
 }

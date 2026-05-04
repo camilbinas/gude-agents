@@ -138,6 +138,9 @@ func (p *MockProvider) ConverseStream(ctx context.Context, params agent.Converse
 	return p.call(ctx, params, cb)
 }
 
+// Name implements agent.Provider.
+func (p *MockProvider) Name() string { return "mock" }
+
 // ModelID implements agent.ModelIdentifier.
 func (p *MockProvider) ModelID() string { return p.modelID }
 

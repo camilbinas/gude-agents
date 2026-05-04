@@ -25,6 +25,8 @@ type structuredTestProvider struct {
 	err            error
 }
 
+func (p *structuredTestProvider) Name() string { return "mock" }
+
 func (p *structuredTestProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
 	p.capturedParams = params
 	if p.err != nil {
