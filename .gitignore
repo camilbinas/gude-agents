@@ -8,3 +8,4 @@ tmp/
 .DS_Store
 **/testdata/rapid/
 go.work.sum
+examples/_local/*
