@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -283,5 +284,281 @@ func TestContext_SetUsage(t *testing.T) {
 	}
 	if usage.OutputTokens != 50 {
 		t.Fatalf("expected OutputTokens=50, got %d", usage.OutputTokens)
+	}
+}
+
+// --- Minimal hook implementations for testing ---
+
+// stubTracingHook is a minimal TracingHook implementation for testing.
+type stubTracingHook struct {
+	name string
+}
+
+func (s *stubTracingHook) OnInvokeStart(ctx context.Context, params InvokeSpanParams) (context.Context, func(err error, usage TokenUsage, response string)) {
+	return ctx, func(error, TokenUsage, string) {}
+}
+func (s *stubTracingHook) OnIterationStart(ctx context.Context, iteration int) (context.Context, func(toolCount int, isFinal bool)) {
+	return ctx, func(int, bool) {}
+}
+func (s *stubTracingHook) OnProviderCallStart(ctx context.Context, params ProviderCallParams) (context.Context, func(err error, usage TokenUsage, toolCallCount int, responseText string)) {
+	return ctx, func(error, TokenUsage, int, string) {}
+}
+func (s *stubTracingHook) OnToolStart(ctx context.Context, toolName string, input json.RawMessage) (context.Context, func(err error, output string)) {
+	return ctx, func(error, string) {}
+}
+func (s *stubTracingHook) OnGuardrailStart(ctx context.Context, direction string, input string) (context.Context, func(err error, output string)) {
+	return ctx, func(error, string) {}
+}
+func (s *stubTracingHook) OnConversationStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error)) {
+	return ctx, func(error) {}
+}
+func (s *stubTracingHook) OnRetrieverStart(ctx context.Context, query string) (context.Context, func(err error, docCount int)) {
+	return ctx, func(error, int) {}
+}
+func (s *stubTracingHook) OnMaxIterationsExceeded(ctx context.Context, limit int) {}
+
+// stubMetricsHook is a minimal MetricsHook implementation for testing.
+type stubMetricsHook struct {
+	name string
+}
+
+func (s *stubMetricsHook) OnInvokeStart() func(err error, usage TokenUsage) {
+	return func(error, TokenUsage) {}
+}
+func (s *stubMetricsHook) OnIterationStart() {}
+func (s *stubMetricsHook) OnProviderCallStart(modelID string) func(err error, usage TokenUsage) {
+	return func(error, TokenUsage) {}
+}
+func (s *stubMetricsHook) OnToolStart(toolName string) func(err error) {
+	return func(error) {}
+}
+func (s *stubMetricsHook) OnGuardrailComplete(direction string, blocked bool) {}
+func (s *stubMetricsHook) OnImagesAttached(imageCount int)                    {}
+func (s *stubMetricsHook) OnDocumentsAttached(docCount int)                   {}
+
+// stubLoggingHook is a minimal LoggingHook implementation for testing.
+type stubLoggingHook struct {
+	name string
+}
+
+func (s *stubLoggingHook) OnInvokeStart(params InvokeSpanParams)                           {}
+func (s *stubLoggingHook) OnInvokeEnd(err error, usage TokenUsage, duration time.Duration) {}
+func (s *stubLoggingHook) OnIterationStart(iteration int)                                  {}
+func (s *stubLoggingHook) OnProviderCallStart(modelID string)                              {}
+func (s *stubLoggingHook) OnProviderCallEnd(err error, usage TokenUsage, toolCallCount int, duration time.Duration) {
+}
+func (s *stubLoggingHook) OnToolStart(toolName string)                                   {}
+func (s *stubLoggingHook) OnToolEnd(toolName string, err error, duration time.Duration)  {}
+func (s *stubLoggingHook) OnGuardrailComplete(direction string, blocked bool, err error) {}
+func (s *stubLoggingHook) OnConversationStart(operation string, conversationID string)   {}
+func (s *stubLoggingHook) OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
+}
+func (s *stubLoggingHook) OnRetrieverStart(query string)                                  {}
+func (s *stubLoggingHook) OnRetrieverEnd(err error, docCount int, duration time.Duration) {}
+func (s *stubLoggingHook) OnImagesAttached(imageCount int)                                {}
+func (s *stubLoggingHook) OnDocumentsAttached(docCount int)                               {}
+func (s *stubLoggingHook) OnMaxIterationsExceeded(limit int)                              {}
+
+// --- Tests for WithTracingHook/WithMetricsHook/WithLoggingHook setters ---
+
+func TestContextWithTracingHook_SetsAndReturns(t *testing.T) {
+	c := Background()
+	hook := &stubTracingHook{name: "tracing-1"}
+
+	got := c.WithTracingHook(hook)
+
+	if got != c {
+		t.Fatal("WithTracingHook should return the same pointer")
+	}
+	if c.TracingHook() != hook {
+		t.Fatal("TracingHook() should return the hook that was set")
+	}
+}
+
+func TestContextWithMetricsHook_SetsAndReturns(t *testing.T) {
+	c := Background()
+	hook := &stubMetricsHook{name: "metrics-1"}
+
+	got := c.WithMetricsHook(hook)
+
+	if got != c {
+		t.Fatal("WithMetricsHook should return the same pointer")
+	}
+	if c.MetricsHook() != hook {
+		t.Fatal("MetricsHook() should return the hook that was set")
+	}
+}
+
+func TestContextWithLoggingHook_SetsAndReturns(t *testing.T) {
+	c := Background()
+	hook := &stubLoggingHook{name: "logging-1"}
+
+	got := c.WithLoggingHook(hook)
+
+	if got != c {
+		t.Fatal("WithLoggingHook should return the same pointer")
+	}
+	if c.LoggingHook() != hook {
+		t.Fatal("LoggingHook() should return the hook that was set")
+	}
+}
+
+func TestContextHookSetters_DefaultNil(t *testing.T) {
+	c := Background()
+
+	if c.TracingHook() != nil {
+		t.Fatal("TracingHook() should be nil on fresh context")
+	}
+	if c.MetricsHook() != nil {
+		t.Fatal("MetricsHook() should be nil on fresh context")
+	}
+	if c.LoggingHook() != nil {
+		t.Fatal("LoggingHook() should be nil on fresh context")
+	}
+}
+
+func TestContextHookSetters_Chaining(t *testing.T) {
+	c := Background()
+	th := &stubTracingHook{name: "tracing"}
+	mh := &stubMetricsHook{name: "metrics"}
+	lh := &stubLoggingHook{name: "logging"}
+
+	result := c.WithTracingHook(th).WithMetricsHook(mh).WithLoggingHook(lh)
+
+	if result != c {
+		t.Fatal("chained hook setters should return the same pointer")
+	}
+	if c.TracingHook() != th {
+		t.Fatal("TracingHook() mismatch after chaining")
+	}
+	if c.MetricsHook() != mh {
+		t.Fatal("MetricsHook() mismatch after chaining")
+	}
+	if c.LoggingHook() != lh {
+		t.Fatal("LoggingHook() mismatch after chaining")
+	}
+}
+
+func TestContextHooks_TakePrecedenceOverAgentHooks(t *testing.T) {
+	agentTracingHook := &stubTracingHook{name: "agent-tracing"}
+	agentMetricsHook := &stubMetricsHook{name: "agent-metrics"}
+	agentLoggingHook := &stubLoggingHook{name: "agent-logging"}
+
+	a := &Agent{
+		tracingHook: agentTracingHook,
+		metricsHook: agentMetricsHook,
+		loggingHook: agentLoggingHook,
+	}
+
+	ctxTracingHook := &stubTracingHook{name: "ctx-tracing"}
+	ctxMetricsHook := &stubMetricsHook{name: "ctx-metrics"}
+	ctxLoggingHook := &stubLoggingHook{name: "ctx-logging"}
+
+	c := Background().
+		WithTracingHook(ctxTracingHook).
+		WithMetricsHook(ctxMetricsHook).
+		WithLoggingHook(ctxLoggingHook)
+
+	h := a.hooks(c)
+
+	if h.tracing != ctxTracingHook {
+		t.Fatalf("expected context tracing hook, got agent-level hook")
+	}
+	if h.metrics != ctxMetricsHook {
+		t.Fatalf("expected context metrics hook, got agent-level hook")
+	}
+	if h.logging != ctxLoggingHook {
+		t.Fatalf("expected context logging hook, got agent-level hook")
+	}
+}
+
+func TestContextHooks_NilFallsBackToAgentHooks(t *testing.T) {
+	agentTracingHook := &stubTracingHook{name: "agent-tracing"}
+	agentMetricsHook := &stubMetricsHook{name: "agent-metrics"}
+	agentLoggingHook := &stubLoggingHook{name: "agent-logging"}
+
+	a := &Agent{
+		tracingHook: agentTracingHook,
+		metricsHook: agentMetricsHook,
+		loggingHook: agentLoggingHook,
+	}
+
+	c := Background()
+	h := a.hooks(c)
+
+	if h.tracing != agentTracingHook {
+		t.Fatalf("expected agent tracing hook as fallback")
+	}
+	if h.metrics != agentMetricsHook {
+		t.Fatalf("expected agent metrics hook as fallback")
+	}
+	if h.logging != agentLoggingHook {
+		t.Fatalf("expected agent logging hook as fallback")
+	}
+}
+
+func TestContextHooks_PartialOverride(t *testing.T) {
+	agentTracingHook := &stubTracingHook{name: "agent-tracing"}
+	agentMetricsHook := &stubMetricsHook{name: "agent-metrics"}
+	agentLoggingHook := &stubLoggingHook{name: "agent-logging"}
+
+	a := &Agent{
+		tracingHook: agentTracingHook,
+		metricsHook: agentMetricsHook,
+		loggingHook: agentLoggingHook,
+	}
+
+	ctxTracingHook := &stubTracingHook{name: "ctx-tracing"}
+	c := Background().WithTracingHook(ctxTracingHook)
+
+	h := a.hooks(c)
+
+	if h.tracing != ctxTracingHook {
+		t.Fatalf("expected context tracing hook")
+	}
+	if h.metrics != agentMetricsHook {
+		t.Fatalf("expected agent metrics hook as fallback")
+	}
+	if h.logging != agentLoggingHook {
+		t.Fatalf("expected agent logging hook as fallback")
+	}
+}
+
+func TestContextHooks_BothNilReturnsNil(t *testing.T) {
+	a := &Agent{}
+	c := Background()
+	h := a.hooks(c)
+
+	if h.tracing != nil {
+		t.Fatal("expected nil tracing hook")
+	}
+	if h.metrics != nil {
+		t.Fatal("expected nil metrics hook")
+	}
+	if h.logging != nil {
+		t.Fatal("expected nil logging hook")
+	}
+}
+
+func TestContextHooks_ClonePreservesHooks(t *testing.T) {
+	th := &stubTracingHook{name: "tracing"}
+	mh := &stubMetricsHook{name: "metrics"}
+	lh := &stubLoggingHook{name: "logging"}
+
+	c := Background().
+		WithTracingHook(th).
+		WithMetricsHook(mh).
+		WithLoggingHook(lh)
+
+	cloned := c.Clone()
+
+	if cloned.TracingHook() != th {
+		t.Fatal("Clone should preserve TracingHook")
+	}
+	if cloned.MetricsHook() != mh {
+		t.Fatal("Clone should preserve MetricsHook")
+	}
+	if cloned.LoggingHook() != lh {
+		t.Fatal("Clone should preserve LoggingHook")
 	}
 }

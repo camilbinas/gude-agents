@@ -491,7 +491,19 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 
 // hooks returns the composite hook dispatcher for this agent.
 func (a *Agent) hooks(c *Context) hooks {
-	return hooks{tracing: a.tracingHook, metrics: a.metricsHook, logging: a.loggingHook, event: c.EventHook()}
+	tracing := a.tracingHook
+	if h := c.TracingHook(); h != nil {
+		tracing = h
+	}
+	metrics := a.metricsHook
+	if h := c.MetricsHook(); h != nil {
+		metrics = h
+	}
+	logging := a.loggingHook
+	if h := c.LoggingHook(); h != nil {
+		logging = h
+	}
+	return hooks{tracing: tracing, metrics: metrics, logging: logging, event: c.EventHook()}
 }
 
 // resolveConversationID returns the per-invocation override from *Context if set,

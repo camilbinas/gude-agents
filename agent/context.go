@@ -19,6 +19,9 @@ type Context struct {
 	inferenceConfig *InferenceConfig
 	eventHook       EventHook
 	identifier      string
+	tracingHook     TracingHook
+	metricsHook     MetricsHook
+	loggingHook     LoggingHook
 }
 
 // NewContext creates a new *Context wrapping the given parent.
@@ -126,6 +129,39 @@ func (c *Context) WithIdentifier(id string) *Context {
 	return c
 }
 
+// TracingHook returns the per-invocation tracing hook, or nil if none is set.
+func (c *Context) TracingHook() TracingHook {
+	return c.tracingHook
+}
+
+// WithTracingHook sets the per-invocation tracing hook and returns the same *Context for chaining.
+func (c *Context) WithTracingHook(h TracingHook) *Context {
+	c.tracingHook = h
+	return c
+}
+
+// MetricsHook returns the per-invocation metrics hook, or nil if none is set.
+func (c *Context) MetricsHook() MetricsHook {
+	return c.metricsHook
+}
+
+// WithMetricsHook sets the per-invocation metrics hook and returns the same *Context for chaining.
+func (c *Context) WithMetricsHook(h MetricsHook) *Context {
+	c.metricsHook = h
+	return c
+}
+
+// LoggingHook returns the per-invocation logging hook, or nil if none is set.
+func (c *Context) LoggingHook() LoggingHook {
+	return c.loggingHook
+}
+
+// WithLoggingHook sets the per-invocation logging hook and returns the same *Context for chaining.
+func (c *Context) WithLoggingHook(h LoggingHook) *Context {
+	c.loggingHook = h
+	return c
+}
+
 // FromContext extracts a *Context from a context.Context.
 // Returns nil if ctx is not a *Context. Use this in tool handlers that need
 // access to invocation state without risking a panic from a direct type assertion.
@@ -168,6 +204,9 @@ func (c *Context) Clone() *Context {
 		inferenceConfig: c.inferenceConfig,
 		eventHook:       c.eventHook,
 		identifier:      c.identifier,
+		tracingHook:     c.tracingHook,
+		metricsHook:     c.metricsHook,
+		loggingHook:     c.loggingHook,
 	}
 }
 
@@ -188,6 +227,9 @@ func (c *Context) withContext(ctx context.Context) *Context {
 		inferenceConfig: c.inferenceConfig,
 		eventHook:       c.eventHook,
 		identifier:      c.identifier,
+		tracingHook:     c.tracingHook,
+		metricsHook:     c.metricsHook,
+		loggingHook:     c.loggingHook,
 	}
 }
 
