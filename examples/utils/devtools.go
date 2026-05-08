@@ -20,9 +20,11 @@ var devtoolsFS embed.FS
 
 // DevToolsConfig configures the DevTools server.
 type DevToolsConfig struct {
-	Port      int
-	Structure graph.GraphStructure
-	RunFunc   func(ctx context.Context, dt *DevToolsHook) error
+	Port         int
+	Structure    graph.GraphStructure
+	RunFunc      func(ctx context.Context, dt *DevToolsHook) error
+	Checkpointer graph.GraphCheckpointer // optional: enables checkpoint history in the UI
+	ThreadID     string                  // optional: default thread ID for checkpoint history queries
 }
 
 // DevTools serves a web UI for visualizing graph execution in real-time.
@@ -32,9 +34,10 @@ type DevTools struct {
 	mu      sync.Mutex
 
 	// Run state: cancel function for the current run.
-	cancelMu sync.Mutex
-	cancelFn context.CancelFunc
-	paused   bool
+	cancelMu     sync.Mutex
+	cancelFn     context.CancelFunc
+	paused       bool
+	activeThread string // thread ID for the current run (set by frontend)
 }
 
 // NewDevTools creates a new DevTools instance.
@@ -112,7 +115,8 @@ func (dt *DevTools) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var action struct {
-			Action string `json:"action"`
+			Action   string `json:"action"`
+			ThreadID string `json:"thread_id"`
 		}
 		if err := json.Unmarshal(msg, &action); err != nil {
 			continue
@@ -120,11 +124,21 @@ func (dt *DevTools) handleWS(w http.ResponseWriter, r *http.Request) {
 
 		switch action.Action {
 		case "start":
+			if action.ThreadID != "" {
+				dt.setActiveThread(action.ThreadID)
+			}
 			go dt.runGraph()
 		case "pause":
 			dt.pause()
 		case "resume":
+			if action.ThreadID != "" {
+				dt.setActiveThread(action.ThreadID)
+			}
 			go dt.runGraph() // RunFunc handles resume via checkpoint
+		case "checkpoints":
+			dt.sendCheckpointHistory(conn, msg)
+		case "checkpoint_detail":
+			dt.sendCheckpointDetail(conn, msg)
 		}
 	}
 }
@@ -140,14 +154,21 @@ func (dt *DevTools) pause() {
 	dt.broadcast(map[string]any{"type": "paused"})
 }
 
+func (dt *DevTools) setActiveThread(id string) {
+	dt.cancelMu.Lock()
+	defer dt.cancelMu.Unlock()
+	dt.activeThread = id
+}
+
 func (dt *DevTools) runGraph() {
 	ctx, cancel := context.WithCancel(context.Background())
 	dt.cancelMu.Lock()
 	dt.cancelFn = cancel
 	dt.paused = false
+	threadID := dt.activeThread
 	dt.cancelMu.Unlock()
 
-	hook := &DevToolsHook{dt: dt}
+	hook := &DevToolsHook{dt: dt, ThreadID: threadID}
 
 	err := dt.config.RunFunc(ctx, hook)
 
@@ -183,7 +204,8 @@ func (dt *DevTools) broadcast(msg any) {
 
 // DevToolsHook implements graph.GraphEventHook and provides streaming output.
 type DevToolsHook struct {
-	dt *DevTools
+	dt       *DevTools
+	ThreadID string // thread ID for this run, set by the frontend
 }
 
 // OnEvent implements graph.GraphEventHook.
@@ -195,6 +217,15 @@ func (h *DevToolsHook) OnEvent(event graph.GraphEvent) {
 
 	// Emit additional typed messages for the frontend to render richer UI.
 	switch event.Type {
+	case graph.EventCheckpointSaved:
+		// Notify frontend that a new checkpoint version is available.
+		h.dt.broadcast(map[string]any{
+			"type":      "checkpoint_saved",
+			"thread_id": event.ThreadID,
+			"version":   event.Version,
+			"node_name": event.NodeName,
+			"timestamp": event.Timestamp,
+		})
 	case graph.EventAgentStreaming:
 		if event.Chunk != "" {
 			h.dt.broadcast(map[string]any{
@@ -252,6 +283,99 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// sendCheckpointHistory sends the checkpoint history for the configured thread.
+func (dt *DevTools) sendCheckpointHistory(conn *websocket.Conn, msg []byte) {
+	if dt.config.Checkpointer == nil {
+		conn.WriteJSON(map[string]any{"type": "checkpoint_history", "error": "no checkpointer configured"})
+		return
+	}
+
+	// Allow client to specify a thread_id, fall back to active thread, then config default.
+	var req struct {
+		ThreadID string `json:"thread_id"`
+	}
+	json.Unmarshal(msg, &req)
+	threadID := req.ThreadID
+	if threadID == "" {
+		dt.cancelMu.Lock()
+		threadID = dt.activeThread
+		dt.cancelMu.Unlock()
+	}
+	if threadID == "" {
+		threadID = dt.config.ThreadID
+	}
+	if threadID == "" {
+		// If no thread specified, list all threads and return history for each.
+		threads, err := dt.config.Checkpointer.List(context.Background())
+		if err != nil {
+			conn.WriteJSON(map[string]any{"type": "checkpoint_history", "error": err.Error()})
+			return
+		}
+		if len(threads) == 0 {
+			conn.WriteJSON(map[string]any{"type": "checkpoint_history", "threads": []string{}, "history": []any{}})
+			return
+		}
+		threadID = threads[0] // default to first thread
+	}
+
+	history, err := dt.config.Checkpointer.History(context.Background(), threadID)
+	if err != nil {
+		conn.WriteJSON(map[string]any{"type": "checkpoint_history", "error": err.Error()})
+		return
+	}
+
+	// Also list all available threads.
+	threads, _ := dt.config.Checkpointer.List(context.Background())
+
+	conn.WriteJSON(map[string]any{
+		"type":      "checkpoint_history",
+		"thread_id": threadID,
+		"threads":   threads,
+		"history":   history,
+	})
+}
+
+// sendCheckpointDetail sends the full checkpoint at a specific version.
+func (dt *DevTools) sendCheckpointDetail(conn *websocket.Conn, msg []byte) {
+	if dt.config.Checkpointer == nil {
+		conn.WriteJSON(map[string]any{"type": "checkpoint_detail", "error": "no checkpointer configured"})
+		return
+	}
+
+	var req struct {
+		ThreadID string `json:"thread_id"`
+		Version  int    `json:"version"`
+	}
+	if err := json.Unmarshal(msg, &req); err != nil {
+		conn.WriteJSON(map[string]any{"type": "checkpoint_detail", "error": "invalid request"})
+		return
+	}
+	threadID := req.ThreadID
+	if threadID == "" {
+		dt.cancelMu.Lock()
+		threadID = dt.activeThread
+		dt.cancelMu.Unlock()
+	}
+	if threadID == "" {
+		threadID = dt.config.ThreadID
+	}
+	if threadID == "" {
+		conn.WriteJSON(map[string]any{"type": "checkpoint_detail", "error": "no thread_id specified"})
+		return
+	}
+
+	cp, err := dt.config.Checkpointer.LoadAt(context.Background(), threadID, req.Version)
+	if err != nil {
+		conn.WriteJSON(map[string]any{"type": "checkpoint_detail", "error": err.Error()})
+		return
+	}
+
+	conn.WriteJSON(map[string]any{
+		"type":       "checkpoint_detail",
+		"checkpoint": cp,
+	})
 }
 
 func openBrowser(url string) {

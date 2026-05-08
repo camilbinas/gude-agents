@@ -89,12 +89,16 @@ func main() {
 
 	// In-memory checkpointer for pause/resume.
 	cp := memory.New()
-	const threadID = "blog-devtools-1"
 
 	dt := utils.NewDevTools(utils.DevToolsConfig{
-		Port:      4040,
-		Structure: structure,
+		Port:         4040,
+		Structure:    structure,
+		Checkpointer: cp,
 		RunFunc: func(ctx context.Context, hook *utils.DevToolsHook) error {
+			threadID := hook.ThreadID
+			if threadID == "" {
+				threadID = "blog-devtools-1"
+			}
 			g := buildBlogGraph(agents, hook, cp)
 
 			// Try to resume from checkpoint (paused state). Fall back to fresh run.
