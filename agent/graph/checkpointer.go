@@ -1,5 +1,7 @@
 package graph
 
+// Graph execution with data-flow scheduling, checkpointing, and interrupt/resume.
+
 import (
 	"context"
 	"errors"
