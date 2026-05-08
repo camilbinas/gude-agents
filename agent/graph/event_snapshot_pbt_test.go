@@ -30,15 +30,6 @@ func (h *snapshotRecordingHook) OnEvent(event GraphEvent) {
 }
 
 // ─── Property 13: Event snapshots are valid map representations ──────────────
-//
-// Feature: graph-generics-unification, Property 13: Event snapshots are valid map representations
-//
-// **Validates: Requirements 11.2, 11.3**
-//
-// For struct S graph with event hook, every StateSnapshot deserializes back to S
-// equal to state at that point.
-// Create a typed graph with an event hook that records all events. After execution,
-// verify each StateSnapshot can be deserialized back to the struct type.
 
 func TestProperty_EventSnapshotsAreValidMapRepresentations(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -68,25 +59,22 @@ func TestProperty_EventSnapshotsAreValidMapRepresentations(t *testing.T) {
 		}
 
 		// Node A: modifies Name
-		if err := g.AddNode("nodeA", func(_ context.Context, s snapshotTestState) (snapshotTestState, error) {
+		if _, err := g.Node("nodeA", func(_ context.Context, s snapshotTestState) (snapshotTestState, error) {
 			s.Name = newName
 			return s, nil
-		}); err != nil {
+		}, In(), Out("nodeA_out")); err != nil {
 			rt.Fatal(err)
 		}
 
 		// Node B: modifies Value
-		if err := g.AddNode("nodeB", func(_ context.Context, s snapshotTestState) (snapshotTestState, error) {
+		if _, err := g.Node("nodeB", func(_ context.Context, s snapshotTestState) (snapshotTestState, error) {
 			s.Value = newValue
 			return s, nil
-		}); err != nil {
+		}, In("nodeA_out"), Out("nodeB_out")); err != nil {
 			rt.Fatal(err)
 		}
 
-		g.SetEntry("nodeA")
-		if err := g.AddEdge("nodeA", "nodeB"); err != nil {
-			rt.Fatal(err)
-		}
+		g.Start("nodeA")
 
 		// Run the graph.
 		_, err = g.Run(context.Background(), initial)
@@ -115,17 +103,11 @@ func TestProperty_EventSnapshotsAreValidMapRepresentations(t *testing.T) {
 				rt.Fatalf("event %d (%s): failed to unmarshal StateSnapshot to struct: %v", i, ev.Type, err)
 			}
 
-			// Verify the deserialized struct has valid field types (non-zero-value check
-			// is not appropriate since fields can legitimately be zero). Instead, verify
-			// that the round-trip produces a consistent result: re-serializing the
-			// deserialized struct should produce the same map.
 			reMap, err := typedToState(deserialized)
 			if err != nil {
 				rt.Fatalf("event %d (%s): failed to re-serialize deserialized struct: %v", i, ev.Type, err)
 			}
 
-			// Compare the re-serialized map with the original snapshot.
-			// We need to handle JSON number normalization (json.Unmarshal produces float64 for numbers).
 			originalJSON, _ := json.Marshal(ev.StateSnapshot)
 			reJSON, _ := json.Marshal(reMap)
 			if string(originalJSON) != string(reJSON) {
@@ -134,8 +116,7 @@ func TestProperty_EventSnapshotsAreValidMapRepresentations(t *testing.T) {
 			}
 		}
 
-		// Additionally verify specific events have correct state at that point.
-		// Find NodeCompleted for nodeA — state should have newName but original Value.
+		// Verify specific events have correct state at that point.
 		for _, ev := range hook.events {
 			if ev.Type == EventNodeCompleted && ev.NodeName == "nodeA" {
 				b, _ := json.Marshal(ev.StateSnapshot)
@@ -152,7 +133,6 @@ func TestProperty_EventSnapshotsAreValidMapRepresentations(t *testing.T) {
 			}
 		}
 
-		// Find NodeCompleted for nodeB — state should have newName AND newValue.
 		for _, ev := range hook.events {
 			if ev.Type == EventNodeCompleted && ev.NodeName == "nodeB" {
 				b, _ := json.Marshal(ev.StateSnapshot)

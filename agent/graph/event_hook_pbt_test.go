@@ -9,142 +9,43 @@ import (
 )
 
 // Feature: graph-checkpointing, Property 22: Event Hook Completeness
-//
-// **Validates: Requirements 16.12, 16.13, 16.14, 16.19**
-//
-// For any graph execution with a GraphEventHook configured, the event hook SHALL
-// receive exactly one GraphStarted event (as the first event), exactly one
-// GraphCompleted event (as the last event), and exactly one NodeStarted +
-// NodeCompleted pair per successfully executed node, with all events having
-// non-zero timestamps in non-decreasing order.
 
 func TestProperty_EventHookCompleteness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		hook := &recordingHook{}
 
-		// Generate a random graph topology.
-		topoType := rapid.IntRange(0, 2).Draw(rt, "topology")
-
-		var expectedNodes []string
-
-		switch topoType {
-		case 0:
-			// Linear graph.
-			numNodes := rapid.IntRange(2, 7).Draw(rt, "numNodes")
-			g, err := New[State](WithEventHook(hook))
-			if err != nil {
-				rt.Fatal(err)
-			}
-
-			names := make([]string, numNodes)
-			for i := range names {
-				names[i] = fmt.Sprintf("node%d", i)
-				name := names[i]
-				if err := g.AddNode(name, func(_ context.Context, s State) (State, error) {
-					out := CopyState(s)
-					out[name] = "done"
-					return out, nil
-				}); err != nil {
-					rt.Fatal(err)
-				}
-			}
-			g.SetEntry(names[0])
-			for i := 0; i < numNodes-1; i++ {
-				if err := g.AddEdge(names[i], names[i+1]); err != nil {
-					rt.Fatal(err)
-				}
-			}
-
-			_, err = g.Run(context.Background(), State{})
-			if err != nil {
-				rt.Fatalf("linear Run failed: %v", err)
-			}
-			expectedNodes = names
-
-		case 1:
-			// Conditional graph: start → (branchA or branchB)
-			chooseBranch := rapid.Bool().Draw(rt, "chooseBranch")
-			g, err := New[State](WithEventHook(hook))
-			if err != nil {
-				rt.Fatal(err)
-			}
-
-			if err := g.AddNode("start", func(_ context.Context, s State) (State, error) {
-				out := CopyState(s)
-				out["start"] = "done"
-				return out, nil
-			}); err != nil {
-				rt.Fatal(err)
-			}
-			if err := g.AddNode("branchA", func(_ context.Context, s State) (State, error) {
-				out := CopyState(s)
-				out["branchA"] = "done"
-				return out, nil
-			}); err != nil {
-				rt.Fatal(err)
-			}
-			if err := g.AddNode("branchB", func(_ context.Context, s State) (State, error) {
-				out := CopyState(s)
-				out["branchB"] = "done"
-				return out, nil
-			}); err != nil {
-				rt.Fatal(err)
-			}
-
-			g.SetEntry("start")
-			if err := g.AddConditionalEdge("start", func(_ context.Context, s State) (string, error) {
-				if s["choose_a"] == true {
-					return "branchA", nil
-				}
-				return "branchB", nil
-			}); err != nil {
-				rt.Fatal(err)
-			}
-
-			_, err = g.Run(context.Background(), State{"choose_a": chooseBranch})
-			if err != nil {
-				rt.Fatalf("conditional Run failed: %v", err)
-			}
-
-			if chooseBranch {
-				expectedNodes = []string{"start", "branchA"}
-			} else {
-				expectedNodes = []string{"start", "branchB"}
-			}
-
-		case 2:
-			// Longer linear graph with varied node count.
-			numNodes := rapid.IntRange(4, 10).Draw(rt, "numNodesLong")
-			g, err := New[State](WithEventHook(hook))
-			if err != nil {
-				rt.Fatal(err)
-			}
-
-			names := make([]string, numNodes)
-			for i := range names {
-				names[i] = fmt.Sprintf("step%d", i)
-				name := names[i]
-				if err := g.AddNode(name, func(_ context.Context, s State) (State, error) {
-					out := CopyState(s)
-					out[name] = "done"
-					return out, nil
-				}); err != nil {
-					rt.Fatal(err)
-				}
-			}
-			g.SetEntry(names[0])
-			for i := 0; i < numNodes-1; i++ {
-				if err := g.AddEdge(names[i], names[i+1]); err != nil {
-					rt.Fatal(err)
-				}
-			}
-
-			_, err = g.Run(context.Background(), State{})
-			if err != nil {
-				rt.Fatalf("long linear Run failed: %v", err)
-			}
-			expectedNodes = names
+		// Generate a linear graph with random number of nodes.
+		numNodes := rapid.IntRange(2, 10).Draw(rt, "numNodes")
+		g, err := New[State](WithEventHook(hook))
+		if err != nil {
+			rt.Fatal(err)
 		}
+
+		names := make([]string, numNodes)
+		for i := range names {
+			names[i] = fmt.Sprintf("node%d", i)
+			name := names[i]
+			var inputKeys []string
+			if i > 0 {
+				inputKeys = []string{fmt.Sprintf("node%d_out", i-1)}
+			}
+			if _, err := g.Node(name, func(_ context.Context, s State) (State, error) {
+				out := CopyState(s)
+				out[name] = "done"
+				out[name+"_out"] = "done"
+				return out, nil
+			}, In(inputKeys...), Out(name+"_out")); err != nil {
+				rt.Fatal(err)
+			}
+		}
+		g.Start(names[0])
+
+		_, err = g.Run(context.Background(), State{})
+		if err != nil {
+			rt.Fatalf("Run failed: %v", err)
+		}
+
+		expectedNodes := names
 
 		// Verify: exactly one GraphStarted as the first event.
 		if len(hook.events) == 0 {

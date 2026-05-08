@@ -34,26 +34,65 @@ func (g *Graph[S]) Step(ctx context.Context, initialState S, threadID string) (S
 		return StepResult[S]{}, err
 	}
 
-	// Determine next node from routing rules applied to checkpoint's NodeName.
-	nextNode, err := g.determineNextNode(ctx, cp)
-	if err != nil {
-		return StepResult[S]{}, err
-	}
-	if nextNode == "" {
-		// No next node — graph is done.
+	// Subsequent calls: check if the checkpoint's node is completed.
+	if !cp.Completed[cp.NodeName] {
+		// InterruptBefore case: the node hasn't been executed yet, execute it now.
 		state, err := g.ops.fromMap(cp.State)
 		if err != nil {
 			return StepResult[S]{}, fmt.Errorf("graph: Step: failed to deserialize checkpoint state: %w", err)
 		}
-		return StepResult[S]{State: state, NodeName: cp.NodeName, Version: cp.Version, Done: true, Usage: cp.Usage}, nil
+		return g.executeOneNode(ctx, state, cp.Completed, cp.Iterations, cp.Usage, cp.NodeName, threadID)
 	}
 
-	// Deserialize checkpoint state.
+	// Node is completed — determine next node to execute using data-flow scheduling.
 	state, err := g.ops.fromMap(cp.State)
 	if err != nil {
 		return StepResult[S]{}, fmt.Errorf("graph: Step: failed to deserialize checkpoint state: %w", err)
 	}
 
+	// Build readiness set from checkpoint's ReadinessSet (includes synthetic connect keys).
+	// Fall back to state keys if ReadinessSet is not available (old checkpoints).
+	readinessSet := make(map[string]bool)
+	if cp.ReadinessSet != nil {
+		for k, v := range cp.ReadinessSet {
+			readinessSet[k] = v
+		}
+	} else {
+		for k := range cp.State {
+			readinessSet[k] = true
+		}
+	}
+	// Also add output keys of completed nodes (covers synthetic keys from Then).
+	for name := range cp.Completed {
+		if meta, ok := g.dataflow[name]; ok {
+			for _, key := range meta.OutputKeys {
+				readinessSet[key] = true
+			}
+		}
+	}
+
+	// Build pending set: all nodes not yet completed (excluding entry).
+	pending := make(map[string]bool)
+	for name := range g.dataflow {
+		if !cp.Completed[name] {
+			pending[name] = true
+		}
+	}
+
+	// Find the next ready node using the shared scheduling function (single source of truth).
+	ready := findReadyNodes(pending, g.dataflow, readinessSet)
+
+	var nextNode string
+	if len(ready) > 0 {
+		nextNode = ready[0] // Pick alphabetically first (list is already sorted).
+	}
+
+	if nextNode == "" {
+		// No more nodes can become ready — graph is done.
+		return StepResult[S]{State: state, NodeName: cp.NodeName, Version: cp.Version, Done: true, Usage: cp.Usage}, nil
+	}
+
+	// Execute the next ready node.
 	return g.executeOneNode(ctx, state, cp.Completed, cp.Iterations, cp.Usage, nextNode, threadID)
 }
 
@@ -121,68 +160,10 @@ func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S) (Res
 		workQueue = []string{cp.NodeName}
 		skipFirst = true
 	} else {
-		// InterruptAfter or normal checkpoint: determine next from routing.
-		r, hasRoute := g.routes[cp.NodeName]
-		if !hasRoute {
-			// No outgoing route — graph is done.
-			return Result[S]{State: resumeState, Usage: cp.Usage}, nil
-		}
-		switch {
-		case r.static != "":
-			workQueue = []string{r.static}
-		case r.conditional != nil:
-			routerState := g.ops.copy(resumeState)
-			next, err2 := r.conditional(ctx, routerState)
-			if err2 != nil {
-				return Result[S]{}, err2
-			}
-			if next == "" {
-				return Result[S]{State: resumeState, Usage: cp.Usage}, nil
-			}
-			workQueue = []string{next}
-		case len(r.fork) > 0:
-			// Fork: use the generic engine to handle parallel execution.
-			exec := &runExec[S]{
-				graph:      g,
-				state:      resumeState,
-				ops:        g.ops,
-				nodes:      g.nodes,
-				routes:     g.routes,
-				completed:  copyCompleted(cp.Completed),
-				iterations: cp.Iterations,
-				usage:      cp.Usage,
-				workQueue:  nil,
-				threadID:   threadID,
-			}
-			if err := exec.dispatchNext(ctx, cp.NodeName); err != nil {
-				if finishTrace != nil {
-					finishTrace(err, exec.iterations)
-				}
-				return Result[S]{}, err
-			}
-			err = exec.execute(ctx)
-			if g.eventHook != nil {
-				snapshot, _ := g.ops.toMap(exec.state)
-				g.eventHook.OnEvent(GraphEvent{
-					Type:          EventGraphCompleted,
-					Timestamp:     time.Now(),
-					StateSnapshot: snapshot,
-					Usage:         exec.usage,
-					ThreadID:      threadID,
-					Error:         err,
-				})
-			}
-			if finishTrace != nil {
-				finishTrace(err, exec.iterations)
-			}
-			if err != nil {
-				return Result[S]{}, err
-			}
-			return Result[S]{State: exec.state, Usage: exec.usage}, nil
-		}
-	}
-	if len(workQueue) == 0 {
-		return Result[S]{State: resumeState, Usage: cp.Usage}, nil
+		// InterruptAfter or normal checkpoint: the node is completed.
+		// Set empty workQueue — the data-flow scheduling loop will take over
+		// after the workQueue phase completes.
+		workQueue = nil
 	}
 
 	// Continue execution from next node using the generic engine.
@@ -191,13 +172,59 @@ func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S) (Res
 		state:              resumeState,
 		ops:                g.ops,
 		nodes:              g.nodes,
-		routes:             g.routes,
 		completed:          copyCompleted(cp.Completed),
 		iterations:         cp.Iterations,
 		usage:              cp.Usage,
 		workQueue:          workQueue,
 		threadID:           threadID,
 		skipFirstInterrupt: skipFirst,
+	}
+
+	// Initialize data-flow scheduling fields for resume.
+	exec.dataflowMeta = make(map[string]DataFlowMeta, len(g.dataflow))
+	for name, meta := range g.dataflow {
+		exec.dataflowMeta[name] = meta
+	}
+	// Initialize readinessSet from checkpoint's ReadinessSet if available,
+	// otherwise compute from state keys and completed nodes' output keys.
+	exec.readinessSet = make(map[string]bool)
+	if cp.ReadinessSet != nil {
+		for k, v := range cp.ReadinessSet {
+			exec.readinessSet[k] = v
+		}
+		// Also add output keys of completed nodes that may not be in the saved
+		// readiness set (e.g., InterruptAfter saves checkpoint before updateReadiness).
+		for name := range cp.Completed {
+			if meta, ok := g.dataflow[name]; ok {
+				for _, key := range meta.OutputKeys {
+					exec.readinessSet[key] = true
+				}
+			}
+		}
+	} else {
+		// Fallback: compute from state keys.
+		if stateMap, mapErr := g.ops.toMap(resumeState); mapErr == nil {
+			for k := range stateMap {
+				exec.readinessSet[k] = true
+			}
+		}
+		// For typed (non-map) state, also add output keys of completed nodes unconditionally.
+		if !isMapStringAny[S]() {
+			for name := range cp.Completed {
+				if meta, ok := g.dataflow[name]; ok {
+					for _, key := range meta.OutputKeys {
+						exec.readinessSet[key] = true
+					}
+				}
+			}
+		}
+	}
+	// Initialize pending with all nodes not yet completed (excluding entry).
+	exec.pending = make(map[string]bool)
+	for name := range g.nodes {
+		if name != g.entry && !cp.Completed[name] {
+			exec.pending[name] = true
+		}
 	}
 
 	err = exec.execute(ctx)
@@ -244,13 +271,14 @@ func (g *Graph[S]) RewindTo(ctx context.Context, threadID string, version int) e
 
 	// Save a new checkpoint that copies the state from the target version.
 	rewindCp := Checkpoint{
-		ThreadID:   threadID,
-		State:      CopyState(cp.State),
-		Completed:  copyCompleted(cp.Completed),
-		Iterations: cp.Iterations,
-		Usage:      cp.Usage,
-		NodeName:   cp.NodeName,
-		Timestamp:  time.Now(),
+		ThreadID:     threadID,
+		State:        CopyState(cp.State),
+		Completed:    copyCompleted(cp.Completed),
+		ReadinessSet: copyCompleted(cp.ReadinessSet),
+		Iterations:   cp.Iterations,
+		Usage:        cp.Usage,
+		NodeName:     cp.NodeName,
+		Timestamp:    time.Now(),
 	}
 	_, err = g.checkpointer.Save(ctx, threadID, rewindCp)
 	if err != nil {
@@ -309,24 +337,47 @@ func (g *Graph[S]) executeOneNode(ctx context.Context, state S, completed map[st
 		return StepResult[S]{}, err
 	}
 
+	// Build readiness set from current state keys for checkpoint and done-check.
+	readinessSet := make(map[string]bool)
+	for k := range stateMap {
+		readinessSet[k] = true
+	}
+
 	// Save checkpoint.
 	cp := Checkpoint{
-		ThreadID:   threadID,
-		State:      stateMap,
-		Completed:  copyCompleted(newCompleted),
-		Iterations: iterations + 1,
-		Usage:      usage,
-		NodeName:   nodeName,
-		Timestamp:  time.Now(),
+		ThreadID:     threadID,
+		State:        stateMap,
+		Completed:    copyCompleted(newCompleted),
+		ReadinessSet: readinessSet,
+		Iterations:   iterations + 1,
+		Usage:        usage,
+		NodeName:     nodeName,
+		Timestamp:    time.Now(),
 	}
 	saved, err := g.checkpointer.Save(ctx, threadID, cp)
 	if err != nil {
 		return StepResult[S]{}, err
 	}
 
-	// Determine if done (no outgoing route or router returns empty).
-	nextNode, _ := g.determineNextNode(ctx, saved)
-	done := nextNode == ""
+	// Determine if graph execution is done by checking if any pending nodes can become ready.
+	// Check if any non-completed node has all its input keys satisfied.
+	done := true
+	for name, meta := range g.dataflow {
+		if newCompleted[name] {
+			continue
+		}
+		allReady := true
+		for _, key := range meta.InputKeys {
+			if !readinessSet[key] {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			done = false
+			break
+		}
+	}
 
 	return StepResult[S]{
 		State:    workingState,
@@ -359,33 +410,4 @@ func extractUsageFromResult[S any](ops stateOps[S], result *S, usage *agent.Toke
 			delete(*m, "__usage__")
 		}
 	}
-}
-
-// determineNextNode determines the next node to execute based on routing rules
-// applied to the checkpoint's NodeName.
-func (g *Graph[S]) determineNextNode(ctx context.Context, cp Checkpoint) (string, error) {
-	r, hasRoute := g.routes[cp.NodeName]
-	if !hasRoute {
-		return "", nil
-	}
-
-	switch {
-	case r.static != "":
-		return r.static, nil
-	case r.conditional != nil:
-		// Deserialize checkpoint state for the router.
-		state, err := g.ops.fromMap(cp.State)
-		if err != nil {
-			return "", fmt.Errorf("graph: determineNextNode: failed to deserialize state: %w", err)
-		}
-		next, err := r.conditional(ctx, state)
-		if err != nil {
-			return "", err
-		}
-		return next, nil
-	case len(r.fork) > 0:
-		return "", fmt.Errorf("graph: Step does not support fork/join nodes; use Run or Resume instead")
-	}
-
-	return "", nil
 }

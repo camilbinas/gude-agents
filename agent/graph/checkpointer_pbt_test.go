@@ -105,19 +105,12 @@ func TestProperty_CheckpointSerializationRoundTrip(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 2: Save/Load Round-Trip
-//
-// **Validates: Requirements 1.2, 1.3**
-//
-// For any valid Checkpoint saved to a GraphCheckpointer implementation, calling
-// LoadAt with the same thread ID and version SHALL return an equivalent checkpoint.
-
 func TestProperty_SaveLoadRoundTrip(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
 
 		threadID := rapid.StringMatching(`thread-[a-z0-9]{3,8}`).Draw(rt, "threadID")
 
-		// Generate state.
 		numKeys := rapid.IntRange(1, 8).Draw(rt, "numKeys")
 		state := make(State, numKeys)
 		for i := 0; i < numKeys; i++ {
@@ -125,7 +118,6 @@ func TestProperty_SaveLoadRoundTrip(t *testing.T) {
 			state[key] = rapid.StringMatching(`[a-zA-Z0-9]{1,10}`).Draw(rt, fmt.Sprintf("val%d", i))
 		}
 
-		// Generate completed set.
 		numCompleted := rapid.IntRange(1, 4).Draw(rt, "numCompleted")
 		completed := make(map[string]bool, numCompleted)
 		for i := 0; i < numCompleted; i++ {
@@ -150,7 +142,6 @@ func TestProperty_SaveLoadRoundTrip(t *testing.T) {
 			rt.Fatalf("LoadAt failed: %v", err)
 		}
 
-		// Verify equivalence.
 		if loaded.ThreadID != threadID {
 			rt.Fatalf("ThreadID mismatch: got %q, want %q", loaded.ThreadID, threadID)
 		}
@@ -164,14 +155,12 @@ func TestProperty_SaveLoadRoundTrip(t *testing.T) {
 			rt.Fatalf("Iterations mismatch: got %d, want %d", loaded.Iterations, original.Iterations)
 		}
 
-		// Verify state.
 		for k, v := range original.State {
 			if loaded.State[k] != v {
 				rt.Fatalf("State[%q] mismatch: got %v, want %v", k, loaded.State[k], v)
 			}
 		}
 
-		// Verify completed.
 		for k, v := range original.Completed {
 			if loaded.Completed[k] != v {
 				rt.Fatalf("Completed[%q] mismatch: got %v, want %v", k, loaded.Completed[k], v)
@@ -181,12 +170,6 @@ func TestProperty_SaveLoadRoundTrip(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 3: Load Returns Latest Version
-//
-// **Validates: Requirements 1.2**
-//
-// For any sequence of N checkpoints saved to the same thread ID, calling Load
-// SHALL return the checkpoint with the highest version number.
-
 func TestProperty_LoadReturnsLatestVersion(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
@@ -221,12 +204,6 @@ func TestProperty_LoadReturnsLatestVersion(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 4: History Ordering and Completeness
-//
-// **Validates: Requirements 1.4, 10.3**
-//
-// For any sequence of N checkpoints saved to a thread, History SHALL return exactly
-// N metadata entries ordered by version ascending.
-
 func TestProperty_HistoryOrderingAndCompleteness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
@@ -255,7 +232,6 @@ func TestProperty_HistoryOrderingAndCompleteness(t *testing.T) {
 			rt.Fatalf("History returned %d entries, expected %d", len(history), n)
 		}
 
-		// Verify ordering by version ascending.
 		for i := 1; i < len(history); i++ {
 			if history[i].Version <= history[i-1].Version {
 				rt.Fatalf("History not ordered: version[%d]=%d <= version[%d]=%d",
@@ -263,7 +239,6 @@ func TestProperty_HistoryOrderingAndCompleteness(t *testing.T) {
 			}
 		}
 
-		// Verify node names match.
 		for i, meta := range history {
 			if meta.NodeName != nodeNames[i] {
 				rt.Fatalf("History[%d].NodeName=%q, expected %q", i, meta.NodeName, nodeNames[i])
@@ -273,12 +248,6 @@ func TestProperty_HistoryOrderingAndCompleteness(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 5: List Completeness
-//
-// **Validates: Requirements 1.5**
-//
-// For any set of distinct thread IDs that have at least one checkpoint saved,
-// List SHALL return a set containing all of those thread IDs.
-
 func TestProperty_ListCompleteness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
@@ -318,18 +287,11 @@ func TestProperty_ListCompleteness(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 6: Delete Removes All Thread Checkpoints
-//
-// **Validates: Requirements 1.6**
-//
-// For any thread ID with saved checkpoints, after Delete is called, Load SHALL
-// return ErrCheckpointNotFound and List SHALL no longer include that thread ID.
-
 func TestProperty_DeleteRemovesAllThreadCheckpoints(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
 		threadID := rapid.StringMatching(`thread-[a-z0-9]{3,8}`).Draw(rt, "threadID")
 
-		// Save some checkpoints.
 		n := rapid.IntRange(1, 5).Draw(rt, "numCheckpoints")
 		for i := 0; i < n; i++ {
 			checkpoint := Checkpoint{
@@ -342,18 +304,15 @@ func TestProperty_DeleteRemovesAllThreadCheckpoints(t *testing.T) {
 			}
 		}
 
-		// Delete the thread.
 		if err := cp.Delete(context.Background(), threadID); err != nil {
 			rt.Fatalf("Delete failed: %v", err)
 		}
 
-		// Load should return ErrCheckpointNotFound.
 		_, err := cp.Load(context.Background(), threadID)
 		if !errors.Is(err, ErrCheckpointNotFound) {
 			rt.Fatalf("Load after Delete: expected ErrCheckpointNotFound, got %v", err)
 		}
 
-		// List should not include the thread.
 		listed, err := cp.List(context.Background())
 		if err != nil {
 			rt.Fatalf("List failed: %v", err)
@@ -367,16 +326,8 @@ func TestProperty_DeleteRemovesAllThreadCheckpoints(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 7: Serialization Validation Catches Non-Serializable State
-//
-// **Validates: Requirements 3.1, 3.2**
-//
-// For any State map containing at least one value that is not JSON-serializable,
-// the serialization validator SHALL return an error that identifies the offending
-// key name and the Go type of the value.
-
 func TestProperty_SerializationValidationCatchesNonSerializableState(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Generate a state with some valid keys.
 		numValidKeys := rapid.IntRange(0, 5).Draw(rt, "numValidKeys")
 		state := make(State, numValidKeys+1)
 		for i := 0; i < numValidKeys; i++ {
@@ -384,7 +335,6 @@ func TestProperty_SerializationValidationCatchesNonSerializableState(t *testing.
 			state[key] = rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, fmt.Sprintf("validVal%d", i))
 		}
 
-		// Add a non-serializable value.
 		badKey := rapid.StringMatching(`bad_[a-z]{2,6}`).Draw(rt, "badKey")
 		badType := rapid.IntRange(0, 1).Draw(rt, "badType")
 		switch badType {
@@ -414,12 +364,6 @@ func TestProperty_SerializationValidationCatchesNonSerializableState(t *testing.
 }
 
 // Feature: graph-checkpointing, Property 8: Monotonically Increasing Versions
-//
-// **Validates: Requirements 4.2, 10.4**
-//
-// For any sequence of checkpoint saves to the same thread ID, the assigned versions
-// SHALL be strictly monotonically increasing sequential integers starting from 1.
-
 func TestProperty_MonotonicallyIncreasingVersions(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
@@ -440,7 +384,6 @@ func TestProperty_MonotonicallyIncreasingVersions(t *testing.T) {
 			versions = append(versions, saved.Version)
 		}
 
-		// Verify versions start from 1 and are strictly increasing.
 		if versions[0] != 1 {
 			rt.Fatalf("first version=%d, expected 1", versions[0])
 		}
@@ -454,17 +397,10 @@ func TestProperty_MonotonicallyIncreasingVersions(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 9: Checkpoint Ordering Reflects Execution Order
-//
-// **Validates: Requirements 4.1, 4.3**
-//
-// For any graph execution with a checkpointer configured, the completed set in
-// checkpoint at version V SHALL be a proper subset of the completed set at version V+1.
-
 func TestProperty_CheckpointOrderingReflectsExecutionOrder(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
 
-		// Build a linear graph with random number of nodes.
 		numNodes := rapid.IntRange(2, 6).Draw(rt, "numNodes")
 		g, err := New[State](WithCheckpointer(cp))
 		if err != nil {
@@ -475,20 +411,20 @@ func TestProperty_CheckpointOrderingReflectsExecutionOrder(t *testing.T) {
 		for i := range names {
 			names[i] = fmt.Sprintf("node%d", i)
 			name := names[i]
-			if err := g.AddNode(name, func(_ context.Context, s State) (State, error) {
+			var inputKeys []string
+			if i > 0 {
+				inputKeys = []string{fmt.Sprintf("node%d_out", i-1)}
+			}
+			if _, err := g.Node(name, func(_ context.Context, s State) (State, error) {
 				out := CopyState(s)
 				out[name] = "done"
+				out[name+"_out"] = "done"
 				return out, nil
-			}); err != nil {
+			}, In(inputKeys...), Out(name+"_out")); err != nil {
 				rt.Fatal(err)
 			}
 		}
-		g.SetEntry(names[0])
-		for i := 0; i < numNodes-1; i++ {
-			if err := g.AddEdge(names[i], names[i+1]); err != nil {
-				rt.Fatal(err)
-			}
-		}
+		g.Start(names[0])
 
 		threadID := rapid.StringMatching(`thread-[a-z0-9]{3,8}`).Draw(rt, "threadID")
 		_, err = g.Run(context.Background(), State{}, WithThreadID(threadID))
@@ -496,7 +432,6 @@ func TestProperty_CheckpointOrderingReflectsExecutionOrder(t *testing.T) {
 			rt.Fatalf("Run failed: %v", err)
 		}
 
-		// Verify checkpoint ordering: completed set at V is proper subset of V+1.
 		if len(cp.saved) < 2 {
 			rt.Fatalf("expected at least 2 checkpoints, got %d", len(cp.saved))
 		}
@@ -505,7 +440,6 @@ func TestProperty_CheckpointOrderingReflectsExecutionOrder(t *testing.T) {
 			currentCompleted := cp.saved[i].Completed
 			nextCompleted := cp.saved[i+1].Completed
 
-			// Current must be a proper subset of next.
 			for k := range currentCompleted {
 				if !nextCompleted[k] {
 					rt.Fatalf("checkpoint %d completed key %q not in checkpoint %d completed set",
@@ -521,17 +455,10 @@ func TestProperty_CheckpointOrderingReflectsExecutionOrder(t *testing.T) {
 }
 
 // Feature: graph-checkpointing, Property 20: CheckpointOnInterruptOnly Limits Checkpoints
-//
-// **Validates: Requirements 14.2**
-//
-// For any graph with WithCheckpointOnInterruptOnly configured, checkpoints SHALL
-// only be saved at interrupt points, not after every node.
-
 func TestProperty_CheckpointOnInterruptOnlyLimitsCheckpoints(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		cp := &mockCheckpointer{}
 
-		// Build a linear graph with 3-5 nodes.
 		numNodes := rapid.IntRange(3, 5).Draw(rt, "numNodes")
 		g, err := New[State](WithCheckpointer(cp), WithCheckpointOnInterruptOnly())
 		if err != nil {
@@ -542,20 +469,20 @@ func TestProperty_CheckpointOnInterruptOnlyLimitsCheckpoints(t *testing.T) {
 		for i := range names {
 			names[i] = fmt.Sprintf("node%d", i)
 			name := names[i]
-			if err := g.AddNode(name, func(_ context.Context, s State) (State, error) {
+			var inputKeys []string
+			if i > 0 {
+				inputKeys = []string{fmt.Sprintf("node%d_out", i-1)}
+			}
+			if _, err := g.Node(name, func(_ context.Context, s State) (State, error) {
 				out := CopyState(s)
 				out[name] = "done"
+				out[name+"_out"] = "done"
 				return out, nil
-			}); err != nil {
+			}, In(inputKeys...), Out(name+"_out")); err != nil {
 				rt.Fatal(err)
 			}
 		}
-		g.SetEntry(names[0])
-		for i := 0; i < numNodes-1; i++ {
-			if err := g.AddEdge(names[i], names[i+1]); err != nil {
-				rt.Fatal(err)
-			}
-		}
+		g.Start(names[0])
 
 		// Pick a random node (not the first) to interrupt before.
 		interruptIdx := rapid.IntRange(1, numNodes-1).Draw(rt, "interruptIdx")
@@ -566,21 +493,111 @@ func TestProperty_CheckpointOnInterruptOnlyLimitsCheckpoints(t *testing.T) {
 		threadID := rapid.StringMatching(`thread-[a-z0-9]{3,8}`).Draw(rt, "threadID")
 		_, err = g.Run(context.Background(), State{}, WithThreadID(threadID))
 
-		// Should get an interrupt error.
 		var intErr *GraphInterruptError
 		if !errors.As(err, &intErr) {
 			rt.Fatalf("expected GraphInterruptError, got %T: %v", err, err)
 		}
 
-		// With CheckpointOnInterruptOnly, only the interrupt checkpoint should be saved.
-		// No checkpoints should be saved for regular node completions.
 		if len(cp.saved) != 1 {
 			rt.Fatalf("expected exactly 1 checkpoint (at interrupt), got %d", len(cp.saved))
 		}
 
-		// The checkpoint should be at the interrupt node.
 		if cp.saved[0].NodeName != names[interruptIdx] {
 			rt.Fatalf("checkpoint node=%q, expected %q", cp.saved[0].NodeName, names[interruptIdx])
+		}
+	})
+}
+
+// ── Struct State Round-Trip Through Checkpoint ───────────────────────────────
+//
+// Feature: graph-checkpointing, Property 21: Struct State Round-Trip Through Checkpoint
+
+// testTypedState is a struct state for property testing.
+type testTypedState struct {
+	Name   string   `json:"name"`
+	Count  int      `json:"count"`
+	Score  float64  `json:"score"`
+	Active bool     `json:"active"`
+	Tags   []string `json:"tags"`
+}
+
+func TestProperty_StructStateRoundTripThroughCheckpoint(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		cp := &mockCheckpointer{}
+
+		tg, err := New[testTypedState](WithCheckpointer(cp))
+		if err != nil {
+			rt.Fatal(err)
+		}
+
+		// Generate arbitrary struct state.
+		numTags := rapid.IntRange(0, 5).Draw(rt, "numTags")
+		tags := make([]string, numTags)
+		for i := range tags {
+			tags[i] = rapid.StringMatching(`[a-z]{2,8}`).Draw(rt, fmt.Sprintf("tag%d", i))
+		}
+
+		initialState := testTypedState{
+			Name:   rapid.StringMatching(`[a-zA-Z]{2,12}`).Draw(rt, "name"),
+			Count:  rapid.IntRange(0, 1000).Draw(rt, "count"),
+			Score:  float64(rapid.IntRange(0, 10000).Draw(rt, "scoreInt")) / 100.0,
+			Active: rapid.Bool().Draw(rt, "active"),
+			Tags:   tags,
+		}
+
+		if _, err := tg.Node("passthrough", func(_ context.Context, s testTypedState) (testTypedState, error) {
+			return s, nil
+		}, In(), Out("pass_out")); err != nil {
+			rt.Fatal(err)
+		}
+		tg.Start("passthrough")
+
+		threadID := rapid.StringMatching(`thread-[a-z0-9]{3,8}`).Draw(rt, "threadID")
+
+		result, err := tg.Step(context.Background(), initialState, threadID)
+		if err != nil {
+			rt.Fatalf("Step failed: %v", err)
+		}
+
+		if result.State.Name != initialState.Name {
+			rt.Fatalf("Name mismatch: got %q, want %q", result.State.Name, initialState.Name)
+		}
+		if result.State.Count != initialState.Count {
+			rt.Fatalf("Count mismatch: got %d, want %d", result.State.Count, initialState.Count)
+		}
+		if result.State.Score != initialState.Score {
+			rt.Fatalf("Score mismatch: got %f, want %f", result.State.Score, initialState.Score)
+		}
+		if result.State.Active != initialState.Active {
+			rt.Fatalf("Active mismatch: got %v, want %v", result.State.Active, initialState.Active)
+		}
+		if len(result.State.Tags) != len(initialState.Tags) {
+			rt.Fatalf("Tags length mismatch: got %d, want %d", len(result.State.Tags), len(initialState.Tags))
+		}
+		for i, tag := range initialState.Tags {
+			if result.State.Tags[i] != tag {
+				rt.Fatalf("Tags[%d] mismatch: got %q, want %q", i, result.State.Tags[i], tag)
+			}
+		}
+
+		loaded, err := cp.LoadAt(context.Background(), threadID, result.Version)
+		if err != nil {
+			rt.Fatalf("LoadAt failed: %v", err)
+		}
+
+		restored, err := stateToTyped[testTypedState](loaded.State)
+		if err != nil {
+			rt.Fatalf("stateToTyped failed: %v", err)
+		}
+
+		if restored.Name != initialState.Name {
+			rt.Fatalf("restored Name mismatch: got %q, want %q", restored.Name, initialState.Name)
+		}
+		if restored.Count != initialState.Count {
+			rt.Fatalf("restored Count mismatch: got %d, want %d", restored.Count, initialState.Count)
+		}
+		if restored.Active != initialState.Active {
+			rt.Fatalf("restored Active mismatch: got %v, want %v", restored.Active, initialState.Active)
 		}
 	})
 }

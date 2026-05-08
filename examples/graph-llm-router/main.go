@@ -1,14 +1,11 @@
-// Example: LLM-powered router graph.
+// Example: LLM-powered conditional routing via data-flow gating.
 //
-// An LLM classifies the user's question and routes it to the right specialist
-// agent using graph.LLMRouter. The graph controls the flow — the router picks
-// the next node, and the specialist runs once and produces the final answer.
+// Demonstrates:
+//   - Conditional execution: classifier writes one route key, only the matching expert runs
+//   - Agent nodes with In/Out
+//   - Data-flow gating (no explicit if/else routing — the engine handles it)
 //
-// Graph:
-//
-//	classify ──(LLM decides)──► code_expert
-//	                          ├► devops_expert
-//	                          └► general_expert
+// Pipeline: classify → (code_expert | devops_expert | general_expert)
 //
 // Run:
 //
@@ -20,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
@@ -34,66 +32,66 @@ func main() {
 	ctx := agent.Background()
 
 	provider := bedrock.Must(bedrock.Standard())
-
-	// A cheap model for classification — it only picks a node name.
 	classifier := bedrock.Must(bedrock.Cheapest())
 
-	routerAgent, err := agent.Worker(classifier, prompt.Text(
-		"You are a question classifier. Based on the question, pick the best expert.\n"+
-			"- code_expert: programming, algorithms, code review, debugging\n"+
-			"- devops_expert: infrastructure, CI/CD, Docker, Kubernetes, cloud\n"+
-			"- general_expert: anything else\n"+
-			"Respond with ONLY the expert name, nothing else.",
+	router, err := agent.Worker(classifier, prompt.Text(
+		"You are a question classifier. Reply with EXACTLY one word from this list: "+
+			"code, devops, general.",
 	), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	codeExpert, err := agent.Worker(provider, prompt.Text(
-		"You are a senior software engineer. Answer programming questions with clear, "+
-			"concise explanations and code examples when helpful. Be brief.",
+		"You are a senior software engineer. Answer programming questions concisely.",
 	), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	devopsExpert, err := agent.Worker(provider, prompt.Text(
-		"You are a DevOps engineer. Answer infrastructure, deployment, and operations "+
-			"questions with practical advice. Be brief.",
+		"You are a DevOps engineer. Answer infrastructure questions concisely.",
 	), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	generalExpert, err := agent.Worker(provider, prompt.Text(
-		"You are a helpful assistant. Answer general questions clearly and concisely.",
+		"You are a helpful assistant. Answer general questions concisely.",
 	), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Build the graph.
 	g, err := graph.New[graph.State]()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Classify node — pass-through, routing happens on the conditional edge.
-	g.AddNode("classify", func(_ context.Context, state graph.State) (graph.State, error) {
-		return state, nil
-	})
+	// Classifier: reads "question", conditionally writes ONE route key.
+	// Only the expert whose route key is written becomes ready.
+	g.Node("classify", func(ctx context.Context, s graph.State) (graph.State, error) {
+		c := agent.NewContext(ctx)
+		choice, err := router.Invoke(c, s["question"].(string))
+		if err != nil {
+			return s, err
+		}
+		out := graph.CopyState(s)
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "code":
+			out["route_code"] = true
+		case "devops":
+			out["route_devops"] = true
+		default:
+			out["route_general"] = true
+		}
+		return out, nil
+	}, graph.In("question"), graph.Out("route_code", "route_devops", "route_general"))
 
-	// Specialist nodes using AgentNode — reads "question", writes "answer".
-	g.AddNode("code_expert", graph.AgentNode(codeExpert, "question", "answer"))
-	g.AddNode("devops_expert", graph.AgentNode(devopsExpert, "question", "answer"))
-	g.AddNode("general_expert", graph.AgentNode(generalExpert, "question", "answer"))
-
-	// Wire: classify → LLM picks one of the three experts.
-	g.SetEntry("classify")
-	g.AddConditionalEdge("classify", graph.LLMRouter(
-		routerAgent,
-		[]string{"code_expert", "devops_expert", "general_expert"},
-	))
+	// Each expert gates on its own route key — only one runs per execution.
+	g.Agent("code_expert", codeExpert, graph.In("question", "route_code"), graph.Out("answer"))
+	g.Agent("devops_expert", devopsExpert, graph.In("question", "route_devops"), graph.Out("answer"))
+	g.Agent("general_expert", generalExpert, graph.In("question", "route_general"), graph.Out("answer"))
 
 	// Run with different questions.
 	questions := []string{

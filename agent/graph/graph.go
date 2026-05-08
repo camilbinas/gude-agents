@@ -4,19 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
+
+	"github.com/camilbinas/gude-agents/agent"
 )
 
 // State is the shared data container passed between nodes.
 // It is the default type parameter for untyped graphs: Graph[State].
 type State = map[string]any
-
-// route[S] is a sealed union: exactly one field is set.
-type route[S any] struct {
-	static      string        // static edge target
-	conditional RouterFunc[S] // conditional edge router
-	fork        []string      // fork targets
-}
 
 // GraphConfigurator is implemented by Graph[S] for any S.
 // GraphOption functions call methods on this interface, allowing options
@@ -38,30 +34,33 @@ type GraphConfigurator interface {
 // Fields are written only during construction; after that they are read-only,
 // making concurrent Run calls safe.
 type Graph[S any] struct {
-	nodes       map[string]NodeFunc[S]
-	entry       string
-	routes      map[string]route[S] // one route per source node
-	joins       map[string][]string // node → required predecessors
-	maxIter     int
-	ops         stateOps[S]
-	nodeMeta    map[string]NodeMeta // optional metadata per node
-	tracingHook GraphTracingHook    // nil = no tracing
-	metricsHook GraphMetricsHook    // nil = no metrics
-	loggingHook GraphLoggingHook    // nil = no structured logging
+	nodes    map[string]NodeFunc[S]
+	entry    string
+	dataflow map[string]DataFlowMeta // node name → I/O declarations
+	maxIter  int
+	ops      stateOps[S]
+	nodeMeta map[string]NodeMeta // optional metadata per node
+
+	tracingHook GraphTracingHook // nil = no tracing
+	metricsHook GraphMetricsHook // nil = no metrics
+	loggingHook GraphLoggingHook // nil = no structured logging
 
 	checkpointer              GraphCheckpointer // nil = no checkpointing
 	checkpointOnInterruptOnly bool
 	interruptBefore           map[string]bool
 	interruptAfter            map[string]bool
 	eventHook                 GraphEventHook // nil = no event emission
+
+	agentNodes map[string]*agent.Agent // node name → agent for dynamic metadata
 }
 
 // NodeMeta holds optional metadata for a node.
 type NodeMeta struct {
-	Label    string `json:"label,omitempty"`    // human-readable name
-	Agent    string `json:"agent,omitempty"`    // agent name
-	Provider string `json:"provider,omitempty"` // provider name
-	Model    string `json:"model,omitempty"`    // model ID
+	Label    string   `json:"label,omitempty"`    // human-readable name
+	Agent    string   `json:"agent,omitempty"`    // agent name
+	Provider string   `json:"provider,omitempty"` // provider name
+	Model    string   `json:"model,omitempty"`    // model ID
+	Tools    []string `json:"tools,omitempty"`    // tool names
 }
 
 // --- GraphConfigurator implementation for Graph[S] ---
@@ -128,12 +127,12 @@ func WithEventHook(hook GraphEventHook) GraphOption {
 func New[S any](opts ...GraphOption) (*Graph[S], error) {
 	g := &Graph[S]{
 		nodes:           make(map[string]NodeFunc[S]),
-		routes:          make(map[string]route[S]),
-		joins:           make(map[string][]string),
+		dataflow:        make(map[string]DataFlowMeta),
 		maxIter:         100,
 		nodeMeta:        make(map[string]NodeMeta),
 		interruptBefore: make(map[string]bool),
 		interruptAfter:  make(map[string]bool),
+		agentNodes:      make(map[string]*agent.Agent),
 	}
 
 	// Strategy selection: detect if S is map[string]any at construction time.
@@ -151,8 +150,9 @@ func New[S any](opts ...GraphOption) (*Graph[S], error) {
 	return g, nil
 }
 
-// AddNode registers a named node. Returns an error on empty name, nil fn, or duplicate name.
-func (g *Graph[S]) AddNode(name string, fn NodeFunc[S]) error {
+// addNode registers a named node internally. Returns an error on empty name, nil fn, or duplicate name.
+// This is used by Agent registration and by NodeWithKeys.
+func (g *Graph[S]) addNode(name string, fn NodeFunc[S]) error {
 	if name == "" {
 		return &GraphValidationError{Message: "node name must not be empty"}
 	}
@@ -166,59 +166,70 @@ func (g *Graph[S]) AddNode(name string, fn NodeFunc[S]) error {
 	return nil
 }
 
-// SetEntry designates the entry node. Validated at Run time.
-func (g *Graph[S]) SetEntry(name string) {
+// NodeOpt configures I/O declarations for a node. Use In() and Out() to create.
+type NodeOpt interface {
+	applyNode(in *[]string, out *[]string)
+}
+
+func (n NodeInput) applyNode(in *[]string, _ *[]string)   { *in = append(*in, n.Keys...) }
+func (n NodeOutput) applyNode(_ *[]string, out *[]string) { *out = append(*out, n.Keys...) }
+
+// RegisterNode registers a named node with optional I/O key declarations.
+// This is the string-based registration API — use Node() for the handle-based API.
+//
+//	g.RegisterNode("fetch", fetchFn)                          // no keys, wire with Connect
+//	g.RegisterNode("fetch", fetchFn, graph.In(), graph.Out("article"))  // explicit keys
+func (g *Graph[S]) RegisterNode(name string, fn NodeFunc[S], opts ...NodeOpt) error {
+	var inKeys, outKeys []string
+	for _, opt := range opts {
+		opt.applyNode(&inKeys, &outKeys)
+	}
+
+	// Validate keys are non-empty strings.
+	for _, k := range inKeys {
+		if k == "" {
+			return &GraphValidationError{Message: fmt.Sprintf("node %q: keys must be non-empty strings", name)}
+		}
+	}
+	for _, k := range outKeys {
+		if k == "" {
+			return &GraphValidationError{Message: fmt.Sprintf("node %q: keys must be non-empty strings", name)}
+		}
+	}
+
+	if err := g.addNode(name, fn); err != nil {
+		return err
+	}
+
+	g.dataflow[name] = DataFlowMeta{
+		InputKeys:  inKeys,
+		OutputKeys: outKeys,
+	}
+	return nil
+}
+
+// Node registers a named node and returns a *Node[S] handle for type-safe wiring,
+// interrupt configuration, and metadata access. In/Out declarations are optional —
+// omit them when using Then() for pure sequencing.
+//
+//	fetch, _ := g.Node("fetch", fetchFn)
+//	process, _ := g.Node("process", processFn)
+//	fetch.Then(process)
+//
+//	// With data-flow keys:
+//	fetch, _ := g.Node("fetch", fetchFn, graph.Out("article"))
+//	report, _ := g.Node("report", reportFn, graph.In("article"), graph.Out("output"))
+func (g *Graph[S]) Node(name string, fn NodeFunc[S], opts ...NodeOpt) (*Node[S], error) {
+	if err := g.RegisterNode(name, fn, opts...); err != nil {
+		return nil, err
+	}
+	return &Node[S]{name: name, graph: g}, nil
+}
+
+// Start designates the entry node explicitly. Optional — if not called,
+// the entry node is auto-detected as the sole node with empty input keys.
+func (g *Graph[S]) Start(name string) {
 	g.entry = name
-}
-
-// AddEdge registers a static edge from → to. Returns an error on empty from or to.
-func (g *Graph[S]) AddEdge(from, to string) error {
-	if from == "" {
-		return &GraphValidationError{Message: "AddEdge: from must not be empty"}
-	}
-	if to == "" {
-		return &GraphValidationError{Message: "AddEdge: to must not be empty"}
-	}
-	g.routes[from] = route[S]{static: to}
-	return nil
-}
-
-// AddConditionalEdge registers a conditional edge from the given node.
-func (g *Graph[S]) AddConditionalEdge(from string, router RouterFunc[S]) error {
-	if from == "" {
-		return &GraphValidationError{Message: "AddConditionalEdge: from must not be empty"}
-	}
-	if router == nil {
-		return &GraphValidationError{Message: fmt.Sprintf("AddConditionalEdge: router for %q must not be nil", from)}
-	}
-	g.routes[from] = route[S]{conditional: router}
-	return nil
-}
-
-// AddFork registers a parallel fork from one node to multiple targets.
-// Returns an error if fewer than 2 targets are provided.
-func (g *Graph[S]) AddFork(from string, targets []string) error {
-	if from == "" {
-		return &GraphValidationError{Message: "AddFork: from must not be empty"}
-	}
-	if len(targets) < 2 {
-		return &GraphValidationError{Message: fmt.Sprintf("AddFork: node %q requires at least 2 targets", from)}
-	}
-	g.routes[from] = route[S]{fork: targets}
-	return nil
-}
-
-// AddJoin registers a join barrier: node waits for all predecessors.
-// Returns an error if fewer than 2 predecessors are provided.
-func (g *Graph[S]) AddJoin(node string, predecessors []string) error {
-	if node == "" {
-		return &GraphValidationError{Message: "AddJoin: node must not be empty"}
-	}
-	if len(predecessors) < 2 {
-		return &GraphValidationError{Message: fmt.Sprintf("AddJoin: node %q requires at least 2 predecessors", node)}
-	}
-	g.joins[node] = predecessors
-	return nil
 }
 
 // GraphValidationError is returned when graph structure is invalid.
@@ -240,59 +251,38 @@ func (e *GraphIterationError) Error() string {
 // validate checks the graph structure before execution.
 // It is called at the start of every Run.
 func (g *Graph[S]) validate() error {
-	// 1. Entry node must be registered.
+	// 1. Determine entry node.
+	if g.entry == "" {
+		// Auto-detect: find nodes with empty input keys.
+		var candidates []string
+		for name, meta := range g.dataflow {
+			if len(meta.InputKeys) == 0 {
+				candidates = append(candidates, name)
+			}
+		}
+		if len(candidates) == 0 {
+			return &GraphValidationError{Message: "no entry node: either call Start() or register a node with empty input keys"}
+		}
+		if len(candidates) == 1 {
+			g.entry = candidates[0]
+		} else {
+			// Multiple root nodes: pick the first alphabetically as the formal entry,
+			// the rest will be scheduled immediately (they have empty input keys).
+			sort.Strings(candidates)
+			g.entry = candidates[0]
+		}
+	}
+
 	if _, ok := g.nodes[g.entry]; !ok {
 		return &GraphValidationError{Message: fmt.Sprintf("entry node %q is not registered", g.entry)}
 	}
 
-	// 2–5. Check all routes.
-	for node, r := range g.routes {
-		// Source node must be registered.
-		if _, ok := g.nodes[node]; !ok {
-			return &GraphValidationError{Message: fmt.Sprintf("route source node %q is not registered", node)}
-		}
-
-		// Conflict check: at most one field of the route union may be set.
-		if r.static != "" && r.conditional != nil {
-			return &GraphValidationError{Message: fmt.Sprintf("node %q has conflicting routing rules (static and conditional)", node)}
-		}
-		if r.static != "" && len(r.fork) > 0 {
-			return &GraphValidationError{Message: fmt.Sprintf("node %q has conflicting routing rules (static and fork)", node)}
-		}
-		if r.conditional != nil && len(r.fork) > 0 {
-			return &GraphValidationError{Message: fmt.Sprintf("node %q has conflicting routing rules (conditional and fork)", node)}
-		}
-
-		// 2. Static edge target must be registered.
-		if r.static != "" {
-			if _, ok := g.nodes[r.static]; !ok {
-				return &GraphValidationError{Message: fmt.Sprintf("node %q static edge target %q is not registered", node, r.static)}
-			}
-		}
-
-		// 3. Fork targets must be registered.
-		for _, target := range r.fork {
-			if _, ok := g.nodes[target]; !ok {
-				return &GraphValidationError{Message: fmt.Sprintf("node %q fork target %q is not registered", node, target)}
-			}
-		}
-	}
-
-	// 4. Join predecessors must be registered.
-	for node, preds := range g.joins {
-		for _, pred := range preds {
-			if _, ok := g.nodes[pred]; !ok {
-				return &GraphValidationError{Message: fmt.Sprintf("join node %q predecessor %q is not registered", node, pred)}
-			}
-		}
-	}
-
-	// 6. MaxIterations must be >= 1.
+	// 2. MaxIterations must be >= 1.
 	if g.maxIter < 1 {
 		return &GraphValidationError{Message: "MaxIterations must be >= 1"}
 	}
 
-	// 7. checkpointOnInterruptOnly requires a checkpointer.
+	// 3. checkpointOnInterruptOnly requires a checkpointer.
 	if g.checkpointOnInterruptOnly && g.checkpointer == nil {
 		return &GraphValidationError{Message: "WithCheckpointOnInterruptOnly requires a checkpointer to be configured"}
 	}
@@ -304,6 +294,33 @@ func (g *Graph[S]) validate() error {
 // It accepts optional RunOption values to configure the execution (e.g., WithThreadID).
 func (g *Graph[S]) Run(ctx context.Context, initial S, opts ...RunOption) (Result[S], error) {
 	if err := g.validate(); err != nil {
+		return Result[S]{}, err
+	}
+
+	// Extract initial state keys for data-flow validation and readiness.
+	initialKeys := make(map[string]bool)      // for validation: all keys present in state
+	initialReadyKeys := make(map[string]bool) // for runtime: only non-zero keys
+	if stateMap, mapErr := g.ops.toMap(initial); mapErr == nil {
+		if isMapStringAny[S]() {
+			// For map state: all keys present in the map are considered available.
+			for k := range stateMap {
+				initialKeys[k] = true
+				initialReadyKeys[k] = true
+			}
+		} else {
+			// For struct state: all keys exist for validation purposes,
+			// but only non-zero values are considered ready at runtime.
+			for k, v := range stateMap {
+				initialKeys[k] = true
+				if isNonZero(v) {
+					initialReadyKeys[k] = true
+				}
+			}
+		}
+	}
+
+	// Validate data-flow declarations: cycles, satisfiability, uniqueness.
+	if err := g.validateDataFlow(initialKeys); err != nil {
 		return Result[S]{}, err
 	}
 
@@ -342,10 +359,25 @@ func (g *Graph[S]) Run(ctx context.Context, initial S, opts ...RunOption) (Resul
 		state:     g.ops.copy(initial),
 		ops:       g.ops,
 		nodes:     g.nodes,
-		routes:    g.routes,
 		completed: make(map[string]bool),
 		workQueue: []string{g.entry},
 		threadID:  cfg.threadID,
+	}
+
+	// Initialize data-flow scheduling fields.
+	exec.dataflowMeta = make(map[string]DataFlowMeta, len(g.dataflow))
+	for name, meta := range g.dataflow {
+		exec.dataflowMeta[name] = meta
+	}
+	exec.readinessSet = make(map[string]bool)
+	for k := range initialReadyKeys {
+		exec.readinessSet[k] = true
+	}
+	exec.pending = make(map[string]bool)
+	for name := range g.nodes {
+		if name != g.entry {
+			exec.pending[name] = true
+		}
 	}
 
 	err := exec.execute(ctx)
@@ -415,6 +447,16 @@ func (g *Graph[S]) GetGraphLoggingHook() GraphLoggingHook {
 // This metadata is included in Structure() for visualization tools.
 func (g *Graph[S]) SetNodeMeta(name string, meta NodeMeta) {
 	g.nodeMeta[name] = meta
+}
+
+// EventHook returns the graph's configured event hook, or nil if none is set.
+func (g *Graph[S]) EventHook() GraphEventHook {
+	return g.eventHook
+}
+
+// SetEventHook sets or replaces the graph's event hook. Pass nil to disable.
+func (g *Graph[S]) SetEventHook(hook GraphEventHook) {
+	g.eventHook = hook
 }
 
 // InterruptBefore marks a node to pause execution before it runs.

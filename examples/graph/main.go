@@ -1,3 +1,13 @@
+// Example: Content review pipeline with streaming agent nodes.
+//
+// Demonstrates:
+//   - g.Node() and g.Agent() with In/Out for data-flow scheduling
+//   - Automatic concurrency (summarise + sentiment run in parallel)
+//   - Agent streaming with event hook integration
+//   - SetEventHook for per-run hook swapping
+//
+// Pipeline: fetch → [summarise, sentiment] → report
+//
 // Run:
 //
 //	go run ./graph
@@ -8,30 +18,20 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
-
-// This example builds a content-review pipeline using agent.Graph:
-//
-//   fetch → [summarise, sentiment] → report
-//
-// "fetch" simulates retrieving an article.
-// "summarise" and "sentiment" run in parallel (fork).
-// "report" waits for both (join) and combines their outputs.
 
 func main() {
 	godotenv.Load() //nolint
 
 	haiku := bedrock.Must(bedrock.Standard())
-
-	// --- Agents for each LLM step ---
 
 	summariser, err := agent.Worker(haiku, prompt.Text(
 		"Summarise the provided article in 2-3 sentences. Return only the summary.",
@@ -48,8 +48,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// --- Build the graph ---
-
+	// Build the graph once — topology is inferred from In/Out keys.
 	g, err := graph.New[graph.State](
 		graph.WithMaxIterations(20),
 		auto.WithGraphLogging(),
@@ -58,57 +57,45 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Node: fetch — simulates loading an article into state["article"]
-	if err := g.AddNode("fetch", func(_ context.Context, s graph.State) (graph.State, error) {
-		out := graph.State{
+	// fetch produces "article" — entry node (no In keys).
+	g.Node("fetch", func(_ context.Context, _ graph.State) (graph.State, error) {
+		return graph.State{
 			"article": "Scientists have discovered a new species of deep-sea fish that " +
 				"produces its own bioluminescent light. The discovery, made 3,000 metres " +
 				"below the Pacific Ocean, could shed light on how life adapts to extreme " +
 				"environments. Researchers are optimistic about future findings.",
-		}
-		return out, nil
-	}); err != nil {
-		log.Fatal(err)
-	}
+		}, nil
+	}, graph.Out("article"))
 
-	// Node: summarise — wraps the summariser agent
-	if err := g.AddNode("summarise", graph.AgentNode(summariser, "article", "summary")); err != nil {
-		log.Fatal(err)
-	}
+	// summarise and sentiment both read "article" → run concurrently after fetch.
+	g.Agent("summarise", summariser, graph.In("article"), graph.Out("summary"))
+	g.Agent("sentiment", sentimentAnalyser, graph.In("article"), graph.Out("sentiment"))
 
-	// Node: sentiment — wraps the sentiment agent
-	if err := g.AddNode("sentiment", graph.AgentNode(sentimentAnalyser, "article", "sentiment")); err != nil {
-		log.Fatal(err)
-	}
-
-	// Node: report — combines summary + sentiment into a final report
-	if err := g.AddNode("report", func(_ context.Context, s graph.State) (graph.State, error) {
+	// report reads both outputs → waits for both to complete.
+	g.Node("report", func(_ context.Context, s graph.State) (graph.State, error) {
 		summary, _ := s["summary"].(string)
 		sentiment, _ := s["sentiment"].(string)
-		report := fmt.Sprintf("=== Content Report ===\nSentiment : %s\nSummary   : %s",
-			strings.TrimSpace(sentiment),
-			strings.TrimSpace(summary),
-		)
-		return graph.State{"report": report}, nil
-	}); err != nil {
-		log.Fatal(err)
-	}
+		return graph.State{
+			"report": fmt.Sprintf("=== Content Report ===\nSentiment : %s\nSummary   : %s", sentiment, summary),
+		}, nil
+	}, graph.In("summary", "sentiment"), graph.Out("report"))
 
-	// Wiring
-	g.SetEntry("fetch")
-	if err := g.AddFork("fetch", []string{"summarise", "sentiment"}); err != nil {
-		log.Fatal(err)
-	}
-	if err := g.AddJoin("report", []string{"summarise", "sentiment"}); err != nil {
-		log.Fatal(err)
-	}
+	// Serve with devtools — swap event hook per run.
+	dt := utils.NewDevTools(utils.DevToolsConfig{
+		Port:      4040,
+		Structure: g.Structure(),
+		RunFunc: func(ctx context.Context, hook *utils.DevToolsHook) error {
+			g.SetEventHook(hook)
+			defer g.SetEventHook(nil)
 
-	// --- Run ---
+			result, err := g.Run(ctx, graph.State{})
+			if err != nil {
+				return err
+			}
+			fmt.Println(result.State["report"])
+			return nil
+		},
+	})
 
-	result, err := g.Run(context.Background(), graph.State{})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(result.State["report"])
+	log.Fatal(dt.ListenAndServe())
 }

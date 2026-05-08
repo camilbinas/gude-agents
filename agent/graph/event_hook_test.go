@@ -22,10 +22,9 @@ func TestEventHook_GraphStartedIsFirstEvent(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{"init": "yes"})
 	if err != nil {
@@ -48,10 +47,9 @@ func TestEventHook_GraphCompletedIsLastEvent(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{})
 	if err != nil {
@@ -82,12 +80,10 @@ func TestEventHook_NodeStartedAndCompletedPairs(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{})
 	if err != nil {
@@ -155,10 +151,9 @@ func TestEventHook_CheckpointSavedEvents(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp), WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{}, WithThreadID("thread-cp-events"))
 	if err != nil {
@@ -200,12 +195,10 @@ func TestEventHook_InterruptFiredEvent(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp), WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	if err := g.InterruptBefore("b"); err != nil {
 		t.Fatalf("InterruptBefore failed: %v", err)
@@ -246,12 +239,10 @@ func TestEventHook_InterruptAfterFiredEvent(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp), WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	if err := g.InterruptAfter("b"); err != nil {
 		t.Fatalf("InterruptAfter failed: %v", err)
@@ -288,10 +279,9 @@ func TestEventHook_NoEventsWithoutHook(t *testing.T) {
 	// When no event hook is configured, execution should work normally.
 	g := mustGraph(t) // No WithEventHook
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	res, err := g.Run(context.Background(), State{})
 	if err != nil {
@@ -311,10 +301,9 @@ func TestEventHook_AllEventsHaveNonZeroTimestamps(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{})
 	if err != nil {
@@ -342,10 +331,9 @@ func TestEventHook_ThreadIDPopulatedWithCheckpointer(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp), WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	threadID := "thread-event-id"
 	_, err := g.Run(context.Background(), State{}, WithThreadID(threadID))
@@ -366,10 +354,9 @@ func TestEventHook_GraphCompletedWithError(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp), WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	// InterruptBefore "b" will cause an interrupt error.
 	if err := g.InterruptBefore("b"); err != nil {
@@ -396,10 +383,9 @@ func TestEventHook_EventSequenceOrder(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{})
 	if err != nil {
@@ -433,10 +419,9 @@ func TestEventHook_EventSequenceWithCheckpointer(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp), WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{}, WithThreadID("thread-seq"))
 	if err != nil {
@@ -471,8 +456,8 @@ func TestEventHook_NodeCompletedHasUpdatedState(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{"init": "yes"})
 	if err != nil {
@@ -505,10 +490,9 @@ func TestEventHook_NodeStartedHasPreExecutionState(t *testing.T) {
 	hook := &recordingHook{}
 	g := mustGraph(t, WithEventHook(hook))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	_, err := g.Run(context.Background(), State{"init": "yes"})
 	if err != nil {

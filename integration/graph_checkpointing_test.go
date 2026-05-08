@@ -37,17 +37,18 @@ func TestIntegration_Graph_Checkpoint_InterruptAndResume(t *testing.T) {
 	}
 
 	// Node: ask — uses the LLM to answer a question.
-	g.AddNode("ask", graph.AgentNode(a, "question", "answer"))
+	if _, err := g.Agent("ask", a, graph.Keys("answer", "question")); err != nil {
+		t.Fatal(err)
+	}
 
 	// Node: format — formats the answer.
-	g.AddNode("format", func(_ context.Context, state graph.State) (graph.State, error) {
+	g.Node("format", func(_ context.Context, state graph.State) (graph.State, error) {
 		answer, _ := state["answer"].(string)
 		state["formatted"] = "Result: " + answer
 		return state, nil
-	})
+	}, []string{"formatted"}, []string{"answer"})
 
-	g.SetEntry("ask")
-	g.AddEdge("ask", "format")
+	g.Start("ask")
 	g.InterruptAfter("ask")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -100,21 +101,19 @@ func TestIntegration_Graph_Checkpoint_StepByStep(t *testing.T) {
 	}
 
 	// Simple 3-node pipeline with no LLM (pure logic).
-	g.AddNode("a", func(_ context.Context, s graph.State) (graph.State, error) {
+	g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["a"] = "done"
 		return s, nil
-	})
-	g.AddNode("b", func(_ context.Context, s graph.State) (graph.State, error) {
+	}, []string{"a_out"}, []string{})
+	g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["b"] = "done"
 		return s, nil
-	})
-	g.AddNode("c", func(_ context.Context, s graph.State) (graph.State, error) {
+	}, []string{"b_out"}, []string{"a_out"})
+	g.Node("c", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["c"] = "done"
 		return s, nil
-	})
-	g.SetEntry("a")
-	g.AddEdge("a", "b")
-	g.AddEdge("b", "c")
+	}, []string{"c_out"}, []string{"b_out"})
+	g.Start("a")
 
 	ctx := context.Background()
 	threadID := "int-test-step"
@@ -161,17 +160,16 @@ func TestIntegration_Graph_Checkpoint_RewindAndReplay(t *testing.T) {
 	}
 
 	var callCount int
-	g.AddNode("a", func(_ context.Context, s graph.State) (graph.State, error) {
+	g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
 		callCount++
 		s["a"] = callCount
 		return s, nil
-	})
-	g.AddNode("b", func(_ context.Context, s graph.State) (graph.State, error) {
+	}, []string{"a_out"}, []string{})
+	g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["b"] = "done"
 		return s, nil
-	})
-	g.SetEntry("a")
-	g.AddEdge("a", "b")
+	}, []string{"b_out"}, []string{"a_out"})
+	g.Start("a")
 
 	ctx := context.Background()
 	threadID := "int-test-rewind"
@@ -227,25 +225,35 @@ func TestIntegration_Graph_Checkpoint_InterruptBeforeWithLLMRouter(t *testing.T)
 		t.Fatal(err)
 	}
 
-	g.AddNode("classify", graph.AgentNode(a, "question", "category"))
-	g.AddNode("math", func(_ context.Context, s graph.State) (graph.State, error) {
+	// classify node: uses LLM to classify, then conditionally writes route keys
+	g.Node("classify", func(ctx context.Context, s graph.State) (graph.State, error) {
+		c := agent.NewContext(ctx)
+		question, _ := s["question"].(string)
+		category, err := a.Invoke(c, question)
+		if err != nil {
+			return s, err
+		}
+		out := graph.CopyState(s)
+		out["category"] = category
+		cat := strings.TrimSpace(strings.ToLower(category))
+		if strings.Contains(cat, "math") {
+			out["route_math"] = "go"
+		} else {
+			out["route_geography"] = "go"
+		}
+		return out, nil
+	}, []string{"route_math", "route_geography", "category"}, []string{})
+
+	g.Node("math", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["result"] = "math handler"
 		return s, nil
-	})
-	g.AddNode("geography", func(_ context.Context, s graph.State) (graph.State, error) {
+	}, []string{"result_math"}, []string{"route_math"})
+	g.Node("geography", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["result"] = "geography handler"
 		return s, nil
-	})
+	}, []string{"result_geography"}, []string{"route_geography"})
 
-	g.SetEntry("classify")
-	g.AddConditionalEdge("classify", func(_ context.Context, s graph.State) (string, error) {
-		cat, _ := s["category"].(string)
-		cat = strings.TrimSpace(strings.ToLower(cat))
-		if strings.Contains(cat, "math") {
-			return "math", nil
-		}
-		return "geography", nil
-	})
+	g.Start("classify")
 
 	// Interrupt before the handler nodes so we can inspect the classification.
 	g.InterruptBefore("math")

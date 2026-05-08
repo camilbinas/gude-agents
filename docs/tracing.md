@@ -147,10 +147,9 @@ g, err := graph.New[graph.State](
 if err != nil {
     log.Fatal(err)
 }
-g.AddNode("classify", classifyNode)
-g.AddNode("respond", respondNode)
-g.AddEdge("classify", "respond")
-g.SetEntry("classify")
+g.Node("classify", classifyNode, graph.In("input"), graph.Out("category"))
+g.Node("respond", respondNode, graph.In("category"), graph.Out("output"))
+g.Start("classify")
 
 result, err := g.Run(ctx, graph.State{"input": userMessage})
 ```
@@ -159,7 +158,7 @@ Graph tracing produces a parallel span hierarchy:
 
 ```
 graph.run
-├── graph.node.<node_name>         (per node, may be concurrent for forks)
+├── graph.node.<node_name>         (per node, may be concurrent when multiple nodes become ready)
 │   └── agent.invoke               (if node wraps an agent)
 ├── graph.checkpoint.save          (per checkpoint, with node and version attributes)
 ├── graph.interrupt                (when an interrupt fires)
@@ -169,8 +168,8 @@ graph.run
 
 - `graph.run` wraps the entire graph execution and records `graph.iterations` on completion.
 - Each node gets a `graph.node.<name>` child span.
-- Fork nodes execute concurrently, producing concurrent child spans under `graph.run`.
-- If a node wraps an agent (via `graph.AgentNode`), the agent's spans nest under the node span.
+- When multiple nodes become ready simultaneously, their spans are concurrent siblings under `graph.run`.
+- If a node wraps an agent (via `g.Agent`), the agent's spans nest under the node span.
 - `graph.checkpoint.save` records `graph.checkpoint.node` and `graph.checkpoint.version`.
 - `graph.interrupt` records `graph.interrupt.node`, `graph.interrupt.type`, and `graph.interrupt.version`.
 - `graph.resume` and `graph.rewind` record `graph.thread_id` and the relevant version.

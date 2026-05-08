@@ -34,62 +34,35 @@ func isValidationError(err error) bool {
 	return errors.As(err, &ve)
 }
 
+func mustAddNodeWithKeys(t *testing.T, g *Graph[State], name string, fn NodeFunc[State], outputKeys []string, inputKeys []string) {
+	t.Helper()
+	if _, err := g.Node(name, fn, In(inputKeys...), Out(outputKeys...)); err != nil {
+		t.Fatalf("Node(%s): %v", name, err)
+	}
+}
+
 func TestGraphBuilder(t *testing.T) {
-	t.Run("6.1 AddNode rejects empty name", func(t *testing.T) {
+	t.Run("6.1 Node rejects empty name", func(t *testing.T) {
 		g := mustGraph(t)
-		if err := g.AddNode("", noop); !isValidationError(err) {
+		if _, err := g.Node("", noop, In(), Out("out")); !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError, got %v", err)
 		}
 	})
 
-	t.Run("6.1 AddNode rejects nil fn", func(t *testing.T) {
+	t.Run("6.1 Node rejects nil fn", func(t *testing.T) {
 		g := mustGraph(t)
-		if err := g.AddNode("a", nil); !isValidationError(err) {
+		if _, err := g.Node("a", nil, In(), Out("out")); !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError, got %v", err)
 		}
 	})
 
-	t.Run("6.1 AddNode rejects duplicate name", func(t *testing.T) {
+	t.Run("6.1 Node rejects duplicate name", func(t *testing.T) {
 		g := mustGraph(t)
-		if err := g.AddNode("a", noop); err != nil {
-			t.Fatalf("first AddNode: %v", err)
+		if _, err := g.Node("a", noop, In(), Out("a_out")); err != nil {
+			t.Fatalf("first Node: %v", err)
 		}
-		if err := g.AddNode("a", noop); !isValidationError(err) {
+		if _, err := g.Node("a", noop, In(), Out("a_out2")); !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError on duplicate, got %v", err)
-		}
-	})
-
-	t.Run("6.2 AddEdge rejects empty from", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddEdge("", "b"); !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-	})
-
-	t.Run("6.2 AddEdge rejects empty to", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddEdge("a", ""); !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-	})
-
-	t.Run("6.3 AddFork rejects fewer than two targets", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddFork("a", []string{"b"}); !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-		if err := g.AddFork("a", nil); !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError for nil targets, got %v", err)
-		}
-	})
-
-	t.Run("6.4 AddJoin rejects fewer than two predecessors", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddJoin("j", []string{"a"}); !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-		if err := g.AddJoin("j", nil); !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError for nil predecessors, got %v", err)
 		}
 	})
 
@@ -108,90 +81,11 @@ func TestGraphBuilder(t *testing.T) {
 func TestGraphValidation(t *testing.T) {
 	t.Run("6.6 validate: entry node missing", func(t *testing.T) {
 		g := mustGraph(t)
-		if err := g.AddNode("a", noop); err != nil {
-			t.Fatal(err)
-		}
-		g.SetEntry("missing")
+		mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+		g.Start("missing")
 		_, err := g.Run(context.Background(), State{})
 		if !isValidationError(err) {
 			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-	})
-
-	t.Run("6.7 validate: edge target unregistered", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddNode("a", noop); err != nil {
-			t.Fatal(err)
-		}
-		g.SetEntry("a")
-		if err := g.AddEdge("a", "ghost"); err != nil {
-			t.Fatal(err)
-		}
-		_, err := g.Run(context.Background(), State{})
-		if !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-	})
-
-	t.Run("6.8 validate: fork target unregistered", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddNode("a", noop); err != nil {
-			t.Fatal(err)
-		}
-		if err := g.AddNode("b", noop); err != nil {
-			t.Fatal(err)
-		}
-		g.SetEntry("a")
-		if err := g.AddFork("a", []string{"b", "ghost"}); err != nil {
-			t.Fatal(err)
-		}
-		_, err := g.Run(context.Background(), State{})
-		if !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-	})
-
-	t.Run("6.9 validate: join predecessor unregistered", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddNode("a", noop); err != nil {
-			t.Fatal(err)
-		}
-		if err := g.AddNode("b", noop); err != nil {
-			t.Fatal(err)
-		}
-		if err := g.AddNode("j", noop); err != nil {
-			t.Fatal(err)
-		}
-		g.SetEntry("a")
-		if err := g.AddJoin("j", []string{"b", "ghost"}); err != nil {
-			t.Fatal(err)
-		}
-		_, err := g.Run(context.Background(), State{})
-		if !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError, got %v", err)
-		}
-	})
-
-	t.Run("6.10 validate: conflicting routing rules (static + fork)", func(t *testing.T) {
-		g := mustGraph(t)
-		if err := g.AddNode("a", noop); err != nil {
-			t.Fatal(err)
-		}
-		if err := g.AddNode("b", noop); err != nil {
-			t.Fatal(err)
-		}
-		if err := g.AddNode("c", noop); err != nil {
-			t.Fatal(err)
-		}
-		g.SetEntry("a")
-		if err := g.AddEdge("a", "b"); err != nil {
-			t.Fatal(err)
-		}
-		// Directly set fork on the same route to create a conflict.
-		g.routes["a"] = route[State]{static: "b", fork: []string{"b", "c"}}
-		_, err := g.Run(context.Background(), State{})
-		if !isValidationError(err) {
-			t.Fatalf("expected GraphValidationError for conflicting rules, got %v", err)
 		}
 	})
 }
@@ -199,12 +93,10 @@ func TestGraphValidation(t *testing.T) {
 func TestGraphExecution(t *testing.T) {
 	t.Run("7.1 linear chain A→B→C", func(t *testing.T) {
 		g := mustGraph(t)
-		mustAddNode(t, g, "a", setter("a", "done_a"))
-		mustAddNode(t, g, "b", setter("b", "done_b"))
-		mustAddNode(t, g, "c", setter("c", "done_c"))
-		g.SetEntry("a")
-		mustAddEdge(t, g, "a", "b")
-		mustAddEdge(t, g, "b", "c")
+		mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+		mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+		mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+		g.Start("a")
 
 		res, err := g.Run(context.Background(), State{})
 		if err != nil {
@@ -217,21 +109,23 @@ func TestGraphExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("7.2 conditional edge selects branch by state", func(t *testing.T) {
+	t.Run("7.2 conditional gating: node only runs when key is written", func(t *testing.T) {
+		// Entry conditionally writes "gate_key". branch_yes depends on "gate_key".
+		// When entry writes it, branch_yes runs. When it doesn't, branch_yes is gated.
 		g := mustGraph(t)
-		mustAddNode(t, g, "start", noop)
-		mustAddNode(t, g, "branch_yes", setter("result", "yes"))
-		mustAddNode(t, g, "branch_no", setter("result", "no"))
-		g.SetEntry("start")
-		if err := g.AddConditionalEdge("start", func(_ context.Context, s State) (string, error) {
+		mustAddNodeWithKeys(t, g, "start", func(_ context.Context, s State) (State, error) {
+			out := CopyState(s)
+			out["trigger"] = "done"
+			// Conditionally write gate_key based on flag
 			if s["flag"] == true {
-				return "branch_yes", nil
+				out["gate_key"] = "open"
 			}
-			return "branch_no", nil
-		}); err != nil {
-			t.Fatal(err)
-		}
+			return out, nil
+		}, []string{"trigger", "gate_key"}, []string{})
+		mustAddNodeWithKeys(t, g, "branch_yes", setter("result", "yes"), []string{"result"}, []string{"gate_key"})
+		g.Start("start")
 
+		// With flag=true, gate_key is written, so branch_yes runs
 		res, err := g.Run(context.Background(), State{"flag": true})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -240,24 +134,20 @@ func TestGraphExecution(t *testing.T) {
 			t.Errorf("expected result=yes, got %v", res.State["result"])
 		}
 
+		// With flag=false, gate_key is NOT written, so branch_yes is gated
 		res2, err := g.Run(context.Background(), State{"flag": false})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if res2.State["result"] != "no" {
-			t.Errorf("expected result=no, got %v", res2.State["result"])
+		if _, exists := res2.State["result"]; exists {
+			t.Errorf("branch_yes should not have run when gate_key not written, but result exists: %v", res2.State["result"])
 		}
 	})
 
-	t.Run("7.3 conditional edge returns empty string terminates", func(t *testing.T) {
+	t.Run("7.3 terminal node ends execution cleanly", func(t *testing.T) {
 		g := mustGraph(t)
-		mustAddNode(t, g, "start", setter("visited", "yes"))
-		g.SetEntry("start")
-		if err := g.AddConditionalEdge("start", func(_ context.Context, _ State) (string, error) {
-			return "", nil
-		}); err != nil {
-			t.Fatal(err)
-		}
+		mustAddNodeWithKeys(t, g, "start", setter("visited", "yes"), []string{"visited"}, []string{})
+		g.Start("start")
 
 		res, err := g.Run(context.Background(), State{})
 		if err != nil {
@@ -268,23 +158,21 @@ func TestGraphExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("7.4 fork/join both branches run and states merged", func(t *testing.T) {
+	t.Run("7.4 diamond: concurrent branches merge", func(t *testing.T) {
 		g := mustGraph(t)
-		mustAddNode(t, g, "start", noop)
-		mustAddNode(t, g, "branch_a", setter("a", "done_a"))
-		mustAddNode(t, g, "branch_b", setter("b", "done_b"))
-		mustAddNode(t, g, "join", func(_ context.Context, s State) (State, error) {
+		mustAddNodeWithKeys(t, g, "start", func(_ context.Context, s State) (State, error) {
+			out := CopyState(s)
+			out["trigger"] = "done"
+			return out, nil
+		}, []string{"trigger"}, []string{})
+		mustAddNodeWithKeys(t, g, "branch_a", setter("a", "done_a"), []string{"a"}, []string{"trigger"})
+		mustAddNodeWithKeys(t, g, "branch_b", setter("b", "done_b"), []string{"b"}, []string{"trigger"})
+		mustAddNodeWithKeys(t, g, "join", func(_ context.Context, s State) (State, error) {
 			out := CopyState(s)
 			out["merged"] = "yes"
 			return out, nil
-		})
-		g.SetEntry("start")
-		if err := g.AddFork("start", []string{"branch_a", "branch_b"}); err != nil {
-			t.Fatal(err)
-		}
-		if err := g.AddJoin("join", []string{"branch_a", "branch_b"}); err != nil {
-			t.Fatal(err)
-		}
+		}, []string{"merged"}, []string{"a", "b"})
+		g.Start("start")
 
 		res, err := g.Run(context.Background(), State{})
 		if err != nil {
@@ -301,22 +189,23 @@ func TestGraphExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("7.5 fork error cancels others and is returned", func(t *testing.T) {
+	t.Run("7.5 concurrent branch error cancels others", func(t *testing.T) {
 		branchErr := fmt.Errorf("branch_bad exploded")
 		g := mustGraph(t)
-		mustAddNode(t, g, "start", noop)
-		mustAddNode(t, g, "branch_ok", func(ctx context.Context, s State) (State, error) {
+		mustAddNodeWithKeys(t, g, "start", func(_ context.Context, s State) (State, error) {
+			out := CopyState(s)
+			out["trigger"] = "done"
+			return out, nil
+		}, []string{"trigger"}, []string{})
+		mustAddNodeWithKeys(t, g, "branch_ok", func(ctx context.Context, s State) (State, error) {
 			// Slow branch — should be cancelled.
 			<-ctx.Done()
 			return nil, ctx.Err()
-		})
-		mustAddNode(t, g, "branch_bad", func(_ context.Context, _ State) (State, error) {
+		}, []string{"ok_out"}, []string{"trigger"})
+		mustAddNodeWithKeys(t, g, "branch_bad", func(_ context.Context, _ State) (State, error) {
 			return nil, branchErr
-		})
-		g.SetEntry("start")
-		if err := g.AddFork("start", []string{"branch_ok", "branch_bad"}); err != nil {
-			t.Fatal(err)
-		}
+		}, []string{"bad_out"}, []string{"trigger"})
+		g.Start("start")
 
 		_, err := g.Run(context.Background(), State{})
 		if err == nil {
@@ -327,21 +216,34 @@ func TestGraphExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("7.6 cyclic graph hits MaxIterations returns GraphIterationError", func(t *testing.T) {
-		g := mustGraph(t, WithMaxIterations(3))
-		mustAddNode(t, g, "a", noop)
-		mustAddNode(t, g, "b", noop)
-		g.SetEntry("a")
-		mustAddEdge(t, g, "a", "b")
-		mustAddEdge(t, g, "b", "a")
+	t.Run("7.6 graph hits MaxIterations returns GraphIterationError", func(t *testing.T) {
+		// MaxIterations limits total node executions. With 3 nodes and limit 2,
+		// the third node triggers the error.
+		g := mustGraph(t, WithMaxIterations(2))
+		mustAddNodeWithKeys(t, g, "a", func(_ context.Context, s State) (State, error) {
+			out := CopyState(s)
+			out["a_out"] = "done"
+			return out, nil
+		}, []string{"a_out"}, []string{})
+		mustAddNodeWithKeys(t, g, "b", func(_ context.Context, s State) (State, error) {
+			out := CopyState(s)
+			out["b_out"] = "done"
+			return out, nil
+		}, []string{"b_out"}, []string{"a_out"})
+		mustAddNodeWithKeys(t, g, "c", func(_ context.Context, s State) (State, error) {
+			out := CopyState(s)
+			out["c_out"] = "done"
+			return out, nil
+		}, []string{"c_out"}, []string{"b_out"})
+		g.Start("a")
 
 		_, err := g.Run(context.Background(), State{})
 		var iterErr *GraphIterationError
 		if !errors.As(err, &iterErr) {
 			t.Fatalf("expected GraphIterationError, got %v", err)
 		}
-		if iterErr.Limit != 3 {
-			t.Errorf("expected Limit=3, got %d", iterErr.Limit)
+		if iterErr.Limit != 2 {
+			t.Errorf("expected Limit=2, got %d", iterErr.Limit)
 		}
 	})
 
@@ -349,13 +251,14 @@ func TestGraphExecution(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		g := mustGraph(t)
-		mustAddNode(t, g, "a", func(ctx context.Context, s State) (State, error) {
+		mustAddNodeWithKeys(t, g, "a", func(ctx context.Context, s State) (State, error) {
 			cancel() // cancel before returning
-			return s, nil
-		})
-		mustAddNode(t, g, "b", noop)
-		g.SetEntry("a")
-		mustAddEdge(t, g, "a", "b")
+			out := CopyState(s)
+			out["a_out"] = "done"
+			return out, nil
+		}, []string{"a_out"}, []string{})
+		mustAddNodeWithKeys(t, g, "b", noop, []string{"b_out"}, []string{"a_out"})
+		g.Start("a")
 
 		_, err := g.Run(ctx, State{})
 		if err == nil {
@@ -368,12 +271,12 @@ func TestGraphExecution(t *testing.T) {
 
 	t.Run("7.8 concurrent Run calls do not share state", func(t *testing.T) {
 		g := mustGraph(t)
-		mustAddNode(t, g, "a", func(_ context.Context, s State) (State, error) {
+		mustAddNodeWithKeys(t, g, "a", func(_ context.Context, s State) (State, error) {
 			out := CopyState(s)
 			out["echo"] = s["id"]
 			return out, nil
-		})
-		g.SetEntry("a")
+		}, []string{"echo"}, []string{})
+		g.Start("a")
 
 		const n = 10
 		results := make([]Result[State], n)
@@ -401,14 +304,12 @@ func TestGraphExecution(t *testing.T) {
 
 	t.Run("7.9 state merge does not drop keys from previous nodes", func(t *testing.T) {
 		g := mustGraph(t)
-		// Node "a" sets key "from_a"; node "b" only sets "from_b" (partial state).
-		mustAddNode(t, g, "a", setter("from_a", "a"))
-		mustAddNode(t, g, "b", func(_ context.Context, s State) (State, error) {
+		mustAddNodeWithKeys(t, g, "a", setter("from_a", "a"), []string{"from_a"}, []string{})
+		mustAddNodeWithKeys(t, g, "b", func(_ context.Context, s State) (State, error) {
 			// Return only the new key — the engine must merge, not replace.
 			return State{"from_b": "b"}, nil
-		})
-		g.SetEntry("a")
-		mustAddEdge(t, g, "a", "b")
+		}, []string{"from_b"}, []string{"from_a"})
+		g.Start("a")
 
 		res, err := g.Run(context.Background(), State{})
 		if err != nil {
@@ -424,9 +325,9 @@ func TestGraphExecution(t *testing.T) {
 
 	t.Run("7.10 no-route terminal ends execution cleanly", func(t *testing.T) {
 		g := mustGraph(t)
-		mustAddNode(t, g, "only", setter("done", "yes"))
-		g.SetEntry("only")
-		// No edges added — "only" is a terminal node.
+		mustAddNodeWithKeys(t, g, "only", setter("done", "yes"), []string{"done"}, []string{})
+		g.Start("only")
+		// No downstream nodes — "only" is a terminal node.
 
 		res, err := g.Run(context.Background(), State{})
 		if err != nil {
@@ -436,20 +337,4 @@ func TestGraphExecution(t *testing.T) {
 			t.Errorf("expected done=yes, got %v", res.State["done"])
 		}
 	})
-}
-
-// ── small helpers to reduce boilerplate ──────────────────────────────────────
-
-func mustAddNode(t *testing.T, g *Graph[State], name string, fn NodeFunc[State]) {
-	t.Helper()
-	if err := g.AddNode(name, fn); err != nil {
-		t.Fatalf("AddNode(%q): %v", name, err)
-	}
-}
-
-func mustAddEdge(t *testing.T, g *Graph[State], from, to string) {
-	t.Helper()
-	if err := g.AddEdge(from, to); err != nil {
-		t.Fatalf("AddEdge(%q→%q): %v", from, to, err)
-	}
 }

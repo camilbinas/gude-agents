@@ -9,18 +9,9 @@ import (
 )
 
 // ─── Property 8: Fork/join deterministic merge order ─────────────────────────
-//
-// Feature: graph-generics-unification, Property 8: Fork/join deterministic merge order
-//
-// **Validates: Requirements 7.3**
-//
-// Run same fork/join graph N times, verify identical merged state each time.
-// Create a graph with start → fork → [branchA, branchB, branchC] → join,
-// where each branch sets a unique key. Run 5 times and verify all results are identical.
 
 func TestProperty_ForkJoinDeterministicMergeOrder(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Generate unique values for each branch to write.
 		valA := rapid.StringMatching(`[a-z]{3,8}`).Draw(rt, "valA")
 		valB := rapid.StringMatching(`[a-z]{3,8}`).Draw(rt, "valB")
 		valC := rapid.StringMatching(`[a-z]{3,8}`).Draw(rt, "valC")
@@ -32,51 +23,49 @@ func TestProperty_ForkJoinDeterministicMergeOrder(t *testing.T) {
 				rt.Fatal(err)
 			}
 
-			// Start node: identity
-			if err := g.AddNode("start", func(_ context.Context, s State) (State, error) {
-				return s, nil
-			}); err != nil {
+			// Start node: writes trigger key
+			if _, err := g.Node("start", func(_ context.Context, s State) (State, error) {
+				out := CopyState(s)
+				out["trigger"] = "done"
+				return out, nil
+			}, In(), Out("trigger")); err != nil {
 				rt.Fatal(err)
 			}
 
-			// Branch nodes: each sets a unique key
-			if err := g.AddNode("branchA", func(_ context.Context, s State) (State, error) {
+			// Branch nodes: each depends on trigger and writes a unique key
+			if _, err := g.Node("branchA", func(_ context.Context, s State) (State, error) {
 				out := CopyState(s)
 				out["key_a"] = valA
+				out["a_out"] = "done"
 				return out, nil
-			}); err != nil {
+			}, In("trigger"), Out("a_out")); err != nil {
 				rt.Fatal(err)
 			}
-			if err := g.AddNode("branchB", func(_ context.Context, s State) (State, error) {
+			if _, err := g.Node("branchB", func(_ context.Context, s State) (State, error) {
 				out := CopyState(s)
 				out["key_b"] = valB
+				out["b_out"] = "done"
 				return out, nil
-			}); err != nil {
+			}, In("trigger"), Out("b_out")); err != nil {
 				rt.Fatal(err)
 			}
-			if err := g.AddNode("branchC", func(_ context.Context, s State) (State, error) {
+			if _, err := g.Node("branchC", func(_ context.Context, s State) (State, error) {
 				out := CopyState(s)
 				out["key_c"] = valC
+				out["c_out"] = "done"
 				return out, nil
-			}); err != nil {
+			}, In("trigger"), Out("c_out")); err != nil {
 				rt.Fatal(err)
 			}
 
-			// Join node: identity
-			if err := g.AddNode("join", func(_ context.Context, s State) (State, error) {
+			// Join node: depends on all branch outputs
+			if _, err := g.Node("join", func(_ context.Context, s State) (State, error) {
 				return s, nil
-			}); err != nil {
+			}, In("a_out", "b_out", "c_out"), Out("join_out")); err != nil {
 				rt.Fatal(err)
 			}
 
-			g.SetEntry("start")
-			if err := g.AddFork("start", []string{"branchA", "branchB", "branchC"}); err != nil {
-				rt.Fatal(err)
-			}
-			if err := g.AddJoin("join", []string{"branchA", "branchB", "branchC"}); err != nil {
-				rt.Fatal(err)
-			}
-
+			g.Start("start")
 			return g
 		}
 

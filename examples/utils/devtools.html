@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Graph DevTools</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#050b18',
+            panel: '#081326',
+            panel2: '#0b1730',
+            line: '#1a315f',
+            line2: '#243f75',
+            muted: '#6f84aa',
+            muted2: '#8ca0c8',
+            accent: '#6b7cff',
+            cyan: '#12c8f6',
+            good: '#21d77a',
+            warn: '#f6ad2f',
+            bad: '#ff5f6d',
+            human: '#ff4fab'
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif']
+          },
+          boxShadow: {
+            glow: '0 0 28px rgba(107, 124, 255, .35)',
+            panel: '0 18px 60px rgba(0, 0, 0, .35)'
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #050b18; }
+    body {
+      background:
+        radial-gradient(circle at 42% 20%, rgba(68, 92, 240, .12), transparent 30%),
+        radial-gradient(circle at 80% 85%, rgba(18, 200, 246, .08), transparent 30%),
+        #050b18;
+    }
+    .grid-bg {
+      background-image: radial-gradient(rgba(75, 98, 216, .30) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    .edge { fill: none; stroke: rgba(33, 215, 122, .62); stroke-width: 2; marker-end: url(#arrow-green); }
+    .edge.fork { stroke: rgba(107, 124, 255, .55); marker-end: url(#arrow-blue); }
+    .edge.conditional { stroke: rgba(246, 173, 47, .55); stroke-dasharray: 6 3; marker-end: url(#arrow-warn); }
+    .node-card { cursor: pointer; filter: drop-shadow(0 10px 24px rgba(0,0,0,.34)); }
+    .node-card .node-rect { fill: rgba(9, 21, 42, .96); stroke: #284b8f; stroke-width: 1.2; }
+    .node-card.selected .node-rect { stroke: #7b85ff; stroke-width: 2.4; filter: drop-shadow(0 0 14px rgba(107, 124, 255, .8)); }
+    .node-card.done .node-rect { stroke: rgba(33, 215, 122, .55); }
+    .node-card.running .node-rect { stroke: rgba(107, 124, 255, .85); }
+    .node-card.pending .node-rect { stroke: rgba(246, 173, 47, .72); }
+    .node-card.idle .node-rect { stroke: #284b8f; }
+    .node-accent { fill: #6b7cff; }
+    .node-card.done .node-accent { fill: #21d77a; }
+    .node-card.running .node-accent { fill: #6b7cff; }
+    .node-card.pending .node-accent { fill: #f6ad2f; }
+    @keyframes dash-flow { to { stroke-dashoffset: -20; } }
+    .edge.running { stroke: rgba(107, 124, 255, .85); stroke-dasharray: 8 4; animation: dash-flow 0.6s linear infinite; marker-end: url(#arrow-blue); }
+    .edge.paused { stroke: rgba(246, 173, 47, .7); stroke-dasharray: 8 4; marker-end: url(#arrow-warn); }
+  </style>
+</head>
+<body class="font-sans text-slate-100">
+  <div id="app" class="h-full"></div>
+  <script type="module">
+    import { html, render, useEffect, useMemo, useRef, useState, useCallback } from 'https://esm.sh/htm/preact/standalone';
+
+    const cx = (...parts) => parts.filter(Boolean).join(' ');
+
+    function App() {
+      const [nodes, setNodes] = useState([]);
+      const [edges, setEdges] = useState([]);
+      const [nodeStatuses, setNodeStatuses] = useState({});
+      const [selectedNode, setSelectedNode] = useState(null);
+      const [events, setEvents] = useState([]);
+      const [connected, setConnected] = useState(false);
+      const [running, setRunning] = useState(false);
+      const [paused, setPaused] = useState(false);
+      const [doneResult, setDoneResult] = useState(null);
+      const [nodeOutput, setNodeOutput] = useState({});
+      const [totalUsage, setTotalUsage] = useState({ input: 0, output: 0 });
+      const [nodeUsage, setNodeUsage] = useState({});
+      const prevUsageRef = useRef({ input: 0, output: 0 });
+      const wsRef = useRef(null);
+
+      useEffect(() => {
+        const ws = new WebSocket(`ws://${location.host}/ws`);
+        wsRef.current = ws;
+
+        ws.onopen = () => setConnected(true);
+        ws.onclose = () => setConnected(false);
+        ws.onerror = () => setConnected(false);
+
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+
+          if (msg.type === 'structure') {
+            const s = msg.structure || {};
+            setNodes((s.nodes || []).map(n => ({ ...n, name: n.label || n.id })));
+            setEdges(s.data_flow_edges || []);
+            setNodeStatuses({});
+            setEvents([]);
+            setDoneResult(null);
+          }
+
+          if (msg.type === 'event') {
+            const ev = msg.event;
+
+            // Build a human-friendly label for the event.
+            let text = `${ev.type}${ev.node_name ? ': ' + ev.node_name : ''}`;
+            let tone = ev.type.includes('Completed') ? 'good' : ev.type.includes('Started') ? 'accent' : 'cyan';
+
+            if (ev.type === 'AgentModelStart') { text = `🧠 ${ev.node_name}: model call`; tone = 'accent'; }
+            if (ev.type === 'AgentModelEnd') { text = `🧠 ${ev.node_name}: ${ev.stop_reason || 'done'}`; tone = 'good'; }
+            if (ev.type === 'AgentStreaming') return; // handled by "stream" message
+            if (ev.type === 'AgentThinking') return; // handled by "thinking" message
+            if (ev.type === 'AgentToolCallStart' || ev.type === 'AgentToolCallEnd') return; // handled by tool_start/tool_end
+
+            setEvents(prev => [{
+              t: new Date().toLocaleTimeString('en-GB', { hour12: false }),
+              type: ev.type,
+              node: ev.node_name,
+              text,
+              tone
+            }, ...prev].slice(0, 1000));
+
+            // Update node statuses based on events.
+            if (ev.type === 'NodeStarted' && ev.node_name) {
+              setNodeStatuses(prev => ({ ...prev, [ev.node_name]: 'running' }));
+            }
+            if (ev.type === 'NodeCompleted' && ev.node_name) {
+              setNodeStatuses(prev => ({ ...prev, [ev.node_name]: 'done' }));
+              // Compute per-node usage as delta from previous cumulative.
+              if (ev.usage && (ev.usage.InputTokens > 0 || ev.usage.OutputTokens > 0)) {
+                const prev = prevUsageRef.current;
+                const delta = {
+                  input: (ev.usage.InputTokens || 0) - prev.input,
+                  output: (ev.usage.OutputTokens || 0) - prev.output,
+                };
+                prevUsageRef.current = { input: ev.usage.InputTokens || 0, output: ev.usage.OutputTokens || 0 };
+                if (delta.input > 0 || delta.output > 0) {
+                  setNodeUsage(nu => ({ ...nu, [ev.node_name]: delta }));
+                }
+              }
+            }
+            // Track token usage — update live on every event that carries usage.
+            if (ev.usage && (ev.usage.InputTokens > 0 || ev.usage.OutputTokens > 0)) {
+              setTotalUsage({ input: ev.usage.InputTokens || 0, output: ev.usage.OutputTokens || 0 });
+            }
+          }
+
+          if (msg.type === 'stream') {
+            const { node, chunk } = msg;
+            if (node && chunk) {
+              setNodeOutput(prev => ({ ...prev, [node]: (prev[node] || '') + chunk }));
+            }
+          }
+
+          if (msg.type === 'tool_start') {
+            const { node, tool_name, input } = msg;
+            setEvents(prev => [{
+              t: new Date().toLocaleTimeString('en-GB', { hour12: false }),
+              type: 'ToolCall',
+              node,
+              text: `🔧 ${node}: ${tool_name}`,
+              detail: input,
+              tone: 'cyan'
+            }, ...prev].slice(0, 1000));
+          }
+
+          if (msg.type === 'tool_end') {
+            const { node, tool_name, output, duration, error } = msg;
+            const status = error ? `❌ ${error}` : `✓ ${duration}ms`;
+            setEvents(prev => [{
+              t: new Date().toLocaleTimeString('en-GB', { hour12: false }),
+              type: 'ToolResult',
+              node,
+              text: `🔧 ${node}: ${tool_name} ${status}`,
+              detail: output ? output.slice(0, 200) : '',
+              tone: error ? 'bad' : 'good'
+            }, ...prev].slice(0, 1000));
+          }
+
+          if (msg.type === 'thinking') {
+            const { node, chunk } = msg;
+            if (node && chunk) {
+              setNodeOutput(prev => ({ ...prev, [node + '__thinking']: (prev[node + '__thinking'] || '') + chunk }));
+            }
+          }
+
+          if (msg.type === 'paused') {
+            setRunning(false);
+            setPaused(true);
+          }
+
+          if (msg.type === 'done') {
+            setRunning(false);
+            setPaused(false);
+            setDoneResult(msg.error || null);
+          }
+        };
+
+        return () => ws.close();
+      }, []);
+
+      const startRun = useCallback(() => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          setRunning(true);
+          setPaused(false);
+          setNodeStatuses({});
+          setEvents([]);
+          setDoneResult(null);
+          setNodeOutput({});
+          setTotalUsage({ input: 0, output: 0 });
+          setNodeUsage({});
+          prevUsageRef.current = { input: 0, output: 0 };
+          wsRef.current.send(JSON.stringify({ action: 'start' }));
+        }
+      }, []);
+
+      const pauseRun = useCallback(() => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ action: 'pause' }));
+        }
+      }, []);
+
+      const resumeRun = useCallback(() => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          setRunning(true);
+          setPaused(false);
+          wsRef.current.send(JSON.stringify({ action: 'resume' }));
+        }
+      }, []);
+
+      // Layout: use server-provided layer field for horizontal position.
+      const layout = useMemo(() => {
+        if (!nodes.length) return { positioned: [], width: 0, height: 0 };
+
+        const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+        // Group nodes by their layer (provided by Go's Structure()).
+        const maxLayer = Math.max(...nodes.map(n => n.layer || 0), 0);
+        const layers = Array.from({ length: maxLayer + 1 }, () => []);
+        nodes.forEach(n => layers[n.layer || 0].push(n.id));
+
+        const nodeW = 190, nodeH = 66, gapX = 60, gapY = 20;
+        const positioned = [];
+        layers.forEach((layer, li) => {
+          const totalH = layer.length * nodeH + (layer.length - 1) * gapY;
+          const startY = -totalH / 2;
+          layer.forEach((id, ni) => {
+            positioned.push({
+              ...nodeMap[id],
+              x: li * (nodeW + gapX),
+              y: startY + ni * (nodeH + gapY),
+              w: nodeW,
+              h: nodeH,
+            });
+          });
+        });
+
+        const minY = Math.min(...positioned.map(n => n.y));
+        positioned.forEach(n => { n.y -= minY - 40; });
+
+        return {
+          positioned,
+          width: Math.max(...positioned.map(n => n.x + n.w)) + 100,
+          height: Math.max(...positioned.map(n => n.y + n.h)) + 80,
+        };
+      }, [nodes, edges]);
+
+      const positionedNodes = layout.positioned.map(n => ({
+        ...n,
+        status: nodeStatuses[n.id] || 'idle',
+      }));
+
+      const selectedNodeData = positionedNodes.find(n => n.id === selectedNode);
+
+      return html`
+        <div class="h-full grid grid-cols-[260px_1fr_300px] grid-rows-[48px_1fr]">
+          <${Topbar} nodes=${positionedNodes} connected=${connected} running=${running} paused=${paused} onStart=${startRun} onPause=${pauseRun} onResume=${resumeRun} doneResult=${doneResult} usage=${totalUsage} />
+          <${Sidebar} events=${events} nodes=${positionedNodes} />
+          <main class="relative overflow-hidden grid-bg col-start-2 row-start-2">
+            <${Stats} nodes=${positionedNodes} />
+            <${GraphView}
+              nodes=${positionedNodes}
+              edges=${edges}
+              selectedNode=${selectedNode}
+              onSelectNode=${setSelectedNode}
+              width=${layout.width}
+              height=${layout.height}
+              paused=${paused}
+            />
+          </main>
+          <${Inspector} node=${selectedNodeData} events=${events} nodeOutput=${nodeOutput} nodeUsage=${nodeUsage} />
+        </div>
+      `;
+    }
+
+    function Topbar({ nodes, connected, running, paused, onStart, onPause, onResume, doneResult, usage }) {
+      const runningCount = nodes.filter(n => n.status === 'running').length;
+      const doneCount = nodes.filter(n => n.status === 'done').length;
+      return html`
+        <header class="col-span-full row-start-1 flex items-center justify-between border-b border-line bg-ink/85 backdrop-blur-xl px-5">
+          <div class="flex items-center gap-3">
+            <div class="relative h-5 w-5 rotate-45 rounded-md border-2 border-accent shadow-glow"></div>
+            <span class="font-extrabold tracking-wider text-sm">Graph DevTools</span>
+            <span class=${cx('ml-3 h-2 w-2 rounded-full', connected ? 'bg-good' : 'bg-bad')}></span>
+            <span class="text-[10px] text-muted2">${connected ? 'Connected' : 'Disconnected'}</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <div class="flex gap-4 font-mono text-[10px] text-muted2">
+              <span>Nodes: <strong class="text-slate-100">${nodes.length}</strong></span>
+              <span>Running: <strong class="text-accent">${runningCount}</strong></span>
+              <span>Done: <strong class="text-good">${doneCount}</strong></span>
+              ${(usage.input > 0 || usage.output > 0) && html`
+                <span class="border-l border-line pl-4">Tokens: <strong class="text-cyan">${formatTokens(usage.input)}</strong> in / <strong class="text-cyan">${formatTokens(usage.output)}</strong> out</span>
+              `}
+            </div>
+            ${doneResult !== null && html`
+              <span class="text-[10px] font-mono text-bad">Error: ${doneResult}</span>
+            `}
+            ${paused && html`
+              <span class="text-[10px] font-mono text-warn">⏸ Paused</span>
+            `}
+            ${running && html`
+              <button onClick=${onPause}
+                class="flex items-center gap-2 rounded-lg px-4 py-1.5 text-xs font-bold bg-warn text-amber-950 hover:bg-warn/80 cursor-pointer">
+                ⏸ Pause
+              </button>
+            `}
+            ${paused && html`
+              <button onClick=${onResume}
+                class="flex items-center gap-2 rounded-lg px-4 py-1.5 text-xs font-bold bg-good text-emerald-950 hover:bg-good/80 cursor-pointer">
+                ▶ Resume
+              </button>
+            `}
+            ${!running && !paused && html`
+              <button
+                onClick=${onStart}
+                disabled=${!connected}
+                class=${cx(
+                  'flex items-center gap-2 rounded-lg px-4 py-1.5 text-xs font-bold transition-all',
+                  connected
+                    ? 'bg-accent text-white hover:bg-accent/80 cursor-pointer'
+                    : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                )}
+              >
+                ▶ Start
+              </button>
+            `}
+          </div>
+        </header>
+      `;
+    }
+
+    function Sidebar({ events, nodes }) {
+      const agentNodes = nodes.filter(n => n.provider);
+      return html`
+        <aside class="col-start-1 row-start-2 flex flex-col border-r border-line bg-[#060d1c]/80 overflow-auto">
+          ${agentNodes.length > 0 && html`
+            <div class="border-b border-line p-4">
+              <h3 class="mb-3 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Agent Nodes</h3>
+              <div class="space-y-2">
+                ${agentNodes.map(n => html`
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <span class=${`h-2 w-2 rounded-full ${n.status === 'done' ? 'bg-good' : n.status === 'running' ? 'bg-accent' : 'bg-muted'}`}></span>
+                      <span class="text-xs text-muted2">${n.name}</span>
+                    </div>
+                    ${n.tools && n.tools.length > 0 && html`
+                      <span class="rounded-full bg-cyan/15 border border-cyan/30 px-1.5 py-0.5 font-mono text-[9px] text-cyan">${n.tools.length} 🔧</span>
+                    `}
+                  </div>
+                `)}
+              </div>
+            </div>
+          `}
+          <div class="p-4 flex-1 overflow-auto">
+            <h3 class="mb-3 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Activity Feed</h3>
+            <div class="space-y-3">
+              ${events.length === 0 && html`
+                <p class="text-xs text-muted">No events yet. Click Start to run the graph.</p>
+              `}
+              ${events.map((item, i) => html`
+                <div key=${i} class="relative pl-5">
+                  <span class=${`absolute left-0 top-1.5 h-2 w-2 rounded-full ${dotClass(item.tone)}`}></span>
+                  <div class="font-mono text-[10px] text-slate-600">${item.t}</div>
+                  <div class="mt-0.5 text-xs leading-snug text-muted2">${item.text}</div>
+                </div>
+              `)}
+            </div>
+          </div>
+          <div class="border-t border-line p-3">
+            <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Legend</h3>
+            <div class="grid grid-cols-2 gap-2">
+              ${[['Running', 'accent'], ['Done', 'good'], ['Idle', 'muted'], ['Error', 'bad']].map(([name, tone]) => html`
+                <div class="flex items-center gap-2 text-[11px] text-muted2">
+                  <span class=${`h-2 w-2 rounded-sm ${dotClass(tone)}`}></span>${name}
+                </div>
+              `)}
+            </div>
+          </div>
+        </aside>
+      `;
+    }
+
+    function Stats({ nodes }) {
+      const running = nodes.filter(n => n.status === 'running').length;
+      const done = nodes.filter(n => n.status === 'done').length;
+      return html`
+        <div class="absolute left-4 top-4 z-10 flex gap-3">
+          <${StatCard} label="Nodes" value=${nodes.length} />
+          <${StatCard} label="Running" value=${running} tone="accent" />
+          <${StatCard} label="Done" value=${done} tone="good" />
+        </div>
+      `;
+    }
+
+    function StatCard({ label, value, tone }) {
+      return html`
+        <div class="min-w-20 rounded-xl border border-line2 bg-panel/85 px-3 py-2 shadow-panel">
+          <label class="block text-[9px] font-black uppercase tracking-[.18em] text-slate-600">${label}</label>
+          <strong class=${cx('mt-0.5 block text-xl font-black',
+            tone === 'good' && 'text-good',
+            tone === 'accent' && 'text-accent',
+            tone === 'cyan' && 'text-cyan'
+          )}>${value}</strong>
+        </div>
+      `;
+    }
+
+    function GraphView({ nodes, edges, selectedNode, onSelectNode, width, height, paused }) {
+      const [transform, setTransform] = useState({ x: 60, y: 40, k: 0.9 });
+      const dragRef = useRef(null);
+      const byId = useMemo(() => Object.fromEntries(nodes.map(n => [n.id, n])), [nodes]);
+
+      function onPointerDown(e) {
+        if (e.target.closest('.node-card')) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, x: transform.x, y: transform.y };
+      }
+      function onPointerMove(e) {
+        const d = dragRef.current;
+        if (!d || d.pointerId !== e.pointerId) return;
+        setTransform(prev => ({ ...prev, x: d.x + e.clientX - d.startX, y: d.y + e.clientY - d.startY }));
+      }
+      function onPointerUp(e) { if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null; }
+      function onWheel(e) {
+        e.preventDefault();
+        const next = Math.max(0.4, Math.min(2.5, transform.k + (e.deltaY > 0 ? -0.06 : 0.06)));
+        setTransform(prev => ({ ...prev, k: next }));
+      }
+
+      const svgW = Math.max(width + 200, 1200);
+      const svgH = Math.max(height + 200, 700);
+
+      return html`
+        <div class="absolute inset-0 cursor-grab active:cursor-grabbing"
+          onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
+          onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp} onWheel=${onWheel}>
+          <svg class="block h-full w-full" viewBox=${`0 0 ${svgW} ${svgH}`}>
+            <defs>
+              <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(33,215,122,.72)"></path>
+              </marker>
+              <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(107,124,255,.72)"></path>
+              </marker>
+              <marker id="arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(246,173,47,.72)"></path>
+              </marker>
+            </defs>
+            <g transform=${`translate(${transform.x} ${transform.y}) scale(${transform.k})`}>
+              ${(() => {
+                const renderedPaths = [];
+
+                for (const e of edges) {
+                  const from = byId[e.from], to = byId[e.to];
+                  if (!from || !to) continue;
+                  const isRunning = from.status === 'running';
+                  const edgeState = isRunning ? (paused ? 'paused' : 'running') : '';
+                  renderedPaths.push(html`<path key=${`${e.from}-${e.to}-${e.key}`} class=${`edge ${edgeState}`} d=${edgePath(from, to, edges)} />`);
+                }
+
+                return renderedPaths;
+              })()}
+              ${nodes.map(node => html`
+                <${NodeCard} key=${node.id} node=${node} selected=${selectedNode === node.id} onSelect=${() => onSelectNode(node.id)} />
+              `)}
+            </g>
+          </svg>
+        </div>
+      `;
+    }
+
+    function NodeCard({ node, selected, onSelect }) {
+      const providerColors = {
+        bedrock: '#ff9900', anthropic: '#d97757', openai: '#10a37f',
+        gemini: '#8b5cf6', ollama: '#333', fallback: '#6b7cff',
+      };
+      const providerName = node.provider || '';
+      const badgeColor = providerColors[providerName] || '#5a7099';
+      const badgeLetter = providerName ? providerName[0].toUpperCase() : '';
+      const modelShort = (node.model || '').length > 24 ? (node.model || '').slice(0, 22) + '…' : (node.model || '');
+
+      return html`
+        <g class=${`node-card ${node.status} ${selected ? 'selected' : ''}`}
+          transform=${`translate(${node.x} ${node.y})`} onClick=${onSelect}>
+          <rect class="node-rect" x="0" y="0" width=${node.w} height=${node.h} rx="9" />
+          <rect class="node-accent" x="3" y="12" width="3" height=${node.h - 24} rx="1.5" />
+          <text fill="#8093be" font-family="ui-monospace, monospace" font-size="8" font-weight="700"
+            letter-spacing="1.2" x="16" y="18">${node.id.toUpperCase()}</text>
+          <text fill="#dbe7ff" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="800"
+            x="16" y="36">${node.name}</text>
+          ${badgeLetter && html`
+            <circle cx="24" cy="52" r="6" fill=${badgeColor} opacity="0.9" />
+            <text fill="#fff" font-family="Inter, system-ui, sans-serif" font-size="8" font-weight="800"
+              text-anchor="middle" x="24" y="55">${badgeLetter}</text>
+            <text fill="#5a7099" font-family="ui-monospace, monospace" font-size="9"
+              x="34" y="55">${modelShort}</text>
+          `}
+        </g>
+      `;
+    }
+
+    function Inspector({ node, events, nodeOutput, nodeUsage }) {
+      if (!node) {
+        return html`
+          <aside class="col-start-3 row-start-2 flex flex-col overflow-auto border-l border-line bg-[#060d1c]/90 items-center justify-center">
+            <p class="text-xs text-muted">Select a node to inspect</p>
+          </aside>
+        `;
+      }
+
+      const nodeEvents = events.filter(e => e.node === node.id);
+      const output = nodeOutput[node.id] || '';
+      const thinking = nodeOutput[node.id + '__thinking'] || '';
+      const usage = nodeUsage[node.id];
+      const toolEvents = nodeEvents.filter(e => e.type === 'ToolCall' || e.type === 'ToolResult');
+
+      return html`
+        <aside class="col-start-3 row-start-2 flex flex-col overflow-auto border-l border-line bg-[#060d1c]/90">
+          <div class="border-b border-line px-4 py-4">
+            <div class="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-accent">
+              <span class="h-2 w-2 rounded-full bg-accent shadow-glow"></span>NODE
+            </div>
+            <h2 class="text-base font-black tracking-tight text-slate-100">${node.name}</h2>
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <span class=${`rounded-full px-2 py-1 font-mono text-[10px] font-black ${statusBadge(node.status)}`}>${node.status.toUpperCase()}</span>
+              ${node.provider && html`
+                <span class="rounded-full border border-warn/40 bg-warn/10 px-2 py-1 font-mono text-[10px] text-warn">${node.provider}</span>
+              `}
+              ${node.tools && node.tools.length > 0 && html`
+                <span class="rounded-full border border-human/40 bg-human/10 px-2 py-1 font-mono text-[10px] text-human">${node.tools.length} tools</span>
+              `}
+              ${node.model && html`
+                <span class="rounded-full border border-accent/40 bg-accent/10 px-2 py-1 font-mono text-[10px] text-accent">${node.model}</span>
+              `}
+              ${usage && html`
+                <span class="rounded-full border border-cyan/40 bg-cyan/10 px-2 py-1 font-mono text-[10px] text-cyan">${usage.input} in / ${usage.output} out</span>
+              `}
+            </div>
+          </div>
+          ${thinking && html`
+            <div class="border-b border-line px-4 py-3">
+              <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Thinking</h3>
+              <pre class="whitespace-pre-wrap text-xs leading-relaxed text-muted2 font-mono bg-panel/50 rounded-lg p-3 max-h-32 overflow-auto italic">${thinking}</pre>
+            </div>
+          `}
+          ${output && html`
+            <div class="border-b border-line px-4 py-3">
+              <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Output</h3>
+              <pre class="whitespace-pre-wrap text-xs leading-relaxed text-slate-200 font-mono bg-panel/50 rounded-lg p-3 max-h-48 overflow-auto">${output}</pre>
+            </div>
+          `}
+          ${toolEvents.length > 0 && html`
+            <div class="border-b border-line px-4 py-3">
+              <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Tool Calls</h3>
+              <div class="space-y-2 max-h-40 overflow-auto">
+                ${toolEvents.map((ev, i) => html`
+                  <div key=${i} class="text-xs rounded-lg bg-panel/50 p-2">
+                    <div class="flex items-center gap-2">
+                      <span class=${`h-1.5 w-1.5 rounded-full ${ev.tone === 'bad' ? 'bg-bad' : ev.tone === 'good' ? 'bg-good' : 'bg-cyan'}`}></span>
+                      <span class="font-mono text-[10px] text-muted2">${ev.text}</span>
+                    </div>
+                    ${ev.detail && html`<pre class="mt-1 text-[10px] text-slate-500 font-mono truncate">${ev.detail.slice(0, 120)}</pre>`}
+                  </div>
+                `)}
+              </div>
+            </div>
+          `}
+          <div class="p-4 flex-1 overflow-auto">
+            <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Node Events</h3>
+            ${nodeEvents.length === 0 && html`<p class="text-xs text-muted">No events for this node yet.</p>`}
+            <div class="space-y-2">
+              ${nodeEvents.map((ev, i) => html`
+                <div key=${i} class="text-xs">
+                  <span class="font-mono text-[10px] text-slate-600">${ev.t}</span>
+                  <span class="ml-2 text-muted2">${ev.type}</span>
+                </div>
+              `)}
+            </div>
+          </div>
+        </aside>
+      `;
+    }
+
+    // --- Helpers ---
+
+    function formatTokens(n) {
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+      return String(n);
+    }
+
+    function edgePath(a, b, allEdges) {
+      if (!a || !b) return '';
+
+      const y1 = a.y + a.h / 2;
+      const y2 = b.y + b.h / 2;
+      const x1 = a.x + a.w;
+      const x2 = b.x;
+      const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
+      return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    }
+
+    function dotClass(tone) {
+      const map = {
+        accent: 'bg-accent shadow-[0_0_12px_#6b7cff]',
+        good: 'bg-good shadow-[0_0_12px_#21d77a]',
+        bad: 'bg-bad shadow-[0_0_12px_#ff5f6d]',
+        warn: 'bg-warn shadow-[0_0_12px_#f6ad2f]',
+        cyan: 'bg-cyan shadow-[0_0_12px_#12c8f6]',
+        muted: 'bg-muted',
+      };
+      return map[tone] || map.accent;
+    }
+
+    function statusBadge(status) {
+      const map = {
+        done: 'bg-good text-emerald-950',
+        running: 'bg-accent text-indigo-950',
+        pending: 'bg-warn text-amber-950',
+        idle: 'bg-slate-700 text-slate-300',
+      };
+      return map[status] || 'bg-slate-700 text-slate-300';
+    }
+
+    render(html`<${App} />`, document.getElementById('app'));
+  </script>
+</body>
+</html>

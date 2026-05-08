@@ -12,12 +12,10 @@ func TestStep_ExecutesOneNodeAndReturnsStepResult(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	result, err := g.Step(context.Background(), State{"init": "yes"}, "thread-step-1")
 	if err != nil {
@@ -43,10 +41,9 @@ func TestStep_NoCheckpointStartsFromEntry(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "entry", setter("entry", "done_entry"))
-	mustAddNode(t, g, "next", setter("next", "done_next"))
-	g.SetEntry("entry")
-	mustAddEdge(t, g, "entry", "next")
+	mustAddNodeWithKeys(t, g, "entry", setter("entry", "done_entry"), []string{"entry"}, []string{})
+	mustAddNodeWithKeys(t, g, "next", setter("next", "done_next"), []string{"next"}, []string{"entry"})
+	g.Start("entry")
 
 	result, err := g.Step(context.Background(), State{"seed": "value"}, "thread-step-entry")
 	if err != nil {
@@ -68,12 +65,10 @@ func TestStep_WithExistingCheckpointContinuesFromNextNode(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// First step: executes "a".
 	result1, err := g.Step(context.Background(), State{"init": "yes"}, "thread-step-cont")
@@ -119,9 +114,9 @@ func TestStep_DoneWhenNoOutgoingRoute(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "only", setter("only", "done"))
-	g.SetEntry("only")
-	// No edges — terminal node.
+	mustAddNodeWithKeys(t, g, "only", setter("only", "done"), []string{"only"}, []string{})
+	g.Start("only")
+	// No downstream nodes — terminal node.
 
 	result, err := g.Step(context.Background(), State{}, "thread-step-done")
 	if err != nil {
@@ -137,8 +132,8 @@ func TestStep_DoneWhenNoOutgoingRoute(t *testing.T) {
 
 func TestStep_NoCheckpointerReturnsError(t *testing.T) {
 	g := mustGraph(t) // No checkpointer
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	_, err := g.Step(context.Background(), State{}, "thread-1")
 	if !errors.Is(err, ErrNoCheckpointer) {
@@ -149,8 +144,8 @@ func TestStep_NoCheckpointerReturnsError(t *testing.T) {
 func TestStep_EmptyThreadIDReturnsError(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	_, err := g.Step(context.Background(), State{}, "")
 	if !errors.Is(err, ErrThreadIDRequired) {
@@ -164,12 +159,10 @@ func TestResume_ContinuesFromInterruptPointToCompletion(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Set interrupt before "b".
 	if err := g.InterruptBefore("b"); err != nil {
@@ -205,15 +198,14 @@ func TestResume_WithStateUpdatesMergesIntoCheckpointState(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", func(_ context.Context, s State) (State, error) {
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", func(_ context.Context, s State) (State, error) {
 		out := CopyState(s)
 		// Read the injected value to prove merge happened.
 		out["saw_injected"] = s["injected"]
 		return out, nil
-	})
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	}, []string{"saw_injected"}, []string{"a"})
+	g.Start("a")
 
 	// Set interrupt before "b".
 	if err := g.InterruptBefore("b"); err != nil {
@@ -242,8 +234,8 @@ func TestResume_WithStateUpdatesMergesIntoCheckpointState(t *testing.T) {
 func TestResume_NonExistentThreadReturnsError(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	_, err := g.Resume(context.Background(), "nonexistent-thread", nil)
 	if !errors.Is(err, ErrCheckpointNotFound) {
@@ -253,8 +245,8 @@ func TestResume_NonExistentThreadReturnsError(t *testing.T) {
 
 func TestResume_NoCheckpointerReturnsError(t *testing.T) {
 	g := mustGraph(t) // No checkpointer
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	_, err := g.Resume(context.Background(), "thread-1", nil)
 	if !errors.Is(err, ErrNoCheckpointer) {
@@ -265,8 +257,8 @@ func TestResume_NoCheckpointerReturnsError(t *testing.T) {
 func TestResume_EmptyThreadIDReturnsError(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	_, err := g.Resume(context.Background(), "", nil)
 	if !errors.Is(err, ErrThreadIDRequired) {
@@ -278,14 +270,11 @@ func TestResume_HitsAnotherInterrupt(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	mustAddNode(t, g, "d", setter("d", "done_d"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
-	mustAddEdge(t, g, "c", "d")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	mustAddNodeWithKeys(t, g, "d", setter("d", "done_d"), []string{"d"}, []string{"c"})
+	g.Start("a")
 
 	// Interrupt before "b" and before "c".
 	if err := g.InterruptBefore("b"); err != nil {
@@ -321,12 +310,10 @@ func TestRewindTo_SetsPositionCorrectly(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Run the full graph.
 	_, err := g.Run(context.Background(), State{"init": "yes"}, WithThreadID("thread-rewind-1"))
@@ -365,12 +352,10 @@ func TestRewindTo_PreservesHistory(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Run the full graph.
 	_, err := g.Run(context.Background(), State{}, WithThreadID("thread-rewind-hist"))
@@ -405,12 +390,10 @@ func TestRewindTo_VersionNumberingContinuesFromMax(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Run the full graph (creates versions 1, 2, 3).
 	_, err := g.Run(context.Background(), State{}, WithThreadID("thread-rewind-ver"))
@@ -465,8 +448,8 @@ func TestRewindTo_VersionNumberingContinuesFromMax(t *testing.T) {
 func TestRewindTo_NonExistentVersionReturnsError(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	err := g.RewindTo(context.Background(), "nonexistent-thread", 99)
 	if !errors.Is(err, ErrCheckpointNotFound) {
@@ -476,8 +459,8 @@ func TestRewindTo_NonExistentVersionReturnsError(t *testing.T) {
 
 func TestRewindTo_NoCheckpointerReturnsError(t *testing.T) {
 	g := mustGraph(t) // No checkpointer
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	err := g.RewindTo(context.Background(), "thread-1", 1)
 	if !errors.Is(err, ErrNoCheckpointer) {
@@ -488,50 +471,11 @@ func TestRewindTo_NoCheckpointerReturnsError(t *testing.T) {
 func TestRewindTo_EmptyThreadIDReturnsError(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
-	mustAddNode(t, g, "a", noop)
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", noop, []string{"a_out"}, []string{})
+	g.Start("a")
 
 	err := g.RewindTo(context.Background(), "", 1)
 	if !errors.Is(err, ErrThreadIDRequired) {
 		t.Fatalf("expected ErrThreadIDRequired, got %v", err)
-	}
-}
-
-func TestStep_ConditionalEdgeRouting(t *testing.T) {
-	cp := &mockCheckpointer{}
-	g := mustGraph(t, WithCheckpointer(cp))
-
-	mustAddNode(t, g, "start", setter("start", "done"))
-	mustAddNode(t, g, "yes", setter("branch", "yes"))
-	mustAddNode(t, g, "no", setter("branch", "no"))
-	g.SetEntry("start")
-	if err := g.AddConditionalEdge("start", func(_ context.Context, s State) (string, error) {
-		if s["flag"] == true {
-			return "yes", nil
-		}
-		return "no", nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Step 1: execute "start".
-	result1, err := g.Step(context.Background(), State{"flag": true}, "thread-step-cond")
-	if err != nil {
-		t.Fatalf("step 1 error: %v", err)
-	}
-	if result1.NodeName != "start" {
-		t.Fatalf("step 1: expected 'start', got %q", result1.NodeName)
-	}
-
-	// Step 2: should route to "yes" based on state.
-	result2, err := g.Step(context.Background(), nil, "thread-step-cond")
-	if err != nil {
-		t.Fatalf("step 2 error: %v", err)
-	}
-	if result2.NodeName != "yes" {
-		t.Errorf("step 2: expected 'yes', got %q", result2.NodeName)
-	}
-	if !result2.Done {
-		t.Error("step 2: expected Done=true")
 	}
 }

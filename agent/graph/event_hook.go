@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -18,6 +19,14 @@ const (
 	EventRewindCompleted EventType = "RewindCompleted"
 	EventGraphStarted    EventType = "GraphStarted"
 	EventGraphCompleted  EventType = "GraphCompleted"
+
+	// Agent-level event types for tool calls, model interactions, and streaming.
+	EventAgentToolCallStart EventType = "AgentToolCallStart"
+	EventAgentToolCallEnd   EventType = "AgentToolCallEnd"
+	EventAgentModelStart    EventType = "AgentModelStart"
+	EventAgentModelEnd      EventType = "AgentModelEnd"
+	EventAgentThinking      EventType = "AgentThinking"
+	EventAgentStreaming     EventType = "AgentStreaming"
 )
 
 // GraphEvent is a structured event emitted by the Graph during execution.
@@ -33,6 +42,14 @@ type GraphEvent struct {
 	InterruptType InterruptType    `json:"interrupt_type,omitempty"`
 	Error         error            `json:"error,omitempty"`
 	ThreadID      string           `json:"thread_id,omitempty"`
+
+	// Agent-level event fields for tool calls, model interactions, and streaming.
+	ToolName     string          `json:"tool_name,omitempty"`
+	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
+	ToolOutput   string          `json:"tool_output,omitempty"`
+	ToolDuration time.Duration   `json:"tool_duration,omitempty"`
+	StopReason   string          `json:"stop_reason,omitempty"`
+	Chunk        string          `json:"chunk,omitempty"`
 }
 
 // GraphEventHook is an optional interface for receiving structured events at all

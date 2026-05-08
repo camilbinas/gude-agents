@@ -1,4 +1,4 @@
-// Example: Traced graph workflow with fork/join, tools, memory, and checkpointing.
+// Example: Traced concurrent graph workflow with tools, memory, and checkpointing.
 //
 // Builds a content-review pipeline as a graph and traces every node execution,
 // checkpoint save, interrupt, and resume.
@@ -127,34 +127,34 @@ func main() {
 	}
 
 	// Node: fetch — simulates loading an article.
-	if err := g.AddNode("fetch", func(_ context.Context, _ graph.State) (graph.State, error) {
+	if _, err := g.Node("fetch", func(_ context.Context, _ graph.State) (graph.State, error) {
 		return graph.State{
 			"article": "Scientists have discovered a new species of deep-sea fish that " +
 				"produces its own bioluminescent light. The discovery, made 3,000 metres " +
 				"below the Pacific Ocean, could shed light on how life adapts to extreme " +
 				"environments. Researchers are optimistic about future findings.",
 		}, nil
-	}); err != nil {
+	}, graph.In(), graph.Out("article")); err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: enrich — uses the word_count tool.
-	if err := g.AddNode("enrich", graph.AgentNode(enricher, "article", "metadata")); err != nil {
+	if _, err := g.Agent("enrich", enricher, graph.Keys("metadata", "article")); err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: summarise — uses memory.
-	if err := g.AddNode("summarise", graph.AgentNode(summariser, "article", "summary")); err != nil {
+	if _, err := g.Agent("summarise", summariser, graph.Keys("summary", "article")); err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: sentiment — plain agent.
-	if err := g.AddNode("sentiment", graph.AgentNode(sentimentAnalyser, "article", "sentiment")); err != nil {
+	if _, err := g.Agent("sentiment", sentimentAnalyser, graph.Keys("sentiment", "article")); err != nil {
 		log.Fatal(err)
 	}
 
 	// Node: report — combines all results.
-	if err := g.AddNode("report", func(_ context.Context, s graph.State) (graph.State, error) {
+	if _, err := g.Node("report", func(_ context.Context, s graph.State) (graph.State, error) {
 		summary, _ := s["summary"].(string)
 		sentiment, _ := s["sentiment"].(string)
 		metadata, _ := s["metadata"].(string)
@@ -167,18 +167,12 @@ func main() {
 			strings.TrimSpace(summary),
 		)
 		return graph.State{"report": report}, nil
-	}); err != nil {
+	}, graph.In("metadata", "summary", "sentiment"), graph.Out("report")); err != nil {
 		log.Fatal(err)
 	}
 
-	// Wiring: fetch forks into enrich + summarise + sentiment, report joins them.
-	g.SetEntry("fetch")
-	if err := g.AddFork("fetch", []string{"enrich", "summarise", "sentiment"}); err != nil {
-		log.Fatal(err)
-	}
-	if err := g.AddJoin("report", []string{"enrich", "summarise", "sentiment"}); err != nil {
-		log.Fatal(err)
-	}
+	// Wiring: fetch produces "article", enrich/summarise/sentiment all read it (concurrent),
+	// report reads all their outputs.
 
 	// Interrupt before report for human review, then publish.
 	if err := g.InterruptBefore("report"); err != nil {

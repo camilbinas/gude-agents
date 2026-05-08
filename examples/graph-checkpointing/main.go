@@ -1,17 +1,12 @@
-// Example: Graph checkpointing with interrupt, resume, and rewind.
+// Example: Checkpointing with interrupt, resume, rewind, and step-by-step execution.
 //
-// This demonstrates a content-approval pipeline where a human reviews
-// the draft before it's published. The graph pauses at the "review" node,
-// allowing the caller to inspect state, inject feedback, and resume.
+// Demonstrates:
+//   - Node handles for interrupt configuration (review.InterruptBefore())
+//   - Human-in-the-loop: pause → inject state → resume
+//   - RewindTo for replaying from a checkpoint
+//   - Then() for pure sequencing in step-by-step mode
 //
-// Pipeline:
-//
-//	draft → review (interrupt) → publish
-//
-// The example shows:
-//  1. Run until interrupt (pauses before "review")
-//  2. Resume with injected state (human approves)
-//  3. Rewind to an earlier checkpoint and replay with different input
+// Pipeline: draft → review (interrupt) → publish
 //
 // Run:
 //
@@ -31,43 +26,39 @@ import (
 
 func main() {
 	ctx := context.Background()
-
-	// In-memory checkpointer for this example. Use dynamodb or postgres
-	// backends for production persistence.
 	cp := memory.New()
 
-	// Build the graph.
 	g, err := graph.New[graph.State](graph.WithCheckpointer(cp))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	g.AddNode("draft", func(_ context.Context, s graph.State) (graph.State, error) {
+	// Data-flow wiring: draft → review → publish via keys.
+	g.Node("draft", func(_ context.Context, s graph.State) (graph.State, error) {
 		topic, _ := s["topic"].(string)
 		out := graph.CopyState(s)
 		out["document"] = fmt.Sprintf("Draft about %q: This is a well-researched article.", topic)
-		out["status"] = "drafted"
 		return out, nil
-	})
-	g.AddNode("review", func(_ context.Context, s graph.State) (graph.State, error) {
+	}, graph.Out("document"))
+
+	review, _ := g.Node("review", func(_ context.Context, s graph.State) (graph.State, error) {
 		out := graph.CopyState(s)
-		out["status"] = "reviewed"
+		out["reviewed"] = true
 		return out, nil
-	})
-	g.AddNode("publish", func(_ context.Context, s graph.State) (graph.State, error) {
+	}, graph.In("document"), graph.Out("reviewed"))
+
+	g.Node("publish", func(_ context.Context, s graph.State) (graph.State, error) {
 		out := graph.CopyState(s)
 		if s["approved"] == true {
-			out["status"] = "published"
+			out["status"] = "published ✓"
 		} else {
-			out["status"] = "rejected"
+			out["status"] = "rejected ✗"
 		}
 		return out, nil
-	})
+	}, graph.In("reviewed"), graph.Out("status"))
 
-	g.SetEntry("draft")
-	g.AddEdge("draft", "review")
-	g.AddEdge("review", "publish")
-	g.InterruptBefore("review")
+	// Interrupt before review — human must approve.
+	review.InterruptBefore()
 
 	threadID := "approval-thread-1"
 
@@ -104,7 +95,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Resume hits the interrupt again — it fires every time execution reaches that node.
 	rejectUpdates := graph.State{"approved": false}
 	_, err = g.Resume(ctx, threadID, &rejectUpdates)
 	if !errors.As(err, &intErr) {
@@ -112,7 +102,6 @@ func main() {
 	}
 	fmt.Printf("Paused again before: %s (as expected)\n", intErr.Result.NodeName)
 
-	// Resume past the interrupt with rejection.
 	rejectUpdates2 := graph.State{"approved": false}
 	result, err = g.Resume(ctx, threadID, &rejectUpdates2)
 	if err != nil {
@@ -121,26 +110,28 @@ func main() {
 
 	fmt.Printf("Final status after rejection: %s\n\n", result.State["status"])
 
-	// ─── Bonus: Step-by-step execution ──────────────────────────────────
+	// ─── Bonus: Step-by-step with Then() ─────────────────────────────────
 
-	fmt.Println("=== Bonus: Step-by-step execution ===")
+	fmt.Println("=== Bonus: Step-by-step execution with Then() ===")
 
 	g2, _ := graph.New[graph.State](graph.WithCheckpointer(cp))
-	g2.AddNode("a", func(_ context.Context, s graph.State) (graph.State, error) {
+
+	// Pure sequencing — no data keys, just ordering via Then().
+	a, _ := g2.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["a"] = "done"
 		return s, nil
 	})
-	g2.AddNode("b", func(_ context.Context, s graph.State) (graph.State, error) {
+	b, _ := g2.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["b"] = "done"
 		return s, nil
 	})
-	g2.AddNode("c", func(_ context.Context, s graph.State) (graph.State, error) {
+	c, _ := g2.Node("c", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["c"] = "done"
 		return s, nil
 	})
-	g2.SetEntry("a")
-	g2.AddEdge("a", "b")
-	g2.AddEdge("b", "c")
+
+	a.Then(b)
+	b.Then(c)
 
 	stepThread := "step-thread-1"
 	var res graph.StepResult[graph.State]

@@ -130,10 +130,10 @@ func TestAgentNode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New[State]: %v", err)
 		}
-		if err := g.AddNode("agent", graph.AgentNode(a, "input", "output")); err != nil {
-			t.Fatalf("AddNode: %v", err)
+		if _, err := g.Node("agent", graph.AgentNode(a, "input", "output"), graph.In(), graph.Out("output")); err != nil {
+			t.Fatalf("Node: %v", err)
 		}
-		g.SetEntry("agent")
+		g.Start("agent")
 
 		res, err := g.Run(context.Background(), graph.State{"input": "hello"})
 		if err != nil {

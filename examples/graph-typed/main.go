@@ -1,4 +1,4 @@
-// Example: Typed graph for a simple research → summarise → score pipeline.
+// Example: Typed graph for a research → summarise → score → (refine | accept) pipeline.
 //
 // Graph[S] uses generics so nodes work directly with a concrete state struct
 // — no map[string]any, no type assertions.
@@ -6,10 +6,14 @@
 // Embedding graph.GraphState enables automatic token usage accumulation via
 // s.AddUsage(usage) — no manual token fields needed on the state struct.
 //
+// For typed state, readiness is determined by non-zero struct field values.
+// We use two bool fields (NeedsRefine / Accepted) as conditional route keys —
+// only one becomes non-zero, so only the corresponding downstream node runs.
+//
 // Pipeline:
 //
-//	research → summarise → score → gate ──(score < 9)──► refine → summarise
-//	                                  └──(score >= 9)──► done
+//	research → summarise → score ─(score < 9 → NeedsRefine)─► refine
+//	                            └─(score ≥ 9 → Accepted)──► (done)
 //
 // Run:
 //
@@ -33,11 +37,22 @@ import (
 // Embedding graph.GraphState enables automatic token tracking via AddUsage.
 type State struct {
 	graph.GraphState
-	Topic    string `json:"topic"`
-	Research string `json:"research"`
-	Summary  string `json:"summary"`
-	Score    int    `json:"score"`
-	Feedback string `json:"feedback"`
+	Topic       string `json:"topic"`
+	Research    string `json:"research"`
+	Summary     string `json:"summary"`
+	Score       int    `json:"score"`
+	Feedback    string `json:"feedback"`
+	NeedsRefine bool   `json:"needs_refine,omitempty"`
+	Accepted    bool   `json:"accepted,omitempty"`
+	Refined     string `json:"refined,omitempty"`
+}
+
+// FinalSummary picks the refined version when present, otherwise the original.
+func (s State) FinalSummary() string {
+	if s.Refined != "" {
+		return s.Refined
+	}
+	return s.Summary
 }
 
 func main() {
@@ -83,15 +98,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Build the typed graph — nodes receive and return State directly.
-	g, err := graph.New[State](
-		graph.WithMaxIterations(20),
-	)
+	g, err := graph.New[State](graph.WithMaxIterations(20))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := g.AddNode("research", func(ctx context.Context, s State) (State, error) {
+	// research is the entry node — it reads s.Topic from the initial state directly
+	// (no declared input key) and writes "research" for downstream nodes.
+	if _, err := g.Node("research", func(ctx context.Context, s State) (State, error) {
 		c := agent.NewContext(ctx)
 		facts, err := researcher.Invoke(c, s.Topic)
 		if err != nil {
@@ -100,11 +114,11 @@ func main() {
 		s.Research = facts
 		s.AddUsage(c.Usage())
 		return s, nil
-	}); err != nil {
+	}, graph.In(), graph.Out("research")); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := g.AddNode("summarise", func(ctx context.Context, s State) (State, error) {
+	if _, err := g.Node("summarise", func(ctx context.Context, s State) (State, error) {
 		c := agent.NewContext(ctx)
 		summary, err := summariser.Invoke(c, s.Research)
 		if err != nil {
@@ -113,11 +127,14 @@ func main() {
 		s.Summary = summary
 		s.AddUsage(c.Usage())
 		return s, nil
-	}); err != nil {
+	}, graph.In("research"), graph.Out("summary")); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := g.AddNode("score", func(ctx context.Context, s State) (State, error) {
+	// score writes exactly one of needs_refine / accepted depending on the score value.
+	// The other field stays at the zero value (false) and the corresponding downstream
+	// node never becomes ready.
+	if _, err := g.Node("score", func(ctx context.Context, s State) (State, error) {
 		c := agent.NewContext(ctx)
 		result, err := agent.InvokeStructured[ScoreResult](c, scorer, s.Summary)
 		if err != nil {
@@ -125,60 +142,40 @@ func main() {
 		}
 		s.Score = result.Score
 		s.Feedback = result.Feedback
+		if s.Score < 9 {
+			s.NeedsRefine = true
+		} else {
+			s.Accepted = true
+		}
 		s.AddUsage(c.Usage())
 		return s, nil
-	}); err != nil {
+	}, graph.In("summary"), graph.Out("needs_refine", "accepted")); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := g.AddNode("refine", func(ctx context.Context, s State) (State, error) {
+	// refine only runs when NeedsRefine is true.
+	if _, err := g.Node("refine", func(ctx context.Context, s State) (State, error) {
 		c := agent.NewContext(ctx)
 		input := fmt.Sprintf("Summary: %s\nFeedback: %s", s.Summary, s.Feedback)
 		refined, err := refiner.Invoke(c, input)
 		if err != nil {
 			return s, err
 		}
-		s.Research = refined // feed refined text back into summarise
+		s.Refined = refined
 		s.AddUsage(c.Usage())
 		return s, nil
-	}); err != nil {
+	}, graph.In("needs_refine"), graph.Out("refined")); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := g.AddNode("done", func(_ context.Context, s State) (State, error) {
-		return s, nil
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	// Wire the graph.
-	g.SetEntry("research")
-	if err := g.AddEdge("research", "summarise"); err != nil {
-		log.Fatal(err)
-	}
-	if err := g.AddEdge("summarise", "score"); err != nil {
-		log.Fatal(err)
-	}
-	if err := g.AddConditionalEdge("score", func(_ context.Context, s State) (string, error) {
-		if s.Score < 9 {
-			log.Printf("[graph] score %d — refining: %s", s.Score, s.Feedback)
-			return "refine", nil
-		}
-		return "done", nil
-	}); err != nil {
-		log.Fatal(err)
-	}
-	if err := g.AddEdge("refine", "summarise"); err != nil {
-		log.Fatal(err)
-	}
-
-	// Run with an initial state — only Topic needs to be set.
 	result, err := g.Run(context.Background(), State{Topic: "the impact of large language models on software engineering"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("\nFinal summary (score %d/10):\n%s\n", result.State.Score, result.State.Summary)
-	fmt.Printf("Feedback: %s\n", result.State.Feedback)
+	fmt.Printf("\nFinal summary (score %d/10):\n%s\n", result.State.Score, result.State.FinalSummary())
+	if result.State.NeedsRefine {
+		fmt.Printf("Feedback: %s\n", result.State.Feedback)
+	}
 	fmt.Printf("Tokens: %d in / %d out\n", result.Usage.InputTokens, result.Usage.OutputTokens)
 }

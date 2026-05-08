@@ -50,14 +50,15 @@ type GraphCheckpointer interface {
 
 // Checkpoint captures the full execution context at a point in time.
 type Checkpoint struct {
-	ThreadID   string           `json:"thread_id"`
-	Version    int              `json:"version"`
-	State      State            `json:"state"`
-	Completed  map[string]bool  `json:"completed"`
-	Iterations int              `json:"iterations"`
-	Usage      agent.TokenUsage `json:"usage"`
-	NodeName   string           `json:"node_name"`
-	Timestamp  time.Time        `json:"timestamp"`
+	ThreadID     string           `json:"thread_id"`
+	Version      int              `json:"version"`
+	State        State            `json:"state"`
+	Completed    map[string]bool  `json:"completed"`
+	ReadinessSet map[string]bool  `json:"readiness_set,omitempty"`
+	Iterations   int              `json:"iterations"`
+	Usage        agent.TokenUsage `json:"usage"`
+	NodeName     string           `json:"node_name"`
+	Timestamp    time.Time        `json:"timestamp"`
 }
 
 // CheckpointMeta is lightweight metadata returned by History.

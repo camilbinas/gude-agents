@@ -166,6 +166,30 @@ func (c *Context) WithEventHook(h EventHook) *Context
 
 Attaches an event hook for real-time UI event delivery (tool call start/end, model start/end, thinking chunks).
 
+### WithTracingHook
+
+```go
+func (c *Context) WithTracingHook(h TracingHook) *Context
+```
+
+Sets a per-invocation tracing hook that takes precedence over the agent-level hook. Used by graph agent nodes to pass bridge tracing hooks without mutating the shared agent.
+
+### WithMetricsHook
+
+```go
+func (c *Context) WithMetricsHook(h MetricsHook) *Context
+```
+
+Sets a per-invocation metrics hook that takes precedence over the agent-level hook.
+
+### WithLoggingHook
+
+```go
+func (c *Context) WithLoggingHook(h LoggingHook) *Context
+```
+
+Sets a per-invocation logging hook that takes precedence over the agent-level hook.
+
 ### WithIdentifier
 
 ```go

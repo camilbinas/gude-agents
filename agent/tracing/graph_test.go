@@ -22,14 +22,14 @@ func TestGraphTracing_RunSpanCreated(t *testing.T) {
 		t.Fatalf("New[graph.State]: %v", err)
 	}
 
-	if err := g.AddNode("start", func(_ context.Context, s graph.State) (graph.State, error) {
+	if _, err := g.Node("start", func(_ context.Context, s graph.State) (graph.State, error) {
 		out := graph.CopyState(s)
 		out["visited"] = true
 		return out, nil
-	}); err != nil {
+	}, graph.In(), graph.Out("visited")); err != nil {
 		t.Fatal(err)
 	}
-	g.SetEntry("start")
+	g.Start("start")
 
 	_, err = g.Run(context.Background(), graph.State{})
 	if err != nil {
@@ -60,22 +60,16 @@ func TestGraphTracing_NodeChildSpans(t *testing.T) {
 		}
 	}
 
-	if err := g.AddNode("alpha", setter("a", "done")); err != nil {
+	if _, err := g.Node("alpha", setter("a", "done"), graph.In(), graph.Out("a")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("beta", setter("b", "done")); err != nil {
+	if _, err := g.Node("beta", setter("b", "done"), graph.In("a"), graph.Out("b")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("gamma", setter("c", "done")); err != nil {
+	if _, err := g.Node("gamma", setter("c", "done"), graph.In("b"), graph.Out("c")); err != nil {
 		t.Fatal(err)
 	}
-	g.SetEntry("alpha")
-	if err := g.AddEdge("alpha", "beta"); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.AddEdge("beta", "gamma"); err != nil {
-		t.Fatal(err)
-	}
+	g.Start("alpha")
 
 	_, err = g.Run(context.Background(), graph.State{})
 	if err != nil {
@@ -96,9 +90,7 @@ func TestGraphTracing_NodeChildSpans(t *testing.T) {
 		}
 	}
 
-	// In a linear chain A→B→C, the hierarchy is:
-	//   graph.run → graph.node.alpha → graph.node.beta → graph.node.gamma
-	// because step() is called recursively with the node's context.
+	// In data-flow scheduling, all nodes are children of graph.run.
 	alphaSpan := findSpan(spans, "graph.node.alpha")
 	betaSpan := findSpan(spans, "graph.node.beta")
 	gammaSpan := findSpan(spans, "graph.node.gamma")
@@ -106,11 +98,11 @@ func TestGraphTracing_NodeChildSpans(t *testing.T) {
 	if alphaSpan.Parent.SpanID() != runSpan.SpanContext.SpanID() {
 		t.Errorf("graph.node.alpha parent should be graph.run span")
 	}
-	if betaSpan.Parent.SpanID() != alphaSpan.SpanContext.SpanID() {
-		t.Errorf("graph.node.beta parent should be graph.node.alpha span")
+	if betaSpan.Parent.SpanID() != runSpan.SpanContext.SpanID() {
+		t.Errorf("graph.node.beta parent should be graph.run span")
 	}
-	if gammaSpan.Parent.SpanID() != betaSpan.SpanContext.SpanID() {
-		t.Errorf("graph.node.gamma parent should be graph.node.beta span")
+	if gammaSpan.Parent.SpanID() != runSpan.SpanContext.SpanID() {
+		t.Errorf("graph.node.gamma parent should be graph.run span")
 	}
 }
 
@@ -123,23 +115,23 @@ func TestGraphTracing_IterationsAttribute(t *testing.T) {
 		t.Fatalf("New[graph.State]: %v", err)
 	}
 
-	noop := func(_ context.Context, s graph.State) (graph.State, error) { return s, nil }
-	if err := g.AddNode("a", noop); err != nil {
+	noop := func(key string) graph.NodeFunc[graph.State] {
+		return func(_ context.Context, s graph.State) (graph.State, error) {
+			out := graph.CopyState(s)
+			out[key] = true
+			return out, nil
+		}
+	}
+	if _, err := g.Node("a", noop("out_a"), graph.In(), graph.Out("out_a")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("b", noop); err != nil {
+	if _, err := g.Node("b", noop("out_b"), graph.In("out_a"), graph.Out("out_b")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("c", noop); err != nil {
+	if _, err := g.Node("c", noop("out_c"), graph.In("out_b"), graph.Out("out_c")); err != nil {
 		t.Fatal(err)
 	}
-	g.SetEntry("a")
-	if err := g.AddEdge("a", "b"); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.AddEdge("b", "c"); err != nil {
-		t.Fatal(err)
-	}
+	g.Start("a")
 
 	_, err = g.Run(context.Background(), graph.State{})
 	if err != nil {
@@ -167,20 +159,19 @@ func TestGraphTracing_ErrorStatusOnNodeFailure(t *testing.T) {
 		t.Fatalf("New[graph.State]: %v", err)
 	}
 
-	if err := g.AddNode("ok_node", func(_ context.Context, s graph.State) (graph.State, error) {
-		return s, nil
-	}); err != nil {
+	if _, err := g.Node("ok_node", func(_ context.Context, s graph.State) (graph.State, error) {
+		out := graph.CopyState(s)
+		out["ok"] = true
+		return out, nil
+	}, graph.In(), graph.Out("ok")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("bad_node", func(_ context.Context, _ graph.State) (graph.State, error) {
+	if _, err := g.Node("bad_node", func(_ context.Context, _ graph.State) (graph.State, error) {
 		return nil, fmt.Errorf("node exploded")
-	}); err != nil {
+	}, graph.In("ok"), graph.Out("bad_out")); err != nil {
 		t.Fatal(err)
 	}
-	g.SetEntry("ok_node")
-	if err := g.AddEdge("ok_node", "bad_node"); err != nil {
-		t.Fatal(err)
-	}
+	g.Start("ok_node")
 
 	_, err = g.Run(context.Background(), graph.State{})
 	if err == nil {
@@ -211,7 +202,7 @@ func TestGraphTracing_ErrorStatusOnNodeFailure(t *testing.T) {
 // ===========================================================================
 // ===========================================================================
 
-func TestGraphTracing_ForkNodeSpansShareParent(t *testing.T) {
+func TestGraphTracing_ConcurrentNodeSpansShareParent(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
@@ -228,26 +219,23 @@ func TestGraphTracing_ForkNodeSpansShareParent(t *testing.T) {
 			return out, nil
 		}
 	}
+	_ = noop
 
-	if err := g.AddNode("start", noop); err != nil {
+	// start produces "ready", branch_a and branch_b both read "ready" (concurrent),
+	// join_node reads both outputs.
+	if _, err := g.Node("start", setter("ready", "yes"), graph.In(), graph.Out("ready")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("branch_a", setter("a", "done_a")); err != nil {
+	if _, err := g.Node("branch_a", setter("a", "done_a"), graph.In("ready"), graph.Out("a")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("branch_b", setter("b", "done_b")); err != nil {
+	if _, err := g.Node("branch_b", setter("b", "done_b"), graph.In("ready"), graph.Out("b")); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddNode("join_node", noop); err != nil {
+	if _, err := g.Node("join_node", setter("joined", "yes"), graph.In("a", "b"), graph.Out("joined")); err != nil {
 		t.Fatal(err)
 	}
-	g.SetEntry("start")
-	if err := g.AddFork("start", []string{"branch_a", "branch_b"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.AddJoin("join_node", []string{"branch_a", "branch_b"}); err != nil {
-		t.Fatal(err)
-	}
+	g.Start("start")
 
 	_, err = g.Run(context.Background(), graph.State{})
 	if err != nil {
@@ -260,7 +248,7 @@ func TestGraphTracing_ForkNodeSpansShareParent(t *testing.T) {
 		t.Fatal("expected graph.run span")
 	}
 
-	// Both fork branch spans should share the same graph.run parent.
+	// Both concurrent branch spans should exist.
 	branchASpan := findSpan(spans, "graph.node.branch_a")
 	branchBSpan := findSpan(spans, "graph.node.branch_b")
 	if branchASpan == nil {
@@ -272,20 +260,6 @@ func TestGraphTracing_ForkNodeSpansShareParent(t *testing.T) {
 
 	// Both should share the same trace ID.
 	if branchASpan.SpanContext.TraceID() != branchBSpan.SpanContext.TraceID() {
-		t.Error("fork branch spans should share the same trace ID")
-	}
-
-	// Fork branches are children of the "start" node span (the node that triggered the fork),
-	// because forkStep passes the start node's context to each branch.
-	startSpan := findSpan(spans, "graph.node.start")
-	if startSpan == nil {
-		t.Fatal("expected graph.node.start span")
-	}
-	startSpanID := startSpan.SpanContext.SpanID()
-	if branchASpan.Parent.SpanID() != startSpanID {
-		t.Errorf("branch_a parent should be graph.node.start span, got parent span ID %s", branchASpan.Parent.SpanID())
-	}
-	if branchBSpan.Parent.SpanID() != startSpanID {
-		t.Errorf("branch_b parent should be graph.node.start span, got parent span ID %s", branchBSpan.Parent.SpanID())
+		t.Error("concurrent branch spans should share the same trace ID")
 	}
 }

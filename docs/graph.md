@@ -1,14 +1,14 @@
 # Graph Workflows
 
-The `graph` package provides a DAG-based state machine for orchestrating multi-step workflows. You define named nodes (units of work), connect them with edges (static, conditional, or parallel), and run the graph with an initial state. The graph engine handles execution order, fork/join parallelism, and iteration limits.
+The `graph` package provides a DAG-based state machine for orchestrating multi-step workflows. You define named nodes with explicit I/O key declarations, and the engine automatically schedules nodes as soon as their declared inputs are available. Concurrent execution happens naturally when multiple nodes become ready simultaneously.
 
 ## Core Concepts
 
 A graph has:
-- **Nodes** — named functions that receive state and return updated state
-- **Edges** — routing rules that determine which node runs next
-- **State** — a `map[string]any` passed between nodes
-- **Entry** — the first node to execute
+- **Nodes** — named functions that declare their input and output state keys
+- **Data-flow scheduling** — the engine infers execution order from I/O declarations
+- **State** — a `map[string]any` or typed struct passed between nodes
+- **Entry** — nodes with empty input keys execute first; auto-detected or set via optional `g.Start()`
 
 ## Creating a Graph
 
@@ -18,10 +18,8 @@ if err != nil {
     log.Fatal(err)
 }
 
-g.AddNode("classify", classifyFn)
-g.AddNode("respond", respondFn)
-g.AddEdge("classify", "respond")
-g.SetEntry("classify")
+classify, _ := g.Node("classify", classifyFn, graph.In("input"), graph.Out("category"))
+respond, _ := g.Node("respond", respondFn, graph.In("category"), graph.Out("output"))
 
 result, err := g.Run(ctx, graph.State{"input": "Hello"})
 fmt.Println(result.State["output"])
@@ -29,7 +27,7 @@ fmt.Println(result.State["output"])
 
 ## State
 
-`State` is `map[string]any` — a shared data container passed between nodes. Each node receives a copy of the current state and returns an updated copy. The graph engine merges the returned state back into the shared state.
+`State` is `map[string]any` — a shared data container passed between nodes. Each node receives a copy of the current state and returns an updated copy.
 
 ```go
 type State = map[string]any
@@ -45,64 +43,109 @@ Every node is a `NodeFunc[S]`:
 type NodeFunc[S any] func(ctx context.Context, state S) (S, error)
 ```
 
-For untyped graphs, use `NodeFunc[graph.State]`. The function receives the current state, does its work, and returns the updated state. Return an error to abort the graph.
+The function receives the current state, does its work, and returns the updated state. Return an error to abort the graph.
+
+## Node
+
+`Node` registers a named node and returns a `*Node[S]` handle for type-safe wiring, interrupt configuration, and metadata access. `In()`/`Out()` declarations are optional — omit them when using `Then()` for pure sequencing:
 
 ```go
-classifyFn := func(ctx context.Context, state graph.State) (graph.State, error) {
-    input := state["input"].(string)
-    // ... classify the input ...
-    state["category"] = "billing"
-    return state, nil
-}
+// Minimal — wire with Then()
+fetch, _ := g.Node("fetch", fetchFn)
+process, _ := g.Node("process", processFn)
+fetch.Then(process)
+
+// With data-flow keys
+fetch, _ := g.Node("fetch", fetchFn, graph.Out("article"))
+report, _ := g.Node("report", reportFn, graph.In("article"), graph.Out("output"))
 ```
 
-## Edges
+The engine uses `In()`/`Out()` declarations to determine when a node is ready to execute. A node runs when all its declared input keys are present in the readiness set.
 
-### Static Edge
-
-Always routes from one node to another:
+For string-based registration (dynamic graphs, cross-package wiring), use `RegisterNode`:
 
 ```go
-g.AddEdge("classify", "respond")
+g.RegisterNode("fetch", fetchFn, graph.Out("article"))
+g.Connect("fetch", "report")
 ```
 
-### Conditional Edge
+## Data-Flow Scheduling
 
-A `RouterFunc` decides the next node at runtime. Return `""` to end the graph:
+The engine schedules nodes automatically based on their I/O declarations:
+
+1. Nodes with empty input keys execute first (entry nodes)
+2. After each node completes, its output keys are added to the readiness set
+3. Any pending node whose input keys are all in the readiness set becomes ready
+4. If multiple nodes become ready simultaneously, they execute concurrently
+5. When no more nodes can become ready, the graph terminates
 
 ```go
-g.AddConditionalEdge("classify", func(ctx context.Context, state graph.State) (string, error) {
-    category := state["category"].(string)
-    switch category {
-    case "billing":
-        return "billing_handler", nil
-    case "technical":
-        return "tech_handler", nil
-    default:
-        return "", nil // end graph
+// Diamond topology: entry → (research, analyze) → synthesize
+g.Node("entry", entryFn, graph.In(), graph.Out("topic"))
+g.Node("research", researchFn, graph.In("topic"), graph.Out("research_result"))
+g.Node("analyze", analyzeFn, graph.In("topic"), graph.Out("analysis_result"))
+g.Node("synthesize", synthesizeFn, graph.In("research_result", "analysis_result"), graph.Out("output"))
+```
+
+Here `research` and `analyze` both depend on `"topic"` and run concurrently after entry. `synthesize` waits for both to complete.
+
+## Connect (Pure Sequencing)
+
+When you need ordering without data flow, use `Then`/`After` on node handles or `Connect` with strings:
+
+```go
+fetch, _ := g.Node("fetch", fetchFn)
+summarise, _ := g.Node("summarise", summariseFn)
+sentiment, _ := g.Node("sentiment", sentimentFn)
+report, _ := g.Node("report", reportFn)
+
+fetch.Then(summarise, sentiment)    // fork: both run after fetch
+report.After(summarise, sentiment)  // join: report waits for both
+```
+
+`Then` generates a synthetic scheduling key internally — nodes don't need to declare or write it. Use `In()`/`Out()` for real data dependencies and `Then`/`Connect` for pure ordering constraints.
+
+### Node Handle Methods
+
+| Method | Description |
+|--------|-------------|
+| `Name()` / `String()` | Returns the registration name. |
+| `InputKeys()` / `OutputKeys()` | Returns copies of declared I/O keys (including synthetic connect keys). |
+| `Then(targets ...*Node[S])` | Fork — this node must complete before all targets begin. |
+| `After(sources ...*Node[S])` | Join — this node waits for all sources to complete. |
+| `InterruptBefore()` / `InterruptAfter()` | Interrupt configuration. |
+| `SetMeta(NodeMeta)` | Attaches display metadata. |
+
+### String-Based API
+
+`RegisterNode`, `RegisterAgent`, `Connect`, `InterruptBefore(name)`, `InterruptAfter(name)`, and `SetNodeMeta(name, meta)` remain available for dynamic or cross-package wiring where handles aren't in scope.
+
+## Conditional Execution (Data-Flow Gating)
+
+Conditional routing is achieved by nodes that conditionally write output keys. Downstream nodes only execute when their input keys are actually present:
+
+```go
+g.Node("classifier", func(ctx context.Context, s graph.State) (graph.State, error) {
+    if s["input"].(string) == "billing" {
+        s["route_billing"] = "go"
+    } else {
+        s["route_tech"] = "go"
     }
-})
+    return s, nil
+}, graph.In("input"), graph.Out("route_billing", "route_tech"))
+
+g.Node("billing_handler", billingFn, graph.In("route_billing"), graph.Out("output"))
+g.Node("tech_handler", techFn, graph.In("route_tech"), graph.Out("output"))
 ```
 
-### Fork (Parallel Execution)
+Only one handler executes — the one whose input key was written. The graph terminates when no more nodes can become ready.
 
-Execute multiple nodes concurrently:
+## Concurrency Control
 
-```go
-g.AddFork("start", []string{"research", "analyze"})
-```
-
-Requires at least 2 targets. Each branch gets a copy of the state. Results are merged in sorted order (deterministic).
-
-### Join (Barrier)
-
-Wait for all predecessors to complete before executing:
-
-```go
-g.AddJoin("synthesize", []string{"research", "analyze"})
-```
-
-Requires at least 2 predecessors. The join node fires automatically when all predecessors are done.
+When multiple nodes execute concurrently:
+- Each node receives an isolated copy of the state (no shared references)
+- Results are merged in alphabetical node-name order using `mergeDiff` (only changed keys applied)
+- If two nodes write the same key, the alphabetically-last node wins (deterministic)
 
 ## Result
 
@@ -115,7 +158,7 @@ type Result[S any] struct {
 }
 ```
 
-`Usage` accumulates token usage from any agent nodes in the graph. `State` contains the final merged state after all nodes have run.
+`Usage` accumulates token usage from any agent nodes in the graph. `State` contains the final state after all nodes have run.
 
 ## Options
 
@@ -129,64 +172,127 @@ g, err := graph.New[graph.State](
 |--------|---------|-------------|
 | `WithMaxIterations(n)` | 100 | Max node executions per Run. Returns error if n < 1. |
 
-## AgentNode
+## Agent Nodes
 
-Wrap an `agent.Invoker` as a graph node. The node reads the user message from `inputKey` in state and writes the agent's response to `outputKey`. Any type that implements `agent.Invoker` works — `*agent.Agent` satisfies it out of the box:
+Agent nodes are graph nodes backed by an `*agent.Agent`. They provide automatic metadata propagation, event bubbling, hook inheritance, and streaming by default.
+
+### Agent
+
+`g.Agent` registers an agent-backed node and returns a `*Node[S]` handle. Uses the same `In()`/`Out()` pattern as `Node` — the agent reads all `In` keys (concatenated with section headers) and writes its response to the `Out` key:
 
 ```go
-import "github.com/camilbinas/gude-agents/agent/graph"
-
-node := graph.AgentNode(myAgent, "input", "output")
-g.AddNode("agent", node)
+summarise, _ := g.Agent("summarise", myAgent, graph.In("article"), graph.Out("summary"))
+investigate, _ := g.Agent("investigate", myAgent, graph.In("pods", "events"), graph.Out("findings"))
 ```
 
-The node also writes `"__usage__"` to state so token usage is accumulated in the graph result.
+For typed state, use `AgentWithAccessor`:
+
+```go
+answer, _ := g.AgentWithAccessor("answer", myAgent, graph.AgentNodeAccessor[MyState]{
+    GetInput:   func(s MyState) string { return s.Question },
+    SetOutput:  func(s *MyState, out string) { s.Answer = out },
+    InputKeys:  []string{"question"},
+    OutputKeys: []string{"answer"},
+})
+```
+
+### Automatic Metadata Propagation
+
+Provider name, model ID, agent name, and tool specifications are captured automatically. Tools are resolved dynamically at `Structure()` call time.
+
+### Agent Event Types
+
+Agent nodes emit events through the graph's `GraphEventHook` — see the [Event Hook](#event-hook) table for the full list. Events are emitted in chronological order with monotonically non-decreasing timestamps.
+
+### Streaming by Default
+
+Agent nodes use `InvokeStream` rather than `Invoke`. Each chunk is emitted as an `EventAgentStreaming` event and accumulated into the output state key. If the provider doesn't support streaming, the full response is emitted as a single chunk event.
+
+### Multimodal Inputs
+
+`Keys()` automatically detects images and documents in state and passes them to the agent as attachments. No special wiring needed — upstream nodes produce media, agent nodes consume it:
+
+```go
+g.Node("capture", captureFn, graph.Out("screenshot", "question"))
+g.Agent("describe", visionAgent, graph.Keys("description", "question", "screenshot"))
+```
+
+| State value type | Handling |
+|-----------------|----------|
+| `string` | Text prompt (concatenated with headers if multiple) |
+| `agent.ImageBlock` | Passed via `WithImages` |
+| `agent.DocumentBlock` | Passed via `WithDocuments` |
+| `[]byte` | Treated as PNG image |
+
+### Hook Inheritance
+
+When observability hooks are configured at the graph level, agent nodes automatically inherit them:
+
+- **Tracing** — A bridge `TracingHook` creates child spans under the graph's node span context
+- **Metrics** — A bridge `MetricsHook` reports agent metrics (provider calls, tool calls, token usage) through the graph's metrics context
+- **Logging** — A bridge `LoggingHook` includes the node name as context in all log entries
+
+If the agent already has its own hooks configured, both the agent's hooks and the graph-inherited hooks are called (composition). If no graph hooks are configured, the agent's own hooks are used unchanged.
+
+### Zero Overhead
+
+Bridge hooks are only created when the corresponding graph hook is configured. No event hook means no bridge event hook and no event emission code runs.
+
+### Custom Node Functions
+
+For custom node functions that invoke an agent (e.g., reading multiple state keys), use `g.EventHook()` and `graph.NewBridgeEventHook` to wire tool call and model event visibility:
+
+```go
+g.Node("my_node", func(ctx context.Context, s graph.State) (graph.State, error) {
+    c := agent.NewContext(ctx)
+    if hook := g.EventHook(); hook != nil {
+        c.WithEventHook(graph.NewBridgeEventHook(hook, "my_node", nil))
+    }
+    result, err := myAgent.Invoke(c, s["input"].(string))
+    s["output"] = result
+    return s, nil
+}, graph.In("input"), graph.Out("output"))
+```
 
 ## LLMRouter
 
-Use an LLM to decide which node to route to:
-
-```go
-router := graph.LLMRouter(routerAgent, []string{"billing", "technical"})
-g.AddConditionalEdge("classify", router)
-```
-
-The LLM receives the current state as context and must respond with one of the allowed node names. For typed graphs, use `graph.LLMRouterFunc[S]` with a prompt extraction function.
+`LLMRouter` and `LLMRouterFunc` are available for building nodes that use an LLM to decide which output key to write, enabling data-flow gating based on LLM classification.
 
 ## Typed State
 
-`Graph[S]` works directly with custom struct types — no `map[string]any`, no type assertions. Use `graph.New[S]()` with any struct type:
+`Graph[S]` works directly with custom struct types — no `map[string]any`, no type assertions:
 
 ```go
 type MyState struct {
-    graph.GraphState                   // embed for automatic token tracking
     Input    string `json:"input"`
     Category string `json:"category"`
     Output   string `json:"output"`
 }
 
 g, err := graph.New[MyState]()
-// ... add nodes, edges, set entry ...
+g.Node("classify", classifyFn, graph.In("input"), graph.Out("category"))
+g.Node("respond", respondFn, graph.In("category"), graph.Out("output"))
+
 result, err := g.Run(ctx, MyState{Input: "Hello"})
 fmt.Println(result.State.Output)
 ```
 
-JSON serialization occurs only at checkpoint boundaries and event snapshots — not between nodes.
+For typed state, readiness is determined by non-zero struct field values. A field left at its zero value (empty string, 0, false, nil) is not considered "present" for scheduling purposes.
 
 ## Validation
 
 The graph validates its structure at the start of every `Run`:
-- Entry node must be registered
-- All edge targets must be registered nodes
-- All fork targets must be registered
-- All join predecessors must be registered
+- At least one node with empty input keys must exist (or `Start()` must be called)
+- No circular dependencies in data-flow declarations
+- Every declared input key must be present in initial state or declared as an output by another node
+- No two nodes may declare the same output key
 - MaxIterations must be >= 1
 
 Invalid graphs return a `*GraphValidationError`. Exceeding the iteration limit returns a `*GraphIterationError`.
 
 ## Code Example
 
-A classification pipeline that routes to different handlers:
+A classification pipeline with conditional routing via data-flow gating:
 
 ```go
 package main
@@ -205,33 +311,25 @@ func main() {
         log.Fatal(err)
     }
 
-    // Classify input
-    g.AddNode("classify", func(ctx context.Context, s graph.State) (graph.State, error) {
+    g.Node("classify", func(ctx context.Context, s graph.State) (graph.State, error) {
         input := s["input"].(string)
         if len(input) > 50 {
-            s["category"] = "complex"
+            s["complex_input"] = input
         } else {
-            s["category"] = "simple"
+            s["simple_input"] = input
         }
         return s, nil
-    })
+    }, graph.In("input"), graph.Out("simple_input", "complex_input"))
 
-    // Simple handler
-    g.AddNode("simple", func(ctx context.Context, s graph.State) (graph.State, error) {
-        s["output"] = "Quick answer: " + s["input"].(string)
+    g.Node("simple", func(ctx context.Context, s graph.State) (graph.State, error) {
+        s["output"] = "Quick answer: " + s["simple_input"].(string)
         return s, nil
-    })
+    }, graph.In("simple_input"), graph.Out("output"))
 
-    // Complex handler
-    g.AddNode("complex", func(ctx context.Context, s graph.State) (graph.State, error) {
-        s["output"] = "Detailed analysis of: " + s["input"].(string)
+    g.Node("complex", func(ctx context.Context, s graph.State) (graph.State, error) {
+        s["output"] = "Detailed analysis of: " + s["complex_input"].(string)
         return s, nil
-    })
-
-    g.SetEntry("classify")
-    g.AddConditionalEdge("classify", func(ctx context.Context, s graph.State) (string, error) {
-        return s["category"].(string), nil
-    })
+    }, graph.In("complex_input"), graph.Out("output"))
 
     result, err := g.Run(context.Background(), graph.State{"input": "What is Go?"})
     if err != nil {
@@ -243,7 +341,7 @@ func main() {
 
 ## Checkpointing
 
-Checkpointing persists execution state after each node, enabling step-by-step execution, interrupt-based human-in-the-loop flows, and rewind/replay. When no checkpointer is configured, the graph runs identically to before with zero overhead.
+Checkpointing persists execution state after each node, enabling step-by-step execution, interrupt-based human-in-the-loop flows, and rewind/replay. When no checkpointer is configured, the graph runs identically with zero overhead.
 
 ```go
 import "github.com/camilbinas/gude-agents/agent/graph/checkpointer/memory"
@@ -253,7 +351,7 @@ g, _ := graph.New[graph.State](
     graph.WithCheckpointer(cp),
 )
 
-// ... add nodes, edges, set entry ...
+// ... add nodes ...
 
 result, err := g.Run(ctx, graph.State{"input": "hello"}, graph.WithThreadID("thread-1"))
 ```
@@ -269,7 +367,6 @@ result, err := g.Run(ctx, graph.State{"input": "hello"}, graph.WithThreadID("thr
 Mark nodes to pause execution before or after they run. Requires a checkpointer.
 
 ```go
-g.AddNode("review", reviewFn)
 g.InterruptBefore("review") // pause before review runs
 
 result, err := g.Run(ctx, state, graph.WithThreadID("t1"))
@@ -281,7 +378,7 @@ if errors.As(err, &intErr) {
 }
 ```
 
-`InterruptBefore` saves a checkpoint with the node NOT in the completed set. `InterruptAfter` saves a checkpoint with the node IN the completed set.
+`InterruptBefore` saves a checkpoint with the node NOT in the completed set. `InterruptAfter` saves a checkpoint with the node IN the completed set. Checkpoints include the current readiness set so that resume correctly restores scheduling progress.
 
 ### Step
 
@@ -291,7 +388,6 @@ Execute one node at a time. Returns a `StepResult[S]` with the executed node nam
 res, err := g.Step(ctx, graph.State{"input": "hello"}, "thread-1")
 fmt.Println(res.NodeName, res.Version, res.Done)
 
-// Continue stepping until done
 for !res.Done {
     res, err = g.Step(ctx, nil, "thread-1")
 }
@@ -302,7 +398,6 @@ for !res.Done {
 Continue execution from the latest checkpoint. Optionally merge state updates before resuming.
 
 ```go
-// After an interrupt, provide human feedback and resume
 updates := graph.State{"approved": true}
 result, err := g.Resume(ctx, "thread-1", &updates)
 ```
@@ -315,7 +410,6 @@ Reset execution position to a previous checkpoint version. Does not delete later
 
 ```go
 err := g.RewindTo(ctx, "thread-1", 2)
-// Next Resume/Step starts from the state at version 2
 result, err := g.Resume(ctx, "thread-1", nil)
 ```
 
@@ -325,7 +419,6 @@ result, err := g.Resume(ctx, "thread-1", nil)
 
 ```go
 g, _ := graph.New[MyState](graph.WithCheckpointer(cp))
-// ... add nodes ...
 g.InterruptBefore("review")
 
 res, _ := g.Step(ctx, MyState{Input: "hello"}, "thread-1")
@@ -337,7 +430,7 @@ _ = g.RewindTo(ctx, "thread-1", 2)
 
 ### Event Hook
 
-`WithEventHook` receives structured events at each lifecycle point — useful for frontend visualization, logging, or metrics.
+`WithEventHook` receives structured events at each lifecycle point — useful for frontend visualization, logging, or metrics. Use `SetEventHook` to swap the hook after construction (e.g., per-request in a server).
 
 ```go
 type MyHook struct {
@@ -364,8 +457,24 @@ g, _ := graph.New[graph.State](
 | `EventResumed` | When Resume is called |
 | `EventRewindCompleted` | When RewindTo completes |
 | `EventGraphCompleted` | End of execution (success or error) |
+| `EventAgentToolCallStart` | Before an agent node invokes a tool |
+| `EventAgentToolCallEnd` | After an agent node's tool call completes |
+| `EventAgentModelStart` | Before an agent node calls the LLM |
+| `EventAgentModelEnd` | After an agent node's LLM call returns |
+| `EventAgentThinking` | When the model emits a thinking/reasoning block |
+| `EventAgentStreaming` | When the model streams a response chunk |
 
-`OnEvent` is called synchronously — implementations must not block (use buffered channels or async dispatch).
+`OnEvent` is called synchronously — implementations must not block (use buffered channels or async dispatch). Agent-level events include additional fields: `ToolName`, `ToolInput`, `ToolOutput`, and `ToolDuration` for tool calls; `StopReason` for model end; `Chunk` for streaming.
+
+### Graph Introspection
+
+`Structure()` returns the graph's topology as a serializable `GraphStructure`. Each `NodeInfo` includes `ID`, `Label`, `Provider`, `Model`, `Tools`, `InputKeys`, `OutputKeys`, `Layer` (BFS depth), and interrupt flags. Each `DataFlowEdge` has `From` (producer), `To` (consumer), and `Key` (the state key connecting them).
+
+```go
+g.Agent("summarise", summariserAgent, graph.Keys("summary", "article"))
+
+structure := g.Structure() // GraphStructure with Nodes []NodeInfo, DataFlowEdges []DataFlowEdge
+```
 
 ### Backends
 

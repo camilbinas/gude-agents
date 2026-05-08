@@ -139,28 +139,25 @@ func TestIntegration_Metrics_GraphPipeline(t *testing.T) {
 	}
 
 	// step1: sets a value in state.
-	err = g.AddNode("step1", func(_ context.Context, state graph.State) (graph.State, error) {
+	_, err = g.Node("step1", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["value"] = 1
 		return state, nil
-	})
+	}, []string{"step1_out"}, []string{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// step2: increments the value.
-	err = g.AddNode("step2", func(_ context.Context, state graph.State) (graph.State, error) {
+	_, err = g.Node("step2", func(_ context.Context, state graph.State) (graph.State, error) {
 		v, _ := state["value"].(int)
 		state["value"] = v + 1
 		return state, nil
-	})
+	}, []string{"step2_out"}, []string{"step1_out"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	g.SetEntry("step1")
-	if err := g.AddEdge("step1", "step2"); err != nil {
-		t.Fatal(err)
-	}
+	g.Start("step1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

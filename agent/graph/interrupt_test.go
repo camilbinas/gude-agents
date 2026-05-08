@@ -10,8 +10,8 @@ import (
 
 func TestInterruptBefore_UnregisteredNode(t *testing.T) {
 	g := mustGraph(t)
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	g.Start("a")
 
 	err := g.InterruptBefore("nonexistent")
 	if err == nil {
@@ -29,8 +29,8 @@ func TestInterruptBefore_UnregisteredNode(t *testing.T) {
 
 func TestInterruptAfter_UnregisteredNode(t *testing.T) {
 	g := mustGraph(t)
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	g.SetEntry("a")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	g.Start("a")
 
 	err := g.InterruptAfter("nonexistent")
 	if err == nil {
@@ -50,12 +50,10 @@ func TestInterruptBefore_PausesBeforeNode(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Mark node "b" to interrupt before execution.
 	if err := g.InterruptBefore("b"); err != nil {
@@ -103,12 +101,10 @@ func TestInterruptAfter_PausesAfterNode(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Mark node "b" to interrupt after execution.
 	if err := g.InterruptAfter("b"); err != nil {
@@ -161,10 +157,9 @@ func TestInterruptBefore_CheckpointDoesNotContainInterruptedNode(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	if err := g.InterruptBefore("b"); err != nil {
 		t.Fatalf("InterruptBefore failed: %v", err)
@@ -197,10 +192,9 @@ func TestInterruptAfter_CheckpointContainsInterruptedNode(t *testing.T) {
 	cp := &mockCheckpointer{}
 	g := mustGraph(t, WithCheckpointer(cp))
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	g.Start("a")
 
 	if err := g.InterruptAfter("b"); err != nil {
 		t.Fatalf("InterruptAfter failed: %v", err)
@@ -238,12 +232,10 @@ func TestInterrupt_NoOpWithoutCheckpointer(t *testing.T) {
 	// When no checkpointer is configured, interrupts are no-ops.
 	g := mustGraph(t) // No WithCheckpointer
 
-	mustAddNode(t, g, "a", setter("a", "done_a"))
-	mustAddNode(t, g, "b", setter("b", "done_b"))
-	mustAddNode(t, g, "c", setter("c", "done_c"))
-	g.SetEntry("a")
-	mustAddEdge(t, g, "a", "b")
-	mustAddEdge(t, g, "b", "c")
+	mustAddNodeWithKeys(t, g, "a", setter("a", "done_a"), []string{"a"}, []string{})
+	mustAddNodeWithKeys(t, g, "b", setter("b", "done_b"), []string{"b"}, []string{"a"})
+	mustAddNodeWithKeys(t, g, "c", setter("c", "done_c"), []string{"c"}, []string{"b"})
+	g.Start("a")
 
 	// Mark interrupts - they should be no-ops without a checkpointer.
 	if err := g.InterruptBefore("b"); err != nil {

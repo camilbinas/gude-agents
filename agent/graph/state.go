@@ -3,6 +3,9 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"strings"
+	"sync"
 
 	"github.com/camilbinas/gude-agents/agent"
 )
@@ -28,6 +31,12 @@ type stateOps[S any] interface {
 	// fromMap deserializes map[string]any back to S.
 	// For map[string]any this is identity (zero-cost).
 	fromMap(m map[string]any) (S, error)
+
+	// hasKey reports whether the given key has a non-zero value in the state.
+	// For map[string]any this is a direct map lookup (zero cost).
+	// For struct types this uses targeted reflection on the struct field
+	// corresponding to the JSON tag, avoiding full json.Marshal.
+	hasKey(state S, key string) bool
 }
 
 // NodeFunc is the unit of work executed by a node.
@@ -76,6 +85,11 @@ func (mapStateOps) mergeDiff(base *State, snapshot, branch State) {
 func (mapStateOps) toMap(s State) (map[string]any, error) { return s, nil }
 
 func (mapStateOps) fromMap(m map[string]any) (State, error) { return State(m), nil }
+
+func (mapStateOps) hasKey(state State, key string) bool {
+	_, ok := state[key]
+	return ok
+}
 
 // jsonStateOps[S] implements stateOps[S] for custom struct types.
 // Uses JSON marshaling only when crossing boundaries (checkpoint, fork/join, events).
@@ -129,6 +143,65 @@ func (jsonStateOps[S]) toMap(s S) (map[string]any, error) {
 
 func (jsonStateOps[S]) fromMap(m map[string]any) (S, error) {
 	return stateToTyped[S](m)
+}
+
+// hasKey uses targeted reflection to check if the struct field corresponding
+// to the given JSON tag key has a non-zero value. This avoids the full
+// json.Marshal that toMap performs.
+func (jsonStateOps[S]) hasKey(state S, key string) bool {
+	fieldIdx, ok := jsonFieldIndex[S](key)
+	if !ok {
+		// Key doesn't correspond to a struct field — treat as abstract scheduling key.
+		// Return false so the caller can decide to add it unconditionally.
+		return false
+	}
+	v := reflect.ValueOf(&state).Elem()
+	field := v.Field(fieldIdx)
+	return !field.IsZero()
+}
+
+// jsonFieldCache caches the mapping from JSON tag name to struct field index
+// for each type. This avoids repeated reflection on every hasKey call.
+var jsonFieldCache sync.Map // map[reflect.Type]map[string]int
+
+// jsonFieldIndex returns the struct field index for the given JSON tag key.
+// It caches the mapping per type for performance.
+func jsonFieldIndex[S any](key string) (int, bool) {
+	var zero S
+	t := reflect.TypeOf(zero)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return 0, false
+	}
+
+	// Check cache first.
+	if cached, ok := jsonFieldCache.Load(t); ok {
+		m := cached.(map[string]int)
+		idx, found := m[key]
+		return idx, found
+	}
+
+	// Build the mapping.
+	m := make(map[string]int, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		tag := field.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		// Parse the tag name (before any comma options like ",omitempty").
+		name := strings.Split(tag, ",")[0]
+		if name == "" {
+			continue
+		}
+		m[name] = i
+	}
+
+	jsonFieldCache.Store(t, m)
+	idx, found := m[key]
+	return idx, found
 }
 
 // GraphState is an optional base struct that typed graph states can embed to get
