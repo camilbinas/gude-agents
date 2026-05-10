@@ -9,6 +9,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // Summary memory integration tests that call real LLM APIs.
@@ -241,5 +242,177 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(bobResult), "bob") {
 		t.Errorf("expected bob's conversation to remember 'Bob', got: %s", bobResult)
+	}
+}
+
+// TestIntegration_Summary_ToolCallsSurviveSummarization verifies that
+// summarization doesn't leave orphaned tool_result blocks when the
+// conversation includes tool calls. This is a regression test for a bug
+// where the summary cut point could land between a tool_use and its
+// corresponding tool_result, causing provider validation errors.
+func TestIntegration_Summary_ToolCallsSurviveSummarization(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	store := conversation.NewInMemory()
+
+	summaryFn := conversation.DefaultSummaryFunc(p)
+
+	// Low threshold (3 messages) to trigger summarization quickly.
+	summaryStore, err := conversation.NewSummary(store, 3, summaryFn,
+		conversation.WithSummaryLogger(testLogger(t)),
+		conversation.WithPreserveRecentMessages(1),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent with a simple tool that the LLM will call.
+	lookupTool := newLookupTool()
+
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant. When asked about a city's population, use the lookup tool. Be brief."),
+		lookupTool,
+		agent.WithConversation(summaryStore, "tool-summary-conv"),
+		agent.WithMaxIterations(5),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	c := agent.NewContext(ctx)
+
+	// Turn 1: trigger a tool call.
+	result, err := a.Invoke(c, "What is the population of Berlin?")
+	if err != nil {
+		t.Fatalf("Turn 1 error: %v", err)
+	}
+	t.Logf("Turn 1: %s", result)
+	if !strings.Contains(strings.ToLower(result), "3") {
+		t.Logf("Warning: expected mention of population ~3.6M, got: %s", result)
+	}
+
+	// Turn 2: another tool call to push past the threshold.
+	result, err = a.Invoke(c, "And what about Paris?")
+	if err != nil {
+		t.Fatalf("Turn 2 error: %v", err)
+	}
+	t.Logf("Turn 2: %s", result)
+
+	// Wait for summarization.
+	summaryStore.Wait()
+
+	// Turn 3: this is the critical turn — if summarization left orphaned
+	// tool_result blocks, this call will fail with a provider validation error.
+	result, err = a.Invoke(c, "Which city is larger?")
+	if err != nil {
+		t.Fatalf("Turn 3 (post-summary) error: %v\nThis likely means summarization left orphaned tool_result blocks.", err)
+	}
+	t.Logf("Turn 3 (post-summary): %s", result)
+
+	// The agent should still be able to answer based on context.
+	lower := strings.ToLower(result)
+	if !strings.Contains(lower, "paris") && !strings.Contains(lower, "berlin") {
+		t.Errorf("expected answer to mention Paris or Berlin, got: %s", result)
+	}
+}
+
+func newLookupTool() []tool.Tool {
+	type CityInput struct {
+		City string `json:"city" description:"City name" required:"true"`
+	}
+	t := tool.New("lookup_population", "Look up the population of a city",
+		func(_ context.Context, in CityInput) (string, error) {
+			populations := map[string]string{
+				"berlin": "3.6 million",
+				"paris":  "2.1 million",
+				"london": "8.9 million",
+			}
+			city := strings.ToLower(in.City)
+			if pop, ok := populations[city]; ok {
+				return city + " has a population of " + pop, nil
+			}
+			return "Population data not available for " + in.City, nil
+		},
+	)
+	return []tool.Tool{t}
+}
+
+// TestIntegration_TokenSummary_ToolCallsSurviveSummarization verifies that
+// the token-based summary strategy doesn't leave orphaned tool_result blocks
+// when summarizing conversations that include tool calls. Same regression
+// scenario as the message-count test, but using TokenSummary which triggers
+// based on actual provider-reported input token count.
+func TestIntegration_TokenSummary_ToolCallsSurviveSummarization(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	store := conversation.NewInMemory()
+
+	summaryFn := conversation.DefaultSummaryFunc(p)
+
+	// Low token threshold to trigger summarization after a couple of tool-call turns.
+	// A single tool-call turn typically uses ~500-1000 input tokens with context.
+	tokenSummary, err := conversation.NewTokenSummary(store, 2000, summaryFn,
+		conversation.WithTokenSummaryLogger(testLogger(t)),
+		conversation.WithTokenPreserveRecentMessages(1),
+		conversation.WithTokenTriggerThreshold(60), // trigger at 60% = ~1200 tokens
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tokenSummary.Close()
+
+	lookupTools := newLookupTool()
+
+	a, err := agent.New(p,
+		prompt.Text("You are a helpful assistant. When asked about a city's population, use the lookup_population tool. Be brief — one sentence max."),
+		lookupTools,
+		agent.WithConversation(tokenSummary, "token-tool-conv"),
+		agent.WithMaxIterations(5),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	c := agent.NewContext(ctx)
+
+	// Turn 1: trigger a tool call.
+	result, err := a.Invoke(c, "What is the population of London?")
+	if err != nil {
+		t.Fatalf("Turn 1 error: %v", err)
+	}
+	t.Logf("Turn 1: %s", result)
+
+	// Turn 2: another tool call to push token count past threshold.
+	result, err = a.Invoke(c, "And Berlin?")
+	if err != nil {
+		t.Fatalf("Turn 2 error: %v", err)
+	}
+	t.Logf("Turn 2: %s", result)
+
+	// Turn 3: one more to ensure we're well past the threshold.
+	result, err = a.Invoke(c, "What about Paris?")
+	if err != nil {
+		t.Fatalf("Turn 3 error: %v", err)
+	}
+	t.Logf("Turn 3: %s", result)
+
+	// Wait for background summarization.
+	tokenSummary.Wait()
+
+	// Turn 4: critical — if summarization left orphaned tool_result blocks,
+	// this will fail with a provider validation error.
+	result, err = a.Invoke(c, "Which of those three cities is the largest?")
+	if err != nil {
+		t.Fatalf("Turn 4 (post-summary) error: %v\nThis likely means token summarization left orphaned tool_result blocks.", err)
+	}
+	t.Logf("Turn 4 (post-summary): %s", result)
+
+	// Should mention London (the largest of the three).
+	if !strings.Contains(strings.ToLower(result), "london") {
+		t.Errorf("expected answer to mention London (largest), got: %s", result)
 	}
 }

@@ -101,18 +101,24 @@ func TestIntegration_Graph_Checkpoint_StepByStep(t *testing.T) {
 	}
 
 	// Simple 3-node pipeline with no LLM (pure logic).
-	g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
-		s["a"] = "done"
+	if _, err := g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
+		s["a_out"] = "done"
 		return s, nil
-	}, graph.In(), graph.Out("a_out"))
-	g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
-		s["b"] = "done"
+	}, graph.In(), graph.Out("a_out")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
+		s["b_out"] = "done"
 		return s, nil
-	}, graph.In("a_out"), graph.Out("b_out"))
-	g.Node("c", func(_ context.Context, s graph.State) (graph.State, error) {
-		s["c"] = "done"
+	}, graph.In("a_out"), graph.Out("b_out")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Node("c", func(_ context.Context, s graph.State) (graph.State, error) {
+		s["c_out"] = "done"
 		return s, nil
-	}, graph.In("b_out"), graph.Out("c_out"))
+	}, graph.In("b_out"), graph.Out("c_out")); err != nil {
+		t.Fatal(err)
+	}
 	g.Start("a")
 
 	ctx := context.Background()
@@ -160,15 +166,19 @@ func TestIntegration_Graph_Checkpoint_RewindAndReplay(t *testing.T) {
 	}
 
 	var callCount int
-	g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
+	if _, err := g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
 		callCount++
-		s["a"] = callCount
+		s["a_out"] = callCount
 		return s, nil
-	}, graph.In(), graph.Out("a_out"))
-	g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
-		s["b"] = "done"
+	}, graph.In(), graph.Out("a_out")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
+		s["b_out"] = "done"
 		return s, nil
-	}, graph.In("a_out"), graph.Out("b_out"))
+	}, graph.In("a_out"), graph.Out("b_out")); err != nil {
+		t.Fatal(err)
+	}
 	g.Start("a")
 
 	ctx := context.Background()
@@ -179,8 +189,8 @@ func TestIntegration_Graph_Checkpoint_RewindAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
-	if result.State["a"] != 1 {
-		t.Errorf("expected a=1, got %v", result.State["a"])
+	if result.State["a_out"] != 1 {
+		t.Errorf("expected a_out=1, got %v", result.State["a_out"])
 	}
 
 	// Rewind to version 1 (after "a").
@@ -193,8 +203,8 @@ func TestIntegration_Graph_Checkpoint_RewindAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume after rewind error: %v", err)
 	}
-	if result.State["b"] != "done" {
-		t.Errorf("expected b=done after rewind+resume, got %v", result.State["b"])
+	if result.State["b_out"] != "done" {
+		t.Errorf("expected b_out=done after rewind+resume, got %v", result.State["b_out"])
 	}
 
 	// Verify history has more than the original 2 checkpoints.
