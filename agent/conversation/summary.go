@@ -410,6 +410,10 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		}
 	}
 
+	// Use safeTruncate to advance past any orphaned tool_result blocks whose
+	// corresponding tool_use blocks were removed during summarization.
+	tail = safeTruncate(latest, preserveFrom)
+
 	// Build the new message list: summary pair + preserved tail.
 	newMsgs := make([]agent.Message, 0, 2+len(tail))
 	newMsgs = append(newMsgs, summaryPair[0], summaryPair[1])
