@@ -36,7 +36,7 @@ func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
 			out["route_general"] = "go"
 		}
 		return out, nil
-	}, []string{"route_technical", "route_general", "category"}, []string{})
+	}, graph.In(), graph.Out("route_technical", "route_general", "category"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
 	_, err = g.Node("technical", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["result"] = "handled by technical"
 		return state, nil
-	}, []string{"result_technical"}, []string{"route_technical"})
+	}, graph.In("route_technical"), graph.Out("result_technical"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestIntegration_Graph_ConditionalRouting(t *testing.T) {
 	_, err = g.Node("general", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["result"] = "handled by general"
 		return state, nil
-	}, []string{"result_general"}, []string{"route_general"})
+	}, graph.In("route_general"), graph.Out("result_general"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestIntegration_Graph_ConditionalEndSignal(t *testing.T) {
 			out["route_process"] = "go"
 		}
 		return out, nil
-	}, []string{"route_process", "check_done"}, []string{})
+	}, graph.In(), graph.Out("route_process", "check_done"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestIntegration_Graph_ConditionalEndSignal(t *testing.T) {
 	_, err = g.Node("process", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["processed"] = true
 		return state, nil
-	}, []string{"processed_out"}, []string{"route_process"})
+	}, graph.In("route_process"), graph.Out("processed_out"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
 	_, err = g.Node("start", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["started"] = true
 		return state, nil
-	}, []string{"started"}, []string{})
+	}, graph.In(), graph.Out("started"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
 	_, err = g.Node("branch_a", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["a_done"] = true
 		return state, nil
-	}, []string{"a_done"}, []string{"started"})
+	}, graph.In("started"), graph.Out("a_done"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
 	_, err = g.Node("branch_b", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["b_done"] = true
 		return state, nil
-	}, []string{"b_done"}, []string{"started"})
+	}, graph.In("started"), graph.Out("b_done"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestIntegration_Graph_ForkAndJoin(t *testing.T) {
 		bDone, _ := state["b_done"].(bool)
 		state["both_done"] = aDone && bDone
 		return state, nil
-	}, []string{"both_done"}, []string{"a_done", "b_done"})
+	}, graph.In("a_done", "b_done"), graph.Out("both_done"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestIntegration_Graph_AgentNode(t *testing.T) {
 		answer, _ := state["answer"].(string)
 		state["formatted"] = "Answer: " + answer
 		return state, nil
-	}, []string{"formatted"}, []string{"answer"})
+	}, graph.In("answer"), graph.Out("formatted"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestIntegration_Graph_TypedState(t *testing.T) {
 	_, err = g.Node("uppercase", func(_ context.Context, s PipelineState) (PipelineState, error) {
 		s.Upper = strings.ToUpper(s.Input)
 		return s, nil
-	}, []string{"upper"}, []string{})
+	}, graph.In(), graph.Out("upper"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestIntegration_Graph_TypedState(t *testing.T) {
 	_, err = g.Node("count", func(_ context.Context, s PipelineState) (PipelineState, error) {
 		s.Length = len(s.Upper)
 		return s, nil
-	}, []string{"length"}, []string{"upper"})
+	}, graph.In("upper"), graph.Out("length"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestIntegration_Graph_LLMRouter(t *testing.T) {
 			out["route_language"] = "go"
 		}
 		return out, nil
-	}, []string{"route_math", "route_language"}, []string{})
+	}, graph.In(), graph.Out("route_math", "route_language"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestIntegration_Graph_LLMRouter(t *testing.T) {
 	_, err = g.Node("math_expert", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["handler"] = "math_expert"
 		return state, nil
-	}, []string{"handler_math"}, []string{"route_math"})
+	}, graph.In("route_math"), graph.Out("handler_math"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestIntegration_Graph_LLMRouter(t *testing.T) {
 	_, err = g.Node("language_expert", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["handler"] = "language_expert"
 		return state, nil
-	}, []string{"handler_language"}, []string{"route_language"})
+	}, graph.In("route_language"), graph.Out("handler_language"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestIntegration_Graph_MaxIterationsExceeded(t *testing.T) {
 		count, _ := state["count"].(int)
 		state["count"] = count + 1
 		return state, nil
-	}, []string{"a_out"}, []string{})
+	}, graph.In(), graph.Out("a_out"))
 	if err != nil {
 		t.Fatal(err)
 	}

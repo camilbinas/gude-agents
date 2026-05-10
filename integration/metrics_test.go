@@ -142,7 +142,7 @@ func TestIntegration_Metrics_GraphPipeline(t *testing.T) {
 	_, err = g.Node("step1", func(_ context.Context, state graph.State) (graph.State, error) {
 		state["value"] = 1
 		return state, nil
-	}, []string{"step1_out"}, []string{})
+	}, graph.In(), graph.Out("step1_out"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestIntegration_Metrics_GraphPipeline(t *testing.T) {
 		v, _ := state["value"].(int)
 		state["value"] = v + 1
 		return state, nil
-	}, []string{"step2_out"}, []string{"step1_out"})
+	}, graph.In("step1_out"), graph.Out("step2_out"))
 	if err != nil {
 		t.Fatal(err)
 	}

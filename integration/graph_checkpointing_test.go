@@ -46,7 +46,7 @@ func TestIntegration_Graph_Checkpoint_InterruptAndResume(t *testing.T) {
 		answer, _ := state["answer"].(string)
 		state["formatted"] = "Result: " + answer
 		return state, nil
-	}, []string{"formatted"}, []string{"answer"})
+	}, graph.In("answer"), graph.Out("formatted"))
 
 	g.Start("ask")
 	g.InterruptAfter("ask")
@@ -104,15 +104,15 @@ func TestIntegration_Graph_Checkpoint_StepByStep(t *testing.T) {
 	g.Node("a", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["a"] = "done"
 		return s, nil
-	}, []string{"a_out"}, []string{})
+	}, graph.In(), graph.Out("a_out"))
 	g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["b"] = "done"
 		return s, nil
-	}, []string{"b_out"}, []string{"a_out"})
+	}, graph.In("a_out"), graph.Out("b_out"))
 	g.Node("c", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["c"] = "done"
 		return s, nil
-	}, []string{"c_out"}, []string{"b_out"})
+	}, graph.In("b_out"), graph.Out("c_out"))
 	g.Start("a")
 
 	ctx := context.Background()
@@ -164,11 +164,11 @@ func TestIntegration_Graph_Checkpoint_RewindAndReplay(t *testing.T) {
 		callCount++
 		s["a"] = callCount
 		return s, nil
-	}, []string{"a_out"}, []string{})
+	}, graph.In(), graph.Out("a_out"))
 	g.Node("b", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["b"] = "done"
 		return s, nil
-	}, []string{"b_out"}, []string{"a_out"})
+	}, graph.In("a_out"), graph.Out("b_out"))
 	g.Start("a")
 
 	ctx := context.Background()
@@ -242,16 +242,16 @@ func TestIntegration_Graph_Checkpoint_InterruptBeforeWithLLMRouter(t *testing.T)
 			out["route_geography"] = "go"
 		}
 		return out, nil
-	}, []string{"route_math", "route_geography", "category"}, []string{})
+	}, graph.In(), graph.Out("route_math", "route_geography", "category"))
 
 	g.Node("math", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["result"] = "math handler"
 		return s, nil
-	}, []string{"result_math"}, []string{"route_math"})
+	}, graph.In("route_math"), graph.Out("result_math"))
 	g.Node("geography", func(_ context.Context, s graph.State) (graph.State, error) {
 		s["result"] = "geography handler"
 		return s, nil
-	}, []string{"result_geography"}, []string{"route_geography"})
+	}, graph.In("route_geography"), graph.Out("result_geography"))
 
 	g.Start("classify")
 
