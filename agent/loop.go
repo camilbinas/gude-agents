@@ -210,7 +210,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			if errors.As(err, &pe) {
 				return cumulative, "", err
 			}
-			if errors.Is(err, ErrRateLimitExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, ErrRateLimitExceeded) {
 				return cumulative, "", err
 			}
 			return cumulative, "", &ProviderError{Cause: err}
