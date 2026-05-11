@@ -82,6 +82,9 @@ func WithInputGuardrail(g ...InputGuardrail) Option {
 }
 
 // WithOutputGuardrail adds output guardrail(s) applied to the final response.
+// With InvokeStream, chunks stream in real-time and guardrails run after the
+// full response is assembled. A GuardrailError is returned if validation fails.
+// With Invoke, the returned text is always the guardrail-processed result.
 func WithOutputGuardrail(g ...OutputGuardrail) Option {
 	return func(a *Agent) error {
 		a.outputGuardrails = append(a.outputGuardrails, g...)

@@ -4,6 +4,14 @@
 // Output guardrails run after the LLM produces its final response.
 // Both can transform content or abort the invocation by returning an error.
 //
+// By default, output guardrails use stream-through mode: chunks are delivered
+// in real-time and guardrails validate the full response at the end. If a
+// guardrail rejects the response, a GuardrailError is returned (but the caller
+// may have already received partial chunks via InvokeStream).
+//
+// For buffered mode (chunks held until guardrails pass), see the
+// guardrails-buffered example.
+//
 // Run:
 //
 //	go run ./guardrails
@@ -85,6 +93,7 @@ func main() {
 		agent.WithInputGuardrail(sanitize),
 		agent.WithInputGuardrail(blocklist("confidential", "password", "secret")),
 		// Output guardrails — run in order on the final response.
+		// Chunks stream in real-time; guardrails validate after completion.
 		agent.WithOutputGuardrail(redactPII),
 		agent.WithOutputGuardrail(maxLength(2000)),
 	)
@@ -94,23 +103,33 @@ func main() {
 
 	ctx := agent.Background()
 
-	// Normal message — passes all guardrails.
+	// ── Stream-through: chunks arrive in real-time ────────────────────
+	fmt.Println("── Streaming with output guardrails (stream-through) ──")
+	err = a.InvokeStream(ctx, "What is the capital of France?", func(chunk string) {
+		fmt.Print(chunk) // chunks arrive immediately, not buffered
+	})
+	fmt.Println()
+	if err != nil {
+		var ge *agent.GuardrailError
+		if errors.As(err, &ge) {
+			fmt.Println("Guardrail rejected:", ge)
+		} else {
+			log.Fatal(err)
+		}
+	}
+
+	// ── Invoke (non-streaming): returns guardrail-processed text ──────
+	fmt.Println("\n── Invoke returns guardrail-processed text ──")
 	result, err := a.Invoke(ctx, "  What is the capital of France?  ")
 	if err != nil {
 		log.Fatalf("unexpected error: %v", err)
 	}
 	fmt.Println("Response:", result)
 
-	// Blocked message — input guardrail rejects it.
+	// ── Blocked message — input guardrail rejects it ──────────────────
 	_, err = a.Invoke(ctx, "What is the password for the admin account?")
 	if err != nil {
 		fmt.Println("Blocked:", err)
-	}
-
-	// Demonstrate that errors.Is works for custom sentinel errors.
-	var blocked *blockedError
-	if errors.As(err, &blocked) {
-		fmt.Println("Term:", blocked.Term)
 	}
 }
 

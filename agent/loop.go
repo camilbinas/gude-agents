@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,19 +33,34 @@ func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) 
 // Invoke is a convenience wrapper over InvokeStream that collects all
 // streamed chunks into a single string.
 func (a *Agent) Invoke(c *Context, userMessage string) (string, error) {
-	var sb strings.Builder
-	err := a.InvokeStream(c, userMessage, func(chunk string) {
-		sb.WriteString(chunk)
-	})
+	convID := resolveConversationID(c, a.conversationID)
+	h := a.hooks(c)
+
+	c, invoke := h.onInvokeStart(c, a.invokeParams(convID, userMessage, c))
+	usage, text, err := a.invokeInner(c, userMessage, convID, &h)
+	invoke.finish(err, usage)
+	c.setUsage(usage)
+
 	if err != nil {
 		return "", err
 	}
-	return sb.String(), nil
+	return text, nil
 }
 
 // invokeStreamInner contains the core InvokeStream logic, separated so that
 // the tracing finish function in InvokeStream can capture the final error and usage.
 func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string, cb StreamCallback, h *hooks) (TokenUsage, error) {
+	usage, _, err := a.invokeCommon(c, userMessage, convID, cb, h)
+	return usage, err
+}
+
+// invokeInner contains the core Invoke logic, returning the final (guardrail-processed) text.
+func (a *Agent) invokeInner(c *Context, userMessage string, convID string, h *hooks) (TokenUsage, string, error) {
+	return a.invokeCommon(c, userMessage, convID, nil, h)
+}
+
+// invokeCommon is the shared implementation for both Invoke and InvokeStream.
+func (a *Agent) invokeCommon(c *Context, userMessage string, convID string, cb StreamCallback, h *hooks) (TokenUsage, string, error) {
 	var cumulative TokenUsage
 
 	// Input guardrails.
@@ -57,7 +71,7 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 		msg, err = g(gC, msg)
 		gf.finish(err, msg)
 		if err != nil {
-			return cumulative, &GuardrailError{Direction: "input", Cause: err}
+			return cumulative, "", &GuardrailError{Direction: "input", Cause: err}
 		}
 	}
 
@@ -68,7 +82,7 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 		history, err := a.conversation.Load(loadC, convID)
 		cf.finish(err, len(history))
 		if err != nil {
-			return cumulative, fmt.Errorf("conversation load: %w", err)
+			return cumulative, "", fmt.Errorf("conversation load: %w", err)
 		}
 		messages = history
 	}
@@ -76,7 +90,7 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 	// Merge and validate inference config.
 	mergedCfg := mergeInferenceConfig(a.inferenceConfig, c.InferenceConfig())
 	if err := validateInferenceConfig(mergedCfg); err != nil {
-		return cumulative, fmt.Errorf("inference config: %w", err)
+		return cumulative, "", fmt.Errorf("inference config: %w", err)
 	}
 
 	// RAG retrieval — inject context as a separate user/assistant turn.
@@ -86,7 +100,7 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 		docs, err := a.retriever.Retrieve(retC, msg)
 		rf.finish(err, len(docs))
 		if err != nil {
-			return cumulative, fmt.Errorf("retriever: %w", err)
+			return cumulative, "", fmt.Errorf("retriever: %w", err)
 		}
 		if len(docs) > 0 {
 			formatter := a.contextFormatter
@@ -107,7 +121,7 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 	images := c.Images()
 	for _, img := range images {
 		if err := img.Source.Validate(); err != nil {
-			return cumulative, err
+			return cumulative, "", err
 		}
 	}
 	if len(images) > 0 {
@@ -118,7 +132,7 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 	documents := c.Documents()
 	for _, doc := range documents {
 		if err := doc.Source.Validate(); err != nil {
-			return cumulative, err
+			return cumulative, "", err
 		}
 	}
 	if len(documents) > 0 {
@@ -136,8 +150,8 @@ func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string,
 	firstContent = append(firstContent, TextBlock{Text: msg})
 	messages = append(messages, Message{Role: RoleUser, Content: firstContent})
 
-	usage, _, err := a.runLoop(c, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h, nil)
-	return usage, err
+	usage, text, err := a.runLoop(c, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h, nil)
+	return usage, text, err
 }
 
 // runLoopConfig holds internal options for runLoop that are not part of the
@@ -157,16 +171,8 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 	for iteration := range a.maxIterations {
 		iterC, iterF := h.onIterationStart(c, iteration+1)
 
-		// Buffer chunks when output guardrails are configured.
-		hasOutputGuardrails := len(a.outputGuardrails) > 0
-		var bufferedChunks []string
-		streamCB := func(chunk string) {
-			if hasOutputGuardrails {
-				bufferedChunks = append(bufferedChunks, chunk)
-			} else if cb != nil {
-				cb(chunk)
-			}
-		}
+		// Stream chunks directly to the callback.
+		streamCB := cb
 
 		// Normalize messages.
 		converseMessages := messages
@@ -304,17 +310,6 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			if gErr != nil {
 				iterF.finish(0, true)
 				return cumulative, "", &GuardrailError{Direction: "output", Cause: gErr}
-			}
-		}
-
-		// Flush buffered chunks or send guardrail-modified text.
-		if hasOutputGuardrails && cb != nil {
-			if finalText == resp.Text {
-				for _, chunk := range bufferedChunks {
-					cb(chunk)
-				}
-			} else {
-				cb(finalText)
 			}
 		}
 

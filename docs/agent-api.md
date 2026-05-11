@@ -119,7 +119,7 @@ a2, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
 | Option | Description |
 |---|---|
 | `WithInputGuardrail(g...)` | Functions that validate/transform the user message before it reaches the provider. Any error aborts the invocation |
-| `WithOutputGuardrail(g...)` | Functions that validate/transform the final response. When configured, streamed chunks are buffered until guardrails pass |
+| `WithOutputGuardrail(g...)` | Functions that validate/transform the final response. With `InvokeStream`, chunks stream in real-time and guardrails run after completion — a `GuardrailError` is returned if rejected. With `Invoke`, the returned text is always guardrail-processed |
 | `WithMiddleware(mws...)` | Functions that wrap tool execution. Applied in order (first = outermost). Accumulates across multiple calls |
 
 ### Tool Filtering
@@ -331,7 +331,7 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
    - If the provider returns **tool calls**: the agent executes them and loops back.
    - If the provider returns a **text response**: the loop exits. Token usage is recorded against the rate limiter.
    - If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
-7. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
+7. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions. With `InvokeStream`, chunks have already been delivered; a `GuardrailError` is returned if rejected. With `Invoke`, the returned text is always guardrail-processed.
 8. **Conversation save** — if `WithConversation` is configured, the full conversation is saved.
 
 If the loop reaches `maxIterations` without a text response, an error is returned.
