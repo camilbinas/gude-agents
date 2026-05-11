@@ -210,6 +210,9 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			if errors.As(err, &pe) {
 				return cumulative, "", err
 			}
+			if errors.Is(err, ErrRateLimitExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return cumulative, "", err
+			}
 			return cumulative, "", &ProviderError{Cause: err}
 		}
 
@@ -456,6 +459,13 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 	var lastErr error
 
 	for attempt := range maxAttempts {
+		// Rate limit acquisition (before each attempt, including retries)
+		if a.rateLimiter != nil {
+			if err := a.rateLimiter.Acquire(ctx); err != nil {
+				return nil, err
+			}
+		}
+
 		callCtx := ctx
 		var cancel context.CancelFunc
 		if a.providerTimeout > 0 {
@@ -467,6 +477,10 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 			cancel()
 		}
 		if err == nil {
+			// Record actual token usage on success
+			if a.rateLimiter != nil {
+				a.rateLimiter.Record(resp.Usage)
+			}
 			return resp, nil
 		}
 

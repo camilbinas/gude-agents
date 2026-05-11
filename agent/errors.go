@@ -1,6 +1,13 @@
 package agent
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrRateLimitExceeded is returned when a rate limit is exceeded in FailFast mode.
+// It is detectable via errors.Is for programmatic error handling.
+var ErrRateLimitExceeded = errors.New("rate limit exceeded")
 
 // ProviderError wraps a failure from an LLM provider call.
 type ProviderError struct {

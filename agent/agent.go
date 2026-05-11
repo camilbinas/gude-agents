@@ -47,6 +47,9 @@ type Agent struct {
 	outputGuardrails []OutputGuardrail
 	toolFilters      []ToolFilter
 
+	// Rate limiting
+	rateLimiter *RateLimiter // nil = no rate limiting
+
 	// Resilience
 	providerTimeout time.Duration // 0 = no timeout
 	retryMax        int           // 0 = no retry

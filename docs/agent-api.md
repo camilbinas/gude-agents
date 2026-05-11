@@ -34,6 +34,7 @@ Use `agent.Default` for most cases. Use `agent.Orchestrator` + `agent.Worker` wh
 | `WithTimeout(d)` | no timeout | Per-call timeout for provider calls. Prevents hung connections in HTTP servers |
 | `WithRetry(maxRetries, baseDelay)` | no retry | Exponential backoff for transient provider errors |
 | `WithTokenBudget(maxTokens)` | no budget | Max cumulative tokens (input + output) per invocation |
+| `WithRateLimiter(rl)` | no limiter | Shared rate limiter enforcing RPM/TPM limits across provider calls. See [Rate Limiting](#rate-limiting) |
 
 `WithTimeout` and `WithRetry` compose naturally — each retry attempt gets its own fresh timeout:
 
@@ -92,6 +93,26 @@ result, err := a.Invoke(c, "Be creative!")
 `WithRetriever(r)` attaches a `Retriever` for automatic RAG. The retriever fetches documents once per invocation (before the first provider call) and injects them as context. See [RAG Pipeline](rag.md) for details.
 
 `WithContextFormatter(f)` customizes how retrieved documents are rendered. Defaults to numbered items in `<retrieved_context>` XML tags.
+
+### Rate Limiting
+
+`WithRateLimiter(rl)` attaches a `*RateLimiter` that enforces RPM and TPM limits on provider calls. A single instance can be shared across multiple agents to collectively respect a provider's rate limits.
+
+```go
+rl, _ := agent.NewRateLimiter(60, 100000, agent.WithSlidingWindow(), agent.WithFailFast())
+
+a1, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
+a2, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
+```
+
+| RateLimiter Option | Default | Description |
+|---|---|---|
+| `WithSlidingWindow()` | ✓ | Tracks consumption over a continuously advancing 60-second window |
+| `WithFixedWindow()` | — | Resets counters at fixed 60-second intervals |
+| `WithBlock()` | ✓ | Waits until capacity is available (respects context cancellation) |
+| `WithFailFast()` | — | Returns `ErrRateLimitExceeded` immediately when a limit is exceeded |
+
+`ErrRateLimitExceeded` short-circuits retries — if the limiter rejects a call during a retry attempt, the error propagates immediately.
 
 ### Guardrails & Middleware
 
@@ -305,9 +326,10 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
 5. **Document injection** — if `WithDocuments` was called on the `*Context`, documents are prepended before images in the first user message.
 6. **Agent loop** (up to `maxIterations`):
    - If a `ToolFilter` is set, it is evaluated to determine which tools are available for this call.
+   - If a `RateLimiter` is configured, `Acquire` is called before each provider call (including retries). In block mode it waits for capacity; in fail-fast mode it returns `ErrRateLimitExceeded`.
    - The provider is called with the current messages, system prompt, and tool specs.
    - If the provider returns **tool calls**: the agent executes them and loops back.
-   - If the provider returns a **text response**: the loop exits.
+   - If the provider returns a **text response**: the loop exits. Token usage is recorded against the rate limiter.
    - If a token budget is set and exceeded, the loop aborts with `ErrTokenBudgetExceeded`.
 7. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions.
 8. **Conversation save** — if `WithConversation` is configured, the full conversation is saved.

@@ -111,6 +111,16 @@ func WithTokenBudget(maxTokens int) Option {
 	}
 }
 
+// WithRateLimiter attaches a shared RateLimiter to the agent.
+// The RateLimiter's Acquire method is called before each provider call,
+// and Record is called after each successful provider call.
+func WithRateLimiter(rl *RateLimiter) Option {
+	return func(a *Agent) error {
+		a.rateLimiter = rl
+		return nil
+	}
+}
+
 // WithRetriever attaches a Retriever to the agent for RAG.
 func WithRetriever(r Retriever) Option {
 	return func(a *Agent) error {
