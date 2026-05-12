@@ -41,31 +41,20 @@ const (
 
 const divider = dim + "────────────────────────────────────────────────" + reset
 
-// spinner frames for tool execution animation.
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
 type debugHook struct {
 	mu        sync.Mutex
 	out       io.Writer
 	agentName string
-
-	// Active tool spinners: toolName → cancel func.
-	spinners map[string]func()
 }
 
 func newDebugHook(out io.Writer) *debugHook {
-	return &debugHook{out: out, spinners: make(map[string]func())}
+	return &debugHook{out: out}
 }
 
 func (h *debugHook) p(format string, args ...any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	fmt.Fprintf(h.out, format, args...)
-}
-
-// clearLine overwrites the current line. Must be called with mu held.
-func (h *debugHook) clearLine() {
-	fmt.Fprintf(h.out, "\r\033[2K")
 }
 
 // Compile-time interface checks.
@@ -127,62 +116,19 @@ func (h *debugHook) OnProviderCallEnd(err error, usage agent.TokenUsage, toolCal
 }
 
 func (h *debugHook) OnToolStart(toolName string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Start a spinner for this tool.
-	stop := make(chan struct{})
-	h.spinners[toolName] = func() { close(stop) }
-
-	// Print initial line.
-	fmt.Fprintf(h.out, "    %s⚙ %s%s …\n", cyan, toolName, reset)
-
-	// Background spinner goroutine.
-	go func() {
-		ticker := time.NewTicker(80 * time.Millisecond)
-		defer ticker.Stop()
-		frame := 0
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				h.mu.Lock()
-				h.clearLine()
-				fmt.Fprintf(h.out, "    %s%s %s%s", cyan, spinnerFrames[frame%len(spinnerFrames)], toolName, reset)
-				h.mu.Unlock()
-				frame++
-			}
-		}
-	}()
+	h.p("    %s⚙ %s%s …\n", cyan, toolName, reset)
 }
 
 func (h *debugHook) OnToolEnd(toolName string, err error, duration time.Duration) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Stop the spinner.
-	if cancel, ok := h.spinners[toolName]; ok {
-		cancel()
-		delete(h.spinners, toolName)
-	}
-
-	// Overwrite the spinner line with the final status.
-	h.clearLine()
 	if err != nil {
-		fmt.Fprintf(h.out, "    %s✗ %s  %s  %s%s\n", red, toolName, fmtDur(duration), fmtErr(err), reset)
+		h.p("    %s✗ %s  %s  %s%s\n", red, toolName, fmtDur(duration), fmtErr(err), reset)
 		return
 	}
-	fmt.Fprintf(h.out, "    %s✓ %s  %s%s\n", green, toolName, fmtDur(duration), reset)
+	h.p("    %s✓ %s  %s%s\n", green, toolName, fmtDur(duration), reset)
 }
 
 func (h *debugHook) OnToolLog(toolName string, msg string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Print the log message on a new line, indented under the tool.
-	h.clearLine()
-	fmt.Fprintf(h.out, "      %s→ %s%s\n", dim, msg, reset)
+	h.p("      %s→ %s%s\n", dim, msg, reset)
 }
 
 func (h *debugHook) OnGuardrailComplete(direction string, blocked bool, err error) {
@@ -231,13 +177,9 @@ func (h *debugHook) OnMaxIterationsExceeded(limit int) {
 	h.p("    %s⚠ max iterations (%d) exceeded%s\n", yellow, limit, reset)
 }
 
-func (h *debugHook) OnStreamChunk(text string) {
-	fmt.Print(text)
-}
+func (h *debugHook) OnStreamChunk(text string) {}
 
-func (h *debugHook) OnResponse(text string) {
-	fmt.Println(text)
-}
+func (h *debugHook) OnResponse(text string) {}
 
 // ---------------------------------------------------------------------------
 // GraphLoggingHook — graph lifecycle

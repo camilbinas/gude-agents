@@ -54,7 +54,9 @@ func main() {
 	fmt.Printf("Document URL: %s\n", docURL)
 	fmt.Println(strings.Repeat("─", 60))
 
-	if err := a.InvokeStream(docCtx, "Summarize this document. What are the key points?", nil); err != nil {
+	if err := a.InvokeStream(docCtx, "Summarize this document. What are the key points?", func(chunk string) {
+		fmt.Print(chunk)
+	}); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println()

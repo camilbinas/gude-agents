@@ -107,7 +107,14 @@ func New(apiKey string, opts ...Option) tool.Tool {
 			if err := json.Unmarshal(input, &req); err != nil {
 				return "", err
 			}
-			return search(ctx, client, apiKey, req.Query, maxResults, maxChars)
+			log := tool.LoggerFrom(ctx)
+			log.Logf("searching %q", req.Query)
+			result, err := search(ctx, client, apiKey, req.Query, maxResults, maxChars)
+			if err != nil {
+				return "", err
+			}
+			log.Logf("got results")
+			return result, nil
 		},
 	)
 }

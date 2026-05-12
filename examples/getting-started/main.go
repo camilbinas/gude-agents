@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -27,7 +28,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if _, err = a.Invoke(agent.Background(), "What is the capital of France?"); err != nil {
+	result, err := a.Invoke(agent.Background(), "What is the capital of France?")
+	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println(result)
 }
