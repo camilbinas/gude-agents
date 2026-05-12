@@ -19,6 +19,7 @@ type Context struct {
 	inferenceConfig *InferenceConfig
 	eventHook       EventHook
 	identifier      string
+	scopes          map[string]string
 	tracingHook     TracingHook
 	metricsHook     MetricsHook
 	loggingHook     LoggingHook
@@ -129,6 +130,40 @@ func (c *Context) WithIdentifier(id string) *Context {
 	return c
 }
 
+// WithScope sets a named scope value for multi-scope memory operations.
+// Use this when an agent needs multiple independent memory scopes (e.g. user
+// preferences scoped by user ID and project notes scoped by project ID).
+func (c *Context) WithScope(key, value string) *Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.scopes == nil {
+		c.scopes = make(map[string]string)
+	}
+	c.scopes[key] = value
+	return c
+}
+
+// Scope returns the value for a named scope, or empty string if not set.
+func (c *Context) Scope(key string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.scopes == nil {
+		return ""
+	}
+	return c.scopes[key]
+}
+
+// SetScope updates a named scope value. Same as WithScope but doesn't return
+// the context — use in tool handlers where chaining isn't needed.
+func (c *Context) SetScope(key, value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.scopes == nil {
+		c.scopes = make(map[string]string)
+	}
+	c.scopes[key] = value
+}
+
 // TracingHook returns the per-invocation tracing hook, or nil if none is set.
 func (c *Context) TracingHook() TracingHook {
 	return c.tracingHook
@@ -170,6 +205,22 @@ func FromContext(ctx context.Context) *Context {
 	return c
 }
 
+// ScopeFrom extracts a named scope value from a context.Context.
+// If the scope key is set, returns its value. Otherwise falls back to
+// Identifier(). Returns empty string if neither is set.
+func ScopeFrom(ctx context.Context, key string) string {
+	c := FromContext(ctx)
+	if c == nil {
+		return ""
+	}
+	if key != "" {
+		if v := c.Scope(key); v != "" {
+			return v
+		}
+	}
+	return c.Identifier()
+}
+
 // GetTyped retrieves a typed value from the invocation-scoped key-value store.
 // Returns the zero value and false if the key doesn't exist or the value is not
 // assignable to T. Eliminates the need for manual type assertions on Get results.
@@ -195,6 +246,15 @@ func (c *Context) WithValue(key, val any) *Context {
 // identifier) but has an independent key-value store. Use this when forking
 // parallel sub-invocations that should not share mutable KV state.
 func (c *Context) Clone() *Context {
+	c.mu.RLock()
+	var scopesCopy map[string]string
+	if c.scopes != nil {
+		scopesCopy = make(map[string]string, len(c.scopes))
+		for k, v := range c.scopes {
+			scopesCopy[k] = v
+		}
+	}
+	c.mu.RUnlock()
 	return &Context{
 		Context:         c.Context,
 		data:            make(map[any]any),
@@ -204,6 +264,7 @@ func (c *Context) Clone() *Context {
 		inferenceConfig: c.inferenceConfig,
 		eventHook:       c.eventHook,
 		identifier:      c.identifier,
+		scopes:          scopesCopy,
 		tracingHook:     c.tracingHook,
 		metricsHook:     c.metricsHook,
 		loggingHook:     c.loggingHook,
@@ -227,6 +288,7 @@ func (c *Context) withContext(ctx context.Context) *Context {
 		inferenceConfig: c.inferenceConfig,
 		eventHook:       c.eventHook,
 		identifier:      c.identifier,
+		scopes:          c.scopes,
 		tracingHook:     c.tracingHook,
 		metricsHook:     c.metricsHook,
 		loggingHook:     c.loggingHook,

@@ -197,7 +197,10 @@ func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
 
 // ToolOption configures tool metadata.
 type ToolOption func(*toolCfg)
-type toolCfg struct{ name, description string }
+type toolCfg struct {
+	name, description string
+	scope             string // named scope key; empty = use Identifier()
+}
 
 // WithToolName sets the tool name.
 func WithToolName(name string) ToolOption {
@@ -217,6 +220,14 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
+// WithScope configures the tool to read its identifier from a named scope
+// on the context (via c.Scope(key)) instead of the default c.Identifier().
+func WithScope(key string) ToolOption {
+	return func(c *toolCfg) {
+		c.scope = key
+	}
+}
+
 // NewRememberTool creates a tool that stores values into an in-memory Store.
 func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	cfg := &toolCfg{name: "remember", description: "Store a memory entry for later recall."}
@@ -226,7 +237,7 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	schema := generateMemSchema[T]()
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx)
+			id := identifierFromContext(ctx, cfg.scope)
 			if id == "" {
 				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
@@ -255,7 +266,7 @@ func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	}
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx)
+			identifier := identifierFromContext(ctx, cfg.scope)
 			if identifier == "" {
 				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
@@ -293,7 +304,7 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	}
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx)
+			id := identifierFromContext(ctx, cfg.scope)
 			if id == "" {
 				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
@@ -342,7 +353,7 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	}
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx)
+			identifier := identifierFromContext(ctx, cfg.scope)
 			if identifier == "" {
 				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
 			}
@@ -360,11 +371,10 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 // --- Internal helpers ---
 
 // identifierFromContext extracts the identifier from a context.Context.
-func identifierFromContext(ctx context.Context) string {
-	if c := agent.FromContext(ctx); c != nil {
-		return c.Identifier()
-	}
-	return ""
+// If scope is non-empty, uses agent.ScopeFrom which checks the named scope
+// first, then falls back to Identifier().
+func identifierFromContext(ctx context.Context, scope string) string {
+	return agent.ScopeFrom(ctx, scope)
 }
 
 func parseMemSchema[T any]() (*memSchema, error) {

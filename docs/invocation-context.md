@@ -49,7 +49,8 @@ All `With*` methods mutate the `*Context` and return the same pointer for chaini
 | Method | Description |
 |---|---|
 | `WithConversationID(id)` | Route to a specific conversation in multi-tenant setups |
-| `WithIdentifier(id)` | Scoping identity for memory operations (user, tenant) |
+| `WithIdentifier(id)` | Default scoping identity for memory operations (user, tenant) |
+| `WithScope(key, value)` | Named scope for multi-dimensional identity (org, project, team, etc.) |
 | `WithImages(imgs)` | Attach images for vision-capable models |
 | `WithDocuments(docs)` | Attach PDFs, Word docs, spreadsheets |
 | `WithInferenceConfig(cfg)` | Override inference parameters for this call |
@@ -61,9 +62,8 @@ All `With*` methods mutate the `*Context` and return the same pointer for chaini
 
 ```go
 c := agent.Background().
-    WithConversationID("conv-123").
-    WithEventHook(myHook).
-    WithInferenceConfig(&agent.InferenceConfig{Temperature: &temp})
+    WithIdentifier("user-alice").
+    WithScope("project", "proj-atlas")
 ```
 
 ## Clone
@@ -76,6 +76,33 @@ for _, topic := range topics {
     go func() { a.Invoke(sub, topic.Question) }()
 }
 ```
+
+## Scopes
+
+Scopes are named string values on the context for multi-dimensional identity. While `WithIdentifier` sets a single default identity (typically the user), `WithScope` attaches additional named identities accessible anywhere in the pipeline.
+
+| Method | Description |
+|---|---|
+| `WithScope(key, value)` | Set a named scope (chainable) |
+| `Scope(key) string` | Read a named scope value |
+| `SetScope(key, value)` | Update a scope mid-invocation (e.g. from a tool handler) |
+| `ScopeFrom(ctx, key) string` | Helper: reads scope from context, falls back to `Identifier()` |
+
+```go
+c := agent.Background().
+    WithIdentifier("user-alice").
+    WithScope("org", "acme-corp").
+    WithScope("project", "proj-atlas")
+
+// Anywhere in the pipeline (tools, middleware, guardrails, filters):
+org := c.Scope("org")         // "acme-corp"
+project := c.Scope("project") // "proj-atlas"
+
+// Update mid-invocation:
+c.SetScope("project", "proj-orion")
+```
+
+Scopes flow through the entire pipeline. Any code that receives the `*Context` can read them — tool handlers via `agent.FromContext(ctx)`, middleware directly on `c`, guardrails, and tool filters. Memory tools use `WithScope` on the tool option to bind to a specific scope key (see [Long-Term Memory](memory.md#multi-scope-memory)).
 
 ## Token Usage
 

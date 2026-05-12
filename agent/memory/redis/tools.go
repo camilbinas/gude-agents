@@ -14,11 +14,10 @@ import (
 )
 
 // identifierFromContext extracts the identifier from a context.Context.
-func identifierFromContext(ctx context.Context) string {
-	if c := agent.FromContext(ctx); c != nil {
-		return c.Identifier()
-	}
-	return ""
+// If scope is non-empty, uses agent.ScopeFrom which checks the named scope
+// first, then falls back to Identifier().
+func identifierFromContext(ctx context.Context, scope string) string {
+	return agent.ScopeFrom(ctx, scope)
 }
 
 // Option configures NewRememberTool or NewRecallTool. Both ToolOption and
@@ -35,6 +34,7 @@ func (f ToolOption) applyTool(c *toolConfig) { f(c) }
 type toolConfig struct {
 	name        string
 	description string
+	scope       string // named scope key; empty = use Identifier()
 	recallOpts  []memory.RecallOption
 }
 
@@ -56,6 +56,14 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
+// WithScope configures the tool to read its identifier from a named scope
+// on the context (via c.Scope(key)) instead of the default c.Identifier().
+func WithScope(key string) ToolOption {
+	return func(c *toolConfig) {
+		c.scope = key
+	}
+}
+
 // NewRememberTool creates a tool that stores values into a Store.
 func NewRememberTool[T any](
 	store *Store[T],
@@ -73,7 +81,7 @@ func NewRememberTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx)
+			id := identifierFromContext(ctx, cfg.scope)
 			if id == "" {
 				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
@@ -116,7 +124,7 @@ func NewUpdateTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx)
+			identifier := identifierFromContext(ctx, cfg.scope)
 			if identifier == "" {
 				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
@@ -175,7 +183,7 @@ func NewRecallTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx)
+			id := identifierFromContext(ctx, cfg.scope)
 			if id == "" {
 				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}
@@ -231,7 +239,7 @@ func NewForgetTool[T any](
 
 	return tool.NewRaw(cfg.name, cfg.description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx)
+			identifier := identifierFromContext(ctx, cfg.scope)
 			if identifier == "" {
 				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
 			}

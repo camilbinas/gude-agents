@@ -166,6 +166,31 @@ Pass `RecallOption` values to `Recall()` or to `NewRecallTool` (applied to every
 | `WithOrderBy(col, dir)` | Custom sort (overrides vector similarity) |
 | `WithRawFilter(sql, args...)` | Raw SQL WHERE clause (Postgres only) |
 
+## Multi-Scope Memory
+
+By default, memory tools read their identifier from `c.Identifier()`. When an agent needs multiple independent scopes (e.g. user preferences + shared project notes), use `WithScope` to bind a tool to a named scope on the context.
+
+```go
+// User tools — default, reads c.Identifier()
+memory.NewRememberTool(userMem, memory.WithToolName("save_preference"))
+
+// Project tools — reads c.Scope("project") instead
+memory.NewRememberTool(projectMem, memory.WithToolName("save_project_note"), memory.WithScope("project"))
+memory.NewRecallTool(projectMem, memory.WithToolName("get_project_notes"), memory.WithScope("project"))
+```
+
+Set scopes on the context per-request:
+
+```go
+c := agent.Background().
+    WithIdentifier("user-alice").
+    WithScope("project", "proj-atlas")
+```
+
+To switch scopes mid-conversation (e.g. via a tool), use `c.SetScope("project", newID)`.
+
+If a scoped tool's key is not set on the context, it falls back to `c.Identifier()`.
+
 ## Update
 
 ```go
