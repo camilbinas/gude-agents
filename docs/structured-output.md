@@ -33,14 +33,24 @@ Token usage is available via `c.Usage()` after the call returns.
 
 The function makes a single provider call — it does not enter the agent loop. No actual tool handler is executed; the tool is only used as a schema constraint.
 
-## Error Conditions
+## Error Handling
 
-| Condition | Error message |
-|-----------|--------------|
-| Provider call fails | `structured output: <provider error>` |
-| LLM returns no tool call | `structured output: LLM did not return a tool call to structured_output` |
-| LLM calls wrong tool | `structured output: LLM called tool "<name>" instead of structured_output` |
-| JSON deserialization fails | `structured output: failed to deserialize response: <parse error>` |
+`InvokeStructured` returns a `*StructuredOutputError` (detectable via `errors.As`) when the LLM fails to produce valid structured output:
+
+| `Reason` | Description |
+|----------|-------------|
+| `"no_tool_call"` | LLM returned text instead of calling the schema tool |
+| `"wrong_tool"` | LLM called a different tool |
+| `"deserialize"` | JSON didn't match the target type (`Cause` has parse details) |
+
+```go
+var soErr *agent.StructuredOutputError
+if errors.As(err, &soErr) {
+    fmt.Println("reason:", soErr.Reason)
+}
+```
+
+Provider failures return `*ProviderError`. Guardrail rejections return `*GuardrailError`.
 
 ## Code Example
 

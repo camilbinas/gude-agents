@@ -305,7 +305,7 @@ Each call to `Invoke` or `InvokeStream` runs the following steps:
 7. **Output guardrails** — the final text passes through all configured `OutputGuardrail` functions. With `InvokeStream`, chunks have already been delivered; a `GuardrailError` is returned if rejected. With `Invoke`, the returned text is always guardrail-processed.
 8. **Conversation save** — if `WithConversation` is configured, the full conversation is saved.
 
-If the loop reaches `maxIterations` without a text response, an error is returned.
+If the loop reaches `maxIterations` without a text response, it returns `ErrMaxIterationsExceeded` (detectable via `errors.Is`).
 
 ## See Also
 

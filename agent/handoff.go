@@ -3,16 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
-
-// ErrHandoffRequested is returned when an agent calls the handoff tool.
-// The caller should inspect the HandoffRequest via GetHandoffRequest,
-// collect the needed input, then call Agent.Resume to continue.
-var ErrHandoffRequested = errors.New("handoff requested")
 
 // handoffKey is the Context key for storing the HandoffRequest.
 type handoffKey struct{}

@@ -339,7 +339,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 	}
 
 	h.onMaxIterationsExceeded(c, a.maxIterations)
-	return cumulative, "", fmt.Errorf("max iterations (%d) exceeded", a.maxIterations)
+	return cumulative, "", &MaxIterationsError{Limit: a.maxIterations}
 }
 
 // executeToolsWithMiddleware runs tool calls with optional extra middleware prepended.

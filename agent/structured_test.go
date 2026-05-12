@@ -214,9 +214,12 @@ func TestInvokeStructured_NoToolCallReturned(t *testing.T) {
 		t.Fatal("expected error for no tool call, got nil")
 	}
 
-	expected := fmt.Sprintf("structured output: LLM did not return a tool call to %s", structuredOutputToolName)
-	if err.Error() != expected {
-		t.Errorf("error mismatch:\n  got:  %q\n  want: %q", err.Error(), expected)
+	var soErr *StructuredOutputError
+	if !errors.As(err, &soErr) {
+		t.Fatalf("expected *StructuredOutputError, got %T: %v", err, err)
+	}
+	if soErr.Reason != "no_tool_call" {
+		t.Errorf("expected reason %q, got %q", "no_tool_call", soErr.Reason)
 	}
 }
 
@@ -240,9 +243,12 @@ func TestInvokeStructured_WrongToolName(t *testing.T) {
 		t.Fatal("expected error for wrong tool name, got nil")
 	}
 
-	expected := fmt.Sprintf("structured output: LLM called tool %q instead of %s", "wrong_tool", structuredOutputToolName)
-	if err.Error() != expected {
-		t.Errorf("error mismatch:\n  got:  %q\n  want: %q", err.Error(), expected)
+	var soErr *StructuredOutputError
+	if !errors.As(err, &soErr) {
+		t.Fatalf("expected *StructuredOutputError, got %T: %v", err, err)
+	}
+	if soErr.Reason != "wrong_tool" {
+		t.Errorf("expected reason %q, got %q", "wrong_tool", soErr.Reason)
 	}
 }
 
@@ -266,12 +272,15 @@ func TestInvokeStructured_MalformedJSON(t *testing.T) {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
 
-	if got := err.Error(); len(got) < 20 {
-		t.Errorf("expected descriptive error, got: %q", got)
+	var soErr *StructuredOutputError
+	if !errors.As(err, &soErr) {
+		t.Fatalf("expected *StructuredOutputError, got %T: %v", err, err)
 	}
-	// Should contain the wrapping prefix.
-	if got := err.Error(); !contains(got, "structured output: failed to deserialize response:") {
-		t.Errorf("expected error to contain deserialization prefix, got: %q", got)
+	if soErr.Reason != "deserialize" {
+		t.Errorf("expected reason %q, got %q", "deserialize", soErr.Reason)
+	}
+	if soErr.Cause == nil {
+		t.Error("expected non-nil Cause for deserialization error")
 	}
 }
 

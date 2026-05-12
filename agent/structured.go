@@ -127,7 +127,7 @@ func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, conv
 	usage := resp.Usage
 
 	if len(resp.ToolCalls) == 0 {
-		return zero, usage, fmt.Errorf("structured output: LLM did not return a tool call to %s", structuredOutputToolName)
+		return zero, usage, &StructuredOutputError{Reason: "no_tool_call"}
 	}
 
 	var found *tool.Call
@@ -138,7 +138,7 @@ func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, conv
 		}
 	}
 	if found == nil {
-		return zero, usage, fmt.Errorf("structured output: LLM called tool %q instead of %s", resp.ToolCalls[0].Name, structuredOutputToolName)
+		return zero, usage, &StructuredOutputError{Reason: "wrong_tool"}
 	}
 
 	// Output guardrails on the raw JSON.
@@ -155,7 +155,7 @@ func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, conv
 	// Deserialize.
 	var result T
 	if err := json.Unmarshal([]byte(rawText), &result); err != nil {
-		return zero, usage, fmt.Errorf("structured output: failed to deserialize response: %w", err)
+		return zero, usage, &StructuredOutputError{Reason: "deserialize", Cause: err}
 	}
 
 	// Save conversation.

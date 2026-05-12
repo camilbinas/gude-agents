@@ -10,9 +10,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// ErrTokenBudgetExceeded is returned when cumulative token usage exceeds the configured budget.
-var ErrTokenBudgetExceeded = fmt.Errorf("token budget exceeded")
-
 // Agent orchestrates LLM calls and tool execution.
 type Agent struct {
 	name         string

@@ -1,12 +1,8 @@
 package agent
 
 import (
-	"errors"
 	"fmt"
 )
-
-// ErrLoopStopped is returned by RunLoop when a ToolResultInterceptor signals stop.
-var ErrLoopStopped = errors.New("loop stopped by interceptor")
 
 // LoopConfig provides optional overrides for RunLoop behavior.
 type LoopConfig struct {
