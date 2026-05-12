@@ -230,57 +230,7 @@ Because the middleware receives a context that already carries the `agent.tool.<
 
 ## Sentry Integration
 
-The `agent/tracing/sentry` module provides a deeper integration with [Sentry](https://sentry.io) that combines OTEL trace export with Sentry's error capture and breadcrumb features. Only the DSN is needed — the OTLP endpoint is derived automatically.
-
-```go
-import (
-    sentrytrace "github.com/camilbinas/gude-agents/agent/tracing/sentry"
-    "github.com/camilbinas/gude-agents/agent/tracing"
-)
-
-// 1. Setup — initializes Sentry SDK + OTLP trace export.
-shutdown, err := sentrytrace.Setup(ctx, sentrytrace.Config{
-    DSN: "https://key@o123.ingest.us.sentry.io/456",
-})
-defer shutdown(ctx)
-
-// 2. Create agent with Sentry tracing + middleware.
-a, err := agent.New(provider, instructions, tools,
-    sentrytrace.WithSentry(),                           // OTEL tracing via Sentry
-    agent.WithMiddleware(
-        sentrytrace.BreadcrumbMiddleware(),             // tool call breadcrumbs
-        sentrytrace.ErrorCaptureMiddleware(),           // auto-capture tool errors
-    ),
-)
-```
-
-### What It Provides
-
-| Feature | Description |
-|---------|-------------|
-| `Setup(ctx, Config)` | Initializes Sentry SDK + OTLP HTTP exporter pointed at Sentry's endpoint (derived from DSN) |
-| `WithSentry(opts...)` | Wraps `tracing.WithTracing()` using the global TracerProvider from Setup |
-| `ErrorCaptureMiddleware()` | Captures tool errors as Sentry Issues linked to the active OTEL trace |
-| `BreadcrumbMiddleware()` | Adds a breadcrumb for every tool call (visible in Issue detail) |
-| `CaptureAgentError(ctx, err, msg, usage)` | Manually capture invocation-level errors with classification and token usage |
-
-### Error Classification
-
-Errors captured via `CaptureAgentError` are tagged with `agent.error_type` for filtering in Sentry:
-
-- `provider_error` — LLM provider failures
-- `tool_error` — tool execution failures
-- `guardrail_error` — guardrail rejections
-- `token_budget_exceeded` — token budget exceeded
-- `max_iterations_exceeded` — iteration limit hit
-
-### Content Capture
-
-Pass `tracing.WithContentCapture()` to include prompts, responses, and tool I/O in span attributes. This is useful for debugging but adds data volume — avoid in production.
-
-```go
-sentrytrace.WithSentry(tracing.WithContentCapture())
-```
+See [Sentry Integration](tracing-sentry.md) for the dedicated Sentry tracing module that combines OTEL trace export with error capture and breadcrumbs.
 
 ## See Also
 

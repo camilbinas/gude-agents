@@ -71,28 +71,16 @@ result, err := a.Invoke(c, req.Message)
 | `WithMaxTokens(n)` | Max tokens the LLM can generate per response. Overrides provider-level default |
 | `WithStopSequences(s)` | Strings that cause the LLM to stop generating |
 
-```go
-a, err := agent.Default(provider, instructions, tools,
-    agent.WithTemperature(0.7),
-    agent.WithTopP(0.9),
-    agent.WithMaxTokens(2048),
-)
-```
-
-These populate an `InferenceConfig` on the agent. When none are set, the provider uses its own defaults. Per-invocation overrides are supported via `WithInferenceConfig` on the `*Context`:
-
-```go
-c := agent.Background().WithInferenceConfig(&agent.InferenceConfig{
-    Temperature: ptrFloat(0.9),
-})
-result, err := a.Invoke(c, "Be creative!")
-```
+When none are set, the provider uses its own defaults. Per-invocation overrides via `WithInferenceConfig` on the `*Context`. See [Agent Context](invocation-context.md).
 
 ### Retrieval
 
-`WithRetriever(r)` attaches a `Retriever` for automatic RAG. The retriever fetches documents once per invocation (before the first provider call) and injects them as context. See [RAG Pipeline](rag.md) for details.
+| Option | Description |
+|---|---|
+| `WithRetriever(r)` | Automatic RAG — retrieves documents once per invocation before the first provider call |
+| `WithContextFormatter(f)` | Customizes how retrieved documents are rendered (default: numbered items in XML tags) |
 
-`WithContextFormatter(f)` customizes how retrieved documents are rendered. Defaults to numbered items in `<retrieved_context>` XML tags.
+See [RAG Pipeline](rag.md) for details.
 
 ### Rate Limiting
 
@@ -220,32 +208,13 @@ fmt.Printf("Tokens: %d in, %d out\n", usage.InputTokens, usage.OutputTokens)
 
 ### Per-Invocation Context
 
-Use chainable `With*` methods on the `*Context` to set per-invocation overrides:
-
-| Method | Description |
-|---|---|
-| `c.WithConversationID(id)` | Override the default conversation ID for this call |
-| `c.WithIdentifier(id)` | Set the identifier for memory scoping (user, tenant, etc.) |
-| `c.WithImages(images)` | Attach images for vision-capable models |
-| `c.WithDocuments(docs)` | Attach PDFs, Word docs, spreadsheets for document reasoning |
-| `c.WithInferenceConfig(cfg)` | Override inference parameters for this call |
-| `c.WithEventHook(hook)` | Attach an event hook for real-time UI delivery |
+Use chainable `With*` methods on the `*Context` to set per-invocation overrides. See [Agent Context](invocation-context.md) for the full list.
 
 ```go
-// Attach an image for vision.
-img := agent.ImageBlock{
-    Source: agent.ImageSource{Data: imageBytes, MIMEType: "image/jpeg"},
-}
-c := agent.Background().WithImages([]agent.ImageBlock{img})
+c := agent.Background().
+    WithConversationID("conv-123").
+    WithImages([]agent.ImageBlock{{Source: agent.ImageSource{Data: imageBytes, MIMEType: "image/jpeg"}}})
 result, err := a.Invoke(c, "What is in this image?")
-```
-
-Images and documents can also be passed by URL:
-
-```go
-img := agent.ImageBlock{
-    Source: agent.ImageSource{URL: "https://example.com/photo.jpg"},
-}
 ```
 
 ### RunLoop

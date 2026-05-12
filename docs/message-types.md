@@ -1,273 +1,84 @@
 # Message Types
 
-Reference for the conversation data model used throughout gude-agents. These types are relevant when working with conversation persistence, custom providers, or middleware.
+Reference for the conversation data model used throughout gude-agents. These types matter when working with conversation persistence, custom providers, or middleware. All types live in the `agent` package unless otherwise noted.
 
-All types below live in the `agent` package (`github.com/camilbinas/gude-agents/agent`) unless otherwise noted.
+## Conversation Model
 
-## Message
+A conversation is a sequence of `Message` values alternating between `RoleUser` and `RoleAssistant`. Each message contains one or more `ContentBlock` values:
 
-```go
-type Message struct {
-    Role    Role
-    Content []ContentBlock
-}
+```
+User:      TextBlock (input) | ToolResultBlock (tool output back to LLM)
+Assistant: TextBlock (response) | ToolUseBlock (tool call request) | both
 ```
 
-A `Message` is a single turn in the conversation. Each message has a `Role` indicating who sent it and a slice of `ContentBlock` values representing the message body.
+`ContentBlock` is a sealed interface — only the implementations below satisfy it.
 
-A user message typically contains a single `TextBlock`. An assistant message may contain a `TextBlock` (text response), one or more `ToolUseBlock` values (tool call requests), or both. Tool results are sent back as user messages containing `ToolResultBlock` values.
+## Content Blocks
 
-| Field | Type | Description |
+| Block | Role | Purpose |
 |---|---|---|
-| `Role` | `Role` | Sender of the message (`RoleUser` or `RoleAssistant`) |
-| `Content` | `[]ContentBlock` | One or more content blocks forming the message body |
+| `TextBlock` | both | Plain text content |
+| `ToolUseBlock` | assistant | LLM requesting a tool call (`ToolUseID`, `Name`, `Input json.RawMessage`) |
+| `ToolResultBlock` | user | Tool execution result (`ToolUseID`, `Content`, `IsError`, optional `Images`) |
+| `ImageBlock` | user | Image attachment (`Source ImageSource`) |
+| `DocumentBlock` | user | Document attachment (`Source DocumentSource`) |
 
-## Role
+`ToolUseID` links a `ToolUseBlock` to its corresponding `ToolResultBlock`.
 
-```go
-type Role string
+## Media Sources
 
-const (
-    RoleUser      Role = "user"
-    RoleAssistant Role = "assistant"
-)
-```
+`ImageSource` and `DocumentSource` hold media data. Set exactly one of `Data`, `Base64`, or `URL` — providers prefer them in that order.
 
-`Role` is a string type that identifies the sender of a `Message`. The framework defines two constants:
-
-| Constant | Value | Description |
+| Field | ImageSource | DocumentSource |
 |---|---|---|
-| `RoleUser` | `"user"` | Messages from the user or tool results sent back to the LLM |
-| `RoleAssistant` | `"assistant"` | Messages from the LLM |
+| `Data []byte` | Raw image bytes | Raw document bytes |
+| `Base64 string` | Pre-encoded base64 | Pre-encoded base64 |
+| `URL string` | Hosted image URL | Hosted document URL |
+| `MIMEType string` | Required for Data/Base64 | Required for Data/Base64 |
+| `Name string` | — | Optional filename hint |
 
-## ContentBlock
+Supported image MIME types: `image/jpeg`, `image/png`, `image/gif`, `image/webp`.
+Supported document MIME types: `application/pdf`, `text/plain`, `text/html`, `text/csv`, `text/markdown`, plus Office formats.
 
-```go
-type ContentBlock interface {
-    contentBlock() // sealed marker
-}
-```
-
-`ContentBlock` is a sealed interface — only the five implementations defined in the `agent` package satisfy it. The unexported `contentBlock()` marker method prevents external types from implementing the interface.
-
-### TextBlock
-
-```go
-type TextBlock struct {
-    Text string
-}
-```
-
-Plain text content. Used in both user messages (the user's input) and assistant messages (the LLM's text response).
-
-| Field | Type | Description |
-|---|---|---|
-| `Text` | `string` | The text content |
-
-### ToolUseBlock
-
-```go
-type ToolUseBlock struct {
-    ToolUseID string
-    Name      string
-    Input     json.RawMessage
-}
-```
-
-Represents the LLM requesting a tool call. Appears in assistant messages when the model decides to invoke a tool. The `Input` field contains the raw JSON arguments for the tool.
-
-| Field | Type | Description |
-|---|---|---|
-| `ToolUseID` | `string` | Unique identifier linking this request to its `ToolResultBlock` |
-| `Name` | `string` | Name of the tool to invoke |
-| `Input` | `json.RawMessage` | JSON-encoded tool input arguments |
-
-### ToolResultBlock
-
-```go
-type ToolResultBlock struct {
-    ToolUseID string
-    Content   string
-    IsError   bool
-    Images    []ImageBlock // optional images returned by the tool
-}
-```
-
-Holds the result of a tool execution. Sent back to the LLM as part of a user-role message so the model can incorporate the tool's output into its next response. Tools that return images (e.g. screenshot tools, chart generators) populate the `Images` field.
-
-| Field | Type | Description |
-|---|---|---|
-| `ToolUseID` | `string` | Matches the `ToolUseID` from the corresponding `ToolUseBlock` |
-| `Content` | `string` | The tool's text output |
-| `IsError` | `bool` | `true` if the tool returned an error |
-| `Images` | `[]ImageBlock` | Optional images returned by the tool (see [Rich Tool Output](#rich-tool-output) in tools.md) |
-
-### ImageSource
-
-```go
-type ImageSource struct {
-    Data     []byte
-    Base64   string
-    URL      string
-    MIMEType string
-}
-
-func (s ImageSource) Validate() error
-```
-
-Holds image data as either raw bytes, a pre-encoded base64 string, or a URL pointing to a hosted image, plus the MIME type. Set exactly one of `Data`, `Base64`, or `URL` — when multiple are set, providers prefer `Data` over `Base64` over `URL`.
-
-| Field | Type | Description |
-|---|---|---|
-| `Data` | `[]byte` | Raw image bytes; mutually exclusive with `Base64` and `URL` |
-| `Base64` | `string` | Pre-encoded base64 string (RFC 4648); mutually exclusive with `Data` and `URL` |
-| `URL` | `string` | Publicly accessible image URL; mutually exclusive with `Data` and `Base64` |
-| `MIMEType` | `string` | Image format; required for `Data`/`Base64`, optional for `URL` (provider resolves it) |
-
-`Validate()` returns `nil` when the source is well-formed. For `Data`/`Base64` sources, `MIMEType` must be one of `image/jpeg`, `image/png`, `image/gif`, `image/webp`. For `URL` sources, MIME type validation is skipped — the provider resolves the format from the URL.
-
-`ImageMIMEFromExt(ext)` is a convenience helper that maps a file extension (e.g. `".jpg"`, `".png"`) to the corresponding MIME type. Returns an error for unsupported extensions.
-
-### ImageBlock
-
-```go
-type ImageBlock struct {
-    Source ImageSource
-}
-```
-
-A `ContentBlock` that carries image data. Attach one or more `ImageBlock` values to an invocation via `WithImages` on the context — the agent loop prepends them to the first user message before calling the provider. All four providers (Bedrock, Anthropic, OpenAI, Gemini) translate `ImageBlock` to their respective native image APIs.
-
-| Field | Type | Description |
-|---|---|---|
-| `Source` | `ImageSource` | The image payload and MIME type |
-
-Supported MIME types: `image/jpeg`, `image/png`, `image/gif`, `image/webp`. Any other value causes the agent loop to return an error before the provider is called.
-
-### DocumentSource
-
-```go
-type DocumentSource struct {
-    Data     []byte
-    Base64   string
-    URL      string
-    MIMEType string
-    Name     string
-}
-
-func (s DocumentSource) Validate() error
-```
-
-Holds document data as either raw bytes, a pre-encoded base64 string, or a URL, plus the MIME type and an optional filename hint. Set exactly one of `Data`, `Base64`, or `URL`.
-
-| Field | Type | Description |
-|---|---|---|
-| `Data` | `[]byte` | Raw document bytes; mutually exclusive with `Base64` and `URL` |
-| `Base64` | `string` | Pre-encoded base64 string (RFC 4648); mutually exclusive with `Data` and `URL` |
-| `URL` | `string` | Publicly accessible document URL; mutually exclusive with `Data` and `Base64` |
-| `MIMEType` | `string` | Document format; required for `Data`/`Base64`, optional for `URL` |
-| `Name` | `string` | Optional filename hint for the provider (e.g. `"contract.pdf"`) |
-
-Supported MIME types: `application/pdf`, `text/plain`, `text/html`, `text/csv`, `text/markdown`, plus Office formats (`.doc`, `.docx`, `.xls`, `.xlsx`). For `URL` sources, MIME type validation is skipped.
-
-`DocumentMIMEFromExt(ext)` is a convenience helper that maps a file extension (e.g. `".pdf"`, `".docx"`) to the corresponding MIME type. Returns an error for unsupported extensions.
-
-### DocumentBlock
-
-```go
-type DocumentBlock struct {
-    Source DocumentSource
-}
-```
-
-A `ContentBlock` that carries an inline document (PDF, Word, spreadsheet, etc.). Attach one or more `DocumentBlock` values to an invocation via `WithDocuments` on the context — the agent loop prepends them to the first user message before images and text. All four providers translate `DocumentBlock` to their respective native document APIs.
-
-| Field | Type | Description |
-|---|---|---|
-| `Source` | `DocumentSource` | The document payload, MIME type, and optional name |
+Both have a `Validate()` method and a `*MIMEFromExt(ext)` helper for extension-to-MIME mapping.
 
 ## InferenceConfig
 
-```go
-type InferenceConfig struct {
-    Temperature   *float64
-    TopP          *float64
-    TopK          *int
-    StopSequences []string
-    MaxTokens     *int
-}
-```
+Groups LLM sampling parameters. All fields are pointer types — `nil` means "use provider default."
 
-`InferenceConfig` groups LLM inference/sampling parameters. All fields are optional — `nil` means "use provider default." This struct is set on `ConverseParams` by the agent loop and read by each provider to map parameters to the native API.
+| Field | Type | Valid Range |
+|---|---|---|
+| `Temperature` | `*float64` | [0.0, 1.0] |
+| `TopP` | `*float64` | [0.0, 1.0] |
+| `TopK` | `*int` | >= 1 |
+| `StopSequences` | `[]string` | — |
+| `MaxTokens` | `*int` | >= 1 |
 
-| Field | Type | Description | Valid Range |
-|---|---|---|---|
-| `Temperature` | `*float64` | Controls randomness of output | [0.0, 1.0] |
-| `TopP` | `*float64` | Nucleus sampling probability cutoff | [0.0, 1.0] |
-| `TopK` | `*int` | Max highest-probability tokens considered | >= 1 |
-| `StopSequences` | `[]string` | Strings that cause the LLM to stop generating | Any |
-| `MaxTokens` | `*int` | Maximum tokens in the response | >= 1 |
-
-Pointer fields distinguish "not set" from "set to zero." When a field is `nil`, the provider uses its own default. When `InferenceConfig` itself is `nil` on `ConverseParams`, all provider defaults apply.
-
-Set at the agent level via `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`. Override per-invocation via `WithInferenceConfig` on the context. See [Agent API Reference](agent-api.md) for details.
+Set at agent level via `WithTemperature`, `WithTopP`, etc. Override per-invocation via `WithInferenceConfig` on the context.
 
 ## ConverseParams
 
-```go
-type ConverseParams struct {
-    Messages         []Message
-    System           string
-    ToolConfig       []tool.Spec
-    ToolChoice       *tool.Choice
-    ThinkingCallback ThinkingCallback
-    InferenceConfig  *InferenceConfig
-}
-```
-
-`ConverseParams` holds the inputs for a `Provider.Converse` or `Provider.ConverseStream` call. The agent constructs this struct internally before each provider call.
+The input struct for `Provider.Converse` / `Provider.ConverseStream`. Constructed internally by the agent loop.
 
 | Field | Type | Description |
 |---|---|---|
-| `Messages` | `[]Message` | The conversation history |
-| `System` | `string` | System prompt text |
-| `ToolConfig` | `[]tool.Spec` | Tool specifications the LLM can choose from |
-| `ToolChoice` | `*tool.Choice` | Controls tool selection behavior; `nil` means provider default (auto) |
-| `ThinkingCallback` | `ThinkingCallback` | Internal callback for streaming thinking chunks; set automatically by the agent loop when an EventHook is configured |
-| `InferenceConfig` | `*InferenceConfig` | Optional inference parameters; `nil` means use provider defaults |
-
-`tool.Spec` and `tool.Choice` are defined in the `tool` sub-package (`github.com/camilbinas/gude-agents/agent/tool`). See [Tool System](tools.md) for details.
+| `Messages` | `[]Message` | Conversation history |
+| `System` | `string` | System prompt |
+| `ToolConfig` | `[]tool.Spec` | Available tools |
+| `ToolChoice` | `*tool.Choice` | Tool selection behavior (`nil` = auto) |
+| `ThinkingCallback` | `ThinkingCallback` | Internal; set by agent loop when EventHook is configured |
+| `InferenceConfig` | `*InferenceConfig` | Sampling parameters (`nil` = provider defaults) |
 
 ## ProviderResponse
 
-```go
-type ProviderResponse struct {
-    Text      string
-    ToolCalls []tool.Call
-    Usage     TokenUsage
-    Metadata  map[string]any
-}
-```
-
-`ProviderResponse` is the result of an LLM call. A response contains either a text reply, one or more tool calls, or both.
+The result of an LLM call. Contains either a text reply, tool calls, or both.
 
 | Field | Type | Description |
 |---|---|---|
-| `Text` | `string` | The LLM's text response (empty when the model only returns tool calls) |
-| `ToolCalls` | `[]tool.Call` | Tool invocation requests from the LLM |
-| `Usage` | `TokenUsage` | Token consumption for this single provider call |
-| `Metadata` | `map[string]any` | Optional provider-specific extras. Currently used to store the full thinking text under the key `"thinking"` when extended thinking is enabled. |
-
-`tool.Call` is defined as:
-
-```go
-// In package tool
-type Call struct {
-    ToolUseID string
-    Name      string
-    Input     json.RawMessage
-}
-```
+| `Text` | `string` | Text response (empty when only tool calls) |
+| `ToolCalls` | `[]tool.Call` | Tool invocation requests |
+| `Usage` | `TokenUsage` | Token consumption for this call |
+| `Metadata` | `map[string]any` | Provider-specific extras (e.g. `"thinking"` key for extended thinking) |
 
 ## TokenUsage
 
@@ -276,69 +87,27 @@ type TokenUsage struct {
     InputTokens  int
     OutputTokens int
 }
-
-func (u TokenUsage) Total() int
 ```
 
-Records token consumption for a single provider call. `Total()` returns `InputTokens + OutputTokens`. Use `c.Usage()` on the `*Context` to access cumulative usage across an invocation.
+`Total()` returns `InputTokens + OutputTokens`. Access cumulative usage via `c.Usage()` on the `*Context`.
 
-## StreamCallback
+## Callbacks
 
-```go
-type StreamCallback func(chunk string)
-```
+| Type | Description |
+|---|---|
+| `StreamCallback func(chunk string)` | Receives incremental text chunks during streaming |
+| `ThinkingCallback func(chunk string)` | Receives thinking/reasoning chunks (internal, forwarded to EventHook) |
 
-`StreamCallback` receives incremental text chunks during streaming. Passed to `Provider.ConverseStream` and `Agent.InvokeStream` to deliver the LLM's response in real-time.
+## RAG Types
 
-When output guardrails are configured on the agent, chunks are buffered until all guardrails pass. See [Guardrails](guardrails.md) for details.
-
-## ThinkingCallback
-
-```go
-type ThinkingCallback func(chunk string)
-```
-
-`ThinkingCallback` receives incremental thinking/reasoning chunks during streaming. Used internally by the agent loop to forward chunks to `EventHook.OnThinking`. Provider implementations call this during `ConverseStream` when thinking is enabled.
-
-See [Providers](providers.md#extended-thinking) for which models support thinking, and [Agent API](agent-api.md#event-hook) for how to receive thinking chunks via EventHook.
-
-## Document
-
-```go
-type Document struct {
-    ID       string
-    Content  string
-    Metadata map[string]string
-}
-```
-
-A text chunk with associated metadata, used throughout the RAG pipeline. Documents are stored in a `VectorStore`, returned by a `Retriever`, and formatted by a `ContextFormatter`.
-
-| Field | Type | Description |
-|---|---|---|
-| `ID` | `string` | Storage-level ID. Empty on input means the store auto-generates one. |
-| `Content` | `string` | The text content of the document |
-| `Metadata` | `map[string]string` | Arbitrary key-value metadata (e.g., source, title) |
-
-## ScoredDocument
-
-```go
-type ScoredDocument struct {
-    Document Document
-    Score    float64
-}
-```
-
-Pairs a `Document` with its similarity score. Returned by `VectorStore.Search` to rank results by relevance.
-
-| Field | Type | Description |
-|---|---|---|
-| `Document` | `Document` | The matched document |
-| `Score` | `float64` | Similarity score (higher is more relevant) |
+| Type | Description |
+|---|---|
+| `Document` | Text chunk with `ID`, `Content`, and `Metadata map[string]string` |
+| `ScoredDocument` | Pairs a `Document` with a `Score float64` (higher = more relevant) |
 
 ## See Also
 
-- [Agent API Reference](agent-api.md) — `Agent` constructor, options, `WithImages`/`GetImages`, and methods
+- [Agent API Reference](agent-api.md) — constructor, options, and invoke methods
 - [Tool System](tools.md) — `Tool`, `Spec`, `Call`, and `Choice` types
 - [RAG Pipeline](rag.md) — `Embedder`, `VectorStore`, `Retriever` interfaces
 - [Conversation System](conversation.md) — storing and loading `Message` history

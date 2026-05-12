@@ -148,63 +148,21 @@ Disconnects from the MCP server and terminates the subprocess. Call this when yo
 
 ## Code Example
 
-This example connects to the official MCP "everything" test server, discovers its tools, and uses them through an agent:
+Connect to an MCP server, discover tools, and use them through an agent:
 
 ```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/mcp"
+mcpClient, _ := mcp.NewStdioClient(ctx,
+    "npx", []string{"-y", "@modelcontextprotocol/server-everything"},
 )
+defer mcpClient.Close()
 
-func main() {
-    ctx := context.Background()
+mcpTools, _ := mcpClient.Tools(ctx)
 
-    // Connect to an MCP server via stdio.
-    mcpClient, err := mcp.NewStdioClient(ctx,
-        "npx", []string{"-y", "@modelcontextprotocol/server-everything"},
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer mcpClient.Close()
-
-    // Discover tools — these are regular tool.Tool values.
-    mcpTools, err := mcpClient.Tools(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    fmt.Printf("Discovered %d MCP tools\n", len(mcpTools))
-
-    // Create an agent with MCP tools.
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    a, err := agent.Default(
-        provider,
-        prompt.Text("You are a helpful assistant. Use the available tools when needed."),
-        mcpTools,
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    result, err := a.Invoke(agent.NewContext(ctx), "Use the echo tool to say hello")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(result)
-}
+a, _ := agent.Default(provider,
+    prompt.Text("You are a helpful assistant. Use the available tools when needed."),
+    mcpTools,
+)
+result, _ := a.Invoke(agent.NewContext(ctx), "Use the echo tool to say hello")
 ```
 
 ## Mixing MCP and Local Tools
@@ -377,80 +335,24 @@ This means connections are created lazily — if you set `WithPoolSize(10)` but 
 ### Pool Code Example
 
 ```go
-package main
+pool, _ := mcp.NewPool(ctx,
+    "npx", []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
+    mcp.WithPoolSize(10),
+)
+defer pool.Close()
 
-import (
-    "context"
-    "fmt"
-    "log"
-    "sync"
+mcpTools, _ := pool.Tools()
 
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/conversation"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/mcp"
-    "github.com/camilbinas/gude-agents/agent/conversation/redis"
+a, _ := agent.Default(provider,
+    prompt.Text("You are a helpful assistant with filesystem access."),
+    mcpTools,
+    agent.WithSharedConversation(store),
 )
 
-func main() {
-    ctx := context.Background()
-
-    // Create a pool with up to 10 concurrent MCP server connections.
-    pool, err := mcp.NewPool(ctx,
-        "npx", []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
-        mcp.WithPoolSize(10),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer pool.Close()
-
-    // Get pooled tools — safe for concurrent use.
-    mcpTools, err := pool.Tools()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Simulate 50 concurrent users, each with their own conversation.
-    var wg sync.WaitGroup
-    for i := range 50 {
-        wg.Add(1)
-        go func(userID int) {
-            defer wg.Done()
-
-            conversationID := fmt.Sprintf("user-%d", userID)
-
-            // Each user gets their own agent with their own conversation store,
-            // but they all share the same pooled MCP tools.
-            store := conversation.NewInMemory()
-            a, err := agent.Default(
-                provider,
-                prompt.Text("You are a helpful assistant with filesystem access."),
-                mcpTools,
-                agent.WithConversation(store, conversationID),
-            )
-            if err != nil {
-                log.Printf("user %d: agent error: %v", userID, err)
-                return
-            }
-
-            result, err := a.Invoke(agent.NewContext(ctx), "List the files in /tmp")
-            if err != nil {
-                log.Printf("user %d: invoke error: %v", userID, err)
-                return
-            }
-            fmt.Printf("User %d: %s\n", userID, result[:min(len(result), 80)])
-        }(i)
-    }
-    wg.Wait()
-    fmt.Printf("Pool used %d connections\n", pool.Size())
-}
+// Safe for concurrent use — each tool call acquires a pool connection.
+c := agent.NewContext(ctx).WithConversationID("user-1")
+result, _ := a.Invoke(c, "List the files in /tmp")
+fmt.Printf("Pool used %d connections\n", pool.Size())
 ```
 
 ### Client vs Pool

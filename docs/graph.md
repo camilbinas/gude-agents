@@ -226,17 +226,11 @@ g.Agent("describe", visionAgent, graph.Keys("description", "question", "screensh
 
 ### Hook Inheritance
 
-When observability hooks are configured at the graph level, agent nodes automatically inherit them:
-
-- **Tracing** — A bridge `TracingHook` creates child spans under the graph's node span context
-- **Metrics** — A bridge `MetricsHook` reports agent metrics (provider calls, tool calls, token usage) through the graph's metrics context
-- **Logging** — A bridge `LoggingHook` includes the node name as context in all log entries
-
-If the agent already has its own hooks configured, both the agent's hooks and the graph-inherited hooks are called (composition). If no graph hooks are configured, the agent's own hooks are used unchanged.
+Graph-level observability hooks are automatically inherited by agent nodes. If the agent already has its own hooks, both fire (composition). Tracing creates child spans, metrics reports through the graph context, and logging includes the node name.
 
 ### Zero Overhead
 
-Bridge hooks are only created when the corresponding graph hook is configured. No event hook means no bridge event hook and no event emission code runs.
+Bridge hooks are only created when the corresponding graph hook is configured.
 
 ### Custom Node Functions
 
@@ -292,51 +286,32 @@ Invalid graphs return a `*GraphValidationError`. Exceeding the iteration limit r
 
 ## Code Example
 
-A classification pipeline with conditional routing via data-flow gating:
+Classification pipeline with conditional routing via data-flow gating:
 
 ```go
-package main
+g, _ := graph.New[graph.State]()
 
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/camilbinas/gude-agents/agent/graph"
-)
-
-func main() {
-    g, err := graph.New[graph.State]()
-    if err != nil {
-        log.Fatal(err)
+g.Node("classify", func(ctx context.Context, s graph.State) (graph.State, error) {
+    if len(s["input"].(string)) > 50 {
+        s["complex_input"] = s["input"]
+    } else {
+        s["simple_input"] = s["input"]
     }
+    return s, nil
+}, graph.In("input"), graph.Out("simple_input", "complex_input"))
 
-    g.Node("classify", func(ctx context.Context, s graph.State) (graph.State, error) {
-        input := s["input"].(string)
-        if len(input) > 50 {
-            s["complex_input"] = input
-        } else {
-            s["simple_input"] = input
-        }
-        return s, nil
-    }, graph.In("input"), graph.Out("simple_input", "complex_input"))
+g.Node("simple", func(ctx context.Context, s graph.State) (graph.State, error) {
+    s["output"] = "Quick answer: " + s["simple_input"].(string)
+    return s, nil
+}, graph.In("simple_input"), graph.Out("output"))
 
-    g.Node("simple", func(ctx context.Context, s graph.State) (graph.State, error) {
-        s["output"] = "Quick answer: " + s["simple_input"].(string)
-        return s, nil
-    }, graph.In("simple_input"), graph.Out("output"))
+g.Node("complex", func(ctx context.Context, s graph.State) (graph.State, error) {
+    s["output"] = "Detailed analysis of: " + s["complex_input"].(string)
+    return s, nil
+}, graph.In("complex_input"), graph.Out("output"))
 
-    g.Node("complex", func(ctx context.Context, s graph.State) (graph.State, error) {
-        s["output"] = "Detailed analysis of: " + s["complex_input"].(string)
-        return s, nil
-    }, graph.In("complex_input"), graph.Out("output"))
-
-    result, err := g.Run(context.Background(), graph.State{"input": "What is Go?"})
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(result.State["output"])
-}
+result, _ := g.Run(context.Background(), graph.State{"input": "What is Go?"})
+fmt.Println(result.State["output"])
 ```
 
 ## Checkpointing

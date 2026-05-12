@@ -172,78 +172,35 @@ Tool choice is passed to the provider via `ConverseParams.ToolChoice`. When `nil
 
 ## Code Example
 
-This example defines a typed tool with struct tags that the LLM can call to look up weather data:
+Typed tool with struct tags that the LLM can call:
 
 ```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/tool"
-)
-
-// WeatherInput defines the tool's parameters via struct tags.
-// The json tag sets the property name, description explains it to the LLM,
-// required marks mandatory fields, and enum restricts allowed values.
 type WeatherInput struct {
     City  string `json:"city"  description:"The city to get weather for" required:"true"`
     Units string `json:"units" description:"Temperature units"           enum:"celsius,fahrenheit"`
 }
 
-func main() {
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
+weatherTool := tool.New("get_weather", "Get the current weather for a city.",
+    func(ctx context.Context, in WeatherInput) (string, error) {
+        return fmt.Sprintf("Weather in %s: 22°C, sunny", in.City), nil
+    },
+)
 
-    // tool.New auto-generates the JSON Schema from WeatherInput's struct tags.
-    weatherTool := tool.New("get_weather",
-        "Get the current weather for a city.",
-        func(ctx context.Context, in WeatherInput) (string, error) {
-            // In a real app, call a weather API here.
-            return fmt.Sprintf("Weather in %s: 22°C, sunny", in.City), nil
-        },
-    )
-
-    a, err := agent.Default(
-        provider,
-        prompt.Text("You are a helpful assistant with access to weather data."),
-        []tool.Tool{weatherTool},
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    c := agent.Background()
-    result, err := a.Invoke(c, "What's the weather in Berlin?")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(result)
-}
+a, _ := agent.Default(provider,
+    prompt.Text("You are a helpful assistant with access to weather data."),
+    []tool.Tool{weatherTool},
+)
+result, _ := a.Invoke(agent.Background(), "What's the weather in Berlin?")
 ```
 
-The generated JSON Schema for `WeatherInput` looks like:
+The generated JSON Schema for `WeatherInput`:
 
 ```json
 {
   "type": "object",
   "properties": {
-    "city": {
-      "type": "string",
-      "description": "The city to get weather for"
-    },
-    "units": {
-      "type": "string",
-      "description": "Temperature units",
-      "enum": ["celsius", "fahrenheit"]
-    }
+    "city": {"type": "string", "description": "The city to get weather for"},
+    "units": {"type": "string", "description": "Temperature units", "enum": ["celsius", "fahrenheit"]}
   },
   "required": ["city"]
 }
@@ -267,7 +224,7 @@ lookup := tool.New("lookup_user", "Looks up a user by ID",
 
 `FromContext` returns nil if `ctx` is not a `*Context` — no panic risk. Most tools don't need this; they just use `context.Context` for cancellation and deadlines.
 
-`agent.ToolLoggerFrom(ctx)` extracts a logger for emitting messages during tool execution. Returns a no-op logger when no logging hook is configured.
+`agent.ToolLoggerFrom(ctx)` extracts a logger for emitting messages during tool execution. Returns a no-op logger when no logging hook is configured. Tool packages that cannot import `agent` (e.g., `tool/webfetch`) use `tool.LoggerFrom(ctx)` directly.
 
 ```go
 search := tool.New("search", "Search the knowledge base",

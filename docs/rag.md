@@ -354,84 +354,23 @@ document.RegisterParser(".rtf", document.ParserFunc(func(ctx context.Context, pa
 
 ## Code Example
 
-Full RAG pipeline — ingest documents, create a retriever, and query with an agent:
+Full RAG pipeline — ingest, retrieve, and query:
 
 ```go
-package main
+embedder, _ := bedrock.TitanEmbedV2()
+store := rag.NewMemoryStore()
 
-import (
-    "context"
-    "fmt"
-    "log"
+docs := []string{"Go is a statically typed language.", "Redis is an in-memory data store."}
+meta := []map[string]string{{"source": "go-docs"}, {"source": "redis-docs"}}
+rag.Ingest(ctx, store, embedder, docs, meta, rag.WithChunkSize(256))
 
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/prompt"
-    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
-    "github.com/camilbinas/gude-agents/agent/rag"
+retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2), rag.WithScoreThreshold(0.5))
+
+a, _ := agent.Default(provider,
+    prompt.Text("Answer using only the provided context."), nil,
+    agent.WithRetriever(retriever),
 )
-
-func main() {
-    ctx := context.Background()
-
-    // 1. Create an embedder.
-    embedder, err := bedrock.TitanEmbedV2()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 2. Create an in-memory vector store.
-    store := rag.NewMemoryStore()
-
-    // 3. Ingest documents.
-    docs := []string{
-        "Go is a statically typed, compiled language designed at Google.",
-        "Redis is an in-memory data structure store used as a database, cache, and message broker.",
-        "Kubernetes automates deployment, scaling, and management of containerized applications.",
-    }
-    meta := []map[string]string{
-        {"source": "go-docs"},
-        {"source": "redis-docs"},
-        {"source": "k8s-docs"},
-    }
-
-    err = rag.Ingest(ctx, store, embedder, docs, meta,
-        rag.WithChunkSize(256),
-        rag.WithChunkOverlap(32),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Printf("Ingested %d documents\n", len(docs))
-
-    // 4. Create a retriever.
-    retriever := rag.NewRetriever(embedder, store,
-        rag.WithMaxResults(2),
-        rag.WithScoreThreshold(0.5),
-    )
-
-    // 5. Create an agent with automatic retrieval.
-    provider, err := bedrock.Standard()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    a, err := agent.Default(
-        provider,
-        prompt.Text("Answer questions using only the provided context. Be concise."),
-        nil,
-        agent.WithRetriever(retriever),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 6. Query the agent.
-    result, err := a.Invoke(agent.NewContext(ctx), "What is Go?")
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("Answer:", result)
-}
+result, _ := a.Invoke(agent.NewContext(ctx), "What is Go?")
 ```
 
 ## See Also

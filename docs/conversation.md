@@ -284,67 +284,19 @@ filtered := conversation.NewFilter(windowed)  // strip tool blocks
 
 ## Code Example
 
-This example composes Window and Filter strategies to keep the last 20 messages with tool blocks stripped:
+Compose Window and Filter strategies to keep the last 20 messages with tool blocks stripped:
 
 ```go
-package main
+store := conversation.NewInMemory()
+windowed := conversation.NewWindow(store, 20)
+filtered := conversation.NewFilter(windowed)
 
-import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+a, _ := agent.Default(provider, instructions, nil,
+    agent.WithConversation(filtered, "demo-conversation"),
 )
 
-func main() {
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// In-memory store as the base layer.
-	store := conversation.NewInMemory()
-
-	// Compose strategies: Window keeps last 20, Filter strips tool blocks.
-	windowed := conversation.NewWindow(store, 20)
-	filtered := conversation.NewFilter(windowed)
-
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithConversation(filtered, "demo-conversation"),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ctx := context.Background()
-
-	result, err := a.Invoke(agent.Background(), "My name is Alice. Remember that.")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Turn 1:", result)
-
-	result, err = a.Invoke(agent.Background(), "What is my name?")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Turn 2:", result)
-
-	// List and delete conversations.
-	ids, _ := store.List(ctx)
-	fmt.Printf("\nConversations in store: %v\n", ids)
-
-	_ = store.Delete(ctx, "demo-conversation")
-	ids, _ = store.List(ctx)
-	fmt.Printf("After delete: %v\n", ids)
-}
+result, _ := a.Invoke(agent.Background(), "My name is Alice. Remember that.")
+result, _ = a.Invoke(agent.Background(), "What is my name?")
 ```
 
 ## Persistent Conversation Drivers
