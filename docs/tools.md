@@ -267,6 +267,20 @@ lookup := tool.New("lookup_user", "Looks up a user by ID",
 
 `FromContext` returns nil if `ctx` is not a `*Context` — no panic risk. Most tools don't need this; they just use `context.Context` for cancellation and deadlines.
 
+`agent.ToolLoggerFrom(ctx)` extracts a logger for emitting messages during tool execution. Returns a no-op logger when no logging hook is configured.
+
+```go
+search := tool.New("search", "Search the knowledge base",
+    func(ctx context.Context, in SearchInput) (string, error) {
+        log := agent.ToolLoggerFrom(ctx)
+        log.Logf("querying %q", in.Query)
+        results := doSearch(in.Query)
+        log.Logf("found %d results", len(results))
+        return formatResults(results), nil
+    },
+)
+```
+
 ## tool.NewRich — Rich Output (Text + Images)
 
 ```go

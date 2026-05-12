@@ -90,7 +90,7 @@ Each log entry includes relevant key-value attributes:
 | `conversation_id` | InvokeStart, ConversationStart, ConversationEnd | Conversation ID |
 | `max_iterations` | InvokeStart | Configured max iterations |
 | `iteration` | IterationStart | 1-based iteration number |
-| `tool.name` | ToolStart, ToolEnd | Tool being executed |
+| `tool.name` | ToolStart, ToolEnd, ToolLog | Tool being executed |
 | `node.name` | NodeStart, NodeEnd | Graph node name |
 | `duration_ms` | All end events | Operation duration in milliseconds |
 | `error` | End events with error | Error message |
@@ -103,6 +103,28 @@ Each log entry includes relevant key-value attributes:
 | `message_count` | ConversationEnd | Number of messages loaded or saved |
 | `direction` | GuardrailComplete | Guardrail direction (`input` or `output`) |
 | `blocked` | GuardrailComplete | Whether the guardrail blocked |
+
+## Tool Logging
+
+Tools can emit log messages during execution via `agent.ToolLoggerFrom(ctx)`. The logger is automatically injected when a `LoggingHook` is configured.
+
+```go
+func myTool(ctx context.Context, input MyInput) (string, error) {
+    log := agent.ToolLoggerFrom(ctx)
+    log.Logf("searching for %q", input.Query)
+    results := doSearch(input.Query)
+    log.Logf("found %d results", len(results))
+    return formatResults(results), nil
+}
+```
+
+`ToolLoggerFrom` returns a no-op logger when no hook is configured, so tools can call it unconditionally.
+
+## Stream and Response Logging
+
+The logging hook receives stream chunks and final responses automatically. When a `LoggingHook` is configured, `OnStreamChunk` is called for each final-answer chunk during `InvokeStream`, and `OnResponse` is called with the complete text after a non-streaming `Invoke`. The user's `StreamCallback` is still called if provided — the hook is additive.
+
+The debug logger prints stream chunks to stdout. The slog logger only logs `OnResponse` (chunks are too noisy for structured logs).
 
 ## Graph Logging
 

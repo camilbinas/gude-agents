@@ -102,6 +102,13 @@ func (h *slogHook) OnToolEnd(toolName string, err error, duration time.Duration)
 	h.log(level, "tool.end", attrs...)
 }
 
+func (h *slogHook) OnToolLog(toolName string, msg string) {
+	h.log(slog.LevelDebug, "tool.log",
+		slog.String("tool.name", toolName),
+		slog.String("message", msg),
+	)
+}
+
 func (h *slogHook) OnGuardrailComplete(direction string, blocked bool, err error) {
 	level := slog.LevelDebug
 	if blocked {
@@ -174,6 +181,16 @@ func (h *slogHook) OnDocumentsAttached(docCount int) {
 func (h *slogHook) OnMaxIterationsExceeded(limit int) {
 	h.log(slog.LevelWarn, "max_iterations_exceeded",
 		slog.Int("limit", limit),
+	)
+}
+
+func (h *slogHook) OnStreamChunk(_ string) {
+	// no-op: too noisy for structured logs
+}
+
+func (h *slogHook) OnResponse(text string) {
+	h.log(slog.LevelInfo, "response.text",
+		slog.String("text", text),
 	)
 }
 

@@ -54,9 +54,7 @@ func main() {
 	// Attach EventHook via context — scoped to this invocation.
 	ctx := agent.Background().WithEventHook(thinkingHook{})
 
-	err = a.InvokeStream(ctx, question, func(chunk string) {
-		fmt.Print(chunk)
-	})
+	err = a.InvokeStream(ctx, question, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

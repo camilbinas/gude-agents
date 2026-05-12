@@ -69,9 +69,7 @@ func main() {
 	fmt.Printf("Document: %s (%s, %d bytes)\n", filepath.Base(docPath), mimeType, len(data))
 	fmt.Println(strings.Repeat("─", 60))
 
-	if err := a.InvokeStream(docCtx, "Summarize this document. What are the key points?", func(chunk string) {
-		fmt.Print(chunk)
-	}); err != nil {
+	if err := a.InvokeStream(docCtx, "Summarize this document. What are the key points?", nil); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println()

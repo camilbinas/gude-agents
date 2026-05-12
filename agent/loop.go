@@ -44,6 +44,7 @@ func (a *Agent) Invoke(c *Context, userMessage string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	h.onResponse(text)
 	return text, nil
 }
 
@@ -171,8 +172,19 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 	for iteration := range a.maxIterations {
 		iterC, iterF := h.onIterationStart(c, iteration+1)
 
-		// Stream chunks directly to the callback.
+		// Stream chunks directly to the callback, also notifying the logging hook.
 		streamCB := cb
+		if h.logging != nil && cb != nil {
+			userCB := cb
+			streamCB = func(chunk string) {
+				userCB(chunk)
+				h.onStreamChunk(chunk)
+			}
+		} else if h.logging != nil && cb == nil {
+			streamCB = func(chunk string) {
+				h.onStreamChunk(chunk)
+			}
+		}
 
 		// Normalize messages.
 		converseMessages := messages
@@ -201,7 +213,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			InferenceConfig: inferenceConfig,
 		}, modelID)
 
-		resp, err := a.callProviderWithRetry(provC, ConverseParams{
+		resp, err := a.callProviderWithRetry(provC, convID, ConverseParams{
 			Messages:         converseMessages,
 			System:           systemPrompt,
 			ToolConfig:       currentToolSpecs,
@@ -449,14 +461,14 @@ func (a *Agent) saveConversation(ctx context.Context, convID string, messages []
 }
 
 // callProviderWithRetry calls ConverseStream with optional timeout and retry.
-func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
 	maxAttempts := 1 + a.retryMax
 	var lastErr error
 
 	for attempt := range maxAttempts {
 		// Rate limit acquisition (before each attempt, including retries)
 		if a.rateLimiter != nil {
-			if err := a.rateLimiter.Acquire(ctx); err != nil {
+			if err := a.rateLimiter.Acquire(ctx, convID); err != nil {
 				return nil, err
 			}
 		}
@@ -474,7 +486,7 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, params ConverseParams
 		if err == nil {
 			// Record actual token usage on success
 			if a.rateLimiter != nil {
-				a.rateLimiter.Record(resp.Usage)
+				a.rateLimiter.Record(convID, resp.Usage)
 			}
 			return resp, nil
 		}

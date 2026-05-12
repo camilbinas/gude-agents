@@ -181,6 +181,13 @@ func (h *hooks) onToolStart(c *Context, toolName string, input json.RawMessage) 
 	if h.logging != nil {
 		h.logging.OnToolStart(toolName)
 		f.logging = h.logging
+
+		// Inject a ToolLogger into the context so tools can emit log messages.
+		c = c.withContext(withToolLogger(c.Context, &hookToolLogger{
+			hook:     h.logging,
+			toolName: toolName,
+		}))
+		f.c = c
 	}
 	if h.event != nil {
 		h.event.OnToolCallStart(c, toolName, input)
@@ -313,6 +320,18 @@ func (h *hooks) onMaxIterationsExceeded(c *Context, limit int) {
 	}
 	if h.logging != nil {
 		h.logging.OnMaxIterationsExceeded(limit)
+	}
+}
+
+func (h *hooks) onStreamChunk(text string) {
+	if h.logging != nil {
+		h.logging.OnStreamChunk(text)
+	}
+}
+
+func (h *hooks) onResponse(text string) {
+	if h.logging != nil {
+		h.logging.OnResponse(text)
 	}
 }
 

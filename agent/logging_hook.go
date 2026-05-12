@@ -28,6 +28,9 @@ type LoggingHook interface {
 	// OnToolEnd is called after each tool execution with the outcome.
 	OnToolEnd(toolName string, err error, duration time.Duration)
 
+	// OnToolLog is called when a tool emits a log message via ToolLoggerFrom(ctx).
+	OnToolLog(toolName string, msg string)
+
 	// OnGuardrailComplete is called after a guardrail evaluation.
 	// direction is "input" or "output". blocked is true if the guardrail rejected.
 	OnGuardrailComplete(direction string, blocked bool, err error)
@@ -54,6 +57,14 @@ type LoggingHook interface {
 
 	// OnMaxIterationsExceeded records the max-iterations-exceeded event.
 	OnMaxIterationsExceeded(limit int)
+
+	// OnStreamChunk is called for each text chunk during streaming.
+	// Only called for final-answer chunks (not during tool-call iterations).
+	OnStreamChunk(text string)
+
+	// OnResponse is called with the complete response text after a non-streaming
+	// Invoke completes (the final answer text).
+	OnResponse(text string)
 }
 
 // SetLoggingHook sets the logging hook. Called by the logging submodule's Option.

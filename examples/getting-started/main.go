@@ -5,7 +5,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -21,16 +20,14 @@ func main() {
 		provider,
 		prompt.Text("You are a helpful assistant. Be concise."),
 		nil,
+		agent.WithName("helpful-assistant"),
 		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	result, err := a.Invoke(agent.Background(), "What is the capital of France?")
-	if err != nil {
+	if _, err = a.Invoke(agent.Background(), "What is the capital of France?"); err != nil {
 		log.Fatal(err)
 	}
-
-	fmt.Println(result)
 }

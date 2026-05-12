@@ -75,6 +75,13 @@ func (b *bridgeLoggingHook) OnToolEnd(toolName string, err error, duration time.
 	}
 }
 
+// OnToolLog is called when a tool emits a log message.
+func (b *bridgeLoggingHook) OnToolLog(toolName string, msg string) {
+	if b.inner != nil {
+		b.inner.OnToolLog(toolName, msg)
+	}
+}
+
 // OnGuardrailComplete is called after a guardrail evaluation.
 func (b *bridgeLoggingHook) OnGuardrailComplete(direction string, blocked bool, err error) {
 	if b.inner != nil {
@@ -128,6 +135,22 @@ func (b *bridgeLoggingHook) OnDocumentsAttached(docCount int) {
 func (b *bridgeLoggingHook) OnMaxIterationsExceeded(limit int) {
 	if b.inner != nil {
 		b.inner.OnMaxIterationsExceeded(limit)
+	}
+}
+
+// OnStreamChunk is called for each text chunk during streaming.
+// No-op for graph bridge — graph nodes don't stream directly.
+func (b *bridgeLoggingHook) OnStreamChunk(text string) {
+	if b.inner != nil {
+		b.inner.OnStreamChunk(text)
+	}
+}
+
+// OnResponse is called with the complete response text after a non-streaming Invoke.
+// No-op for graph bridge — graph nodes don't stream directly.
+func (b *bridgeLoggingHook) OnResponse(text string) {
+	if b.inner != nil {
+		b.inner.OnResponse(text)
 	}
 }
 

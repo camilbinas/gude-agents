@@ -349,6 +349,7 @@ func (s *stubLoggingHook) OnProviderCallEnd(err error, usage TokenUsage, toolCal
 }
 func (s *stubLoggingHook) OnToolStart(toolName string)                                   {}
 func (s *stubLoggingHook) OnToolEnd(toolName string, err error, duration time.Duration)  {}
+func (s *stubLoggingHook) OnToolLog(toolName string, msg string)                         {}
 func (s *stubLoggingHook) OnGuardrailComplete(direction string, blocked bool, err error) {}
 func (s *stubLoggingHook) OnConversationStart(operation string, conversationID string)   {}
 func (s *stubLoggingHook) OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
@@ -358,6 +359,8 @@ func (s *stubLoggingHook) OnRetrieverEnd(err error, docCount int, duration time.
 func (s *stubLoggingHook) OnImagesAttached(imageCount int)                                {}
 func (s *stubLoggingHook) OnDocumentsAttached(docCount int)                               {}
 func (s *stubLoggingHook) OnMaxIterationsExceeded(limit int)                              {}
+func (s *stubLoggingHook) OnStreamChunk(text string)                                      {}
+func (s *stubLoggingHook) OnResponse(text string)                                         {}
 
 // --- Tests for WithTracingHook/WithMetricsHook/WithLoggingHook setters ---
 

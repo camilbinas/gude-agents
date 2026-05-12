@@ -303,6 +303,7 @@ func (h *recordingAgentLoggingHook) OnProviderCallEnd(_ error, _ agent.TokenUsag
 }
 func (h *recordingAgentLoggingHook) OnToolStart(_ string)                          { h.toolStartCalls++ }
 func (h *recordingAgentLoggingHook) OnToolEnd(_ string, _ error, _ time.Duration)  { h.toolEndCalls++ }
+func (h *recordingAgentLoggingHook) OnToolLog(_ string, _ string)                  {}
 func (h *recordingAgentLoggingHook) OnGuardrailComplete(_ string, _ bool, _ error) {}
 func (h *recordingAgentLoggingHook) OnConversationStart(_ string, _ string)        {}
 func (h *recordingAgentLoggingHook) OnConversationEnd(_ string, _ string, _ error, _ int, _ time.Duration) {
@@ -312,3 +313,5 @@ func (h *recordingAgentLoggingHook) OnRetrieverEnd(_ error, _ int, _ time.Durati
 func (h *recordingAgentLoggingHook) OnImagesAttached(_ int)                         {}
 func (h *recordingAgentLoggingHook) OnDocumentsAttached(_ int)                      {}
 func (h *recordingAgentLoggingHook) OnMaxIterationsExceeded(_ int)                  {}
+func (h *recordingAgentLoggingHook) OnStreamChunk(_ string)                         {}
+func (h *recordingAgentLoggingHook) OnResponse(_ string)                            {}
