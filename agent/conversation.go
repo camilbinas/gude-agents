@@ -24,3 +24,13 @@ type Conversation interface {
 type ConversationWaiter interface {
 	Wait()
 }
+
+// ForkConversation copies a conversation's history to a new ID, creating an
+// independent branch. Both conversations continue independently after the fork.
+func ForkConversation(ctx context.Context, store Conversation, sourceID, newID string) error {
+	msgs, err := store.Load(ctx, sourceID)
+	if err != nil {
+		return err
+	}
+	return store.Save(ctx, newID, msgs)
+}

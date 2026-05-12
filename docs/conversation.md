@@ -435,6 +435,14 @@ mem, err := diskmemory.New("/tmp/agent-conversations")
 
 Conversation IDs are sanitized to prevent path traversal.
 
+## Forking
+
+`agent.ForkConversation` copies history to a new ID, creating an independent branch.
+
+```go
+agent.ForkConversation(ctx, store, "conv-main", "conv-what-if")
+```
+
 ## See Also
 
 - [Agent API Reference](agent-api.md) — `WithConversation` option and agent loop behavior
