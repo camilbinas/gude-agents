@@ -10,8 +10,9 @@
 #   6. Creates a GitHub Release with auto-generated notes.
 #
 # Conventional commit prefixes:
-#   feat:  → minor bump   (0.3.0 → 0.4.0)
-#   fix:   → patch bump   (0.3.0 → 0.3.1)
+#   feat:     → minor bump   (0.3.0 → 0.4.0)
+#   fix:      → patch bump   (0.3.0 → 0.3.1)
+#   refactor: → patch bump   (0.3.0 → 0.3.1)
 #   feat!: or BREAKING CHANGE → major bump (0.3.0 → 1.0.0)
 
 name: Release
@@ -81,6 +82,9 @@ jobs:
               [ "$BUMP" != "major" ] && BUMP="minor"
             fi
             if echo "$msg" | grep -qE '^fix(\(.+\))?:'; then
+              [ "$BUMP" = "none" ] && BUMP="patch"
+            fi
+            if echo "$msg" | grep -qE '^refactor(\(.+\))?:'; then
               [ "$BUMP" = "none" ] && BUMP="patch"
             fi
           done <<< "$COMMITS"
