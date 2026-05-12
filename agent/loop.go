@@ -325,7 +325,9 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			}
 		}
 
-		messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
+		if finalText != "" {
+			messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
+		}
 		iterF.finish(0, true)
 
 		if cfg == nil || !cfg.skipConversationSave {
