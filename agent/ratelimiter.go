@@ -34,13 +34,12 @@ type tokenEvent struct {
 	tokens int
 }
 
-// RateLimiter enforces RPM and TPM limits on provider calls.
-// It is safe for concurrent use by multiple goroutines and agents.
-type RateLimiter struct {
+// rateBucket holds the counters for a single rate limit bucket.
+type rateBucket struct {
 	mu sync.Mutex
 
-	rpmLimit int // 0 = unlimited
-	tpmLimit int // 0 = unlimited
+	rpmLimit int
+	tpmLimit int
 
 	windowStrategy   WindowStrategy
 	overflowBehavior OverflowBehavior
@@ -54,7 +53,207 @@ type RateLimiter struct {
 	fixedRPMCount    int
 	fixedTPMCount    int
 
+	// lastAccess is updated on every acquire/record for TTL eviction.
+	lastAccess time.Time
+
 	// Clock abstraction for testing
+	now func() time.Time
+}
+
+// maybeResetFixedWindow resets the fixed window counters if the current window
+// has expired (60 seconds elapsed since window start).
+func (b *rateBucket) maybeResetFixedWindow() {
+	now := b.now()
+	if b.fixedWindowStart.IsZero() {
+		b.fixedWindowStart = now
+		return
+	}
+	if now.Sub(b.fixedWindowStart) >= 60*time.Second {
+		b.fixedWindowStart = now
+		b.fixedRPMCount = 0
+		b.fixedTPMCount = 0
+	}
+}
+
+func (b *rateBucket) fixedRPMCountVal() int {
+	b.maybeResetFixedWindow()
+	return b.fixedRPMCount
+}
+
+func (b *rateBucket) fixedTPMCountVal() int {
+	b.maybeResetFixedWindow()
+	return b.fixedTPMCount
+}
+
+func (b *rateBucket) slidingRPMCount() int {
+	cutoff := b.now().Add(-60 * time.Second)
+	i := sort.Search(len(b.rpmEvents), func(j int) bool {
+		return !b.rpmEvents[j].Before(cutoff)
+	})
+	b.rpmEvents = b.rpmEvents[i:]
+	return len(b.rpmEvents)
+}
+
+func (b *rateBucket) slidingTPMCount() int {
+	cutoff := b.now().Add(-60 * time.Second)
+	i := sort.Search(len(b.tpmEvents), func(j int) bool {
+		return !b.tpmEvents[j].at.Before(cutoff)
+	})
+	b.tpmEvents = b.tpmEvents[i:]
+	total := 0
+	for _, e := range b.tpmEvents {
+		total += e.tokens
+	}
+	return total
+}
+
+func (b *rateBucket) rpmWaitDuration() time.Duration {
+	now := b.now()
+	switch b.windowStrategy {
+	case SlidingWindow:
+		if len(b.rpmEvents) > 0 {
+			oldest := b.rpmEvents[0]
+			return oldest.Add(60 * time.Second).Sub(now)
+		}
+	case FixedWindow:
+		return b.fixedWindowStart.Add(60 * time.Second).Sub(now)
+	}
+	return time.Second
+}
+
+func (b *rateBucket) tpmWaitDuration() time.Duration {
+	now := b.now()
+	switch b.windowStrategy {
+	case SlidingWindow:
+		if len(b.tpmEvents) > 0 {
+			oldest := b.tpmEvents[0]
+			return oldest.at.Add(60 * time.Second).Sub(now)
+		}
+	case FixedWindow:
+		return b.fixedWindowStart.Add(60 * time.Second).Sub(now)
+	}
+	return time.Second
+}
+
+func (b *rateBucket) waitForCapacity(ctx context.Context, waitDuration time.Duration) error {
+	timer := time.NewTimer(waitDuration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// acquire checks rate limits and blocks or fails fast depending on config.
+func (b *rateBucket) acquire(ctx context.Context) error {
+	b.mu.Lock()
+	for {
+		if b.rpmLimit > 0 {
+			var count int
+			switch b.windowStrategy {
+			case SlidingWindow:
+				count = b.slidingRPMCount()
+			case FixedWindow:
+				count = b.fixedRPMCountVal()
+			}
+			if count >= b.rpmLimit {
+				if b.overflowBehavior == FailFastMode {
+					b.mu.Unlock()
+					return ErrRateLimitExceeded
+				}
+				waitDuration := b.rpmWaitDuration()
+				b.mu.Unlock()
+				if err := b.waitForCapacity(ctx, waitDuration); err != nil {
+					return err
+				}
+				b.mu.Lock()
+				continue
+			}
+		}
+
+		if b.tpmLimit > 0 {
+			var count int
+			switch b.windowStrategy {
+			case SlidingWindow:
+				count = b.slidingTPMCount()
+			case FixedWindow:
+				count = b.fixedTPMCountVal()
+			}
+			if count >= b.tpmLimit {
+				if b.overflowBehavior == FailFastMode {
+					b.mu.Unlock()
+					return ErrRateLimitExceeded
+				}
+				waitDuration := b.tpmWaitDuration()
+				b.mu.Unlock()
+				if err := b.waitForCapacity(ctx, waitDuration); err != nil {
+					return err
+				}
+				b.mu.Lock()
+				continue
+			}
+		}
+
+		switch b.windowStrategy {
+		case SlidingWindow:
+			b.rpmEvents = append(b.rpmEvents, b.now())
+		case FixedWindow:
+			b.maybeResetFixedWindow()
+			b.fixedRPMCount++
+		}
+
+		b.lastAccess = b.now()
+		b.mu.Unlock()
+		return nil
+	}
+}
+
+// record records token consumption after a successful provider call.
+func (b *rateBucket) record(usage TokenUsage) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	tokens := usage.Total()
+	if tokens <= 0 {
+		return
+	}
+
+	b.lastAccess = b.now()
+
+	switch b.windowStrategy {
+	case SlidingWindow:
+		b.tpmEvents = append(b.tpmEvents, tokenEvent{at: b.now(), tokens: tokens})
+	case FixedWindow:
+		b.maybeResetFixedWindow()
+		b.fixedTPMCount += tokens
+	}
+}
+
+// RateLimiter enforces RPM and TPM limits on provider calls.
+// It supports both shared (single-bucket) and per-key (multi-bucket) modes.
+//
+// In shared mode, all calls compete for the same budget regardless of
+// conversation ID. In per-key mode, each conversation ID gets its own
+// independent budget. The mode is determined automatically: when a conversation
+// ID is present, the limiter uses per-key buckets; when absent, it uses a
+// shared default bucket.
+//
+// It is safe for concurrent use by multiple goroutines and agents.
+type RateLimiter struct {
+	mu sync.Mutex
+
+	rpmLimit int
+	tpmLimit int
+
+	windowStrategy   WindowStrategy
+	overflowBehavior OverflowBehavior
+
+	buckets   map[string]*rateBucket
+	lastSweep time.Time // last time stale buckets were evicted
+
+	// Clock abstraction for testing.
 	now func() time.Time
 }
 
@@ -77,7 +276,7 @@ func WithSlidingWindow() RateLimiterOption {
 }
 
 // WithFailFast configures the RateLimiter to return ErrRateLimitExceeded
-// immediately when a limit is exceeded.
+// immediately when a limit is exceeded. This is the default.
 func WithFailFast() RateLimiterOption {
 	return func(rl *RateLimiter) {
 		rl.overflowBehavior = FailFastMode
@@ -85,46 +284,20 @@ func WithFailFast() RateLimiterOption {
 }
 
 // WithBlock configures the RateLimiter to wait until capacity is available.
-// This is the default and is provided for explicitness.
+// Useful for background batch processing where throughput matters more than latency.
 func WithBlock() RateLimiterOption {
 	return func(rl *RateLimiter) {
 		rl.overflowBehavior = BlockMode
 	}
 }
 
-// maybeResetFixedWindow resets the fixed window counters if the current window
-// has expired (60 seconds elapsed since window start). If the window has not
-// been initialized yet, it sets the start to now.
-func (rl *RateLimiter) maybeResetFixedWindow() {
-	now := rl.now()
-	if rl.fixedWindowStart.IsZero() {
-		rl.fixedWindowStart = now
-		return
-	}
-	if now.Sub(rl.fixedWindowStart) >= 60*time.Second {
-		rl.fixedWindowStart = now
-		rl.fixedRPMCount = 0
-		rl.fixedTPMCount = 0
-	}
-}
-
-// fixedRPMCountVal returns the current RPM count for the fixed window,
-// resetting the window first if it has expired.
-func (rl *RateLimiter) fixedRPMCountVal() int {
-	rl.maybeResetFixedWindow()
-	return rl.fixedRPMCount
-}
-
-// fixedTPMCountVal returns the current TPM count for the fixed window,
-// resetting the window first if it has expired.
-func (rl *RateLimiter) fixedTPMCountVal() int {
-	rl.maybeResetFixedWindow()
-	return rl.fixedTPMCount
-}
-
 // NewRateLimiter creates a RateLimiter with the given RPM and TPM limits.
 // At least one of rpmLimit or tpmLimit must be > 0.
-// Defaults: SlidingWindow strategy, BlockMode overflow behavior.
+// Defaults: SlidingWindow strategy, FailFast overflow behavior.
+//
+// When used without conversation IDs (or with a single shared agent), all calls
+// share one budget. When conversation IDs are present, each ID gets its own
+// independent budget with the same limits.
 func NewRateLimiter(rpmLimit, tpmLimit int, opts ...RateLimiterOption) (*RateLimiter, error) {
 	if rpmLimit == 0 && tpmLimit == 0 {
 		return nil, fmt.Errorf("at least one of rpmLimit or tpmLimit must be > 0")
@@ -133,7 +306,8 @@ func NewRateLimiter(rpmLimit, tpmLimit int, opts ...RateLimiterOption) (*RateLim
 		rpmLimit:         rpmLimit,
 		tpmLimit:         tpmLimit,
 		windowStrategy:   SlidingWindow,
-		overflowBehavior: BlockMode,
+		overflowBehavior: FailFastMode,
+		buckets:          make(map[string]*rateBucket),
 		now:              time.Now,
 	}
 	for _, opt := range opts {
@@ -142,168 +316,67 @@ func NewRateLimiter(rpmLimit, tpmLimit int, opts ...RateLimiterOption) (*RateLim
 	return rl, nil
 }
 
-// slidingRPMCount prunes rpmEvents older than 60 seconds and returns the count
-// of remaining events. Must be called with rl.mu held.
-func (rl *RateLimiter) slidingRPMCount() int {
-	cutoff := rl.now().Add(-60 * time.Second)
-	// Use sort.Search to find the first event that is not before the cutoff.
-	i := sort.Search(len(rl.rpmEvents), func(j int) bool {
-		return !rl.rpmEvents[j].Before(cutoff)
-	})
-	rl.rpmEvents = rl.rpmEvents[i:]
-	return len(rl.rpmEvents)
-}
-
-// slidingTPMCount prunes tpmEvents older than 60 seconds and returns the sum
-// of remaining token counts. Must be called with rl.mu held.
-func (rl *RateLimiter) slidingTPMCount() int {
-	cutoff := rl.now().Add(-60 * time.Second)
-	i := sort.Search(len(rl.tpmEvents), func(j int) bool {
-		return !rl.tpmEvents[j].at.Before(cutoff)
-	})
-	rl.tpmEvents = rl.tpmEvents[i:]
-	total := 0
-	for _, e := range rl.tpmEvents {
-		total += e.tokens
-	}
-	return total
-}
-
-// Acquire checks rate limits before a provider call.
-// It checks RPM first, then TPM. Depending on overflow behavior:
-// - FailFastMode: returns ErrRateLimitExceeded immediately if a limit is exceeded
-// - BlockMode: waits until the window resets and capacity is available
-// The context is monitored for cancellation during blocking.
-func (rl *RateLimiter) Acquire(ctx context.Context) error {
-	rl.mu.Lock()
-	for {
-		// Check RPM limit (if configured, i.e. > 0)
-		if rl.rpmLimit > 0 {
-			var count int
-			switch rl.windowStrategy {
-			case SlidingWindow:
-				count = rl.slidingRPMCount()
-			case FixedWindow:
-				count = rl.fixedRPMCountVal()
-			}
-			if count >= rl.rpmLimit {
-				if rl.overflowBehavior == FailFastMode {
-					rl.mu.Unlock()
-					return ErrRateLimitExceeded
-				}
-				// BlockMode: calculate wait duration, release lock, wait, re-acquire
-				waitDuration := rl.rpmWaitDuration()
-				rl.mu.Unlock()
-				if err := rl.waitForCapacity(ctx, waitDuration); err != nil {
-					return err
-				}
-				rl.mu.Lock()
-				continue
-			}
-		}
-
-		// Check TPM limit (if configured, i.e. > 0)
-		if rl.tpmLimit > 0 {
-			var count int
-			switch rl.windowStrategy {
-			case SlidingWindow:
-				count = rl.slidingTPMCount()
-			case FixedWindow:
-				count = rl.fixedTPMCountVal()
-			}
-			if count >= rl.tpmLimit {
-				if rl.overflowBehavior == FailFastMode {
-					rl.mu.Unlock()
-					return ErrRateLimitExceeded
-				}
-				// BlockMode: calculate wait duration, release lock, wait, re-acquire
-				waitDuration := rl.tpmWaitDuration()
-				rl.mu.Unlock()
-				if err := rl.waitForCapacity(ctx, waitDuration); err != nil {
-					return err
-				}
-				rl.mu.Lock()
-				continue
-			}
-		}
-
-		// Both checks passed: increment RPM counter and return
-		switch rl.windowStrategy {
-		case SlidingWindow:
-			rl.rpmEvents = append(rl.rpmEvents, rl.now())
-		case FixedWindow:
-			rl.maybeResetFixedWindow()
-			rl.fixedRPMCount++
-		}
-
-		rl.mu.Unlock()
-		return nil
-	}
-}
-
-// rpmWaitDuration calculates how long to wait until RPM capacity becomes available.
-// Must be called with rl.mu held.
-func (rl *RateLimiter) rpmWaitDuration() time.Duration {
-	now := rl.now()
-	switch rl.windowStrategy {
-	case SlidingWindow:
-		if len(rl.rpmEvents) > 0 {
-			oldest := rl.rpmEvents[0]
-			return oldest.Add(60 * time.Second).Sub(now)
-		}
-	case FixedWindow:
-		return rl.fixedWindowStart.Add(60 * time.Second).Sub(now)
-	}
-	return time.Second // fallback, should not happen
-}
-
-// tpmWaitDuration calculates how long to wait until TPM capacity becomes available.
-// Must be called with rl.mu held.
-func (rl *RateLimiter) tpmWaitDuration() time.Duration {
-	now := rl.now()
-	switch rl.windowStrategy {
-	case SlidingWindow:
-		if len(rl.tpmEvents) > 0 {
-			oldest := rl.tpmEvents[0]
-			return oldest.at.Add(60 * time.Second).Sub(now)
-		}
-	case FixedWindow:
-		return rl.fixedWindowStart.Add(60 * time.Second).Sub(now)
-	}
-	return time.Second // fallback, should not happen
-}
-
-// waitForCapacity waits for the specified duration or until the context is cancelled.
-// It does NOT hold the mutex — it is called after releasing the lock.
-// Returns nil when the timer fires (capacity may be available), or ctx.Err() if
-// the context is cancelled before the timer fires.
-func (rl *RateLimiter) waitForCapacity(ctx context.Context, waitDuration time.Duration) error {
-	timer := time.NewTimer(waitDuration)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil // capacity available, retry check
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// Record records token consumption after a successful provider call.
-// Only call this after a successful provider response.
-func (rl *RateLimiter) Record(usage TokenUsage) {
+// bucket returns the rateBucket for the given key, creating one if needed.
+// Lazily evicts stale buckets (idle > 60s) at most once per 10 seconds.
+func (rl *RateLimiter) bucket(key string) *rateBucket {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	tokens := usage.Total()
-	if tokens <= 0 {
-		return
+	now := rl.now()
+
+	// Lazy sweep: evict stale buckets at most once per 10 seconds.
+	if now.Sub(rl.lastSweep) >= 10*time.Second {
+		rl.lastSweep = now
+		for k, b := range rl.buckets {
+			b.mu.Lock()
+			idle := now.Sub(b.lastAccess)
+			b.mu.Unlock()
+			if idle >= 60*time.Second && k != "" {
+				delete(rl.buckets, k)
+			}
+		}
 	}
 
-	switch rl.windowStrategy {
-	case SlidingWindow:
-		rl.tpmEvents = append(rl.tpmEvents, tokenEvent{at: rl.now(), tokens: tokens})
-	case FixedWindow:
-		rl.maybeResetFixedWindow()
-		rl.fixedTPMCount += tokens
+	if b, ok := rl.buckets[key]; ok {
+		return b
 	}
+	b := &rateBucket{
+		rpmLimit:         rl.rpmLimit,
+		tpmLimit:         rl.tpmLimit,
+		windowStrategy:   rl.windowStrategy,
+		overflowBehavior: rl.overflowBehavior,
+		lastAccess:       now,
+		now:              rl.now,
+	}
+	rl.buckets[key] = b
+	return b
+}
+
+// Acquire checks rate limits for the given key before a provider call.
+// Use an empty string for shared (non-keyed) rate limiting.
+// Each distinct key is rate-limited independently.
+func (rl *RateLimiter) Acquire(ctx context.Context, key string) error {
+	return rl.bucket(key).acquire(ctx)
+}
+
+// Record records token consumption for the given key after a successful provider call.
+// Use an empty string for shared (non-keyed) rate limiting.
+func (rl *RateLimiter) Record(key string, usage TokenUsage) {
+	rl.bucket(key).record(usage)
+}
+
+// Purge removes the bucket for the given key, freeing its resources.
+// Call this when a conversation ends and no further calls are expected for that key.
+// Has no effect on shared (empty-key) usage.
+func (rl *RateLimiter) Purge(key string) {
+	rl.mu.Lock()
+	delete(rl.buckets, key)
+	rl.mu.Unlock()
+}
+
+// Len returns the number of active key buckets.
+func (rl *RateLimiter) Len() int {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return len(rl.buckets)
 }

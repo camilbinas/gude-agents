@@ -117,7 +117,7 @@ func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, conv
 		InferenceConfig: mergedCfg,
 	}, modelID)
 
-	resp, err := a.callProviderWithRetry(provC, params, nil)
+	resp, err := a.callProviderWithRetry(provC, convID, params, nil)
 	if err != nil {
 		provF.finish(err, TokenUsage{}, 0, "")
 		return zero, TokenUsage{}, &ProviderError{Cause: err}

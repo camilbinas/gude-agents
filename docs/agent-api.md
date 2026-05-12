@@ -34,7 +34,7 @@ Use `agent.Default` for most cases. Use `agent.Orchestrator` + `agent.Worker` wh
 | `WithTimeout(d)` | no timeout | Per-call timeout for provider calls. Prevents hung connections in HTTP servers |
 | `WithRetry(maxRetries, baseDelay)` | no retry | Exponential backoff for transient provider errors |
 | `WithTokenBudget(maxTokens)` | no budget | Max cumulative tokens (input + output) per invocation |
-| `WithRateLimiter(rl)` | no limiter | Shared rate limiter enforcing RPM/TPM limits across provider calls. See [Rate Limiting](#rate-limiting) |
+| `WithRateLimiter(rl)` | no limiter | Rate limiter enforcing RPM/TPM limits. Per-conversation when conversation IDs are used, shared otherwise. See [Rate Limiting](#rate-limiting) |
 
 `WithTimeout` and `WithRetry` compose naturally — each retry attempt gets its own fresh timeout:
 
@@ -96,21 +96,23 @@ result, err := a.Invoke(c, "Be creative!")
 
 ### Rate Limiting
 
-`WithRateLimiter(rl)` attaches a `*RateLimiter` that enforces RPM and TPM limits on provider calls. A single instance can be shared across multiple agents to collectively respect a provider's rate limits.
+`WithRateLimiter(rl)` attaches a `*RateLimiter` that enforces RPM and TPM limits on provider calls. Each conversation ID gets its own independent budget; calls without a conversation ID share a single default bucket. A single `*RateLimiter` instance can be shared across multiple agents.
 
 ```go
-rl, _ := agent.NewRateLimiter(60, 100000, agent.WithSlidingWindow(), agent.WithFailFast())
+rl, _ := agent.NewRateLimiter(60, 100000)
 
-a1, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
-a2, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
+a, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
+// Shared budget when no conversation ID is set.
+// Per-conversation budget when WithConversationID is used.
+// Call rl.Purge(convID) when a conversation ends to free resources.
 ```
 
-| RateLimiter Option | Default | Description |
+| RateLimiterOption | Default | Description |
 |---|---|---|
 | `WithSlidingWindow()` | ✓ | Tracks consumption over a continuously advancing 60-second window |
 | `WithFixedWindow()` | — | Resets counters at fixed 60-second intervals |
-| `WithBlock()` | ✓ | Waits until capacity is available (respects context cancellation) |
-| `WithFailFast()` | — | Returns `ErrRateLimitExceeded` immediately when a limit is exceeded |
+| `WithFailFast()` | ✓ | Returns `ErrRateLimitExceeded` immediately when a limit is exceeded |
+| `WithBlock()` | — | Waits until capacity is available (respects context cancellation) |
 
 `ErrRateLimitExceeded` short-circuits retries — if the limiter rejects a call during a retry attempt, the error propagates immediately.
 

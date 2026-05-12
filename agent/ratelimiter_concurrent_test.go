@@ -36,7 +36,7 @@ func TestConcurrentAcquire(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < acquiresPerGoroutine; j++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					t.Errorf("Acquire() returned unexpected error: %v", err)
 					return
 				}
@@ -54,9 +54,10 @@ func TestConcurrentAcquire(t *testing.T) {
 	}
 
 	// Verify the RPM counter matches
-	rl.mu.Lock()
-	rpmCount := rl.slidingRPMCount()
-	rl.mu.Unlock()
+	b := rl.bucket("")
+	b.mu.Lock()
+	rpmCount := b.slidingRPMCount()
+	b.mu.Unlock()
 
 	if rpmCount != int(expected) {
 		t.Fatalf("RPM counter = %d, want %d", rpmCount, expected)
@@ -89,7 +90,7 @@ func TestConcurrentRecord(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < recordsPerGoroutine; j++ {
-				rl.Record(TokenUsage{
+				rl.Record("", TokenUsage{
 					InputTokens:  5,
 					OutputTokens: 5,
 				})
@@ -100,9 +101,10 @@ func TestConcurrentRecord(t *testing.T) {
 	wg.Wait()
 
 	// Verify the TPM counter equals the sum of all recorded tokens
-	rl.mu.Lock()
-	tpmCount := rl.slidingTPMCount()
-	rl.mu.Unlock()
+	b := rl.bucket("")
+	b.mu.Lock()
+	tpmCount := b.slidingTPMCount()
+	b.mu.Unlock()
 
 	expected := numGoroutines * recordsPerGoroutine * tokensPerRecord
 	if tpmCount != expected {
@@ -140,7 +142,7 @@ func TestConcurrentAcquireAndRecord(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < opsPerGoroutine; j++ {
-					if err := rl.Acquire(ctx); err != nil {
+					if err := rl.Acquire(ctx, ""); err != nil {
 						t.Errorf("Acquire() returned unexpected error: %v", err)
 						return
 					}
@@ -151,7 +153,7 @@ func TestConcurrentAcquireAndRecord(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < opsPerGoroutine; j++ {
-					rl.Record(TokenUsage{
+					rl.Record("", TokenUsage{
 						InputTokens:  3,
 						OutputTokens: 7,
 					})
@@ -175,10 +177,11 @@ func TestConcurrentAcquireAndRecord(t *testing.T) {
 	}
 
 	// Verify internal counters are consistent
-	rl.mu.Lock()
-	rpmCount := rl.slidingRPMCount()
-	tpmCount := rl.slidingTPMCount()
-	rl.mu.Unlock()
+	b := rl.bucket("")
+	b.mu.Lock()
+	rpmCount := b.slidingRPMCount()
+	tpmCount := b.slidingTPMCount()
+	b.mu.Unlock()
 
 	if rpmCount != int(expectedAcquires) {
 		t.Fatalf("RPM counter = %d, want %d", rpmCount, expectedAcquires)
@@ -225,14 +228,14 @@ func TestSharedLimiterAcrossAgents(t *testing.T) {
 			defer wg.Done()
 			for call := 0; call < callsPerAgent; call++ {
 				// Acquire (pre-call)
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					t.Errorf("Agent Acquire() returned unexpected error: %v", err)
 					return
 				}
 				totalAcquires.Add(1)
 
 				// Record (post-call) — simulating a successful provider response
-				rl.Record(TokenUsage{
+				rl.Record("", TokenUsage{
 					InputTokens:  40,
 					OutputTokens: 60,
 				})
@@ -252,10 +255,11 @@ func TestSharedLimiterAcrossAgents(t *testing.T) {
 	}
 
 	// Verify the shared RateLimiter's internal counters reflect aggregated consumption
-	rl.mu.Lock()
-	rpmCount := rl.slidingRPMCount()
-	tpmCount := rl.slidingTPMCount()
-	rl.mu.Unlock()
+	b := rl.bucket("")
+	b.mu.Lock()
+	rpmCount := b.slidingRPMCount()
+	tpmCount := b.slidingTPMCount()
+	b.mu.Unlock()
 
 	if rpmCount != totalExpectedRPM {
 		t.Fatalf("aggregated RPM counter = %d, want %d", rpmCount, totalExpectedRPM)
@@ -291,7 +295,7 @@ func TestConcurrentAcquire_FixedWindow(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < acquiresPerGoroutine; j++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					t.Errorf("Acquire() returned unexpected error: %v", err)
 					return
 				}
@@ -309,9 +313,10 @@ func TestConcurrentAcquire_FixedWindow(t *testing.T) {
 	}
 
 	// Verify the fixed window RPM counter matches
-	rl.mu.Lock()
-	rpmCount := rl.fixedRPMCount
-	rl.mu.Unlock()
+	b := rl.bucket("")
+	b.mu.Lock()
+	rpmCount := b.fixedRPMCount
+	b.mu.Unlock()
 
 	if rpmCount != int(expected) {
 		t.Fatalf("fixed window RPM counter = %d, want %d", rpmCount, expected)
@@ -343,7 +348,7 @@ func TestConcurrentRecord_FixedWindow(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < recordsPerGoroutine; j++ {
-				rl.Record(TokenUsage{
+				rl.Record("", TokenUsage{
 					InputTokens:  5,
 					OutputTokens: 5,
 				})
@@ -354,9 +359,10 @@ func TestConcurrentRecord_FixedWindow(t *testing.T) {
 	wg.Wait()
 
 	// Verify the fixed window TPM counter
-	rl.mu.Lock()
-	tpmCount := rl.fixedTPMCount
-	rl.mu.Unlock()
+	b := rl.bucket("")
+	b.mu.Lock()
+	tpmCount := b.fixedTPMCount
+	b.mu.Unlock()
 
 	expected := numGoroutines * recordsPerGoroutine * tokensPerRecord
 	if tpmCount != expected {

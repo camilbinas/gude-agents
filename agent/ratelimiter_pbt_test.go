@@ -49,7 +49,7 @@ func TestProperty_ZeroLimitMeansUnlimited(t *testing.T) {
 
 			ctx := context.Background()
 			for i := 0; i < numCalls; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d with RPM=0 (unlimited): %v", i+1, err)
 				}
@@ -91,7 +91,7 @@ func TestProperty_ZeroLimitMeansUnlimited(t *testing.T) {
 			// Record large amounts of tokens — TPM should never be enforced
 			for i := 0; i < numRecords; i++ {
 				tokens := rapid.IntRange(1, 100000).Draw(rt, "tokens")
-				rl.Record(TokenUsage{
+				rl.Record("", TokenUsage{
 					InputTokens:  tokens / 2,
 					OutputTokens: tokens - tokens/2,
 				})
@@ -102,7 +102,7 @@ func TestProperty_ZeroLimitMeansUnlimited(t *testing.T) {
 			// call Acquire up to rpmLimit times.
 			acquireCalls := rapid.IntRange(1, rpmLimit).Draw(rt, "acquireCalls")
 			for i := 0; i < acquireCalls; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d with TPM=0 (unlimited) after recording %d token events: %v", i+1, numRecords, err)
 				}
@@ -136,14 +136,14 @@ func TestProperty_FixedWindowResetsAtIntervals(t *testing.T) {
 
 		// Exhaust the RPM limit within the current window
 		for i := 0; i < rpmLimit; i++ {
-			err := rl.Acquire(ctx)
+			err := rl.Acquire(ctx, "")
 			if err != nil {
 				rt.Fatalf("Acquire() returned error on call %d (limit=%d): %v", i+1, rpmLimit, err)
 			}
 		}
 
 		// Verify the limit is actually exhausted (next call should fail)
-		err = rl.Acquire(ctx)
+		err = rl.Acquire(ctx, "")
 		if err != ErrRateLimitExceeded {
 			rt.Fatalf("expected ErrRateLimitExceeded after exhausting RPM limit, got: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestProperty_FixedWindowResetsAtIntervals(t *testing.T) {
 		currentTime = currentTime.Add(time.Duration(advanceDuration) * time.Second)
 
 		// After the window resets, Acquire should succeed again
-		err = rl.Acquire(ctx)
+		err = rl.Acquire(ctx, "")
 		if err != nil {
 			rt.Fatalf("Acquire() returned error after window reset (advanced %ds): %v", advanceDuration, err)
 		}
@@ -191,7 +191,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 			for i := 0; i < numOldRequests; i++ {
 				offset := rapid.IntRange(0, 29).Draw(rt, "oldOffset")
 				currentTime = baseTime.Add(time.Duration(offset) * time.Second)
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() failed during old requests (call %d): %v", i+1, err)
 				}
@@ -205,7 +205,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 			// Now the sliding window should have pruned all old requests.
 			// We should be able to make rpmLimit requests without hitting the limit.
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d after old requests expired (rpmLimit=%d, numOldRequests=%d): %v",
 						i+1, rpmLimit, numOldRequests, err)
@@ -213,7 +213,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 			}
 
 			// The next request should fail (we've now used all capacity)
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if !errors.Is(err, ErrRateLimitExceeded) {
 				rt.Fatalf("Expected ErrRateLimitExceeded after filling capacity, got: %v", err)
 			}
@@ -247,12 +247,12 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 				// Record some tokens (distribute the tpmLimit across records)
 				tokens := rapid.IntRange(1, tpmLimit/numRecords+1).Draw(rt, "tokens")
 				totalOldTokens += tokens
-				rl.Record(TokenUsage{
+				rl.Record("", TokenUsage{
 					InputTokens:  tokens / 2,
 					OutputTokens: tokens - tokens/2,
 				})
 				// Also acquire to register the RPM event (needed for the request to count)
-				_ = rl.Acquire(ctx)
+				_ = rl.Acquire(ctx, "")
 			}
 
 			// Advance time past 60 seconds from the latest possible old record
@@ -261,13 +261,13 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 			// Now the sliding window should have pruned all old token records.
 			// Record tokens up to the limit — this should succeed because old tokens expired.
 			tokensToRecord := tpmLimit - 1 // just under the limit
-			rl.Record(TokenUsage{
+			rl.Record("", TokenUsage{
 				InputTokens:  tokensToRecord / 2,
 				OutputTokens: tokensToRecord - tokensToRecord/2,
 			})
 
 			// Acquire should still succeed (TPM is at tpmLimit-1, under the limit)
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if err != nil {
 				rt.Fatalf("Acquire() failed after old tokens expired and recording %d tokens (tpmLimit=%d, totalOldTokens=%d): %v",
 					tokensToRecord, tpmLimit, totalOldTokens, err)
@@ -300,7 +300,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 				// Place requests within (checkTime-60s, checkTime] — i.e., within the window
 				offset := rapid.IntRange(1, 59).Draw(rt, "recentOffset")
 				currentTime = checkTime.Add(-time.Duration(offset) * time.Second)
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() failed for recent request %d: %v", i+1, err)
 				}
@@ -312,7 +312,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 
 			// We should be able to make exactly remainingCapacity more requests
 			for i := 0; i < remainingCapacity; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() failed on remaining capacity call %d (remaining=%d): %v",
 						i+1, remainingCapacity, err)
@@ -320,7 +320,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 			}
 
 			// The next one should fail
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if !errors.Is(err, ErrRateLimitExceeded) {
 				rt.Fatalf("Expected ErrRateLimitExceeded after using all capacity, got: %v", err)
 			}
@@ -360,14 +360,14 @@ func TestProperty_FailFastReturnsErrRateLimitExceeded(t *testing.T) {
 
 			// Exhaust the RPM limit by calling Acquire rpmLimit times
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (before limit reached): %v", i+1, err)
 				}
 			}
 
 			// The next Acquire should return ErrRateLimitExceeded immediately
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if err == nil {
 				rt.Fatalf("Acquire() returned nil after exhausting RPM limit of %d", rpmLimit)
 			}
@@ -405,13 +405,13 @@ func TestProperty_FailFastReturnsErrRateLimitExceeded(t *testing.T) {
 			// Record tokens to exhaust the TPM limit.
 			// We need to record enough tokens to meet or exceed tpmLimit.
 			// Use a single Record call with exactly tpmLimit tokens.
-			rl.Record(TokenUsage{
+			rl.Record("", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
 
 			// The next Acquire should return ErrRateLimitExceeded due to TPM exceeded
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if err == nil {
 				rt.Fatalf("Acquire() returned nil after exhausting TPM limit of %d", tpmLimit)
 			}
@@ -446,15 +446,15 @@ func TestProperty_CountersTrackConsumptionAccurately(t *testing.T) {
 
 			ctx := context.Background()
 			for i := 0; i < n; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d: %v", i+1, err)
 				}
 			}
 
 			// Verify RPM counter equals N
-			rl.mu.Lock()
-			count := rl.slidingRPMCount()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			count := b.slidingRPMCount()
+			b.mu.Unlock()
 
 			if count != n {
 				rt.Fatalf("sliding RPM counter = %d, want %d", count, n)
@@ -483,13 +483,13 @@ func TestProperty_CountersTrackConsumptionAccurately(t *testing.T) {
 				output := rapid.IntRange(1, 5000).Draw(rt, "outputTokens")
 				usage := TokenUsage{InputTokens: input, OutputTokens: output}
 				expectedTotal += usage.Total()
-				rl.Record(usage)
+				rl.Record("", usage)
 			}
 
 			// Verify TPM counter equals sum of all tokens
-			rl.mu.Lock()
-			count := rl.slidingTPMCount()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			count := b.slidingTPMCount()
+			b.mu.Unlock()
 
 			if count != expectedTotal {
 				rt.Fatalf("sliding TPM counter = %d, want %d", count, expectedTotal)
@@ -514,15 +514,15 @@ func TestProperty_CountersTrackConsumptionAccurately(t *testing.T) {
 
 			ctx := context.Background()
 			for i := 0; i < n; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d: %v", i+1, err)
 				}
 			}
 
 			// Verify RPM counter equals N
-			rl.mu.Lock()
-			count := rl.fixedRPMCount
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			count := b.fixedRPMCount
+			b.mu.Unlock()
 
 			if count != n {
 				rt.Fatalf("fixed RPM counter = %d, want %d", count, n)
@@ -551,13 +551,13 @@ func TestProperty_CountersTrackConsumptionAccurately(t *testing.T) {
 				output := rapid.IntRange(1, 5000).Draw(rt, "outputTokens")
 				usage := TokenUsage{InputTokens: input, OutputTokens: output}
 				expectedTotal += usage.Total()
-				rl.Record(usage)
+				rl.Record("", usage)
 			}
 
 			// Verify TPM counter equals sum of all tokens
-			rl.mu.Lock()
-			count := rl.fixedTPMCount
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			count := b.fixedTPMCount
+			b.mu.Unlock()
 
 			if count != expectedTotal {
 				rt.Fatalf("fixed TPM counter = %d, want %d", count, expectedTotal)
@@ -603,7 +603,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 
 			// Exhaust the RPM limit at T=0
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() failed on call %d: %v", i+1, err)
 				}
@@ -625,7 +625,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 
 			// Acquire should block briefly (real timer ~10ms), then succeed
 			start := time.Now()
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			elapsed := time.Since(start)
 
 			if err != nil {
@@ -665,7 +665,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 
 			// Exhaust the RPM limit at T=0
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() failed on call %d: %v", i+1, err)
 				}
@@ -687,7 +687,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 
 			// Acquire should block briefly then succeed after window reset
 			start := time.Now()
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			elapsed := time.Since(start)
 
 			if err != nil {
@@ -723,7 +723,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 			}
 
 			// Record tokens to exhaust TPM at T=0
-			rl.Record(TokenUsage{
+			rl.Record("", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
@@ -743,7 +743,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 
 			ctx := context.Background()
 			start := time.Now()
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			elapsed := time.Since(start)
 
 			if err != nil {
@@ -781,7 +781,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 
 			// Exhaust RPM at T=0
 			for i := 0; i < rpmLimit; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() failed: %v", err)
 				}
 			}
@@ -802,7 +802,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 			}()
 
 			start := time.Now()
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			elapsed := time.Since(start)
 
 			if err != nil {
@@ -851,7 +851,7 @@ func TestProperty_ContextCancellationInterruptsBlocking(t *testing.T) {
 
 			// Exhaust the RPM limit — all events at T=0, so wait = 60s
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (before limit reached): %v", i+1, err)
 				}
@@ -868,7 +868,7 @@ func TestProperty_ContextCancellationInterruptsBlocking(t *testing.T) {
 			start := time.Now()
 
 			// Acquire should block, then return the context error
-			acquireErr := rl.Acquire(ctxWithTimeout)
+			acquireErr := rl.Acquire(ctxWithTimeout, "")
 
 			elapsed := time.Since(start)
 
@@ -915,7 +915,7 @@ func TestProperty_ContextCancellationInterruptsBlocking(t *testing.T) {
 
 			// Exhaust the RPM limit
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (before limit reached): %v", i+1, err)
 				}
@@ -937,7 +937,7 @@ func TestProperty_ContextCancellationInterruptsBlocking(t *testing.T) {
 			start := time.Now()
 
 			// Acquire should block, then return context.Canceled
-			acquireErr := rl.Acquire(ctxWithCancel)
+			acquireErr := rl.Acquire(ctxWithCancel, "")
 
 			elapsed := time.Since(start)
 			wg.Wait()
@@ -993,7 +993,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 
 			// Exhaust RPM by calling Acquire rpmLimit times
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (before RPM limit reached): %v", i+1, err)
 				}
@@ -1001,7 +1001,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 
 			// TPM is still well under limit (no tokens recorded beyond what Acquire does)
 			// The next Acquire should fail due to RPM exhaustion
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if err == nil {
 				rt.Fatalf("Acquire() returned nil after exhausting RPM limit of %d (TPM still under limit)", rpmLimit)
 			}
@@ -1035,14 +1035,14 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			ctx := context.Background()
 
 			// Record tokens to exhaust TPM limit
-			rl.Record(TokenUsage{
+			rl.Record("", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
 
 			// RPM is still well under limit (only 0 acquires so far)
 			// The next Acquire should fail due to TPM exhaustion
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if err == nil {
 				rt.Fatalf("Acquire() returned nil after exhausting TPM limit of %d (RPM still under limit)", tpmLimit)
 			}
@@ -1078,7 +1078,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			// Record some tokens but stay under TPM limit
 			tokensToRecord := rapid.IntRange(0, tpmLimit-1).Draw(rt, "tokensToRecord")
 			if tokensToRecord > 0 {
-				rl.Record(TokenUsage{
+				rl.Record("", TokenUsage{
 					InputTokens:  tokensToRecord / 2,
 					OutputTokens: tokensToRecord - tokensToRecord/2,
 				})
@@ -1087,7 +1087,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			// Make some Acquire calls but stay under RPM limit
 			acquireCalls := rapid.IntRange(1, rpmLimit-1).Draw(rt, "acquireCalls")
 			for i := 0; i < acquireCalls; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (both under limit, rpmLimit=%d, tpmLimit=%d): %v",
 						i+1, rpmLimit, tpmLimit, err)
@@ -1121,14 +1121,14 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 
 			// Exhaust RPM by calling Acquire rpmLimit times
 			for i := 0; i < rpmLimit; i++ {
-				err := rl.Acquire(ctx)
+				err := rl.Acquire(ctx, "")
 				if err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (before RPM limit reached): %v", i+1, err)
 				}
 			}
 
 			// Also exhaust TPM by recording tokens >= tpmLimit
-			rl.Record(TokenUsage{
+			rl.Record("", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
@@ -1136,7 +1136,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			// Both RPM and TPM are exhausted. Since RPM is checked first,
 			// the error should be ErrRateLimitExceeded (from RPM check).
 			// This verifies the ordering: RPM check happens before TPM check.
-			err = rl.Acquire(ctx)
+			err = rl.Acquire(ctx, "")
 			if err == nil {
 				rt.Fatalf("Acquire() returned nil after exhausting both RPM (%d) and TPM (%d)", rpmLimit, tpmLimit)
 			}
@@ -1171,16 +1171,16 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 			// Perform a random number of Acquire calls (simulating provider calls that fail)
 			numFailedCalls := rapid.IntRange(1, 100).Draw(rt, "numFailedCalls")
 			for i := 0; i < numFailedCalls; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d: %v", i+1, err)
 				}
 				// Do NOT call Record — simulating a failed provider call
 			}
 
 			// Verify TPM counter is zero (no tokens recorded)
-			rl.mu.Lock()
-			tpmCount := rl.slidingTPMCount()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			tpmCount := b.slidingTPMCount()
+			b.mu.Unlock()
 
 			if tpmCount != 0 {
 				rt.Fatalf("TPM counter = %d after %d Acquire-only calls (no Record), want 0",
@@ -1206,16 +1206,16 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 			// Perform a random number of Acquire calls (simulating provider calls that fail)
 			numFailedCalls := rapid.IntRange(1, 100).Draw(rt, "numFailedCalls")
 			for i := 0; i < numFailedCalls; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d: %v", i+1, err)
 				}
 				// Do NOT call Record — simulating a failed provider call
 			}
 
 			// Verify TPM counter is zero (no tokens recorded)
-			rl.mu.Lock()
-			tpmCount := rl.fixedTPMCountVal()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			tpmCount := b.fixedTPMCountVal()
+			b.mu.Unlock()
 
 			if tpmCount != 0 {
 				rt.Fatalf("TPM counter = %d after %d Acquire-only calls (no Record), want 0",
@@ -1254,7 +1254,7 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 			}
 
 			for i := 0; i < totalCalls; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d: %v", i+1, err)
 				}
 
@@ -1264,15 +1264,15 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 					output := rapid.IntRange(1, 1000).Draw(rt, "outputTokens")
 					usage := TokenUsage{InputTokens: input, OutputTokens: output}
 					expectedTPM += usage.Total()
-					rl.Record(usage)
+					rl.Record("", usage)
 				}
 				// else: failed call — do NOT call Record
 			}
 
 			// Verify TPM counter only reflects tokens from Record calls
-			rl.mu.Lock()
-			actualTPM := rl.slidingTPMCount()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			actualTPM := b.slidingTPMCount()
+			b.mu.Unlock()
 
 			if actualTPM != expectedTPM {
 				rt.Fatalf("TPM counter = %d, want %d (only from %d successful Record calls out of %d total Acquire calls)",
@@ -1311,7 +1311,7 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 			}
 
 			for i := 0; i < totalCalls; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d: %v", i+1, err)
 				}
 
@@ -1321,15 +1321,15 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 					output := rapid.IntRange(1, 1000).Draw(rt, "outputTokens")
 					usage := TokenUsage{InputTokens: input, OutputTokens: output}
 					expectedTPM += usage.Total()
-					rl.Record(usage)
+					rl.Record("", usage)
 				}
 				// else: failed call — do NOT call Record
 			}
 
 			// Verify TPM counter only reflects tokens from Record calls
-			rl.mu.Lock()
-			actualTPM := rl.fixedTPMCountVal()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			actualTPM := b.fixedTPMCountVal()
+			b.mu.Unlock()
 
 			if actualTPM != expectedTPM {
 				rt.Fatalf("TPM counter = %d, want %d (only from %d successful Record calls out of %d total Acquire calls)",
@@ -1372,7 +1372,7 @@ func TestProperty_ErrRateLimitExceededShortCircuitsRetries(t *testing.T) {
 			// Exhaust the RPM limit by calling Acquire directly
 			ctx := context.Background()
 			for i := 0; i < rpmLimit; i++ {
-				if err := rl.Acquire(ctx); err != nil {
+				if err := rl.Acquire(ctx, ""); err != nil {
 					rt.Fatalf("Acquire() returned error on call %d (exhausting limit): %v", i+1, err)
 				}
 			}
@@ -1517,7 +1517,7 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for op := 0; op < opsPerGoroutine; op++ {
-						if err := rl.Acquire(ctx); err != nil {
+						if err := rl.Acquire(ctx, ""); err != nil {
 							// With very high limits, this should never happen
 							return
 						}
@@ -1527,7 +1527,7 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 							InputTokens:  tokensPerOp / 2,
 							OutputTokens: tokensPerOp - tokensPerOp/2,
 						}
-						rl.Record(usage)
+						rl.Record("", usage)
 						totalTokens.Add(int64(usage.Total()))
 					}
 				}()
@@ -1548,9 +1548,9 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 			}
 
 			// Verify RPM counter matches total acquires
-			rl.mu.Lock()
-			rpmCount := rl.slidingRPMCount()
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			rpmCount := b.slidingRPMCount()
+			b.mu.Unlock()
 
 			if rpmCount != expectedRPM {
 				rt.Fatalf("sliding RPM counter = %d, want %d (N=%d, M=%d)",
@@ -1558,9 +1558,9 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 			}
 
 			// Verify TPM counter matches sum of all recorded tokens
-			rl.mu.Lock()
-			tpmCount := rl.slidingTPMCount()
-			rl.mu.Unlock()
+			b = rl.bucket(""); b.mu.Lock()
+			tpmCount := b.slidingTPMCount()
+			b.mu.Unlock()
 
 			if tpmCount != expectedTPM {
 				rt.Fatalf("sliding TPM counter = %d, want %d (N=%d, M=%d, tokensPerOp=%d)",
@@ -1609,7 +1609,7 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for op := 0; op < opsPerGoroutine; op++ {
-						if err := rl.Acquire(ctx); err != nil {
+						if err := rl.Acquire(ctx, ""); err != nil {
 							// With very high limits, this should never happen
 							return
 						}
@@ -1619,7 +1619,7 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 							InputTokens:  tokensPerOp / 2,
 							OutputTokens: tokensPerOp - tokensPerOp/2,
 						}
-						rl.Record(usage)
+						rl.Record("", usage)
 						totalTokens.Add(int64(usage.Total()))
 					}
 				}()
@@ -1640,9 +1640,9 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 			}
 
 			// Verify RPM counter matches total acquires
-			rl.mu.Lock()
-			rpmCount := rl.fixedRPMCount
-			rl.mu.Unlock()
+			b := rl.bucket(""); b.mu.Lock()
+			rpmCount := b.fixedRPMCount
+			b.mu.Unlock()
 
 			if rpmCount != expectedRPM {
 				rt.Fatalf("fixed RPM counter = %d, want %d (N=%d, M=%d)",
@@ -1650,9 +1650,9 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 			}
 
 			// Verify TPM counter matches sum of all recorded tokens
-			rl.mu.Lock()
-			tpmCount := rl.fixedTPMCount
-			rl.mu.Unlock()
+			b = rl.bucket(""); b.mu.Lock()
+			tpmCount := b.fixedTPMCount
+			b.mu.Unlock()
 
 			if tpmCount != expectedTPM {
 				rt.Fatalf("fixed TPM counter = %d, want %d (N=%d, M=%d, tokensPerOp=%d)",

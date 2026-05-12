@@ -110,7 +110,7 @@ func (a *Agent) Provider() Provider { return a.provider }
 // Useful for subpackages that need to invoke the provider with the agent's
 // retry and timeout settings without duplicating the logic.
 func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
-	return a.callProviderWithRetry(ctx, params, cb)
+	return a.callProviderWithRetry(ctx, "", params, cb)
 }
 
 // Instructions returns the agent's system prompt string.
