@@ -145,7 +145,14 @@ func New(opts ...Option) tool.Tool {
 			if err := json.Unmarshal(input, &req); err != nil {
 				return "", err
 			}
-			return fetchPage(ctx, client, req.URL, maxBytes, maxChars, format)
+			log := tool.LoggerFrom(ctx)
+			log.Logf("fetching %s", req.URL)
+			result, err := fetchPage(ctx, client, req.URL, maxBytes, maxChars, format)
+			if err != nil {
+				return "", err
+			}
+			log.Logf("fetched %d chars", len(result))
+			return result, nil
 		},
 	)
 }

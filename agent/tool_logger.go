@@ -3,43 +3,27 @@ package agent
 import (
 	"context"
 	"fmt"
+
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// ToolLogger allows tools to emit log messages during execution.
-// Messages appear in the debug logger indented under the tool's line.
-// The logger is injected into the tool's context automatically when a
-// LoggingHook is configured on the agent.
-type ToolLogger interface {
-	// Log emits a message from within a tool execution.
-	Log(msg string)
-
-	// Logf emits a formatted message from within a tool execution.
-	Logf(format string, args ...any)
-}
-
-type toolLoggerKey struct{}
-
-// withToolLogger returns a new context with the given ToolLogger attached.
-func withToolLogger(ctx context.Context, tl ToolLogger) context.Context {
-	return context.WithValue(ctx, toolLoggerKey{}, tl)
-}
+// ToolLogger is an alias for tool.Logger for backward compatibility.
+// Tools should prefer tool.LoggerFrom(ctx) directly.
+type ToolLogger = tool.Logger
 
 // ToolLoggerFrom extracts the ToolLogger from a context.
 // Returns a no-op logger if none is set — safe to call unconditionally.
+// This is a convenience re-export of tool.LoggerFrom.
 func ToolLoggerFrom(ctx context.Context) ToolLogger {
-	if tl, ok := ctx.Value(toolLoggerKey{}).(ToolLogger); ok && tl != nil {
-		return tl
-	}
-	return nopToolLogger{}
+	return tool.LoggerFrom(ctx)
 }
 
-// nopToolLogger is a no-op implementation for when no logger is configured.
-type nopToolLogger struct{}
+// withToolLogger returns a new context with the given ToolLogger attached.
+func withToolLogger(ctx context.Context, tl ToolLogger) context.Context {
+	return tool.WithLogger(ctx, tl)
+}
 
-func (nopToolLogger) Log(string)          {}
-func (nopToolLogger) Logf(string, ...any) {}
-
-// hookToolLogger bridges the ToolLogger interface to LoggingHook.OnToolLog.
+// hookToolLogger bridges the tool.Logger interface to LoggingHook.OnToolLog.
 type hookToolLogger struct {
 	hook     LoggingHook
 	toolName string
