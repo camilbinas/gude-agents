@@ -11,6 +11,11 @@ type MetricsHook interface {
 	// OnIterationStart is called at the beginning of each agent loop iteration.
 	OnIterationStart()
 
+	// OnIterationEnd is called at the end of each agent loop iteration.
+	// toolCount is the number of tool calls executed (0 for final answer iteration).
+	// isFinal is true when this iteration produced the final text response.
+	OnIterationEnd(toolCount int, isFinal bool)
+
 	// OnProviderCallStart is called before each Provider.ConverseStream call.
 	// modelID is from ModelIdentifier (empty if not implemented).
 	// Returns a finish function called with the outcome and token usage.

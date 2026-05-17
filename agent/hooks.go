@@ -60,16 +60,26 @@ func (h *hooks) onInvokeStart(c *Context, params InvokeSpanParams) (*Context, *i
 // iterationFinisher is returned by onIterationStart.
 type iterationFinisher struct {
 	finishTracing func(toolCount int, isFinal bool)
+	metrics       MetricsHook
+	logging       LoggingHook
+	iteration     int
+	start         time.Time
 }
 
 func (f *iterationFinisher) finish(toolCount int, isFinal bool) {
 	if f.finishTracing != nil {
 		f.finishTracing(toolCount, isFinal)
 	}
+	if f.metrics != nil {
+		f.metrics.OnIterationEnd(toolCount, isFinal)
+	}
+	if f.logging != nil {
+		f.logging.OnIterationEnd(f.iteration, toolCount, isFinal, time.Since(f.start))
+	}
 }
 
 func (h *hooks) onIterationStart(c *Context, iteration int) (*Context, *iterationFinisher) {
-	f := &iterationFinisher{}
+	f := &iterationFinisher{iteration: iteration, start: time.Now()}
 	ctx := context.Context(c)
 	if h.tracing != nil {
 		newCtx, finish := h.tracing.OnIterationStart(ctx, iteration)
@@ -80,9 +90,11 @@ func (h *hooks) onIterationStart(c *Context, iteration int) (*Context, *iteratio
 	}
 	if h.metrics != nil {
 		h.metrics.OnIterationStart()
+		f.metrics = h.metrics
 	}
 	if h.logging != nil {
 		h.logging.OnIterationStart(iteration)
+		f.logging = h.logging
 	}
 	return c, f
 }

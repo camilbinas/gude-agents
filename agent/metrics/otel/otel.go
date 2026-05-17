@@ -134,6 +134,11 @@ func (h *otelHook) OnIterationStart() {
 	h.iterationTotal.Add(context.Background(), 1, metric.WithAttributes(h.baseAttrs()...))
 }
 
+func (h *otelHook) OnIterationEnd(toolCount int, isFinal bool) {
+	// Iteration count is already tracked in OnIterationStart.
+	// OnIterationEnd is available for custom extensions; no additional metrics emitted.
+}
+
 func (h *otelHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {
 	if modelID == "" {
 		modelID = "unknown"

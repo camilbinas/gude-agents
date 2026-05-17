@@ -98,6 +98,14 @@ func (h *debugHook) OnIterationStart(iteration int) {
 	h.p("\n%s◉ iteration %d%s\n", cyan, iteration, reset)
 }
 
+func (h *debugHook) OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration) {
+	if isFinal {
+		h.p("%s◉ iteration %d done%s  %s  %sfinal%s\n", dim, iteration, reset, fmtDur(duration), green, reset)
+	} else {
+		h.p("%s◉ iteration %d done%s  %s  %s%d tool(s)%s\n", dim, iteration, reset, fmtDur(duration), dim, toolCount, reset)
+	}
+}
+
 func (h *debugHook) OnProviderCallStart(_ string) {}
 
 func (h *debugHook) OnProviderCallEnd(err error, usage agent.TokenUsage, toolCallCount int, duration time.Duration) {

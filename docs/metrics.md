@@ -163,7 +163,8 @@ InvokeStream
 │       ├── OnIterationStart
 │       ├── OnProviderCallStart(modelID) → finishProvider(err, usage)
 │       ├── OnToolStart(toolName) → finishTool(err)  [per tool]
-│       └── guardrail (output) → OnGuardrailComplete("output", blocked)
+│       ├── guardrail (output) → OnGuardrailComplete("output", blocked)
+│       └── OnIterationEnd(toolCount, isFinal)
 └── finishInvoke called
 ```
 

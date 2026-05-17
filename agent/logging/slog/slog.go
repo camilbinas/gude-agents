@@ -62,6 +62,15 @@ func (h *slogHook) OnIterationStart(iteration int) {
 	)
 }
 
+func (h *slogHook) OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration) {
+	h.log(slog.LevelDebug, "iteration.end",
+		slog.Int("iteration", iteration),
+		slog.Int("tool_count", toolCount),
+		slog.Bool("is_final", isFinal),
+		slog.Float64("duration_ms", float64(duration.Milliseconds())),
+	)
+}
+
 func (h *slogHook) OnProviderCallStart(modelID string) {
 	h.log(slog.LevelDebug, "provider_call.start",
 		slog.String("model.id", modelID),

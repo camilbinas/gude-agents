@@ -325,7 +325,8 @@ type stubMetricsHook struct {
 func (s *stubMetricsHook) OnInvokeStart() func(err error, usage TokenUsage) {
 	return func(error, TokenUsage) {}
 }
-func (s *stubMetricsHook) OnIterationStart() {}
+func (s *stubMetricsHook) OnIterationStart()                          {}
+func (s *stubMetricsHook) OnIterationEnd(toolCount int, isFinal bool) {}
 func (s *stubMetricsHook) OnProviderCallStart(modelID string) func(err error, usage TokenUsage) {
 	return func(error, TokenUsage) {}
 }
@@ -344,7 +345,9 @@ type stubLoggingHook struct {
 func (s *stubLoggingHook) OnInvokeStart(params InvokeSpanParams)                           {}
 func (s *stubLoggingHook) OnInvokeEnd(err error, usage TokenUsage, duration time.Duration) {}
 func (s *stubLoggingHook) OnIterationStart(iteration int)                                  {}
-func (s *stubLoggingHook) OnProviderCallStart(modelID string)                              {}
+func (s *stubLoggingHook) OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration) {
+}
+func (s *stubLoggingHook) OnProviderCallStart(modelID string) {}
 func (s *stubLoggingHook) OnProviderCallEnd(err error, usage TokenUsage, toolCallCount int, duration time.Duration) {
 }
 func (s *stubLoggingHook) OnToolStart(toolName string)                                   {}

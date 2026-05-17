@@ -149,6 +149,12 @@ func (h *prometheusHook) OnIterationStart() {
 	h.iterationTotal.Inc()
 }
 
+// OnIterationEnd is called at the end of each agent loop iteration.
+func (h *prometheusHook) OnIterationEnd(toolCount int, isFinal bool) {
+	// Iteration count is already tracked in OnIterationStart.
+	// OnIterationEnd is available for custom extensions; no additional metrics emitted.
+}
+
 // OnProviderCallStart is called before each provider call.
 // It returns a finish function that records duration, status, and token counts.
 func (h *prometheusHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {

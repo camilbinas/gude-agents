@@ -66,7 +66,7 @@ Each lifecycle point maps to a log level:
 
 | Lifecycle Point | Default Level | With Error |
 |---|---|---|
-| InvokeStart, IterationStart, ProviderCallStart, ToolStart, ConversationStart, RetrieverStart, ImagesAttached, DocumentsAttached | Debug | — |
+| InvokeStart, IterationStart, IterationEnd, ProviderCallStart, ToolStart, ConversationStart, RetrieverStart, ImagesAttached, DocumentsAttached | Debug | — |
 | InvokeEnd, ProviderCallEnd, ToolEnd, ConversationEnd, RetrieverEnd | Info | Error |
 | GuardrailComplete (not blocked) | Debug | Error |
 | GuardrailComplete (blocked) | Warn | Error |

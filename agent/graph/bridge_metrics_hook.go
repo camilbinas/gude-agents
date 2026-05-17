@@ -40,6 +40,13 @@ func (b *bridgeMetricsHook) OnIterationStart() {
 	}
 }
 
+// OnIterationEnd is called at the end of each agent loop iteration.
+func (b *bridgeMetricsHook) OnIterationEnd(toolCount int, isFinal bool) {
+	if b.inner != nil {
+		b.inner.OnIterationEnd(toolCount, isFinal)
+	}
+}
+
 // OnProviderCallStart is called before each Provider.ConverseStream call.
 func (b *bridgeMetricsHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {
 	var innerFinish func(err error, usage agent.TokenUsage)

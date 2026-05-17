@@ -15,6 +15,11 @@ type LoggingHook interface {
 	// OnIterationStart is called at the beginning of each agent loop iteration.
 	OnIterationStart(iteration int)
 
+	// OnIterationEnd is called at the end of each agent loop iteration.
+	// toolCount is the number of tool calls executed in this iteration (0 for final).
+	// isFinal is true when this iteration produced the final text response.
+	OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration)
+
 	// OnProviderCallStart is called before each Provider.ConverseStream call.
 	// modelID is from ModelIdentifier (empty if not implemented).
 	OnProviderCallStart(modelID string)

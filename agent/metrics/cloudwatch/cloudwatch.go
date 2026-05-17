@@ -183,6 +183,11 @@ func (h *cloudwatchHook) OnIterationStart() {
 	h.append(counterDatum("AgentIterationTotal", 1))
 }
 
+func (h *cloudwatchHook) OnIterationEnd(toolCount int, isFinal bool) {
+	// Iteration count is already tracked in OnIterationStart.
+	// OnIterationEnd is available for custom extensions; no additional metrics emitted.
+}
+
 func (h *cloudwatchHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {
 	if modelID == "" {
 		modelID = "unknown"

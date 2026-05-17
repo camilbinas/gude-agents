@@ -255,7 +255,8 @@ func (h *recordingAgentMetricsHook) OnInvokeStart() func(error, agent.TokenUsage
 	}
 }
 
-func (h *recordingAgentMetricsHook) OnIterationStart() {}
+func (h *recordingAgentMetricsHook) OnIterationStart()            {}
+func (h *recordingAgentMetricsHook) OnIterationEnd(_ int, _ bool) {}
 func (h *recordingAgentMetricsHook) OnProviderCallStart(_ string) func(error, agent.TokenUsage) {
 	return nil
 }
@@ -297,8 +298,9 @@ func (h *recordingAgentLoggingHook) OnInvokeStart(_ agent.InvokeSpanParams) { h.
 func (h *recordingAgentLoggingHook) OnInvokeEnd(_ error, _ agent.TokenUsage, _ time.Duration) {
 	h.invokeEndCalls++
 }
-func (h *recordingAgentLoggingHook) OnIterationStart(_ int)       {}
-func (h *recordingAgentLoggingHook) OnProviderCallStart(_ string) {}
+func (h *recordingAgentLoggingHook) OnIterationStart(_ int)                               {}
+func (h *recordingAgentLoggingHook) OnIterationEnd(_ int, _ int, _ bool, _ time.Duration) {}
+func (h *recordingAgentLoggingHook) OnProviderCallStart(_ string)                         {}
 func (h *recordingAgentLoggingHook) OnProviderCallEnd(_ error, _ agent.TokenUsage, _ int, _ time.Duration) {
 }
 func (h *recordingAgentLoggingHook) OnToolStart(_ string)                          { h.toolStartCalls++ }
