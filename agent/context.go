@@ -164,6 +164,22 @@ func (c *Context) SetScope(key, value string) {
 	c.scopes[key] = value
 }
 
+// allScopes returns a copy of all scope key-value pairs.
+// Used internally by Background_Tool dispatch to capture the originating
+// *Context's scoping identity for the eventual Re_Entry_Turn.
+func (c *Context) allScopes() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.scopes) == 0 {
+		return nil
+	}
+	cp := make(map[string]string, len(c.scopes))
+	for k, v := range c.scopes {
+		cp[k] = v
+	}
+	return cp
+}
+
 // TracingHook returns the per-invocation tracing hook, or nil if none is set.
 func (c *Context) TracingHook() TracingHook {
 	return c.tracingHook

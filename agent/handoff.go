@@ -126,6 +126,15 @@ func (a *Agent) Resume(c *Context, hr *HandoffRequest, humanResponse string, cb 
 		convID = resolveConversationID(c, a.conversationID)
 	}
 
+	// Acquire the per-conversation lock so that the Save region inside runLoop
+	// is serialized with respect to Re_Entry_Turns and other concurrent invocations
+	// on the same Conversation_ID (Req 7.1, 7.3, 7.4).
+	if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {
+		m := a.backgroundRegistry.lockFor(convID)
+		m.Lock()
+		defer m.Unlock()
+	}
+
 	// Use base instructions — RAG context was already applied in the original invocation
 	// and is reflected in the conversation history.
 	// Resolve inference config for the resumed invocation.

@@ -65,7 +65,23 @@ type Tool struct {
 	Spec        Spec
 	Handler     func(ctx context.Context, input json.RawMessage) (string, error)
 	RichHandler func(ctx context.Context, input json.RawMessage) (*Output, error) // optional; takes precedence over Handler
+
+	// Background marker fields. Set only by NewBackground / NewBackgroundRaw.
+	isBackground bool
+	ack          string
 }
+
+// IsBackground reports whether t was constructed via NewBackground / NewBackgroundRaw.
+func (t Tool) IsBackground() bool { return t.isBackground }
+
+// Ack returns the ack string supplied at construction time.
+// Empty for non-Background_Tools.
+func (t Tool) Ack() string { return t.ack }
+
+// BackgroundHandler is the function signature for typed background tool execution.
+// The handler runs in a detached goroutine; its result is injected back into the
+// conversation as a tool result message triggering a Re_Entry_Turn.
+type BackgroundHandler[T any] func(ctx context.Context, input T) (string, error)
 
 // New creates a Tool from a typed handler function.
 // It generates the JSON Schema from T's struct tags.
@@ -180,6 +196,61 @@ func NewRichRaw(name, description string, schema map[string]any, handler func(ct
 			InputSchema: schema,
 		},
 		RichHandler: handler,
+	}
+}
+
+// NewBackground creates a Background_Tool from a typed handler function.
+// It generates the JSON Schema from T's struct tags (identical to tool.New)
+// and wraps the typed handler in a json.RawMessage adapter.
+// The tool is marked as a background tool with the supplied ack string.
+//
+// The handler is not called synchronously during the originating turn; the
+// agent loop dispatches it in a detached goroutine and returns ack to the LLM
+// immediately. When the handler completes, the result is injected back into
+// the conversation and a Re_Entry_Turn is triggered.
+//
+// Validation of name, description, ack, and handler is deferred to agent.New
+// and Agent.RegisterTool, consistent with how tool.New works.
+func NewBackground[T any](name, description, ack string, handler BackgroundHandler[T]) Tool {
+	schema := GenerateSchema[T]()
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: schema,
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var input T
+			if err := json.Unmarshal(raw, &input); err != nil {
+				return "", fmt.Errorf("unmarshal tool input: %w", err)
+			}
+			return handler(ctx, input)
+		},
+		isBackground: true,
+		ack:          ack,
+	}
+}
+
+// NewBackgroundRaw creates a Background_Tool with a raw JSON handler.
+// Like NewBackground but without automatic deserialization — the handler
+// receives the json.RawMessage directly.
+// If schema is nil, it defaults to {"type": "object"} (no input parameters).
+//
+// Validation of name, description, ack, and handler is deferred to agent.New
+// and Agent.RegisterTool, consistent with how tool.NewRaw works.
+func NewBackgroundRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool {
+	if schema == nil {
+		schema = map[string]any{"type": "object"}
+	}
+	return Tool{
+		Spec: Spec{
+			Name:        name,
+			Description: description,
+			InputSchema: schema,
+		},
+		Handler:      handler,
+		isBackground: true,
+		ack:          ack,
 	}
 }
 

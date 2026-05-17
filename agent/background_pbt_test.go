@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -2465,17 +2466,17 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 				n := providerCallCount
 				providerMu.Unlock()
 
-				// Check if this is a re-entry turn (messages contain a ToolResultBlock
-				// that is NOT the ack — i.e., it's the injected background result).
-				// Simple heuristic: if the last user message contains a ToolResultBlock
-				// with content "bg-result" or an error, it's a re-entry turn.
+				// Check if this is a re-entry turn by looking for the injected
+				// background completion TextBlock. The framework injects a
+				// RoleUser message containing TextBlock{Text: "[Background tool ...
+				// completed: ...]"} after a Background_Handler returns.
 				isReEntry := false
 				if len(params.Messages) > 0 {
 					lastMsg := params.Messages[len(params.Messages)-1]
 					if lastMsg.Role == RoleUser {
 						for _, block := range lastMsg.Content {
-							trb, ok := block.(ToolResultBlock)
-							if ok && trb.Content != ack {
+							tb, ok := block.(TextBlock)
+							if ok && strings.HasPrefix(tb.Text, "[Background tool ") {
 								isReEntry = true
 								break
 							}
@@ -4810,21 +4811,20 @@ func (t *p17TrackingConversation) Save(_ context.Context, convID string, msgs []
 
 	// Detect a re-entry turn's final save: it contains an assistant message
 	// as the last message (the re-entry turn's response).
-	// A re-entry final save has: ... → user(ToolResultBlock with handler result) → assistant(text)
+	// A re-entry final save has: ... → user(TextBlock "[Background tool ... completed: ...]") → assistant(text)
 	if len(cp) >= 2 {
 		lastMsg := cp[len(cp)-1]
 		if lastMsg.Role == RoleAssistant && len(lastMsg.Content) > 0 {
-			// Check if there's a preceding user message with a ToolResultBlock
-			// containing a handler result (not the ack).
+			// Check if there's a preceding user message with the injected
+			// background completion TextBlock.
 			for i := len(cp) - 2; i >= 0; i-- {
 				if cp[i].Role == RoleUser {
 					for _, block := range cp[i].Content {
-						trb, ok := block.(ToolResultBlock)
+						tb, ok := block.(TextBlock)
 						if !ok {
 							continue
 						}
-						// Handler results start with "handler-" prefix.
-						if len(trb.Content) > 8 && trb.Content[:8] == "handler-" {
+						if strings.HasPrefix(tb.Text, "[Background tool ") {
 							t.reEntrySavesCompleted.Add(1)
 							return nil
 						}

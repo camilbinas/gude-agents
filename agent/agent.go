@@ -56,6 +56,10 @@ type Agent struct {
 	tracingHook TracingHook // nil = no tracing
 	metricsHook MetricsHook // nil = no metrics
 	loggingHook LoggingHook // nil = no logging
+
+	// Background tools
+	backgroundRegistry *backgroundRegistry                       // nil until a Background_Tool is registered; manages dispatch, locks, and shutdown
+	bgNotify           func(conversationID, agentMessage string) // Notify_Callback set via WithBackgroundNotify; wired onto the registry at construction
 }
 
 // New creates a new Agent. Returns an error if tool validation fails or an option errors.
@@ -75,6 +79,14 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 		if t.Spec.Name == "" || t.Spec.Description == "" || (t.Handler == nil && t.RichHandler == nil) {
 			return nil, fmt.Errorf("tool %q: name, description, and handler are required", t.Spec.Name)
 		}
+		if t.IsBackground() {
+			if t.Ack() == "" {
+				return nil, fmt.Errorf("tool %q: background tools require a non-empty ack string", t.Spec.Name)
+			}
+			if t.Handler == nil {
+				return nil, fmt.Errorf("tool %q: background tools require a handler", t.Spec.Name)
+			}
+		}
 		if _, exists := a.tools[t.Spec.Name]; exists {
 			return nil, fmt.Errorf("duplicate tool name: %q", t.Spec.Name)
 		}
@@ -87,6 +99,29 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 		if err := opt(a); err != nil {
 			return nil, err
 		}
+	}
+
+	// Validate that Background_Tools have a conversation store configured.
+	// This check runs after options are applied because WithConversation /
+	// WithSharedConversation set a.conversation.
+	for _, t := range a.tools {
+		if t.IsBackground() && a.conversation == nil {
+			return nil, fmt.Errorf("tool %q: background tools require a conversation store; use WithConversation or WithSharedConversation", t.Spec.Name)
+		}
+	}
+
+	// Construct the backgroundRegistry whenever a conversation store is
+	// configured. We do this eagerly even when no Background_Tool is registered
+	// yet so that tools added later via RegisterTool can dispatch without
+	// introducing a data race on a.backgroundRegistry (loop.go reads the field
+	// without holding toolsMu). The registry is also the holder of the
+	// per-conversation lock map, which serializes same-conversation user turns
+	// even without Background_Tools — a desirable invariant for any agent
+	// configured with a conversation store. When no conversation store is
+	// configured, no Background_Tool can be registered (validated here and in
+	// RegisterTool), so the registry is not needed.
+	if a.conversation != nil {
+		a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
 	}
 
 	return a, nil
@@ -113,15 +148,19 @@ func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb Stre
 // Instructions returns the agent's system prompt string.
 func (a *Agent) Instructions() string { return a.instructions }
 
-// Close performs graceful cleanup. If the agent's conversation implements ConversationWaiter
-// (e.g. the Summary strategy), Close blocks until all background work is complete.
+// Close performs graceful cleanup. If the agent has in-flight Background_Handlers or
+// Re_Entry_Turns, Close blocks until they all complete. Then, if the agent's conversation
+// implements ConversationWaiter (e.g. the Summary strategy), Close blocks until all
+// background summarisation work is complete.
 // Safe to call multiple times. No-op if no cleanup is needed.
 func (a *Agent) Close() {
-	if a.conversation == nil {
-		return
+	if a.backgroundRegistry != nil {
+		a.backgroundRegistry.wg.Wait()
 	}
-	if w, ok := a.conversation.(ConversationWaiter); ok {
-		w.Wait()
+	if a.conversation != nil {
+		if w, ok := a.conversation.(ConversationWaiter); ok {
+			w.Wait()
+		}
 	}
 }
 
@@ -151,8 +190,21 @@ func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
 }
 
 // RegisterTool adds a tool to the agent. Returns an error if a tool with the
-// same name is already registered.
+// same name is already registered or if Background_Tool prerequisites are not met.
 func (a *Agent) RegisterTool(t tool.Tool) error {
+	// Validate Background_Tool prerequisites before acquiring the lock or mutating state.
+	if t.IsBackground() {
+		if t.Ack() == "" {
+			return fmt.Errorf("tool %q: background tools require a non-empty ack string", t.Spec.Name)
+		}
+		if t.Handler == nil {
+			return fmt.Errorf("tool %q: background tools require a handler", t.Spec.Name)
+		}
+		if a.conversation == nil {
+			return fmt.Errorf("tool %q: background tools require a conversation store; use WithConversation or WithSharedConversation", t.Spec.Name)
+		}
+	}
+
 	a.toolsMu.Lock()
 	defer a.toolsMu.Unlock()
 	if _, exists := a.tools[t.Spec.Name]; exists {

@@ -51,6 +51,7 @@ a, err := agent.Default(provider, instructions, tools,
 |---|---|
 | `WithConversation(c, conversationID)` | Attach a conversation store with a default conversation ID for multi-turn support |
 | `WithSharedConversation(c)` | Attach a conversation store without a default ID — each invocation must provide one via `WithConversationID` on the context |
+| `WithBackgroundNotify(fn)` | Callback invoked with `(conversationID, agentMessage)` after a Background_Tool's Re_Entry_Turn completes. Use to push reactive responses to the user via SSE, websocket, etc. |
 
 `WithSharedConversation` is the recommended pattern for HTTP servers where a single Agent instance serves multiple concurrent conversations:
 
@@ -277,7 +278,7 @@ See [Handoffs](handoff.md) for the full workflow.
 func (a *Agent) Close()
 ```
 
-Performs graceful cleanup. Call before process exit to ensure pending background work (e.g. conversation summarization) is flushed:
+Performs graceful cleanup. Blocks until in-flight Background_Tool handlers and Re_Entry_Turns complete, then flushes any pending conversation summarization. Call before process exit:
 
 ```go
 a, _ := agent.Default(provider, instructions, tools,

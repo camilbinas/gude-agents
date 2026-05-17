@@ -51,12 +51,30 @@ func (a *Agent) Invoke(c *Context, userMessage string) (string, error) {
 // invokeStreamInner contains the core InvokeStream logic, separated so that
 // the tracing finish function in InvokeStream can capture the final error and usage.
 func (a *Agent) invokeStreamInner(c *Context, userMessage string, convID string, cb StreamCallback, h *hooks) (TokenUsage, error) {
+	// Acquire the per-conversation lock so that the Load → Save region is
+	// serialized with respect to Re_Entry_Turns and other concurrent invocations
+	// on the same Conversation_ID (Req 7.1, 7.3, 7.4).
+	if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {
+		m := a.backgroundRegistry.lockFor(convID)
+		m.Lock()
+		defer m.Unlock()
+	}
+
 	usage, _, err := a.invokeCommon(c, userMessage, convID, cb, h)
 	return usage, err
 }
 
 // invokeInner contains the core Invoke logic, returning the final (guardrail-processed) text.
 func (a *Agent) invokeInner(c *Context, userMessage string, convID string, h *hooks) (TokenUsage, string, error) {
+	// Acquire the per-conversation lock so that the Load → Save region is
+	// serialized with respect to Re_Entry_Turns and other concurrent invocations
+	// on the same Conversation_ID (Req 7.1, 7.3, 7.4).
+	if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {
+		m := a.backgroundRegistry.lockFor(convID)
+		m.Lock()
+		defer m.Unlock()
+	}
+
 	return a.invokeCommon(c, userMessage, convID, nil, h)
 }
 
@@ -364,6 +382,45 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			tf.finish(err, "")
 			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
+			return
+		}
+
+		// Background_Tools: dispatch to the background registry and return the ack
+		// string synchronously so the rest of runLoop treats it like a normal tool result.
+		if t.IsBackground() {
+			if a.conversation == nil {
+				// Defense in depth — agent.New should have rejected this earlier (Req 9.1).
+				results[i] = ToolResultBlock{
+					ToolUseID: tc.ToolUseID,
+					Content:   "background tool requires a conversation store",
+					IsError:   true,
+				}
+				tf.finish(fmt.Errorf("background tool without conversation"), "")
+				return
+			}
+			convID := resolveConversationID(c, a.conversationID)
+			if convID == "" {
+				results[i] = ToolResultBlock{
+					ToolUseID: tc.ToolUseID,
+					Content:   "background tool requires a conversation id",
+					IsError:   true,
+				}
+				tf.finish(fmt.Errorf("background tool without conversation id"), "")
+				return
+			}
+			a.backgroundRegistry.dispatch(backgroundDispatch{
+				toolName:       tc.Name,
+				toolUseID:      tc.ToolUseID,
+				conversationID: convID,
+				identifier:     c.Identifier(),
+				scopes:         c.allScopes(),
+				rawInput:       tc.Input,
+				handler:        t.Handler,
+				ack:            t.Ack(),
+				dispatchedAt:   time.Now(),
+			})
+			tf.finish(nil, t.Ack())
+			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: t.Ack()}
 			return
 		}
 

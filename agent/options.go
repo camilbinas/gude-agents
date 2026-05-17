@@ -277,3 +277,14 @@ func WithMaxTokens(n int) Option {
 		return nil
 	}
 }
+
+// WithBackgroundNotify registers a callback that is invoked after a Background_Tool's
+// Re_Entry_Turn completes successfully. The callback receives the Conversation_ID and
+// the final assistant message produced by the reactive turn. The callback is wired onto
+// the backgroundRegistry at construction time (see agent.New).
+func WithBackgroundNotify(fn func(conversationID, agentMessage string)) Option {
+	return func(a *Agent) error {
+		a.bgNotify = fn
+		return nil
+	}
+}

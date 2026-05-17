@@ -9,6 +9,7 @@ The tool system lets you define functions that the LLM can invoke during a conve
 | `tool.NewSimple` | None | Tools with no parameters (e.g. current time) |
 | `tool.NewString` | Single required string | Simple query tools |
 | `tool.NewAsync` | Same as `New[T]` | Fire-and-forget side effects |
+| `tool.NewBackground` | Same as `New[T]` | Long-running work with result re-injection |
 | `tool.NewRich` | Same as `New[T]` | Tools that return text + images |
 
 ## tool.New[T] — Typed Constructor
@@ -139,6 +140,47 @@ crmTool := tool.NewAsync("update_crm", "Add a note to a CRM contact",
 
 ```go
 func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger) Tool
+```
+
+## tool.NewBackground — Background Tools (Long-Running with Re-Entry)
+
+```go
+func NewBackground[T any](name, description, ack string, handler BackgroundHandler[T]) Tool
+```
+
+`NewBackground` creates a tool whose handler runs in a detached goroutine. The LLM receives the `ack` string immediately (like `NewAsync`), but when the handler completes, the result is automatically injected back into the conversation and a new LLM turn is triggered so the agent can react. The application receives the reactive response via `WithBackgroundNotify`.
+
+Requires a conversation store (`WithConversation` or `WithSharedConversation`). The handler runs on `context.Background()` — it survives request cancellation.
+
+```go
+type DeployInput struct {
+    Service string `json:"service" description:"Service to deploy" required:"true"`
+    Version string `json:"version" description:"Target version"    required:"true"`
+}
+
+deployTool := tool.NewBackground("deploy", "Deploy a service version",
+    "Deployment started — I'll notify you when it completes.",
+    func(ctx context.Context, in DeployInput) (string, error) {
+        result, err := ci.Deploy(ctx, in.Service, in.Version)
+        if err != nil {
+            return "", err
+        }
+        return fmt.Sprintf("Deployed %s@%s: %s", in.Service, in.Version, result), nil
+    },
+)
+
+a, _ := agent.New(provider, instructions, []tool.Tool{deployTool},
+    agent.WithConversation(store, "conv-1"),
+    agent.WithBackgroundNotify(func(convID, msg string) {
+        pushToUser(convID, msg) // SSE, websocket, queue, etc.
+    }),
+)
+```
+
+`NewBackgroundRaw` is the raw JSON variant:
+
+```go
+func NewBackgroundRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool
 ```
 
 ## ChoiceMode and Choice
