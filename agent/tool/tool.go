@@ -64,7 +64,8 @@ type RichHandler[T any] func(ctx context.Context, input T) (*Output, error)
 type Tool struct {
 	Spec        Spec
 	Handler     func(ctx context.Context, input json.RawMessage) (string, error)
-	RichHandler func(ctx context.Context, input json.RawMessage) (*Output, error) // optional; takes precedence over Handler
+	RichHandler func(ctx context.Context, input json.RawMessage) (*Output, error)  // optional; takes precedence over Handler
+	Guard       func(ctx context.Context, input json.RawMessage) (Decision, error) // nil = no guard
 
 	// Background marker fields. Set only by NewBackground / NewBackgroundRaw.
 	isBackground bool
@@ -85,9 +86,9 @@ type BackgroundHandler[T any] func(ctx context.Context, input T) (string, error)
 
 // New creates a Tool from a typed handler function.
 // It generates the JSON Schema from T's struct tags.
-func New[T any](name, description string, handler Handler[T]) Tool {
+func New[T any](name, description string, handler Handler[T], opts ...func(*Tool)) Tool {
 	schema := GenerateSchema[T]()
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -101,12 +102,16 @@ func New[T any](name, description string, handler Handler[T]) Tool {
 			return handler(ctx, input)
 		},
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewSimple creates a Tool that takes no input parameters.
 // It uses an empty object schema and a handler that receives no input.
-func NewSimple(name, description string, handler func(ctx context.Context) (string, error)) Tool {
-	return Tool{
+func NewSimple(name, description string, handler func(ctx context.Context) (string, error), opts ...func(*Tool)) Tool {
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -116,13 +121,17 @@ func NewSimple(name, description string, handler func(ctx context.Context) (stri
 			return handler(ctx)
 		},
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewString creates a Tool that takes a single required string parameter.
 // paramName and paramDesc control the JSON property name and its description
 // in the schema. The handler receives the extracted string directly.
-func NewString(name, description, paramName, paramDesc string, handler func(ctx context.Context, value string) (string, error)) Tool {
-	return Tool{
+func NewString(name, description, paramName, paramDesc string, handler func(ctx context.Context, value string) (string, error), opts ...func(*Tool)) Tool {
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -145,15 +154,19 @@ func NewString(name, description, paramName, paramDesc string, handler func(ctx 
 			return handler(ctx, params[paramName])
 		},
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewRaw creates a Tool with a raw JSON handler (no auto-deserialization).
 // If schema is nil, it defaults to {"type": "object"} (no input parameters).
-func NewRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool {
+func NewRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error), opts ...func(*Tool)) Tool {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
 	}
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -161,13 +174,17 @@ func NewRaw(name, description string, schema map[string]any, handler func(ctx co
 		},
 		Handler: handler,
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewRich creates a Tool from a typed handler that returns rich output
 // (text + images). Use this for tools that need to return images to the
 // LLM, such as screenshot tools, chart generators, or image search.
-func NewRich[T any](name, description string, handler RichHandler[T]) Tool {
-	return Tool{
+func NewRich[T any](name, description string, handler RichHandler[T], opts ...func(*Tool)) Tool {
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -181,15 +198,19 @@ func NewRich[T any](name, description string, handler RichHandler[T]) Tool {
 			return handler(ctx, v)
 		},
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewRichRaw creates a Tool with a hand-crafted schema and a rich handler
 // that returns text + images.
-func NewRichRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (*Output, error)) Tool {
+func NewRichRaw(name, description string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (*Output, error), opts ...func(*Tool)) Tool {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
 	}
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -197,6 +218,10 @@ func NewRichRaw(name, description string, schema map[string]any, handler func(ct
 		},
 		RichHandler: handler,
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewBackground creates a Background_Tool from a typed handler function.
@@ -211,9 +236,9 @@ func NewRichRaw(name, description string, schema map[string]any, handler func(ct
 //
 // Validation of name, description, ack, and handler is deferred to agent.New
 // and Agent.RegisterTool, consistent with how tool.New works.
-func NewBackground[T any](name, description, ack string, handler BackgroundHandler[T]) Tool {
+func NewBackground[T any](name, description, ack string, handler BackgroundHandler[T], opts ...func(*Tool)) Tool {
 	schema := GenerateSchema[T]()
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -229,6 +254,10 @@ func NewBackground[T any](name, description, ack string, handler BackgroundHandl
 		isBackground: true,
 		ack:          ack,
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewBackgroundRaw creates a Background_Tool with a raw JSON handler.
@@ -238,11 +267,11 @@ func NewBackground[T any](name, description, ack string, handler BackgroundHandl
 //
 // Validation of name, description, ack, and handler is deferred to agent.New
 // and Agent.RegisterTool, consistent with how tool.NewRaw works.
-func NewBackgroundRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool {
+func NewBackgroundRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error), opts ...func(*Tool)) Tool {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
 	}
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -252,6 +281,10 @@ func NewBackgroundRaw(name, description, ack string, schema map[string]any, hand
 		isBackground: true,
 		ack:          ack,
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // ErrorLogger is an optional callback for reporting errors from background
@@ -273,9 +306,9 @@ type AsyncHandler[T any] func(ctx context.Context, input T)
 // isn't cancelled when the HTTP request or agent invocation finishes.
 //
 // If errLogger is nil, handler panics are logged to the default logger.
-func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger) Tool {
+func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger, opts ...func(*Tool)) Tool {
 	schema := GenerateSchema[T]()
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -301,16 +334,20 @@ func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], err
 			return ack, nil
 		},
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // NewAsyncRaw creates an async Tool with a raw JSON handler.
 // Like NewAsync but without automatic deserialization.
 // If schema is nil, it defaults to {"type": "object"}.
-func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger) Tool {
+func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger, opts ...func(*Tool)) Tool {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
 	}
-	return Tool{
+	t := Tool{
 		Spec: Spec{
 			Name:        name,
 			Description: description,
@@ -332,6 +369,10 @@ func NewAsyncRaw(name, description, ack string, schema map[string]any, handler f
 			return ack, nil
 		},
 	}
+	for _, opt := range opts {
+		opt(&t)
+	}
+	return t
 }
 
 // GenerateSchema uses reflection to produce a JSON Schema from a Go struct.

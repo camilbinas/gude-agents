@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/prompt"
@@ -12,9 +13,13 @@ import (
 
 // Agent orchestrates LLM calls and tool execution.
 type Agent struct {
-	name         string
-	provider     Provider
-	instructions string
+	name     string
+	provider Provider
+
+	// instructions is the agent's system prompt. Stored behind an atomic
+	// pointer so SetInstructions can update it concurrently with in-flight
+	// invocations without locking the hot path. Always non-nil after New.
+	instructions atomic.Pointer[string]
 
 	// Tools
 	toolsMu   sync.RWMutex // protects tools and toolSpecs for runtime registration
@@ -70,9 +75,10 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 	a := &Agent{
 		provider:      provider,
 		tools:         make(map[string]tool.Tool),
-		instructions:  instructions.String(),
 		maxIterations: 10,
 	}
+	initial := instructions.String()
+	a.instructions.Store(&initial)
 
 	// Register and validate tools.
 	for _, t := range tools {
@@ -146,7 +152,34 @@ func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb Stre
 }
 
 // Instructions returns the agent's system prompt string.
-func (a *Agent) Instructions() string { return a.instructions }
+func (a *Agent) Instructions() string {
+	if p := a.instructions.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// instructionsFor returns the system prompt to use for the given invocation
+// context. If the context carries a non-empty system prompt override (set via
+// Context.WithSystemPromptOverride), that takes precedence over the agent's
+// configured instructions. This is the entry point used by the agent loop and
+// supports per-request prompt selection for A/B testing.
+func (a *Agent) instructionsFor(c *Context) string {
+	if c != nil {
+		if override := c.SystemPromptOverride(); override != "" {
+			return override
+		}
+	}
+	return a.Instructions()
+}
+
+// SetInstructions atomically updates the agent's system prompt. Subsequent
+// invocations use the new value; in-flight invocations continue with the
+// value they read at start. Intended for hot-reload scenarios such as
+// AgentCore configuration bundle updates. Safe for concurrent use.
+func (a *Agent) SetInstructions(s string) {
+	a.instructions.Store(&s)
+}
 
 // Close performs graceful cleanup. If the agent has in-flight Background_Handlers or
 // Re_Entry_Turns, Close blocks until they all complete. Then, if the agent's conversation
@@ -213,6 +246,16 @@ func (a *Agent) RegisterTool(t tool.Tool) error {
 	a.tools[t.Spec.Name] = t
 	a.toolSpecs = append(a.toolSpecs, t.Spec)
 	return nil
+}
+
+// HasConversation reports whether the agent has a conversation store configured.
+func (a *Agent) HasConversation() bool { return a.conversation != nil }
+
+// SetConversation sets the agent's conversation store. This is intended for use
+// by runtime adapters (e.g. agentcore) that need to wire a conversation store
+// after construction. It operates as a shared conversation (no default ID).
+func (a *Agent) SetConversation(c Conversation) {
+	a.conversation = c
 }
 
 // InferenceConfig returns the agent's inference config, or nil if none is set.

@@ -169,7 +169,7 @@ func (a *Agent) invokeCommon(c *Context, userMessage string, convID string, cb S
 	firstContent = append(firstContent, TextBlock{Text: msg})
 	messages = append(messages, Message{Role: RoleUser, Content: firstContent})
 
-	usage, text, err := a.runLoop(c, convID, messages, ragOffset, a.instructions, mergedCfg, cb, h, nil)
+	usage, text, err := a.runLoop(c, convID, messages, ragOffset, a.instructionsFor(c), mergedCfg, cb, h, nil)
 	return usage, text, err
 }
 
@@ -454,12 +454,46 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 
 		handler := ChainMiddleware(
 			func(c *Context, toolName string, input json.RawMessage) (string, error) {
+				// Check guard if present.
+				if t.Guard != nil {
+					decision, err := t.Guard(c, input)
+					if err != nil {
+						reason := err.Error()
+						denial := guardDenialState{Tool: toolName, Reason: reason, Result: denialResultJSON(toolName, reason)}
+						c.Set(guardDenialKey{}, denial)
+						return denial.Result, nil
+					}
+					if !decision.Allow {
+						denial := guardDenialState{Tool: toolName, Reason: decision.Reason, Result: denialResultJSON(toolName, decision.Reason)}
+						c.Set(guardDenialKey{}, denial)
+						return denial.Result, nil
+					}
+				}
 				return t.Handler(c, input)
 			},
 			allMiddleware...,
 		)
 
+		// Clear any stale guard denial state from a previous tool call.
+		toolC.Set(guardDenialKey{}, nil)
+
 		out, err := handler(toolC, tc.Name, tc.Input)
+
+		// Guard deny: when the guard denies a call it stashes a
+		// guardDenialState on the per-call *Context and returns
+		// (denial.Result, nil). Translate that into an IsError
+		// ToolResultBlock and feed ErrToolCallDenied to the metrics hook.
+		if denial, ok := GetTyped[guardDenialState](toolC, guardDenialKey{}); ok {
+			denyErr := fmt.Errorf("%w: tool=%q reason=%q", ErrToolCallDenied, denial.Tool, denial.Reason)
+			tf.finish(denyErr, "")
+			results[i] = ToolResultBlock{
+				ToolUseID: tc.ToolUseID,
+				Content:   denial.Result,
+				IsError:   true,
+			}
+			return
+		}
+
 		if err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			tf.finish(err, "")
@@ -610,7 +644,7 @@ func (a *Agent) invokeParams(convID, userMessage string, c *Context) InvokeSpanP
 		ModelID:         a.modelID(),
 		ConversationID:  convID,
 		UserMessage:     userMessage,
-		SystemPrompt:    a.instructions,
+		SystemPrompt:    a.instructionsFor(c),
 		InferenceConfig: mergeInferenceConfig(a.inferenceConfig, c.InferenceConfig()),
 		AgentName:       a.name,
 		ImageCount:      len(c.Images()),
