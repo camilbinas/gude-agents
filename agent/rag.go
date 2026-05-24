@@ -68,6 +68,40 @@ type Reranker interface {
 	Rerank(ctx context.Context, query string, docs []Document) ([]Document, error)
 }
 
+// FulltextSearcher performs keyword-based document search.
+type FulltextSearcher interface {
+	// Search returns documents matching the query, ordered by relevance score
+	// descending. Returns an empty slice and nil error for empty queries.
+	// Returns an error if limit < 1.
+	Search(ctx context.Context, query string, limit int) ([]ScoredDocument, error)
+}
+
+// MetadataFilter represents AND-semantics metadata constraints.
+// All key-value pairs must match for a document to be included.
+type MetadataFilter map[string]string
+
+// FilteredVectorStore extends VectorStore with metadata-filtered search.
+// Backends opt into filtering by implementing this interface alongside VectorStore.
+type FilteredVectorStore interface {
+	VectorStore
+
+	// SearchWithFilter returns the top-K documents by similarity whose metadata
+	// contains all key-value pairs in the filter (AND semantics).
+	// When filter is nil or empty, behaves identically to Search.
+	SearchWithFilter(ctx context.Context, queryEmbedding []float64, topK int, filter MetadataFilter) ([]ScoredDocument, error)
+}
+
+// FilteredFulltextSearcher extends FulltextSearcher with metadata-filtered search.
+// Backends opt into filtering by implementing this interface alongside FulltextSearcher.
+type FilteredFulltextSearcher interface {
+	FulltextSearcher
+
+	// SearchWithFilter returns documents matching the query whose metadata
+	// contains all key-value pairs in the filter (AND semantics).
+	// When filter is nil or empty, behaves identically to Search.
+	SearchWithFilter(ctx context.Context, query string, limit int, filter MetadataFilter) ([]ScoredDocument, error)
+}
+
 // ContextFormatter formats retrieved documents into a string for prompt injection.
 type ContextFormatter func(docs []Document) string
 

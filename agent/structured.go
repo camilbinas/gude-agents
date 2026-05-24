@@ -98,7 +98,7 @@ func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, conv
 	schema := tool.GenerateSchema[T]()
 	params := ConverseParams{
 		Messages: messages,
-		System:   a.instructions,
+		System:   a.instructionsFor(c),
 		ToolConfig: []tool.Spec{{
 			Name:        structuredOutputToolName,
 			Description: "Respond with structured JSON output conforming to the schema.",
@@ -112,7 +112,7 @@ func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, conv
 	}
 
 	provC, provF := h.onProviderCallStart(c, ProviderCallParams{
-		System:          a.instructions,
+		System:          a.instructionsFor(c),
 		MessageCount:    len(messages),
 		InferenceConfig: mergedCfg,
 	}, modelID)

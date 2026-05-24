@@ -23,6 +23,12 @@ type Context struct {
 	tracingHook     TracingHook
 	metricsHook     MetricsHook
 	loggingHook     LoggingHook
+
+	// systemPromptOverride, when non-empty, replaces the agent's configured
+	// instructions for this invocation only. Set by callers that need
+	// per-request prompt selection (e.g. AgentCore A/B testing where the
+	// gateway routes each session to a different configuration bundle).
+	systemPromptOverride string
 }
 
 // NewContext creates a new *Context wrapping the given parent.
@@ -213,6 +219,22 @@ func (c *Context) WithLoggingHook(h LoggingHook) *Context {
 	return c
 }
 
+// SystemPromptOverride returns the per-invocation system prompt override, or
+// empty string if none was set. The agent uses this in preference to its
+// configured instructions when non-empty.
+func (c *Context) SystemPromptOverride() string {
+	return c.systemPromptOverride
+}
+
+// WithSystemPromptOverride sets a per-invocation system prompt that overrides
+// the agent's configured instructions for this invocation only. Use this for
+// A/B testing or other per-request prompt selection. Pass empty string to
+// clear the override (the agent's instructions are used as before).
+func (c *Context) WithSystemPromptOverride(s string) *Context {
+	c.systemPromptOverride = s
+	return c
+}
+
 // FromContext extracts a *Context from a context.Context.
 // Returns nil if ctx is not a *Context. Use this in tool handlers that need
 // access to invocation state without risking a panic from a direct type assertion.
@@ -272,18 +294,19 @@ func (c *Context) Clone() *Context {
 	}
 	c.mu.RUnlock()
 	return &Context{
-		Context:         c.Context,
-		data:            make(map[any]any),
-		conversationID:  c.conversationID,
-		images:          c.images,
-		documents:       c.documents,
-		inferenceConfig: c.inferenceConfig,
-		eventHook:       c.eventHook,
-		identifier:      c.identifier,
-		scopes:          scopesCopy,
-		tracingHook:     c.tracingHook,
-		metricsHook:     c.metricsHook,
-		loggingHook:     c.loggingHook,
+		Context:              c.Context,
+		data:                 make(map[any]any),
+		conversationID:       c.conversationID,
+		images:               c.images,
+		documents:            c.documents,
+		inferenceConfig:      c.inferenceConfig,
+		eventHook:            c.eventHook,
+		identifier:           c.identifier,
+		scopes:               scopesCopy,
+		tracingHook:          c.tracingHook,
+		metricsHook:          c.metricsHook,
+		loggingHook:          c.loggingHook,
+		systemPromptOverride: c.systemPromptOverride,
 	}
 }
 
@@ -295,19 +318,20 @@ func (c *Context) setUsage(u TokenUsage) {
 // withContext returns a shallow copy of c with a different embedded context.Context.
 func (c *Context) withContext(ctx context.Context) *Context {
 	return &Context{
-		Context:         ctx,
-		data:            c.data,
-		usage:           c.usage,
-		conversationID:  c.conversationID,
-		images:          c.images,
-		documents:       c.documents,
-		inferenceConfig: c.inferenceConfig,
-		eventHook:       c.eventHook,
-		identifier:      c.identifier,
-		scopes:          c.scopes,
-		tracingHook:     c.tracingHook,
-		metricsHook:     c.metricsHook,
-		loggingHook:     c.loggingHook,
+		Context:              ctx,
+		data:                 c.data,
+		usage:                c.usage,
+		conversationID:       c.conversationID,
+		images:               c.images,
+		documents:            c.documents,
+		inferenceConfig:      c.inferenceConfig,
+		eventHook:            c.eventHook,
+		identifier:           c.identifier,
+		scopes:               c.scopes,
+		tracingHook:          c.tracingHook,
+		metricsHook:          c.metricsHook,
+		loggingHook:          c.loggingHook,
+		systemPromptOverride: c.systemPromptOverride,
 	}
 }
 

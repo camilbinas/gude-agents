@@ -144,7 +144,7 @@ func (a *Agent) Resume(c *Context, hr *HandoffRequest, humanResponse string, cb 
 	}
 
 	h := a.hooks(c)
-	usage, _, err := a.runLoop(c, convID, messages, 0, a.instructions, mergedInferenceCfg, cb, &h, nil)
+	usage, _, err := a.runLoop(c, convID, messages, 0, a.instructionsFor(c), mergedInferenceCfg, cb, &h, nil)
 
 	// Store cumulative usage on the Context for caller access.
 	c.setUsage(usage)

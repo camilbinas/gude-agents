@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/a2aproject/a2a-go/v2 v2.3.0
-	github.com/camilbinas/gude-agents v0.59.0
+	github.com/camilbinas/gude-agents v0.60.0
 	google.golang.org/grpc v1.80.0
 	pgregory.net/rapid v1.2.0
 )

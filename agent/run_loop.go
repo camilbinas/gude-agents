@@ -37,8 +37,8 @@ type LoopParams struct {
 // Returns cumulative token usage, the final assistant text, and an error.
 // If a ToolResultInterceptor in cfg signals stop, returns ErrLoopStopped.
 func (a *Agent) RunLoop(c *Context, params LoopParams) (TokenUsage, string, error) {
-	// Resolve system prompt: use params override if non-empty, else agent's instructions.
-	systemPrompt := a.instructions
+	// Resolve system prompt: use params override if non-empty, else context override (A/B), else agent's instructions.
+	systemPrompt := a.instructionsFor(c)
 	if params.SystemPrompt != "" {
 		systemPrompt = params.SystemPrompt
 	}
