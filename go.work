@@ -3,6 +3,7 @@ go 1.26.0
 use (
 	.
 	./agent/a2a
+	./agent/agentcore
 	./agent/conversation/dynamodb
 	./agent/conversation/postgres
 	./agent/conversation/redis

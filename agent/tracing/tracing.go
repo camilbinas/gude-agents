@@ -53,6 +53,18 @@ func WithContentCapture() TracingOption {
 type otelHook struct {
 	tracer         trace.Tracer
 	captureContent bool
+	scheme         AttributeScheme
+}
+
+// newOtelHook constructs an otelHook with the given tracer and options applied.
+// The scheme is left as a nil map by default; AttributeScheme.Key falls back
+// to each role's default key when the map is nil or missing an entry.
+func newOtelHook(tracer trace.Tracer, opts ...TracingOption) *otelHook {
+	h := &otelHook{tracer: tracer}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // Compile-time check that otelHook implements agent.TracingHook.
@@ -66,11 +78,7 @@ func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 			tp = otel.GetTracerProvider()
 		}
 		tracer := tp.Tracer(instrumentationName)
-		h := &otelHook{tracer: tracer}
-		for _, opt := range opts {
-			opt(h)
-		}
-		a.SetTracingHook(h)
+		a.SetTracingHook(newOtelHook(tracer, opts...))
 		return nil
 	}
 }
@@ -78,48 +86,48 @@ func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanParams) (context.Context, func(error, agent.TokenUsage, string)) {
 	ctx, span := h.tracer.Start(ctx, "agent.invoke")
 	span.SetAttributes(
-		attribute.Int(AttrAgentMaxIterations, params.MaxIterations),
-		attribute.String(AttrGenAISystem, "gude-agents"),
+		attribute.Int(h.scheme.Key(RoleAgentMaxIterations), params.MaxIterations),
+		attribute.String(h.scheme.Key(RoleGenAISystem), "gude-agents"),
 	)
 	if params.ModelID != "" {
-		span.SetAttributes(attribute.String(AttrAgentModelID, params.ModelID))
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleAgentModelID), params.ModelID))
 	}
 	if params.ConversationID != "" {
-		span.SetAttributes(attribute.String(AttrAgentConversationID, params.ConversationID))
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleAgentConversationID), params.ConversationID))
 	}
 	if params.AgentName != "" {
-		span.SetAttributes(attribute.String(AttrAgentName, params.AgentName))
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleAgentName), params.AgentName))
 	}
 	if params.ImageCount > 0 {
-		span.SetAttributes(attribute.Int(AttrAgentImageCount, params.ImageCount))
+		span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentImageCount), params.ImageCount))
 	}
 	if params.DocumentCount > 0 {
-		span.SetAttributes(attribute.Int(AttrAgentDocumentCount, params.DocumentCount))
+		span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentDocumentCount), params.DocumentCount))
 	}
 	if h.captureContent {
 		if params.UserMessage != "" {
-			span.SetAttributes(attribute.String(AttrGenAIPrompt, params.UserMessage))
+			span.SetAttributes(attribute.String(h.scheme.Key(RoleGenAIPrompt), params.UserMessage))
 		}
 		if params.SystemPrompt != "" {
-			span.SetAttributes(attribute.String(AttrGenAISystemPrompt, params.SystemPrompt))
+			span.SetAttributes(attribute.String(h.scheme.Key(RoleGenAISystemPrompt), params.SystemPrompt))
 		}
 	}
 	// Record inference config parameters when set.
 	if cfg := params.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
-			span.SetAttributes(attribute.Float64(AttrGenAITemperature, *cfg.Temperature))
+			span.SetAttributes(attribute.Float64(h.scheme.Key(RoleGenAITemperature), *cfg.Temperature))
 		}
 		if cfg.TopP != nil {
-			span.SetAttributes(attribute.Float64(AttrGenAITopP, *cfg.TopP))
+			span.SetAttributes(attribute.Float64(h.scheme.Key(RoleGenAITopP), *cfg.TopP))
 		}
 		if cfg.TopK != nil {
-			span.SetAttributes(attribute.Int(AttrGenAITopK, *cfg.TopK))
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleGenAITopK), *cfg.TopK))
 		}
 		if cfg.MaxTokens != nil {
-			span.SetAttributes(attribute.Int(AttrGenAIMaxTokens, *cfg.MaxTokens))
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleGenAIMaxTokens), *cfg.MaxTokens))
 		}
 		if cfg.StopSequences != nil {
-			span.SetAttributes(attribute.StringSlice(AttrGenAIStopSequences, cfg.StopSequences))
+			span.SetAttributes(attribute.StringSlice(h.scheme.Key(RoleGenAIStopSequences), cfg.StopSequences))
 		}
 	}
 	return ctx, func(err error, usage agent.TokenUsage, response string) {
@@ -129,11 +137,11 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 		} else {
 			span.SetStatus(codes.Ok, "")
 			span.SetAttributes(
-				attribute.Int(AttrAgentTokenUsageInput, usage.InputTokens),
-				attribute.Int(AttrAgentTokenUsageOutput, usage.OutputTokens),
+				attribute.Int(h.scheme.Key(RoleAgentTokenInput), usage.InputTokens),
+				attribute.Int(h.scheme.Key(RoleAgentTokenOutput), usage.OutputTokens),
 			)
 			if h.captureContent && response != "" {
-				span.SetAttributes(attribute.String(AttrGenAICompletion, response))
+				span.SetAttributes(attribute.String(h.scheme.Key(RoleGenAICompletion), response))
 			}
 		}
 		span.End()
@@ -142,11 +150,11 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 
 func (h *otelHook) OnIterationStart(ctx context.Context, iteration int) (context.Context, func(toolCount int, isFinal bool)) {
 	ctx, span := h.tracer.Start(ctx, "agent.iteration")
-	span.SetAttributes(attribute.Int(AttrAgentIterationNumber, iteration))
+	span.SetAttributes(attribute.Int(h.scheme.Key(RoleIterationNumber), iteration))
 	return ctx, func(toolCount int, isFinal bool) {
 		span.SetAttributes(
-			attribute.Int(AttrAgentIterationToolCount, toolCount),
-			attribute.Bool(AttrAgentIterationFinal, isFinal),
+			attribute.Int(h.scheme.Key(RoleIterationToolCount), toolCount),
+			attribute.Bool(h.scheme.Key(RoleIterationFinal), isFinal),
 		)
 		span.End()
 	}
@@ -155,24 +163,24 @@ func (h *otelHook) OnIterationStart(ctx context.Context, iteration int) (context
 func (h *otelHook) OnProviderCallStart(ctx context.Context, params agent.ProviderCallParams) (context.Context, func(err error, usage agent.TokenUsage, toolCallCount int, responseText string)) {
 	ctx, span := h.tracer.Start(ctx, "agent.provider.call")
 	if h.captureContent {
-		span.SetAttributes(attribute.Int(AttrProviderMessageCount, params.MessageCount))
+		span.SetAttributes(attribute.Int(h.scheme.Key(RoleProviderMessageCount), params.MessageCount))
 	}
 	// Record inference config parameters when set.
 	if cfg := params.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
-			span.SetAttributes(attribute.Float64(AttrGenAITemperature, *cfg.Temperature))
+			span.SetAttributes(attribute.Float64(h.scheme.Key(RoleGenAITemperature), *cfg.Temperature))
 		}
 		if cfg.TopP != nil {
-			span.SetAttributes(attribute.Float64(AttrGenAITopP, *cfg.TopP))
+			span.SetAttributes(attribute.Float64(h.scheme.Key(RoleGenAITopP), *cfg.TopP))
 		}
 		if cfg.TopK != nil {
-			span.SetAttributes(attribute.Int(AttrGenAITopK, *cfg.TopK))
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleGenAITopK), *cfg.TopK))
 		}
 		if cfg.MaxTokens != nil {
-			span.SetAttributes(attribute.Int(AttrGenAIMaxTokens, *cfg.MaxTokens))
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleGenAIMaxTokens), *cfg.MaxTokens))
 		}
 		if cfg.StopSequences != nil {
-			span.SetAttributes(attribute.StringSlice(AttrGenAIStopSequences, cfg.StopSequences))
+			span.SetAttributes(attribute.StringSlice(h.scheme.Key(RoleGenAIStopSequences), cfg.StopSequences))
 		}
 	}
 	return ctx, func(err error, usage agent.TokenUsage, toolCallCount int, responseText string) {
@@ -181,12 +189,12 @@ func (h *otelHook) OnProviderCallStart(ctx context.Context, params agent.Provide
 			span.SetStatus(codes.Error, err.Error())
 		} else {
 			span.SetAttributes(
-				attribute.Int(AttrProviderInputTokens, usage.InputTokens),
-				attribute.Int(AttrProviderOutputTokens, usage.OutputTokens),
-				attribute.Int(AttrProviderToolCalls, toolCallCount),
+				attribute.Int(h.scheme.Key(RoleProviderInputTokens), usage.InputTokens),
+				attribute.Int(h.scheme.Key(RoleProviderOutputTokens), usage.OutputTokens),
+				attribute.Int(h.scheme.Key(RoleProviderToolCalls), toolCallCount),
 			)
 			if h.captureContent && responseText != "" {
-				span.SetAttributes(attribute.String(AttrGenAIProviderResponse, responseText))
+				span.SetAttributes(attribute.String(h.scheme.Key(RoleGenAIProviderResponse), responseText))
 			}
 		}
 		span.End()
@@ -195,16 +203,16 @@ func (h *otelHook) OnProviderCallStart(ctx context.Context, params agent.Provide
 
 func (h *otelHook) OnToolStart(ctx context.Context, toolName string, input json.RawMessage) (context.Context, func(err error, output string)) {
 	ctx, span := h.tracer.Start(ctx, fmt.Sprintf("agent.tool.%s", toolName))
-	span.SetAttributes(attribute.String(AttrToolName, toolName))
+	span.SetAttributes(attribute.String(h.scheme.Key(RoleToolName), toolName))
 	if h.captureContent && len(input) > 0 {
-		span.SetAttributes(attribute.String(AttrToolInput, string(input)))
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleToolInput), string(input)))
 	}
 	return ctx, func(err error, output string) {
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 		} else if h.captureContent && output != "" {
-			span.SetAttributes(attribute.String(AttrToolOutput, output))
+			span.SetAttributes(attribute.String(h.scheme.Key(RoleToolOutput), output))
 		}
 		span.End()
 	}
@@ -214,14 +222,14 @@ func (h *otelHook) OnGuardrailStart(ctx context.Context, direction string, input
 	spanName := fmt.Sprintf("agent.guardrail.%s", direction)
 	ctx, span := h.tracer.Start(ctx, spanName)
 	if h.captureContent && input != "" {
-		span.SetAttributes(attribute.String(AttrGuardrailInput, input))
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleGuardrailInput), input))
 	}
 	return ctx, func(err error, output string) {
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 		} else if h.captureContent && output != "" {
-			span.SetAttributes(attribute.String(AttrGuardrailOutput, output))
+			span.SetAttributes(attribute.String(h.scheme.Key(RoleGuardrailOutput), output))
 		}
 		span.End()
 	}
@@ -230,7 +238,7 @@ func (h *otelHook) OnGuardrailStart(ctx context.Context, direction string, input
 func (h *otelHook) OnConversationStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error)) {
 	spanName := fmt.Sprintf("agent.conversation.%s", operation)
 	ctx, span := h.tracer.Start(ctx, spanName)
-	span.SetAttributes(attribute.String(AttrMemoryConversationID, conversationID))
+	span.SetAttributes(attribute.String(h.scheme.Key(RoleMemoryConversationID), conversationID))
 	return ctx, func(err error) {
 		if err != nil {
 			span.RecordError(err)
@@ -243,14 +251,14 @@ func (h *otelHook) OnConversationStart(ctx context.Context, operation string, co
 func (h *otelHook) OnRetrieverStart(ctx context.Context, query string) (context.Context, func(err error, docCount int)) {
 	ctx, span := h.tracer.Start(ctx, "agent.retriever.retrieve")
 	if h.captureContent && query != "" {
-		span.SetAttributes(attribute.String(AttrRetrieverQuery, query))
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleRetrieverQuery), query))
 	}
 	return ctx, func(err error, docCount int) {
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 		} else {
-			span.SetAttributes(attribute.Int(AttrRetrieverDocumentCount, docCount))
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleRetrieverDocumentCount), docCount))
 		}
 		span.End()
 	}
@@ -258,7 +266,7 @@ func (h *otelHook) OnRetrieverStart(ctx context.Context, query string) (context.
 
 func (h *otelHook) OnMaxIterationsExceeded(ctx context.Context, limit int) {
 	span := trace.SpanFromContext(ctx)
-	span.AddEvent(EventMaxIterationsExceeded, trace.WithAttributes(
-		attribute.Int(AttrAgentMaxIterations, limit),
+	span.AddEvent(h.scheme.Key(RoleEventMaxIterationsExceeded), trace.WithAttributes(
+		attribute.Int(h.scheme.Key(RoleAgentMaxIterations), limit),
 	))
 }

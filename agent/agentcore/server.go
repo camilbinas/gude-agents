@@ -11,6 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/camilbinas/gude-agents/agent"
 )
 
@@ -293,23 +297,49 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		sessionID = req.SessionID
 	}
 
-	ctx := agent.NewContext(r.Context())
+	// Parse W3C baggage for both configuration bundle and A/B experiment
+	// metadata. The gateway injects both when an A/B test is active.
+	baggageHeader := r.Header.Get("baggage")
+	ref, exp := parseBaggageAll(baggageHeader)
+
+	// Start a request-level span that carries experiment attributes. The
+	// online evaluation pipeline reads these from the root span to
+	// correlate sessions to A/B test variants. All agent spans (invoke,
+	// provider, tool) become children of this span.
+	reqCtx := r.Context()
+	if !exp.IsZero() {
+		tracer := otel.Tracer("agentcore.server")
+		var span trace.Span
+		reqCtx, span = tracer.Start(reqCtx, "agentcore.request",
+			trace.WithAttributes(
+				attribute.String("aws.bedrock.agentcore.experimentArn", exp.ExperimentARN),
+				attribute.String("aws.bedrock.agentcore.variantName", exp.VariantName),
+				attribute.String("aws.bedrock.agentcore.configbundle_arn", ref.BundleARN),
+				attribute.String("aws.bedrock.agentcore.configbundle_version", ref.VersionID),
+			),
+		)
+		defer span.End()
+	}
+
+	ctx := agent.NewContext(reqCtx)
 	if sessionID != "" {
 		ctx.WithConversationID(sessionID)
 	}
 
-	// Resolve and apply AgentCore configuration bundle when wired. Baggage
-	// is the per-request hand-off from the AgentCore Gateway during A/B
-	// testing.
-	if s.bundleClient != nil {
-		if ref := parseBundleRefFromBaggage(r.Header.Get("baggage")); !ref.IsZero() {
-			cfg, err := s.bundleClient.Resolve(r.Context(), ref)
-			if err != nil {
-				s.logger.Printf("agentcore server: bundle resolve failed (continuing with defaults) version=%s err=%v",
-					ref.VersionID, err)
-			} else if s.bundleApply != nil {
-				s.bundleApply(ctx, ref, cfg)
-			}
+	// Also store experiment info on the agent context for downstream use.
+	if !exp.IsZero() {
+		ctx.Set("aws.bedrock.agentcore.experimentArn", exp.ExperimentARN)
+		ctx.Set("aws.bedrock.agentcore.variantName", exp.VariantName)
+	}
+
+	// Resolve and apply AgentCore configuration bundle when wired.
+	if s.bundleClient != nil && !ref.IsZero() {
+		cfg, err := s.bundleClient.Resolve(r.Context(), ref)
+		if err != nil {
+			s.logger.Printf("agentcore server: bundle resolve failed (continuing with defaults) version=%s err=%v",
+				ref.VersionID, err)
+		} else if s.bundleApply != nil {
+			s.bundleApply(ctx, ref, cfg)
 		}
 	}
 
