@@ -37,8 +37,12 @@ func (h *collectingEventHook) OnThinking(_ *agent.Context, chunk string) {
 	h.chunks = append(h.chunks, chunk)
 	h.mu.Unlock()
 }
-func (h *collectingEventHook) OnModelStart(_ *agent.Context)         {}
-func (h *collectingEventHook) OnModelEnd(_ *agent.Context, _ string) {}
+func (h *collectingEventHook) OnModelStart(_ *agent.Context)            {}
+func (h *collectingEventHook) OnModelEnd(_ *agent.Context, _ string)    {}
+func (h *collectingEventHook) OnIterationStart(_ *agent.Context, _ int) {}
+func (h *collectingEventHook) OnIterationEnd(_ *agent.Context, _ int, _ int, _ bool, _ time.Duration) {
+}
+func (h *collectingEventHook) OnMaxIterationsExceeded(_ *agent.Context, _ int) {}
 
 func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 	t.Parallel()

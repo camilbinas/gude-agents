@@ -4155,6 +4155,24 @@ func (r *p15EventRecorder) OnModelEnd(_ *Context, _ string) {
 	r.recorded = append(r.recorded, "OnModelEnd")
 }
 
+func (r *p15EventRecorder) OnIterationStart(_ *Context, _ int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recorded = append(r.recorded, "OnIterationStart")
+}
+
+func (r *p15EventRecorder) OnIterationEnd(_ *Context, _ int, _ int, _ bool, _ time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recorded = append(r.recorded, "OnIterationEnd")
+}
+
+func (r *p15EventRecorder) OnMaxIterationsExceeded(_ *Context, _ int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recorded = append(r.recorded, "OnMaxIterationsExceeded")
+}
+
 func (r *p15EventRecorder) events() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

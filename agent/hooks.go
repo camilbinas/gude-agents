@@ -62,6 +62,8 @@ type iterationFinisher struct {
 	finishTracing func(toolCount int, isFinal bool)
 	metrics       MetricsHook
 	logging       LoggingHook
+	event         EventHook
+	c             *Context
 	iteration     int
 	start         time.Time
 }
@@ -76,16 +78,20 @@ func (f *iterationFinisher) finish(toolCount int, isFinal bool) {
 	if f.logging != nil {
 		f.logging.OnIterationEnd(f.iteration, toolCount, isFinal, time.Since(f.start))
 	}
+	if f.event != nil {
+		f.event.OnIterationEnd(f.c, f.iteration, toolCount, isFinal, time.Since(f.start))
+	}
 }
 
 func (h *hooks) onIterationStart(c *Context, iteration int) (*Context, *iterationFinisher) {
-	f := &iterationFinisher{iteration: iteration, start: time.Now()}
+	f := &iterationFinisher{iteration: iteration, start: time.Now(), c: c}
 	ctx := context.Context(c)
 	if h.tracing != nil {
 		newCtx, finish := h.tracing.OnIterationStart(ctx, iteration)
 		f.finishTracing = finish
 		if newCtx != ctx {
 			c = c.withContext(newCtx)
+			f.c = c
 		}
 	}
 	if h.metrics != nil {
@@ -95,6 +101,11 @@ func (h *hooks) onIterationStart(c *Context, iteration int) (*Context, *iteratio
 	if h.logging != nil {
 		h.logging.OnIterationStart(iteration)
 		f.logging = h.logging
+	}
+	if h.event != nil {
+		h.event.OnIterationStart(c, iteration)
+		f.event = h.event
+		f.c = c
 	}
 	return c, f
 }
@@ -332,6 +343,9 @@ func (h *hooks) onMaxIterationsExceeded(c *Context, limit int) {
 	}
 	if h.logging != nil {
 		h.logging.OnMaxIterationsExceeded(limit)
+	}
+	if h.event != nil {
+		h.event.OnMaxIterationsExceeded(c, limit)
 	}
 }
 

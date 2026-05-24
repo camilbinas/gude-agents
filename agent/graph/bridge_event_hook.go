@@ -92,6 +92,51 @@ func (b *bridgeEventHook) OnThinking(c *agent.Context, chunk string) {
 	})
 }
 
+// OnIterationStart is called at the beginning of each agent loop iteration.
+// It emits an EventAgentIterationStart GraphEvent and delegates to the inner hook if present.
+func (b *bridgeEventHook) OnIterationStart(c *agent.Context, iteration int) {
+	if b.inner != nil {
+		b.inner.OnIterationStart(c, iteration)
+	}
+	b.graphHook.OnEvent(GraphEvent{
+		Type:      EventAgentIterationStart,
+		Timestamp: time.Now(),
+		NodeName:  b.nodeName,
+		Iteration: iteration,
+	})
+}
+
+// OnIterationEnd is called at the end of each agent loop iteration.
+// It emits an EventAgentIterationEnd GraphEvent and delegates to the inner hook if present.
+func (b *bridgeEventHook) OnIterationEnd(c *agent.Context, iteration int, toolCount int, isFinal bool, duration time.Duration) {
+	if b.inner != nil {
+		b.inner.OnIterationEnd(c, iteration, toolCount, isFinal, duration)
+	}
+	b.graphHook.OnEvent(GraphEvent{
+		Type:              EventAgentIterationEnd,
+		Timestamp:         time.Now(),
+		NodeName:          b.nodeName,
+		Iteration:         iteration,
+		ToolCount:         toolCount,
+		IsFinal:           isFinal,
+		IterationDuration: duration,
+	})
+}
+
+// OnMaxIterationsExceeded is called when the agent loop terminates due to
+// reaching the configured iteration limit without producing a final answer.
+func (b *bridgeEventHook) OnMaxIterationsExceeded(c *agent.Context, limit int) {
+	if b.inner != nil {
+		b.inner.OnMaxIterationsExceeded(c, limit)
+	}
+	b.graphHook.OnEvent(GraphEvent{
+		Type:           EventAgentMaxIterationsReached,
+		Timestamp:      time.Now(),
+		NodeName:       b.nodeName,
+		IterationLimit: limit,
+	})
+}
+
 // newBridgeEventHook creates a bridgeEventHook that forwards agent events to the graph's
 // event hook. Returns nil if graphHook is nil (zero overhead when no graph event hook is configured).
 // The inner parameter is the agent's own EventHook (may be nil).

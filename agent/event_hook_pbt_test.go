@@ -240,7 +240,11 @@ func (h *orderTrackingEventHook) OnModelStart(_ *Context) {
 	*h.sequence = append(*h.sequence, "modelStart")
 	h.mu.Unlock()
 }
-func (h *orderTrackingEventHook) OnModelEnd(_ *Context, _ string) {}
+func (h *orderTrackingEventHook) OnModelEnd(_ *Context, _ string)    {}
+func (h *orderTrackingEventHook) OnIterationStart(_ *Context, _ int) {}
+func (h *orderTrackingEventHook) OnIterationEnd(_ *Context, _ int, _ int, _ bool, _ time.Duration) {
+}
+func (h *orderTrackingEventHook) OnMaxIterationsExceeded(_ *Context, _ int) {}
 
 func TestProperty_ModelStartOrdering(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {

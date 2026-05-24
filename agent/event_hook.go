@@ -38,6 +38,19 @@ type EventHook interface {
 	// OnModelEnd is called after the Provider call completes.
 	// stopReason is one of: "end_turn", "tool_use", "error".
 	OnModelEnd(c *Context, stopReason string)
+
+	// OnIterationStart is called at the beginning of each agent loop iteration.
+	// iteration is 1-indexed.
+	OnIterationStart(c *Context, iteration int)
+
+	// OnIterationEnd is called at the end of each agent loop iteration.
+	// toolCount is the number of tool calls executed in this iteration (0 for final).
+	// isFinal is true when this iteration produced the final text response.
+	OnIterationEnd(c *Context, iteration int, toolCount int, isFinal bool, duration time.Duration)
+
+	// OnMaxIterationsExceeded is called when the agent loop terminates because
+	// the configured maximum iteration count was reached without a final answer.
+	OnMaxIterationsExceeded(c *Context, limit int)
 }
 
 // BaseEventHook provides no-op implementations of all EventHook methods.
@@ -49,3 +62,6 @@ func (BaseEventHook) OnToolCallEnd(_ *Context, _ string, _ string, _ error, _ ti
 func (BaseEventHook) OnThinking(_ *Context, _ string)                                        {}
 func (BaseEventHook) OnModelStart(_ *Context)                                                {}
 func (BaseEventHook) OnModelEnd(_ *Context, _ string)                                        {}
+func (BaseEventHook) OnIterationStart(_ *Context, _ int)                                     {}
+func (BaseEventHook) OnIterationEnd(_ *Context, _ int, _ int, _ bool, _ time.Duration)       {}
+func (BaseEventHook) OnMaxIterationsExceeded(_ *Context, _ int)                              {}

@@ -21,12 +21,15 @@ const (
 	EventGraphCompleted  EventType = "GraphCompleted"
 
 	// Agent-level event types for tool calls, model interactions, and streaming.
-	EventAgentToolCallStart EventType = "AgentToolCallStart"
-	EventAgentToolCallEnd   EventType = "AgentToolCallEnd"
-	EventAgentModelStart    EventType = "AgentModelStart"
-	EventAgentModelEnd      EventType = "AgentModelEnd"
-	EventAgentThinking      EventType = "AgentThinking"
-	EventAgentStreaming     EventType = "AgentStreaming"
+	EventAgentToolCallStart        EventType = "AgentToolCallStart"
+	EventAgentToolCallEnd          EventType = "AgentToolCallEnd"
+	EventAgentModelStart           EventType = "AgentModelStart"
+	EventAgentModelEnd             EventType = "AgentModelEnd"
+	EventAgentThinking             EventType = "AgentThinking"
+	EventAgentStreaming            EventType = "AgentStreaming"
+	EventAgentIterationStart       EventType = "AgentIterationStart"
+	EventAgentIterationEnd         EventType = "AgentIterationEnd"
+	EventAgentMaxIterationsReached EventType = "AgentMaxIterationsReached"
 )
 
 // GraphEvent is a structured event emitted by the Graph during execution.
@@ -50,6 +53,13 @@ type GraphEvent struct {
 	ToolDuration time.Duration   `json:"tool_duration,omitempty"`
 	StopReason   string          `json:"stop_reason,omitempty"`
 	Chunk        string          `json:"chunk,omitempty"`
+
+	// Agent iteration-loop fields.
+	Iteration         int           `json:"iteration,omitempty"`
+	ToolCount         int           `json:"tool_count,omitempty"`
+	IsFinal           bool          `json:"is_final,omitempty"`
+	IterationDuration time.Duration `json:"iteration_duration,omitempty"`
+	IterationLimit    int           `json:"iteration_limit,omitempty"`
 }
 
 // GraphEventHook is an optional interface for receiving structured events at all

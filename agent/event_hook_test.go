@@ -74,6 +74,11 @@ func (r *recordingEventHook) OnModelEnd(_ *Context, stopReason string) {
 	r.modelEnds = append(r.modelEnds, modelEndEvent{stopReason: stopReason})
 }
 
+func (r *recordingEventHook) OnIterationStart(_ *Context, _ int) {}
+func (r *recordingEventHook) OnIterationEnd(_ *Context, _ int, _ int, _ bool, _ time.Duration) {
+}
+func (r *recordingEventHook) OnMaxIterationsExceeded(_ *Context, _ int) {}
+
 // ---------------------------------------------------------------------------
 // 4.1: Context-based EventHook — via *Context.WithEventHook
 // ---------------------------------------------------------------------------
