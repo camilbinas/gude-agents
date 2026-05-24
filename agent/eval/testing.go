@@ -7,20 +7,8 @@ import (
 )
 
 // RunT runs an EvalSuite and reports results through Go's testing framework.
-// Each eval case becomes a subtest, and each failed evaluator within a case
-// calls t.Errorf with the evaluator name, score, and explanation.
-//
-// Usage in a _test.go file:
-//
-//	func TestRAGQuality(t *testing.T) {
-//	    cases := []eval.EvalCase{...}
-//	    evaluators := []eval.Evaluator{...}
-//	    eval.RunT(t, cases, evaluators)
-//	}
-//
-// Options:
-//   - Pass eval.WithSuiteConcurrency(n) to run evaluations in parallel.
-//   - The test context is derived from t via context.Background() with t.Deadline().
+// Each eval case becomes a subtest, and each failed evaluator calls t.Errorf.
+// Pass eval.WithSuiteConcurrency(n) to run evaluations in parallel.
 func RunT(t *testing.T, cases []EvalCase, evaluators []Evaluator, opts ...SuiteOption) {
 	t.Helper()
 

@@ -479,10 +479,7 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 
 		out, err := handler(toolC, tc.Name, tc.Input)
 
-		// Guard deny: when the guard denies a call it stashes a
-		// guardDenialState on the per-call *Context and returns
-		// (denial.Result, nil). Translate that into an IsError
-		// ToolResultBlock and feed ErrToolCallDenied to the metrics hook.
+		// Guard deny: translate stashed denial into IsError ToolResultBlock.
 		if denial, ok := GetTyped[guardDenialState](toolC, guardDenialKey{}); ok {
 			denyErr := fmt.Errorf("%w: tool=%q reason=%q", ErrToolCallDenied, denial.Tool, denial.Reason)
 			tf.finish(denyErr, "")

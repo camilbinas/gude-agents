@@ -27,18 +27,8 @@ type FallbackStreamInvoker interface {
 }
 
 // agentNodeStream invokes the agent using the streaming path and emits
-// EventAgentStreaming GraphEvents for each non-empty chunk received.
-// If the provider never calls the stream callback (no streaming support),
-// it falls back to emitting a single chunk event with the full response text.
-//
-// Parameters:
-//   - invoker: the streaming agent (typically *agent.Agent)
-//   - c: the agent context for the invocation
-//   - input: the user message to send to the agent
-//   - graphHook: the graph event hook to emit streaming events to (may be nil)
-//   - nodeName: the registration name of the agent node (used in events)
-//
-// Returns the accumulated full response string and any error from the agent.
+// EventAgentStreaming GraphEvents for each chunk. Falls back to a single
+// chunk event if the provider doesn't support streaming.
 func agentNodeStream(invoker StreamInvoker, c *agent.Context, input string, graphHook GraphEventHook, nodeName string) (string, error) {
 	var sb strings.Builder
 	var callbackCalled bool

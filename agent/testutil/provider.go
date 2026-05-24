@@ -13,36 +13,8 @@ import (
 
 // MockProvider is a configurable test provider that covers the common patterns
 // needed across agent unit tests: scripted responses, param capture, streaming,
-// delays, and error injection.
-//
-// Usage:
-//
-//	// Simple scripted responses
-//	p := testutil.NewProvider(
-//	    testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}),
-//	)
-//
-//	// Capture params + scripted responses
-//	p := testutil.NewProvider(
-//	    testutil.WithResponses(&agent.ProviderResponse{Text: "reply"}),
-//	    testutil.WithCapture(),
-//	)
-//	// After invoke: p.Captured() returns the ConverseParams received
-//
-//	// Always error
-//	p := testutil.NewProvider(testutil.WithError(errors.New("boom")))
-//
-//	// Delay (for timeout tests)
-//	p := testutil.NewProvider(
-//	    testutil.WithDelay(500 * time.Millisecond),
-//	    testutil.WithResponses(&agent.ProviderResponse{Text: "slow"}),
-//	)
-//
-//	// Fail first N calls, then succeed
-//	p := testutil.NewProvider(
-//	    testutil.WithFailFirst(2, errors.New("transient")),
-//	    testutil.WithResponses(&agent.ProviderResponse{Text: "ok"}),
-//	)
+// delays, and error injection. Configure via WithResponses, WithCapture,
+// WithError, WithDelay, and WithFailFirst options.
 type MockProvider struct {
 	mu        sync.Mutex
 	responses []*agent.ProviderResponse

@@ -205,22 +205,8 @@ func jsonFieldIndex[S any](key string) (int, bool) {
 }
 
 // GraphState is an optional base struct that typed graph states can embed to get
-// automatic token usage accumulation. When embedded, nodes can call AddUsage to
-// accumulate token counts, and the graph will automatically propagate them to the
-// underlying usage tracker via the usageCarrier mechanism.
-//
-// Usage:
-//
-//	type MyState struct {
-//	    graph.GraphState          // embed for automatic token tracking
-//	    Topic   string `json:"topic"`
-//	    Summary string `json:"summary"`
-//	}
-//
-//	// In a node:
-//	c := agent.Background()
-//	result, err := myAgent.Invoke(c, s.Topic)
-//	s.AddUsage(c.Usage())  // accumulates into the graph's token counter
+// automatic token usage accumulation. Nodes call AddUsage(c.Usage()) to
+// accumulate token counts into the graph's result.
 type GraphState struct {
 	pendingUsage agent.TokenUsage `json:"-"`
 }

@@ -110,21 +110,9 @@ func Keys(outputKey string, inputKeys ...string) AgentNodeAccessor[State] {
 	}
 }
 
-// Agent registers a node backed by an *agent.Agent on the graph.
-// It uses the streaming invocation path, configures bridge event hooks, and
-// configures bridge observability hooks (tracing, metrics, logging).
-// The agent is also stored in the agent registry for dynamic tool resolution.
-//
-// For Graph[State] (map), use In/Out to declare which keys the agent reads and writes:
-//
-//	g.Agent("summarise", myAgent, graph.In("article"), graph.Out("summary"))
-//	g.Agent("investigate", myAgent, graph.In("pods", "events"), graph.Out("findings"))
-//
-// The agent reads all In keys (concatenated with section headers when multiple)
-// and writes its response to the Out key. Images and documents in state are
-// automatically passed as attachments.
-//
-// For typed graphs, use AgentWithAccessor() instead.
+// Agent registers a node backed by an *agent.Agent on the graph. Use In/Out
+// to declare which state keys the agent reads and writes. For typed graphs,
+// use AgentWithAccessor() instead.
 func (g *Graph[S]) Agent(name string, a *agent.Agent, opts ...NodeOpt) (*Node[S], error) {
 	if a == nil {
 		return nil, &GraphValidationError{Message: "Agent: agent must not be nil"}
