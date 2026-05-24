@@ -680,3 +680,166 @@ func TestInvoke_OutputGuardrailErrorWrapped(t *testing.T) {
 		t.Errorf("expected Cause=%v, got %v", cause, ge.Cause)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Instructions / SetInstructions
+// ---------------------------------------------------------------------------
+
+func TestInstructions_ReturnsInitialValue(t *testing.T) {
+	a, err := New(mockProvider{}, prompt.Text("initial system prompt"), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := a.Instructions(); got != "initial system prompt" {
+		t.Errorf("Instructions() = %q, want %q", got, "initial system prompt")
+	}
+}
+
+func TestSetInstructions_UpdatesValue(t *testing.T) {
+	a, err := New(mockProvider{}, prompt.Text("v1"), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	a.SetInstructions("v2")
+	if got := a.Instructions(); got != "v2" {
+		t.Errorf("after SetInstructions, Instructions() = %q, want %q", got, "v2")
+	}
+
+	a.SetInstructions("")
+	if got := a.Instructions(); got != "" {
+		t.Errorf("after empty SetInstructions, Instructions() = %q, want empty", got)
+	}
+}
+
+func TestSetInstructions_ConcurrentSafe(t *testing.T) {
+	a, err := New(mockProvider{}, prompt.Text("v0"), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	const goroutines = 16
+	const iterations = 200
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 2)
+
+	// Writers
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				a.SetInstructions(fmt.Sprintf("writer-%d-iter-%d", id, j))
+			}
+		}(i)
+	}
+
+	// Readers
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				_ = a.Instructions()
+			}
+		}()
+	}
+
+	wg.Wait()
+	// If we reach here without -race firing, the atomic pointer is doing its job.
+}
+
+// ---------------------------------------------------------------------------
+// Per-invocation system prompt override (for A/B testing)
+// ---------------------------------------------------------------------------
+
+// systemPromptCapturingProvider records the System field passed in each
+// ConverseParams so tests can assert which prompt the agent loop used.
+type systemPromptCapturingProvider struct {
+	mu       sync.Mutex
+	captured []string
+}
+
+func (p *systemPromptCapturingProvider) Name() string { return "capture" }
+
+func (p *systemPromptCapturingProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
+	p.mu.Lock()
+	p.captured = append(p.captured, params.System)
+	p.mu.Unlock()
+	return &ProviderResponse{Text: "ok"}, nil
+}
+
+func (p *systemPromptCapturingProvider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+	p.mu.Lock()
+	p.captured = append(p.captured, params.System)
+	p.mu.Unlock()
+	return &ProviderResponse{Text: "ok"}, nil
+}
+
+func (p *systemPromptCapturingProvider) lastSystem() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.captured) == 0 {
+		return ""
+	}
+	return p.captured[len(p.captured)-1]
+}
+
+func TestInvoke_UsesContextSystemPromptOverride(t *testing.T) {
+	p := &systemPromptCapturingProvider{}
+	a, err := New(p, prompt.Text("agent default prompt"), nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := Background().WithSystemPromptOverride("override prompt for this turn")
+	if _, err := a.Invoke(ctx, "hi"); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+
+	if got := p.lastSystem(); got != "override prompt for this turn" {
+		t.Errorf("provider received System=%q, want %q", got, "override prompt for this turn")
+	}
+}
+
+func TestInvoke_FallsBackToAgentInstructionsWhenNoOverride(t *testing.T) {
+	p := &systemPromptCapturingProvider{}
+	a, err := New(p, prompt.Text("agent default prompt"), nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Invoke(Background(), "hi"); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+
+	if got := p.lastSystem(); got != "agent default prompt" {
+		t.Errorf("provider received System=%q, want default", got)
+	}
+}
+
+func TestInvoke_DifferentOverridesPerCall(t *testing.T) {
+	p := &systemPromptCapturingProvider{}
+	a, err := New(p, prompt.Text("default"), nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctxA := Background().WithSystemPromptOverride("variant-A")
+	if _, err := a.Invoke(ctxA, "hi"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctxB := Background().WithSystemPromptOverride("variant-B")
+	if _, err := a.Invoke(ctxB, "hi"); err != nil {
+		t.Fatal(err)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.captured) != 2 {
+		t.Fatalf("captured = %d, want 2", len(p.captured))
+	}
+	if p.captured[0] != "variant-A" || p.captured[1] != "variant-B" {
+		t.Errorf("captured = %v, want [variant-A variant-B]", p.captured)
+	}
+}
