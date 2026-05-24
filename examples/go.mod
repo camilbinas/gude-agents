@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/camilbinas/gude-agents v0.59.0
+	github.com/camilbinas/gude-agents/agent/agentcore v0.59.0
 	github.com/camilbinas/gude-agents/agent/conversation/dynamodb v0.59.0
 	github.com/camilbinas/gude-agents/agent/conversation/postgres v0.59.0
 	github.com/camilbinas/gude-agents/agent/conversation/redis v0.59.0
@@ -150,3 +151,5 @@ require (
 	k8s.io/apimachinery v0.36.0 // indirect
 	k8s.io/client-go v0.36.0 // indirect
 )
+
+replace github.com/camilbinas/gude-agents/agent/agentcore => ../agent/agentcore
