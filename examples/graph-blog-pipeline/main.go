@@ -94,25 +94,34 @@ func main() {
 		Port:         4040,
 		Structure:    structure,
 		Checkpointer: cp,
-		RunFunc: func(ctx context.Context, hook *utils.DevToolsHook) error {
-			threadID := hook.ThreadID
+		RunFunc: func(ctx context.Context, dt *utils.DevTools) error {
+			threadID := dt.ThreadID()
 			if threadID == "" {
 				threadID = "blog-devtools-1"
 			}
-			g := buildBlogGraph(agents, hook, cp)
+			g := buildBlogGraph(agents, dt, cp)
 
-			// Try to resume from checkpoint (paused state). Fall back to fresh run.
-			_, err := g.Resume(ctx, threadID, nil)
-			if errors.Is(err, graph.ErrCheckpointNotFound) {
-				_, err = g.Run(ctx, BlogState{Topic: "Why Go is the best language for building AI agents in 2026"}, graph.WithThreadID(threadID))
+			// Resume always uses Run-style (no streaming) because by definition
+			// it picks up from a paused checkpoint and may immediately re-pause.
+			// The frontend already has the prior events from the original run.
+			if _, err := g.Resume(ctx, threadID, nil); !errors.Is(err, graph.ErrCheckpointNotFound) {
+				if err != nil {
+					return err
+				}
+				_ = cp.Delete(context.Background(), threadID)
+				return nil
 			}
-			if err != nil {
+
+			// Fresh run — stream events into devtools as they happen.
+			stream := g.RunEventStream(ctx, BlogState{
+				Topic: "Why Go is the best language for building AI agents in 2026",
+			}, graph.WithRunOption(graph.WithThreadID(threadID)))
+			dt.Pump(stream.Events())
+			if _, err := stream.Result(); err != nil {
 				return err
 			}
 
-			// Clean up checkpoint on success.
 			_ = cp.Delete(context.Background(), threadID)
-
 			return nil
 		},
 	})
@@ -124,13 +133,10 @@ type blogAgents struct {
 	outliner, writer, reviewer, reviser, seoWriter, socialWriter *agent.Agent
 }
 
-func buildBlogGraph(a *blogAgents, hook *utils.DevToolsHook, cp graph.GraphCheckpointer) *graph.Graph[BlogState] {
+func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointer) *graph.Graph[BlogState] {
 	opts := []graph.GraphOption{
 		graph.WithMaxIterations(30),
 		auto.WithGraphLogging(),
-	}
-	if hook != nil {
-		opts = append(opts, graph.WithEventHook(hook))
 	}
 	if cp != nil {
 		opts = append(opts, graph.WithCheckpointer(cp))
@@ -147,8 +153,8 @@ func buildBlogGraph(a *blogAgents, hook *utils.DevToolsHook, cp graph.GraphCheck
 		var result strings.Builder
 		cb := func(chunk string) {
 			result.WriteString(chunk)
-			if hook != nil {
-				hook.StreamCallback(nodeName)(chunk)
+			if dt != nil {
+				dt.StreamCallback(nodeName)(chunk)
 			}
 		}
 		if err := ag.InvokeStream(c, input, cb); err != nil {
@@ -184,8 +190,8 @@ func buildBlogGraph(a *blogAgents, hook *utils.DevToolsHook, cp graph.GraphCheck
 		if err != nil {
 			return s, err
 		}
-		if hook != nil {
-			hook.StreamCallback("review")(fmt.Sprintf("Score: %d — %s", review.Score, review.Feedback))
+		if dt != nil {
+			dt.StreamCallback("review")(fmt.Sprintf("Score: %d — %s", review.Score, review.Feedback))
 		}
 		s.Score = review.Score
 		s.Feedback = review.Feedback
@@ -245,8 +251,8 @@ func buildBlogGraph(a *blogAgents, hook *utils.DevToolsHook, cp graph.GraphCheck
 			"━━━ SEO META ━━━", s.SEO, "",
 			"━━━ SOCIAL COPY ━━━", s.Social,
 		}, "\n")
-		if hook != nil {
-			hook.StreamCallback("publish")(pkg)
+		if dt != nil {
+			dt.StreamCallback("publish")(pkg)
 		}
 		fmt.Println(pkg)
 		return s, nil

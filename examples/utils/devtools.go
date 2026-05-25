@@ -22,12 +22,20 @@ var devtoolsFS embed.FS
 type DevToolsConfig struct {
 	Port         int
 	Structure    graph.GraphStructure
-	RunFunc      func(ctx context.Context, dt *DevToolsHook) error
+	RunFunc      func(ctx context.Context, dt *DevTools) error
 	Checkpointer graph.GraphCheckpointer // optional: enables checkpoint history in the UI
 	ThreadID     string                  // optional: default thread ID for checkpoint history queries
 }
 
 // DevTools serves a web UI for visualizing graph execution in real-time.
+//
+// Typical wiring inside RunFunc:
+//
+//	stream := g.RunEventStream(ctx, initial,
+//	    graph.WithRunOption(graph.WithThreadID(dt.ThreadID())))
+//	dt.Pump(stream.Events())
+//	_, err := stream.Result()
+//	return err
 type DevTools struct {
 	config  DevToolsConfig
 	clients map[*websocket.Conn]bool
@@ -160,17 +168,25 @@ func (dt *DevTools) setActiveThread(id string) {
 	dt.activeThread = id
 }
 
+// ThreadID returns the active thread ID for the current run. Returns the
+// empty string when no thread has been selected by the frontend.
+//
+// Use this inside RunFunc to forward the thread ID to the underlying graph
+// run (e.g. via graph.WithRunOption(graph.WithThreadID(dt.ThreadID()))).
+func (dt *DevTools) ThreadID() string {
+	dt.cancelMu.Lock()
+	defer dt.cancelMu.Unlock()
+	return dt.activeThread
+}
+
 func (dt *DevTools) runGraph() {
 	ctx, cancel := context.WithCancel(context.Background())
 	dt.cancelMu.Lock()
 	dt.cancelFn = cancel
 	dt.paused = false
-	threadID := dt.activeThread
 	dt.cancelMu.Unlock()
 
-	hook := &DevToolsHook{dt: dt, ThreadID: threadID}
-
-	err := dt.config.RunFunc(ctx, hook)
+	err := dt.config.RunFunc(ctx, dt)
 
 	dt.cancelMu.Lock()
 	dt.cancelFn = nil
@@ -202,24 +218,35 @@ func (dt *DevTools) broadcast(msg any) {
 	}
 }
 
-// DevToolsHook implements graph.GraphEventHook and provides streaming output.
-type DevToolsHook struct {
-	dt       *DevTools
-	ThreadID string // thread ID for this run, set by the frontend
+// Pump consumes a stream of GraphEvents and broadcasts each one to connected
+// clients with the same JSON shape the legacy GraphEventHook produced. It
+// returns when the channel is closed (i.e. when the run has finished).
+//
+// Pair Pump with Graph[S].RunEventStream so you never have to mutate the
+// graph's event hook for the duration of a run:
+//
+//	stream := g.RunEventStream(ctx, initial,
+//	    graph.WithRunOption(graph.WithThreadID(dt.ThreadID())))
+//	dt.Pump(stream.Events())
+//	_, err := stream.Result()
+func (dt *DevTools) Pump(events <-chan graph.GraphEvent) {
+	for ev := range events {
+		dt.dispatchEvent(ev)
+	}
 }
 
-// OnEvent implements graph.GraphEventHook.
-func (h *DevToolsHook) OnEvent(event graph.GraphEvent) {
-	h.dt.broadcast(map[string]any{
+// dispatchEvent broadcasts a single GraphEvent. It first emits the raw event
+// for the timeline view, then any typed sub-messages (checkpoint, stream,
+// tool, thinking) that the frontend renders specially.
+func (dt *DevTools) dispatchEvent(event graph.GraphEvent) {
+	dt.broadcast(map[string]any{
 		"type":  "event",
 		"event": event,
 	})
 
-	// Emit additional typed messages for the frontend to render richer UI.
 	switch event.Type {
 	case graph.EventCheckpointSaved:
-		// Notify frontend that a new checkpoint version is available.
-		h.dt.broadcast(map[string]any{
+		dt.broadcast(map[string]any{
 			"type":      "checkpoint_saved",
 			"thread_id": event.ThreadID,
 			"version":   event.Version,
@@ -228,21 +255,21 @@ func (h *DevToolsHook) OnEvent(event graph.GraphEvent) {
 		})
 	case graph.EventAgentStreaming:
 		if event.Chunk != "" {
-			h.dt.broadcast(map[string]any{
+			dt.broadcast(map[string]any{
 				"type":  "stream",
 				"node":  event.NodeName,
 				"chunk": event.Chunk,
 			})
 		}
 	case graph.EventAgentToolCallStart:
-		h.dt.broadcast(map[string]any{
+		dt.broadcast(map[string]any{
 			"type":      "tool_start",
 			"node":      event.NodeName,
 			"tool_name": event.ToolName,
 			"input":     string(event.ToolInput),
 		})
 	case graph.EventAgentToolCallEnd:
-		h.dt.broadcast(map[string]any{
+		dt.broadcast(map[string]any{
 			"type":      "tool_end",
 			"node":      event.NodeName,
 			"tool_name": event.ToolName,
@@ -252,7 +279,7 @@ func (h *DevToolsHook) OnEvent(event graph.GraphEvent) {
 		})
 	case graph.EventAgentThinking:
 		if event.Chunk != "" {
-			h.dt.broadcast(map[string]any{
+			dt.broadcast(map[string]any{
 				"type":  "thinking",
 				"node":  event.NodeName,
 				"chunk": event.Chunk,
@@ -261,16 +288,17 @@ func (h *DevToolsHook) OnEvent(event graph.GraphEvent) {
 	}
 }
 
-// EventHook returns the hook as a graph.GraphEventHook for use with WithEventHook.
-func (h *DevToolsHook) EventHook() graph.GraphEventHook {
-	return h
-}
-
-// StreamCallback returns a callback that sends chunks to the frontend
-// tagged with the given node name. Use this as the callback in InvokeStream.
-func (h *DevToolsHook) StreamCallback(nodeName string) func(chunk string) {
+// StreamCallback returns a callback that broadcasts streamed text chunks
+// tagged with the given node name. Use this inside custom node functions
+// that call agent.InvokeStream directly (without an Agent node), or for
+// pushing synthetic chunks (e.g. structured-output renders) into the
+// devtools timeline.
+//
+// For Agent nodes wired via g.Agent(...), streaming events flow through
+// Pump automatically — no manual callback needed.
+func (dt *DevTools) StreamCallback(nodeName string) func(chunk string) {
 	return func(chunk string) {
-		h.dt.broadcast(map[string]any{
+		dt.broadcast(map[string]any{
 			"type":  "stream",
 			"node":  nodeName,
 			"chunk": chunk,

@@ -80,15 +80,16 @@ func main() {
 		}, nil
 	}, graph.In("summary", "sentiment"), graph.Out("report"))
 
-	// Serve with devtools — swap event hook per run.
+	// Serve with devtools — RunEventStream gives us a per-call event channel
+	// that Pump forwards into the devtools websocket. No graph-level hook
+	// mutation needed; concurrent runs would each get their own channel.
 	dt := utils.NewDevTools(utils.DevToolsConfig{
 		Port:      4040,
 		Structure: g.Structure(),
-		RunFunc: func(ctx context.Context, hook *utils.DevToolsHook) error {
-			g.SetEventHook(hook)
-			defer g.SetEventHook(nil)
-
-			result, err := g.Run(ctx, graph.State{})
+		RunFunc: func(ctx context.Context, dt *utils.DevTools) error {
+			stream := g.RunEventStream(ctx, graph.State{})
+			dt.Pump(stream.Events())
+			result, err := stream.Result()
 			if err != nil {
 				return err
 			}
