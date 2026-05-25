@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent DevTools</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#050b18',
+            panel: '#081326',
+            panel2: '#0b1730',
+            line: '#1a315f',
+            line2: '#243f75',
+            muted: '#6f84aa',
+            muted2: '#8ca0c8',
+            accent: '#6b7cff',
+            cyan: '#12c8f6',
+            good: '#21d77a',
+            warn: '#f6ad2f',
+            bad: '#ff5f6d',
+            human: '#ff4fab'
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif']
+          },
+          boxShadow: {
+            glow: '0 0 28px rgba(107, 124, 255, .35)',
+            panel: '0 18px 60px rgba(0, 0, 0, .35)'
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #050b18; }
+    body {
+      background:
+        radial-gradient(circle at 42% 20%, rgba(68, 92, 240, .12), transparent 30%),
+        radial-gradient(circle at 80% 85%, rgba(18, 200, 246, .08), transparent 30%),
+        #050b18;
+    }
+    .grid-bg {
+      background-image: radial-gradient(rgba(75, 98, 216, .30) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    @keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+    .running-dot { animation: pulse-dot 1.1s ease-in-out infinite; }
+    .scrollthin::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollthin::-webkit-scrollbar-thumb { background: rgba(107,124,255,.25); border-radius: 4px; }
+    .scrollthin::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body class="font-sans text-slate-100">
+  <div id="app" class="h-full"></div>
+  <script type="module">
+    import { html, render, useEffect, useMemo, useRef, useState, useCallback } from 'https://esm.sh/htm/preact/standalone';
+
+    const cx = (...parts) => parts.filter(Boolean).join(' ');
+
+    function App() {
+      const [meta, setMeta] = useState({ name: 'agent', provider: '', model: '', tools: [], clearSupported: false });
+      const [connected, setConnected] = useState(false);
+      const [running, setRunning] = useState(false);
+      const [draft, setDraft] = useState('');
+      // turns: ordered list of conversation turns. Each turn collects the
+      // user message plus every iteration / tool call / model response so the
+      // UI can render the full agent loop trace inline with the chat.
+      const [turns, setTurns] = useState([]);
+      const [selectedTurn, setSelectedTurn] = useState(null);
+      const [totalUsage, setTotalUsage] = useState({ input: 0, output: 0 });
+
+      const wsRef = useRef(null);
+      const turnsRef = useRef([]);
+      const chatScrollRef = useRef(null);
+
+      // Keep a synchronous ref of turns so socket handlers can mutate the
+      // current turn without racing the React state queue.
+      useEffect(() => { turnsRef.current = turns; }, [turns]);
+
+      // Auto-scroll the chat panel as new content arrives.
+      useEffect(() => {
+        const el = chatScrollRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+      }, [turns]);
+
+      const updateCurrentTurn = useCallback((mut) => {
+        setTurns(prev => {
+          if (prev.length === 0) return prev;
+          const next = [...prev];
+          const cur = { ...next[next.length - 1] };
+          mut(cur);
+          next[next.length - 1] = cur;
+          return next;
+        });
+      }, []);
+
+      useEffect(() => {
+        const ws = new WebSocket(`ws://${location.host}/ws`);
+        wsRef.current = ws;
+
+        ws.onopen = () => setConnected(true);
+        ws.onclose = () => { setConnected(false); setRunning(false); };
+        ws.onerror = () => setConnected(false);
+
+        ws.onmessage = (e) => {
+          let msg;
+          try { msg = JSON.parse(e.data); } catch { return; }
+
+          switch (msg.type) {
+            case 'agent_meta':
+              setMeta({
+                name: msg.name || 'agent',
+                provider: msg.provider || '',
+                model: msg.model || '',
+                tools: msg.tools || [],
+                clearSupported: !!msg.clear_supported,
+              });
+              break;
+
+            case 'user_message':
+              // Server echoes the user message, which is also where we
+              // create the turn skeleton.
+              setTurns(prev => [...prev, {
+                user: msg.text,
+                ts: msg.ts,
+                iterations: [],
+                response: '',
+                thinking: '',
+                stopReason: '',
+                error: '',
+                usage: null,
+                done: false,
+                events: [],
+              }]);
+              setSelectedTurn(turnsRef.current.length); // index of the new turn
+              break;
+
+            case 'turn_start':
+              setRunning(true);
+              break;
+
+            case 'iteration_start':
+              updateCurrentTurn(t => {
+                t.iterations = [...t.iterations, {
+                  n: msg.iteration,
+                  toolCalls: [],
+                  thinking: '',
+                  stopReason: '',
+                  durationMs: 0,
+                  isFinal: false,
+                  modelStarted: false,
+                  modelDone: false,
+                }];
+                t.events = [...t.events, { kind: 'iter_start', n: msg.iteration, ts: Date.now() }];
+              });
+              break;
+
+            case 'model_start':
+              updateCurrentTurn(t => {
+                if (t.iterations.length > 0) {
+                  const it = { ...t.iterations[t.iterations.length - 1] };
+                  it.modelStarted = true;
+                  t.iterations[t.iterations.length - 1] = it;
+                }
+                t.events = [...t.events, { kind: 'model_start', ts: Date.now() }];
+              });
+              break;
+
+            case 'text_chunk':
+              // Text chunks are only ever emitted by the agent on the final
+              // iteration (per event_stream.go contract), so we route them
+              // exclusively to the consolidated turn response bubble. The
+              // iteration card stays focused on trace metadata — tools,
+              // thinking, stop reason, duration — and never duplicates the
+              // assistant message.
+              updateCurrentTurn(t => {
+                t.response = (t.response || '') + msg.chunk;
+              });
+              break;
+
+            case 'thinking_chunk':
+              updateCurrentTurn(t => {
+                t.thinking = (t.thinking || '') + msg.chunk;
+                if (t.iterations.length > 0) {
+                  const it = { ...t.iterations[t.iterations.length - 1] };
+                  it.thinking = (it.thinking || '') + msg.chunk;
+                  t.iterations[t.iterations.length - 1] = it;
+                }
+              });
+              break;
+
+            case 'tool_start':
+              updateCurrentTurn(t => {
+                if (t.iterations.length === 0) return;
+                const it = { ...t.iterations[t.iterations.length - 1] };
+                it.toolCalls = [...it.toolCalls, {
+                  name: msg.tool_name,
+                  input: msg.input || '',
+                  output: '',
+                  durationMs: 0,
+                  error: '',
+                  done: false,
+                  startedAt: Date.now(),
+                }];
+                t.iterations[t.iterations.length - 1] = it;
+                t.events = [...t.events, { kind: 'tool_start', name: msg.tool_name, ts: Date.now() }];
+              });
+              break;
+
+            case 'tool_end':
+              updateCurrentTurn(t => {
+                if (t.iterations.length === 0) return;
+                const it = { ...t.iterations[t.iterations.length - 1] };
+                // Find the most recent unfinished call with this name.
+                for (let i = it.toolCalls.length - 1; i >= 0; i--) {
+                  if (!it.toolCalls[i].done && it.toolCalls[i].name === msg.tool_name) {
+                    it.toolCalls[i] = {
+                      ...it.toolCalls[i],
+                      output: msg.output || '',
+                      durationMs: msg.duration_ms || 0,
+                      error: msg.error || '',
+                      done: true,
+                    };
+                    break;
+                  }
+                }
+                t.iterations[t.iterations.length - 1] = it;
+                t.events = [...t.events, {
+                  kind: 'tool_end', name: msg.tool_name, ms: msg.duration_ms || 0,
+                  error: msg.error || '', ts: Date.now(),
+                }];
+              });
+              break;
+
+            case 'model_end':
+              updateCurrentTurn(t => {
+                if (t.iterations.length > 0) {
+                  const it = { ...t.iterations[t.iterations.length - 1] };
+                  it.stopReason = msg.stop_reason || '';
+                  it.modelDone = true;
+                  t.iterations[t.iterations.length - 1] = it;
+                }
+                t.events = [...t.events, { kind: 'model_end', stop: msg.stop_reason || '', ts: Date.now() }];
+              });
+              break;
+
+            case 'iteration_end':
+              updateCurrentTurn(t => {
+                if (t.iterations.length > 0) {
+                  const it = { ...t.iterations[t.iterations.length - 1] };
+                  it.durationMs = msg.duration_ms || 0;
+                  it.isFinal = !!msg.is_final;
+                  t.iterations[t.iterations.length - 1] = it;
+                }
+                t.events = [...t.events, {
+                  kind: 'iter_end', n: msg.iteration, ms: msg.duration_ms || 0,
+                  final: !!msg.is_final, tools: msg.tool_count || 0, ts: Date.now(),
+                }];
+              });
+              break;
+
+            case 'max_iterations':
+              updateCurrentTurn(t => {
+                t.error = `max iterations exceeded (limit=${msg.iteration_limit})`;
+                t.events = [...t.events, { kind: 'max_iter', limit: msg.iteration_limit, ts: Date.now() }];
+              });
+              break;
+
+            case 'invoke_end':
+              updateCurrentTurn(t => {
+                t.done = true;
+                if (msg.error) t.error = msg.error;
+                t.usage = { input: msg.input_tokens || 0, output: msg.output_tokens || 0 };
+                t.events = [...t.events, { kind: 'invoke_end', err: msg.error || '', ts: Date.now() }];
+              });
+              setRunning(false);
+              setTotalUsage(u => ({
+                input: u.input + (msg.input_tokens || 0),
+                output: u.output + (msg.output_tokens || 0),
+              }));
+              break;
+
+            case 'error':
+              updateCurrentTurn(t => { t.error = msg.message || 'unknown error'; });
+              setRunning(false);
+              break;
+
+            case 'cleared':
+              setTurns([]);
+              setSelectedTurn(null);
+              setTotalUsage({ input: 0, output: 0 });
+              break;
+
+            // 'event' frames are the generic timeline; the typed frames above
+            // are sufficient for rendering, so we ignore the duplicate here.
+            case 'event':
+            default:
+              break;
+          }
+        };
+
+        return () => ws.close();
+      }, [updateCurrentTurn]);
+
+      const sendMessage = useCallback(() => {
+        const text = draft.trim();
+        if (!text || !connected || running) return;
+        wsRef.current?.send(JSON.stringify({ action: 'send', text }));
+        setDraft('');
+      }, [draft, connected, running]);
+
+      const stopRun = useCallback(() => {
+        wsRef.current?.send(JSON.stringify({ action: 'stop' }));
+      }, []);
+
+      const clearChat = useCallback(() => {
+        wsRef.current?.send(JSON.stringify({ action: 'clear' }));
+      }, []);
+
+      const onKeyDown = useCallback((e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      }, [sendMessage]);
+
+      const currentTurn = selectedTurn != null && turns[selectedTurn]
+        ? turns[selectedTurn]
+        : (turns.length ? turns[turns.length - 1] : null);
+
+      return html`
+        <div class="h-full grid grid-cols-[260px_1fr_360px] grid-rows-[48px_1fr]">
+          <${Topbar}
+            meta=${meta}
+            connected=${connected}
+            running=${running}
+            usage=${totalUsage}
+            turnCount=${turns.length}
+            onStop=${stopRun}
+            onClear=${clearChat}
+          />
+          <${Sidebar}
+            meta=${meta}
+            turns=${turns}
+            selectedTurn=${selectedTurn}
+            onSelectTurn=${setSelectedTurn}
+          />
+          <main class="relative overflow-hidden col-start-2 row-start-2 flex flex-col bg-[#070f20]/60">
+            <div ref=${chatScrollRef} class="flex-1 overflow-auto scrollthin px-6 py-5 space-y-6 grid-bg">
+              ${turns.length === 0 && html`
+                <div class="h-full flex items-center justify-center">
+                  <div class="text-center text-muted2 max-w-sm">
+                    <div class="mx-auto mb-4 h-12 w-12 rotate-45 rounded-md border-2 border-accent shadow-glow"></div>
+                    <h2 class="text-base font-bold text-slate-100 mb-1">Agent DevTools</h2>
+                    <p class="text-xs">Send a message to watch the agent loop iterate, call tools, and stream tokens in real time.</p>
+                  </div>
+                </div>
+              `}
+              ${turns.map((t, i) => html`
+                <${TurnView}
+                  key=${i}
+                  index=${i}
+                  turn=${t}
+                  selected=${selectedTurn === i}
+                  onSelect=${() => setSelectedTurn(i)}
+                />
+              `)}
+            </div>
+            <${Composer}
+              draft=${draft}
+              setDraft=${setDraft}
+              onSend=${sendMessage}
+              onKeyDown=${onKeyDown}
+              connected=${connected}
+              running=${running}
+              onStop=${stopRun}
+            />
+          </main>
+          <${Inspector} turn=${currentTurn} />
+        </div>
+      `;
+    }
+
+    function Topbar({ meta, connected, running, usage, turnCount, onStop, onClear }) {
+      const providerColors = {
+        bedrock: '#ff9900', anthropic: '#d97757', openai: '#10a37f',
+        gemini: '#8b5cf6', ollama: '#333', fallback: '#6b7cff',
+      };
+      const badgeColor = providerColors[meta.provider] || '#5a7099';
+      return html`
+        <header class="col-span-full row-start-1 flex items-center justify-between border-b border-line bg-ink/85 backdrop-blur-xl px-5">
+          <div class="flex items-center gap-3">
+            <div class="relative h-5 w-5 rotate-45 rounded-md border-2 border-accent shadow-glow"></div>
+            <span class="font-extrabold tracking-wider text-sm">Agent DevTools</span>
+            <span class=${cx('ml-3 h-2 w-2 rounded-full', connected ? 'bg-good' : 'bg-bad')}></span>
+            <span class="text-[10px] text-muted2">${connected ? 'Connected' : 'Disconnected'}</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2">
+              ${meta.provider && html`
+                <span class="rounded-full px-2 py-0.5 text-[10px] font-mono font-bold" style=${`background:${badgeColor}22;color:${badgeColor};border:1px solid ${badgeColor}55`}>
+                  ${meta.provider}
+                </span>
+              `}
+              <span class="font-mono text-[11px] text-slate-200">${meta.name}</span>
+              ${meta.model && html`
+                <span class="font-mono text-[10px] text-muted2">· ${meta.model}</span>
+              `}
+            </div>
+            <div class="flex gap-4 font-mono text-[10px] text-muted2 border-l border-line pl-4">
+              <span>Turns: <strong class="text-slate-100">${turnCount}</strong></span>
+              <span>Tools: <strong class="text-cyan">${meta.tools.length}</strong></span>
+              ${(usage.input > 0 || usage.output > 0) && html`
+                <span>Tokens: <strong class="text-cyan">${formatTokens(usage.input)}</strong> in / <strong class="text-cyan">${formatTokens(usage.output)}</strong> out</span>
+              `}
+            </div>
+            ${running && html`
+              <button onClick=${onStop}
+                class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold bg-bad text-white hover:bg-bad/80 cursor-pointer">
+                ■ Stop
+              </button>
+            `}
+            ${meta.clearSupported && !running && html`
+              <button onClick=${onClear}
+                class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold border border-line2 text-muted2 hover:text-slate-100 hover:border-line2 hover:bg-panel cursor-pointer"
+                title="Reset conversation / memory">
+                ↺ Clear
+              </button>
+            `}
+          </div>
+        </header>
+      `;
+    }
+
+    function Sidebar({ meta, turns, selectedTurn, onSelectTurn }) {
+      return html`
+        <aside class="col-start-1 row-start-2 flex flex-col border-r border-line bg-[#060d1c]/80 overflow-hidden">
+          <div class="border-b border-line p-4">
+            <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Agent</h3>
+            <div class="space-y-1.5 text-xs">
+              <div class="flex items-center justify-between">
+                <span class="text-muted">name</span>
+                <span class="font-mono text-slate-200">${meta.name}</span>
+              </div>
+              ${meta.model && html`
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">model</span>
+                  <span class="font-mono text-slate-200 truncate ml-2 max-w-[160px]" title=${meta.model}>${meta.model}</span>
+                </div>
+              `}
+              ${meta.provider && html`
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">provider</span>
+                  <span class="font-mono text-slate-200">${meta.provider}</span>
+                </div>
+              `}
+            </div>
+          </div>
+
+          ${meta.tools.length > 0 && html`
+            <div class="border-b border-line p-4">
+              <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Tools (${meta.tools.length})</h3>
+              <div class="space-y-1">
+                ${meta.tools.map(t => html`
+                  <div key=${t} class="flex items-center gap-2 text-[11px] text-muted2">
+                    <span class="text-cyan">🔧</span>
+                    <span class="font-mono">${t}</span>
+                  </div>
+                `)}
+              </div>
+            </div>
+          `}
+
+          <div class="flex-1 overflow-auto scrollthin p-4">
+            <h3 class="mb-2 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Turns</h3>
+            ${turns.length === 0 && html`<p class="text-xs text-muted">No turns yet.</p>`}
+            <div class="space-y-1.5">
+              ${turns.map((t, i) => html`
+                <button
+                  key=${i}
+                  onClick=${() => onSelectTurn(i)}
+                  class=${cx(
+                    'w-full text-left rounded-lg border px-2.5 py-2 transition-all cursor-pointer',
+                    selectedTurn === i
+                      ? 'border-accent/60 bg-accent/10'
+                      : 'border-line hover:border-line2 hover:bg-panel/50'
+                  )}>
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-mono text-[10px] text-muted2">turn ${i + 1}</span>
+                    <span class=${cx('h-1.5 w-1.5 rounded-full',
+                      t.done ? (t.error ? 'bg-bad' : 'bg-good') : 'bg-accent running-dot')}></span>
+                  </div>
+                  <p class="text-xs text-slate-200 line-clamp-2">${t.user}</p>
+                  <div class="mt-1 flex items-center gap-2 text-[10px] text-muted">
+                    <span>${t.iterations.length} iter</span>
+                    <span>·</span>
+                    <span>${t.iterations.reduce((s, it) => s + it.toolCalls.length, 0)} tools</span>
+                  </div>
+                </button>
+              `)}
+            </div>
+          </div>
+        </aside>
+      `;
+    }
+
+    function Composer({ draft, setDraft, onSend, onKeyDown, connected, running, onStop }) {
+      return html`
+        <div class="border-t border-line bg-[#060d1c]/95 px-4 py-3">
+          <div class="flex items-end gap-2">
+            <textarea
+              value=${draft}
+              onInput=${(e) => setDraft(e.target.value)}
+              onKeyDown=${onKeyDown}
+              placeholder=${running ? "Agent is running…" : "Type a message and press Enter…"}
+              rows="2"
+              disabled=${!connected}
+              class="flex-1 resize-none rounded-lg border border-line bg-panel px-3 py-2 text-sm text-slate-100 font-sans placeholder:text-muted focus:outline-none focus:border-accent/60 disabled:opacity-50"
+            ></textarea>
+            ${running
+              ? html`
+                <button onClick=${onStop}
+                  class="rounded-lg px-4 py-2 text-xs font-bold bg-bad text-white hover:bg-bad/80 cursor-pointer h-[60px]">
+                  ■ Stop
+                </button>`
+              : html`
+                <button
+                  onClick=${onSend}
+                  disabled=${!connected || !draft.trim()}
+                  class=${cx('rounded-lg px-4 py-2 text-xs font-bold transition-all h-[60px]',
+                    connected && draft.trim()
+                      ? 'bg-accent text-white hover:bg-accent/80 cursor-pointer'
+                      : 'bg-slate-700 text-slate-400 cursor-not-allowed')}>
+                  Send ▶
+                </button>`}
+          </div>
+          <p class="mt-1 text-[10px] text-muted">Enter to send · Shift+Enter for newline</p>
+        </div>
+      `;
+    }
+
+    function TurnView({ index, turn, selected, onSelect }) {
+      return html`
+        <div class=${cx('rounded-xl border bg-panel/40 p-4 transition-all',
+          selected ? 'border-accent/50 shadow-glow' : 'border-line')}
+          onClick=${onSelect}>
+          <!-- User message -->
+          <div class="flex items-start gap-3 mb-3">
+            <div class="h-7 w-7 rounded-full bg-human/20 border border-human/40 flex items-center justify-center text-human font-bold text-xs">U</div>
+            <div class="flex-1 min-w-0">
+              <div class="font-mono text-[10px] text-muted mb-0.5">turn ${index + 1}</div>
+              <p class="text-sm text-slate-100 whitespace-pre-wrap break-words">${turn.user}</p>
+            </div>
+          </div>
+
+          <!-- Iterations -->
+          ${turn.iterations.map((it, i) => html`
+            <${IterationView} key=${i} iter=${it} />
+          `)}
+
+          <!-- Final response -->
+          ${turn.response && html`
+            <div class="flex items-start gap-3 mt-3 pt-3 border-t border-line">
+              <div class="h-7 w-7 rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center text-accent font-bold text-xs">A</div>
+              <div class="flex-1 min-w-0">
+                <div class="font-mono text-[10px] text-muted mb-0.5">${turn.done ? 'response' : 'streaming…'}</div>
+                <p class="text-sm text-slate-100 whitespace-pre-wrap break-words">${turn.response}</p>
+              </div>
+            </div>
+          `}
+
+          <!-- Footer: usage / errors -->
+          <div class="mt-3 flex items-center gap-3 text-[10px] font-mono text-muted">
+            ${turn.done && !turn.error && html`<span class="text-good">✓ done</span>`}
+            ${!turn.done && html`<span class="text-accent running-dot">● running</span>`}
+            ${turn.error && html`<span class="text-bad">✗ ${turn.error}</span>`}
+            ${turn.usage && (turn.usage.input || turn.usage.output) && html`
+              <span class="text-cyan">${formatTokens(turn.usage.input)} in / ${formatTokens(turn.usage.output)} out</span>
+            `}
+            <span>${turn.iterations.length} iter · ${turn.iterations.reduce((s, it) => s + it.toolCalls.length, 0)} tools</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function IterationView({ iter }) {
+      const finished = iter.durationMs > 0 || iter.isFinal;
+      const hasDetails = iter.thinking || iter.toolCalls.length > 0;
+      // Collapse trivial iterations (no tools, no thinking) into a single
+      // compact row. The assistant bubble carries the actual content, so an
+      // empty card would just be visual noise.
+      if (!hasDetails) {
+        return html`
+          <div class="ml-10 mt-1.5 flex items-center gap-2 px-3 py-1 text-[10px] font-mono text-muted2 rounded-md border border-line2/40 bg-[#070f1f]/40">
+            <span class="rounded bg-accent/15 border border-accent/40 px-1.5 py-0.5 font-bold text-accent">iter ${iter.n}</span>
+            ${iter.modelStarted && !iter.modelDone && html`
+              <span class="text-accent running-dot">● model thinking</span>
+            `}
+            ${iter.stopReason && html`<span>stop: <span class="text-slate-200">${iter.stopReason}</span></span>`}
+            ${iter.isFinal && html`<span class="text-good">✓ final</span>`}
+            ${finished && html`<span class="ml-auto">${iter.durationMs}ms</span>`}
+          </div>
+        `;
+      }
+      return html`
+        <div class="ml-10 mt-2 rounded-lg border border-line2/60 bg-[#070f1f]/60">
+          <div class="flex items-center justify-between px-3 py-1.5 border-b border-line2/60">
+            <div class="flex items-center gap-2">
+              <span class="rounded-md bg-accent/15 border border-accent/40 px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent">iter ${iter.n}</span>
+              ${iter.modelStarted && !iter.modelDone && html`
+                <span class="text-[10px] text-accent running-dot">● model thinking</span>
+              `}
+              ${iter.stopReason && html`
+                <span class="font-mono text-[10px] text-muted2">stop: <span class="text-slate-200">${iter.stopReason}</span></span>
+              `}
+              ${iter.isFinal && html`<span class="text-[10px] text-good">✓ final</span>`}
+            </div>
+            ${finished && html`<span class="font-mono text-[10px] text-muted">${iter.durationMs}ms</span>`}
+          </div>
+
+          ${iter.thinking && html`
+            <div class="border-b border-line2/60 px-3 py-2">
+              <div class="text-[10px] font-mono text-warn mb-1">💭 thinking</div>
+              <pre class="text-[11px] text-muted2 italic whitespace-pre-wrap font-mono leading-relaxed max-h-32 overflow-auto scrollthin">${iter.thinking}</pre>
+            </div>
+          `}
+
+          ${iter.toolCalls.length > 0 && html`
+            <div class="px-3 py-2 space-y-1.5">
+              ${iter.toolCalls.map((tc, i) => html`<${ToolCallView} key=${i} tc=${tc} />`)}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function ToolCallView({ tc }) {
+      const [expanded, setExpanded] = useState(false);
+      const status = !tc.done ? 'running' : (tc.error ? 'error' : 'ok');
+      const statusBadge = {
+        running: 'bg-accent/20 text-accent border-accent/40 running-dot',
+        ok: 'bg-good/20 text-good border-good/40',
+        error: 'bg-bad/20 text-bad border-bad/40',
+      }[status];
+      const statusLabel = !tc.done ? '● running' : (tc.error ? '✗ error' : '✓ ' + tc.durationMs + 'ms');
+
+      return html`
+        <div class="rounded-md bg-[#0a1428] border border-line">
+          <button onClick=${() => setExpanded(!expanded)}
+            class="w-full flex items-center justify-between px-2.5 py-1.5 text-left cursor-pointer hover:bg-line/30">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-cyan">🔧</span>
+              <span class="font-mono text-xs text-slate-200 truncate">${tc.name}</span>
+            </div>
+            <span class=${cx('rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold', statusBadge)}>${statusLabel}</span>
+          </button>
+          ${expanded && html`
+            <div class="px-2.5 py-2 border-t border-line space-y-2">
+              ${tc.input && html`
+                <div>
+                  <div class="text-[10px] font-mono text-muted mb-1">input</div>
+                  <pre class="text-[11px] text-cyan font-mono whitespace-pre-wrap bg-panel/60 rounded p-2 max-h-32 overflow-auto scrollthin">${prettyJson(tc.input)}</pre>
+                </div>
+              `}
+              ${tc.output && html`
+                <div>
+                  <div class="text-[10px] font-mono text-muted mb-1">output</div>
+                  <pre class="text-[11px] text-slate-200 font-mono whitespace-pre-wrap bg-panel/60 rounded p-2 max-h-40 overflow-auto scrollthin">${prettyJson(tc.output)}</pre>
+                </div>
+              `}
+              ${tc.error && html`
+                <div>
+                  <div class="text-[10px] font-mono text-bad mb-1">error</div>
+                  <pre class="text-[11px] text-bad font-mono whitespace-pre-wrap bg-bad/10 border border-bad/30 rounded p-2">${tc.error}</pre>
+                </div>
+              `}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function Inspector({ turn }) {
+      if (!turn) {
+        return html`
+          <aside class="col-start-3 row-start-2 flex flex-col overflow-auto border-l border-line bg-[#060d1c]/90 items-center justify-center">
+            <p class="text-xs text-muted">Send a message to begin</p>
+          </aside>
+        `;
+      }
+      return html`
+        <aside class="col-start-3 row-start-2 flex flex-col overflow-auto scrollthin border-l border-line bg-[#060d1c]/90">
+          <div class="border-b border-line px-4 py-4">
+            <div class="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-cyan">
+              <span class="h-2 w-2 rounded-full bg-cyan shadow-[0_0_12px_#12c8f6]"></span>EVENT TIMELINE
+            </div>
+            <div class="text-xs text-slate-200">
+              ${turn.iterations.length} iteration${turn.iterations.length === 1 ? '' : 's'} ·
+              ${turn.iterations.reduce((s, it) => s + it.toolCalls.length, 0)} tool call${turn.iterations.reduce((s, it) => s + it.toolCalls.length, 0) === 1 ? '' : 's'}
+            </div>
+          </div>
+
+          <div class="flex-1 overflow-auto scrollthin p-3 space-y-1.5">
+            ${turn.events.length === 0 && html`<p class="text-xs text-muted">No events yet.</p>`}
+            ${turn.events.map((ev, i) => html`<${EventRow} key=${i} ev=${ev} />`)}
+          </div>
+
+          ${turn.usage && html`
+            <div class="border-t border-line p-3">
+              <h3 class="mb-1.5 text-[10px] font-black uppercase tracking-[.18em] text-slate-600">Usage</h3>
+              <div class="font-mono text-xs text-cyan">
+                ${formatTokens(turn.usage.input)} in / ${formatTokens(turn.usage.output)} out
+              </div>
+            </div>
+          `}
+        </aside>
+      `;
+    }
+
+    function EventRow({ ev }) {
+      const map = {
+        iter_start: { c: 'accent', label: '▶ iteration ' + ev.n + ' start' },
+        iter_end:   { c: 'good',   label: `■ iteration ${ev.n} (${ev.ms}ms${ev.final ? ', final' : ''}, ${ev.tools} tools)` },
+        model_start:{ c: 'accent', label: '🧠 model start' },
+        model_end:  { c: 'cyan',   label: '🧠 model end · ' + (ev.stop || '') },
+        tool_start: { c: 'cyan',   label: '🔧 ' + ev.name + ' start' },
+        tool_end:   { c: ev.error ? 'bad' : 'good', label: '🔧 ' + ev.name + (ev.error ? ' err: ' + ev.error : ' ok ' + ev.ms + 'ms') },
+        max_iter:   { c: 'warn',   label: '⚠ max iterations (' + ev.limit + ')' },
+        invoke_end: { c: ev.err ? 'bad' : 'good', label: ev.err ? '✗ ' + ev.err : '✓ invoke end' },
+      };
+      const info = map[ev.kind] || { c: 'muted', label: ev.kind };
+      const t = new Date(ev.ts);
+      return html`
+        <div class="flex items-start gap-2 text-[11px]">
+          <span class=${cx('mt-1 h-1.5 w-1.5 rounded-full', dotClass(info.c))}></span>
+          <div class="flex-1 min-w-0">
+            <div class="text-muted2 font-mono leading-tight">${info.label}</div>
+            <div class="text-[9px] text-muted font-mono">${t.toLocaleTimeString('en-GB', { hour12: false })}.${String(t.getMilliseconds()).padStart(3, '0')}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    // --- helpers ---
+
+    function formatTokens(n) {
+      if (!n) return '0';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+      return String(n);
+    }
+
+    function prettyJson(s) {
+      if (!s) return '';
+      try {
+        return JSON.stringify(JSON.parse(s), null, 2);
+      } catch {
+        return s;
+      }
+    }
+
+    function dotClass(tone) {
+      const map = {
+        accent: 'bg-accent shadow-[0_0_12px_#6b7cff]',
+        good: 'bg-good shadow-[0_0_12px_#21d77a]',
+        bad: 'bg-bad shadow-[0_0_12px_#ff5f6d]',
+        warn: 'bg-warn shadow-[0_0_12px_#f6ad2f]',
+        cyan: 'bg-cyan shadow-[0_0_12px_#12c8f6]',
+        muted: 'bg-muted',
+      };
+      return map[tone] || map.accent;
+    }
+
+    render(html`<${App} />`, document.getElementById('app'));
+  </script>
+</body>
+</html>

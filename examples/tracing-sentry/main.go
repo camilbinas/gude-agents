@@ -25,7 +25,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -41,6 +40,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/agent/tracing"
 	sentrytrace "github.com/camilbinas/gude-agents/agent/tracing/sentry"
+	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
@@ -116,54 +116,38 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 5. Interactive loop.
-	scanner := bufio.NewScanner(os.Stdin)
+	// 5. Interactive loop — utils.Chat runs the stdin REPL by default and
+	//    automatically switches to the web-based Agent DevTools when the
+	//    DEVTOOLS env var is set (e.g. DEVTOOLS=1 or DEVTOOLS=4041).
 	fmt.Println("Sentry-traced agent ready. Type 'quit' to exit.")
 	fmt.Println("Try: What's the weather in Tokyo?")
 	fmt.Println("Try: What's the weather in error-test?  (triggers error → Sentry Issue)")
 	fmt.Println("Try: creative: write a haiku          (per-invocation temperature override → visible in trace)")
 	fmt.Println()
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if strings.EqualFold(input, "quit") {
-			break
-		}
-
+	utils.Chat(agent.Background(), a, utils.ChatOptions{
 		// Per-invocation override: prefix "creative:" bumps temperature to 0.95.
 		// The overridden value appears on the agent.invoke span in Sentry as
 		// gen_ai.request.temperature=0.95 instead of the agent-level 0.3.
-		c := agent.Background()
-		if after, ok := strings.CutPrefix(input, "creative:"); ok {
-			input = strings.TrimSpace(after)
-			temp := 0.95
-			c = c.WithInferenceConfig(&agent.InferenceConfig{
-				Temperature: &temp,
-			})
-		}
-
-		fmt.Print("Agent: ")
-		err := a.InvokeStream(c, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
-		fmt.Println()
-
-		usage := c.Usage()
-		if err != nil {
-			// Capture invocation-level errors in Sentry with full context.
-			sentrytrace.CaptureAgentError(ctx, err, input, usage)
-			log.Printf("Error (sent to Sentry): %v", err)
-		}
-
-		fmt.Printf("  [tokens: %d in, %d out]\n\n", usage.InputTokens, usage.OutputTokens)
-	}
+		BeforeInvoke: func(c *agent.Context, input string) *agent.Context {
+			if strings.HasPrefix(input, "creative:") {
+				temp := 0.95
+				return c.WithInferenceConfig(&agent.InferenceConfig{
+					Temperature: &temp,
+				})
+			}
+			return nil
+		},
+		AfterInvoke: func(c *agent.Context, err error) {
+			usage := c.Usage()
+			if err != nil {
+				// Capture invocation-level errors in Sentry with full context.
+				sentrytrace.CaptureAgentError(ctx, err, "", usage)
+				log.Printf("Error (sent to Sentry): %v", err)
+			}
+			fmt.Printf("  [tokens: %d in, %d out]\n\n", usage.InputTokens, usage.OutputTokens)
+		},
+	})
 
 	fmt.Println("Flushing to Sentry...")
 }
