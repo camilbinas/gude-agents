@@ -221,6 +221,8 @@ The full event taxonomy is `EventInvokeStart`, `EventIterationStart`, `EventMode
 
 The caller's `*Context` is cloned internally, so `InvokeEventStream` is safe to call multiple times (sequentially or in parallel) on the same context. Any `EventHook` set via `WithEventHook` still fires alongside the channel.
 
+> **Token usage:** unlike `Invoke` and `InvokeStream`, `InvokeEventStream` does **not** write cumulative usage back to the caller's `*Context` — that would race when the same context is shared across concurrent streams. Read `Usage` off the terminal `EventInvokeEnd` event instead.
+
 | Option | Description |
 |---|---|
 | `WithEventStreamBuffer(n)` | Override the channel buffer (default `DefaultEventStreamBuffer = 64`). Smaller buffers tighten back-pressure; larger buffers absorb slow consumers. Zero or negative values fall back to the default |

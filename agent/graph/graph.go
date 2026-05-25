@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -52,6 +53,13 @@ type Graph[S any] struct {
 	eventHook                 GraphEventHook // nil = no event emission
 
 	agentNodes map[string]*agent.Agent // node name → agent for dynamic metadata
+
+	// validateOnce guards the lazy entry-detection in validate(). Without it,
+	// concurrent Run / RunEventStream calls on a graph that didn't explicitly
+	// call Start() could race writing g.entry. Validation is a pure function
+	// of immutable structure, so caching its result via sync.Once is correct.
+	validateOnce sync.Once
+	validateErr  error
 }
 
 // NodeMeta holds optional metadata for a node.
@@ -249,8 +257,20 @@ func (e *GraphIterationError) Error() string {
 }
 
 // validate checks the graph structure before execution.
-// It is called at the start of every Run.
+// It is called at the start of every Run. The actual work runs at most
+// once per graph instance via sync.Once, so concurrent callers see a stable
+// (race-free) result.
 func (g *Graph[S]) validate() error {
+	g.validateOnce.Do(func() {
+		g.validateErr = g.validateImpl()
+	})
+	return g.validateErr
+}
+
+// validateImpl is the actual validation logic. Called exactly once per graph
+// via validate(). It may write to g.entry (lazy entry detection) and reads
+// other fields that are immutable post-construction.
+func (g *Graph[S]) validateImpl() error {
 	// 1. Determine entry node.
 	if g.entry == "" {
 		// Auto-detect: find nodes with empty input keys.

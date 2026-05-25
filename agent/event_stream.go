@@ -176,9 +176,10 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 			if r := recover(); r != nil {
 				panicErr = fmt.Errorf("agent: panic in InvokeEventStream: %v", r)
 			}
-			// Propagate cumulative usage from the cloned context back to the
-			// caller's context so c.Usage() reflects this invocation.
-			c.setUsage(streamC.Usage())
+			// NOTE: usage is not written back to the caller's *Context. The
+			// caller's context is shared with other invocations and writing
+			// to its usage field would race. Read Usage off the terminal
+			// EventInvokeEnd instead.
 			ch <- AgentEvent{
 				Type:      EventInvokeEnd,
 				Timestamp: time.Now(),
