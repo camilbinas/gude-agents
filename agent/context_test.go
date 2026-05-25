@@ -568,3 +568,104 @@ func TestContextHooks_ClonePreservesHooks(t *testing.T) {
 		t.Fatal("Clone should preserve LoggingHook")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Multi-scope memory (8fc5f43)
+// ---------------------------------------------------------------------------
+
+func TestWithScope_SetsAndReturnsSamePointer(t *testing.T) {
+	c := Background()
+	got := c.WithScope("project", "p-123")
+	if got != c {
+		t.Fatal("WithScope should return the same pointer")
+	}
+	if v := c.Scope("project"); v != "p-123" {
+		t.Errorf("Scope(\"project\") = %q, want \"p-123\"", v)
+	}
+}
+
+func TestSetScope_UpdatesValueWithoutChaining(t *testing.T) {
+	c := Background()
+	c.SetScope("user", "u-1")
+	if v := c.Scope("user"); v != "u-1" {
+		t.Errorf("Scope(\"user\") = %q, want \"u-1\"", v)
+	}
+}
+
+func TestScope_MultipleScopesAreIndependent(t *testing.T) {
+	c := Background().
+		WithScope("project", "p-1").
+		WithScope("user", "u-1").
+		WithScope("team", "t-1")
+
+	cases := map[string]string{
+		"project": "p-1",
+		"user":    "u-1",
+		"team":    "t-1",
+	}
+	for key, want := range cases {
+		if got := c.Scope(key); got != want {
+			t.Errorf("Scope(%q) = %q, want %q", key, got, want)
+		}
+	}
+	if got := c.Scope("missing"); got != "" {
+		t.Errorf("missing scope should be empty string, got %q", got)
+	}
+}
+
+func TestScope_OverwriteSameKey(t *testing.T) {
+	c := Background().WithScope("project", "p-1")
+	c.WithScope("project", "p-2")
+	if v := c.Scope("project"); v != "p-2" {
+		t.Errorf("Scope(\"project\") = %q, want \"p-2\" after overwrite", v)
+	}
+}
+
+func TestScopeFrom_FallsBackToIdentifier(t *testing.T) {
+	c := Background().WithIdentifier("default-user")
+
+	// Unknown scope key — should fall back to Identifier().
+	if got := ScopeFrom(c, "project"); got != "default-user" {
+		t.Errorf("ScopeFrom unknown key = %q, want fallback to identifier", got)
+	}
+
+	// Known scope key — should return the scope value.
+	c.WithScope("project", "p-1")
+	if got := ScopeFrom(c, "project"); got != "p-1" {
+		t.Errorf("ScopeFrom(\"project\") = %q, want \"p-1\"", got)
+	}
+}
+
+func TestScopeFrom_EmptyKeyReturnsIdentifier(t *testing.T) {
+	c := Background().WithIdentifier("u-1")
+	if got := ScopeFrom(c, ""); got != "u-1" {
+		t.Errorf("ScopeFrom with empty key = %q, want identifier", got)
+	}
+}
+
+func TestScopeFrom_NoContextReturnsEmpty(t *testing.T) {
+	if got := ScopeFrom(context.Background(), "project"); got != "" {
+		t.Errorf("ScopeFrom on plain context = %q, want empty", got)
+	}
+}
+
+func TestScope_ClonePropagatesScopes(t *testing.T) {
+	c := Background().
+		WithScope("project", "p-1").
+		WithScope("user", "u-1")
+
+	cloned := c.Clone()
+
+	if v := cloned.Scope("project"); v != "p-1" {
+		t.Errorf("clone lost project scope: got %q", v)
+	}
+	if v := cloned.Scope("user"); v != "u-1" {
+		t.Errorf("clone lost user scope: got %q", v)
+	}
+
+	// Clone scopes should be independent — mutating clone doesn't affect original.
+	cloned.WithScope("project", "p-2")
+	if v := c.Scope("project"); v != "p-1" {
+		t.Errorf("original mutated by clone: got %q, want p-1", v)
+	}
+}
