@@ -150,6 +150,7 @@
                 t.iterations = [...t.iterations, {
                   n: msg.iteration,
                   toolCalls: [],
+                  custom: [],
                   thinking: '',
                   stopReason: '',
                   durationMs: 0,
@@ -295,6 +296,26 @@
               setTurns([]);
               setSelectedTurn(null);
               setTotalUsage({ input: 0, output: 0 });
+              break;
+
+            case 'custom':
+              // User-defined event from a tool/middleware/node via
+              // Context.EmitEvent or graph.EmitEvent. Attach it to the
+              // current iteration if there is one, plus the timeline.
+              updateCurrentTurn(t => {
+                if (t.iterations.length > 0) {
+                  const it = { ...t.iterations[t.iterations.length - 1] };
+                  it.custom = [...(it.custom || []), {
+                    name: msg.name,
+                    payload: msg.payload,
+                    ts: Date.now(),
+                  }];
+                  t.iterations[t.iterations.length - 1] = it;
+                }
+                t.events = [...t.events, {
+                  kind: 'custom', name: msg.name, payload: msg.payload, ts: Date.now(),
+                }];
+              });
               break;
 
             // 'event' frames are the generic timeline; the typed frames above
@@ -591,10 +612,11 @@
 
     function IterationView({ iter }) {
       const finished = iter.durationMs > 0 || iter.isFinal;
-      const hasDetails = iter.thinking || iter.toolCalls.length > 0;
-      // Collapse trivial iterations (no tools, no thinking) into a single
-      // compact row. The assistant bubble carries the actual content, so an
-      // empty card would just be visual noise.
+      const customs = iter.custom || [];
+      const hasDetails = iter.thinking || iter.toolCalls.length > 0 || customs.length > 0;
+      // Collapse trivial iterations (no tools, no thinking, no custom events)
+      // into a single compact row. The assistant bubble carries the actual
+      // content, so an empty card would just be visual noise.
       if (!hasDetails) {
         return html`
           <div class="ml-10 mt-1.5 flex items-center gap-2 px-3 py-1 text-[10px] font-mono text-muted2 rounded-md border border-line2/40 bg-[#070f1f]/40">
@@ -635,6 +657,31 @@
             <div class="px-3 py-2 space-y-1.5">
               ${iter.toolCalls.map((tc, i) => html`<${ToolCallView} key=${i} tc=${tc} />`)}
             </div>
+          `}
+
+          ${customs.length > 0 && html`
+            <div class="border-t border-line2/60 px-3 py-2 space-y-1">
+              ${customs.map((cev, i) => html`<${CustomEventView} key=${i} ev=${cev} />`)}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function CustomEventView({ ev }) {
+      const [expanded, setExpanded] = useState(false);
+      const hasPayload = ev.payload !== undefined && ev.payload !== null && JSON.stringify(ev.payload) !== '{}';
+      return html`
+        <div class="rounded-md bg-[#0a1428] border border-cyan/30">
+          <button onClick=${() => hasPayload && setExpanded(!expanded)}
+            class=${cx('w-full flex items-center gap-2 px-2.5 py-1 text-left',
+              hasPayload ? 'cursor-pointer hover:bg-cyan/10' : 'cursor-default')}>
+            <span class="text-cyan">✦</span>
+            <span class="font-mono text-xs text-cyan truncate">${ev.name}</span>
+            ${hasPayload && html`<span class="ml-auto text-[10px] text-muted">${expanded ? 'hide' : 'show'}</span>`}
+          </button>
+          ${expanded && hasPayload && html`
+            <pre class="text-[11px] text-slate-200 font-mono whitespace-pre-wrap bg-panel/60 rounded p-2 mx-2 mb-2 max-h-40 overflow-auto scrollthin">${prettyJsonValue(ev.payload)}</pre>
           `}
         </div>
       `;
@@ -733,6 +780,7 @@
         tool_end:   { c: ev.error ? 'bad' : 'good', label: '🔧 ' + ev.name + (ev.error ? ' err: ' + ev.error : ' ok ' + ev.ms + 'ms') },
         max_iter:   { c: 'warn',   label: '⚠ max iterations (' + ev.limit + ')' },
         invoke_end: { c: ev.err ? 'bad' : 'good', label: ev.err ? '✗ ' + ev.err : '✓ invoke end' },
+        custom:     { c: 'cyan',   label: '✦ ' + (ev.name || 'custom') },
       };
       const info = map[ev.kind] || { c: 'muted', label: ev.kind };
       const t = new Date(ev.ts);
@@ -761,6 +809,19 @@
         return JSON.stringify(JSON.parse(s), null, 2);
       } catch {
         return s;
+      }
+    }
+
+    // prettyJsonValue formats an already-parsed value (e.g. msg.payload from
+    // a 'custom' frame) as indented JSON. Falls back to the raw value's
+    // toString for non-objects.
+    function prettyJsonValue(v) {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'string') return prettyJson(v);
+      try {
+        return JSON.stringify(v, null, 2);
+      } catch {
+        return String(v);
       }
     }
 

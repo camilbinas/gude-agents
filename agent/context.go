@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 )
 
@@ -128,6 +129,41 @@ func (c *Context) WithInferenceConfig(cfg *InferenceConfig) *Context {
 func (c *Context) WithEventHook(h EventHook) *Context {
 	c.eventHook = h
 	return c
+}
+
+// EmitEvent emits a user-defined event onto the active InvokeEventStream
+// channel (if any). When no event stream is active — i.e. the context has
+// no EventHook, or the hook does not implement CustomEventEmitter — the
+// call is a no-op. Use it from inside tool handlers, middleware, or graph
+// node functions to surface domain progress (e.g. "rag.retrieved",
+// "score.computed") to UIs without inventing parallel channels.
+//
+// name should be a short, dot-namespaced tag chosen by the emitter.
+// payload is JSON-marshalled; pass any value json.Marshal can handle.
+// Marshal failures silently drop the event so EmitEvent never disturbs the
+// agent loop.
+//
+// Custom events are delivered on the same channel as the agent's built-in
+// events (Type=EventCustom) and obey the same back-pressure semantics.
+// Safe for concurrent use.
+func (c *Context) EmitEvent(name string, payload any) {
+	hook := c.EventHook()
+	if hook == nil {
+		return
+	}
+	emitter, ok := hook.(CustomEventEmitter)
+	if !ok {
+		return
+	}
+	var raw json.RawMessage
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+		raw = b
+	}
+	emitter.OnCustomEvent(c, name, raw)
 }
 
 // WithIdentifier sets the scoping identity and returns the same *Context for chaining.

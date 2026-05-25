@@ -391,6 +391,13 @@ func (dt *AgentDevTools) dispatchEvent(conn *websocket.Conn, ev agent.AgentEvent
 			"input_tokens":  ev.Usage.InputTokens,
 			"output_tokens": ev.Usage.OutputTokens,
 		})
+
+	case agent.EventCustom:
+		dt.send(conn, map[string]any{
+			"type":    "custom",
+			"name":    ev.CustomName,
+			"payload": ev.CustomPayload,
+		})
 	}
 }
 

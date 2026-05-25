@@ -58,6 +58,12 @@ const (
 	// Read Err for the invocation error (nil on success) and Usage for the
 	// cumulative token usage. The channel is closed immediately after.
 	EventInvokeEnd EventType = "invoke_end"
+
+	// EventCustom carries a user-defined event emitted from inside a tool
+	// handler, middleware, or graph node via Context.EmitEvent. The payload
+	// is opaque JSON; the receiver typically discriminates on CustomName.
+	// The runtime never emits this variant itself.
+	EventCustom EventType = "custom"
 )
 
 // AgentEvent is a tagged union of everything observable during an invocation,
@@ -92,6 +98,13 @@ type AgentEvent struct {
 	// Invocation result (EventInvokeEnd).
 	Usage TokenUsage `json:"usage,omitempty"`
 	Err   error      `json:"-"` // not JSON-serializable; stringify at transport layer
+
+	// Custom event payload (EventCustom). CustomName is a free-form, dot-
+	// namespaced tag chosen by the emitter (e.g. "rag.retrieved",
+	// "score.computed"). CustomPayload is the JSON-encoded user payload.
+	// Both are populated only when Type is EventCustom.
+	CustomName    string          `json:"custom_name,omitempty"`
+	CustomPayload json.RawMessage `json:"custom_payload,omitempty"`
 }
 
 // DefaultEventStreamBuffer is the default buffer size for InvokeEventStream's
@@ -301,5 +314,39 @@ func (h *eventStreamHook) OnMaxIterationsExceeded(c *Context, limit int) {
 	}
 	if h.next != nil {
 		h.next.OnMaxIterationsExceeded(c, limit)
+	}
+}
+
+// CustomEventEmitter is an optional companion interface to EventHook. Hooks
+// that want to receive user-defined events emitted via Context.EmitEvent
+// implement this method in addition to the EventHook interface. Hooks that
+// do not implement it simply drop custom events on the floor — the runtime
+// itself never emits them, so there is no breakage risk.
+//
+// The runtime's built-in eventStreamHook (used by InvokeEventStream)
+// implements this so custom events flow into the same channel as built-in
+// events. A user-supplied EventHook can opt in by adding an
+// OnCustomEvent(c *Context, name string, payload json.RawMessage) method.
+type CustomEventEmitter interface {
+	OnCustomEvent(c *Context, name string, payload json.RawMessage)
+}
+
+// OnCustomEvent forwards a user-defined event to the channel and, if the
+// chained user hook also implements CustomEventEmitter, to that hook too.
+func (h *eventStreamHook) OnCustomEvent(c *Context, name string, payload json.RawMessage) {
+	// Defensive copy: the caller may reuse or mutate the slice after returning.
+	var payloadCopy json.RawMessage
+	if payload != nil {
+		payloadCopy = make(json.RawMessage, len(payload))
+		copy(payloadCopy, payload)
+	}
+	h.ch <- AgentEvent{
+		Type:          EventCustom,
+		Timestamp:     time.Now(),
+		CustomName:    name,
+		CustomPayload: payloadCopy,
+	}
+	if next, ok := h.next.(CustomEventEmitter); ok {
+		next.OnCustomEvent(c, name, payload)
 	}
 }

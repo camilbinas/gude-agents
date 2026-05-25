@@ -30,6 +30,13 @@ const (
 	EventAgentIterationStart       EventType = "AgentIterationStart"
 	EventAgentIterationEnd         EventType = "AgentIterationEnd"
 	EventAgentMaxIterationsReached EventType = "AgentMaxIterationsReached"
+
+	// EventCustom carries a user-defined event emitted from inside a graph
+	// node function (or, by way of the agent->graph bridge, from inside an
+	// Agent node's tool handler) via graph.EmitEvent. The payload is opaque
+	// JSON; consumers discriminate on CustomName. The runtime never emits
+	// this variant itself.
+	EventCustom EventType = "Custom"
 )
 
 // GraphEvent is a structured event emitted by the Graph during execution.
@@ -60,6 +67,14 @@ type GraphEvent struct {
 	IsFinal           bool          `json:"is_final,omitempty"`
 	IterationDuration time.Duration `json:"iteration_duration,omitempty"`
 	IterationLimit    int           `json:"iteration_limit,omitempty"`
+
+	// Custom-event payload (EventCustom). CustomName is a free-form,
+	// dot-namespaced tag chosen by the emitter (e.g. "rag.retrieved").
+	// CustomPayload is the JSON-encoded user payload. NodeName is set to
+	// the graph node that emitted the event, including events bridged up
+	// from an Agent node's inner tool handlers.
+	CustomName    string          `json:"custom_name,omitempty"`
+	CustomPayload json.RawMessage `json:"custom_payload,omitempty"`
 }
 
 // GraphEventHook is an optional interface for receiving structured events at all

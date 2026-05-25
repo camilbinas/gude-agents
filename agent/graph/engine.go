@@ -475,9 +475,11 @@ func (e *runExec[S]) executeNode(ctx context.Context, nodeName string) (S, error
 		ThreadID:  e.threadID,
 	})
 
-	// 5. Call the node function with the copied state.
+	// 5. Call the node function with the copied state. Attach the node name
+	//    to the context so graph.EmitEvent can attribute custom events to
+	//    the correct node without the caller passing it explicitly.
 	fn := e.nodes[nodeName]
-	result, err := fn(nodeCtx, stateCopy)
+	result, err := fn(withCurrentNode(nodeCtx, nodeName), stateCopy)
 
 	// 6. Call hook finish functions.
 	if finishNode != nil {

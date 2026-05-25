@@ -137,6 +137,28 @@ func (b *bridgeEventHook) OnMaxIterationsExceeded(c *agent.Context, limit int) {
 	})
 }
 
+// OnCustomEvent forwards a user-defined event emitted from inside the agent
+// (typically from a tool handler via Context.EmitEvent) up to the graph's
+// event stream. The graph node name is attached so consumers can attribute
+// the event back to the originating node. The bridge implements the
+// agent.CustomEventEmitter optional interface; agents that emit custom
+// events thus surface those events to RunEventStream automatically.
+//
+// If the inner agent.EventHook also implements agent.CustomEventEmitter,
+// it is also invoked for full composition.
+func (b *bridgeEventHook) OnCustomEvent(c *agent.Context, name string, payload json.RawMessage) {
+	if inner, ok := b.inner.(agent.CustomEventEmitter); ok {
+		inner.OnCustomEvent(c, name, payload)
+	}
+	b.graphHook.OnEvent(GraphEvent{
+		Type:          EventCustom,
+		Timestamp:     time.Now(),
+		NodeName:      b.nodeName,
+		CustomName:    name,
+		CustomPayload: payload,
+	})
+}
+
 // newBridgeEventHook creates a bridgeEventHook that forwards agent events to the graph's
 // event hook. Returns nil if graphHook is nil (zero overhead when no graph event hook is configured).
 // The inner parameter is the agent's own EventHook (may be nil).
