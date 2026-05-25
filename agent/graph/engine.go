@@ -77,6 +77,14 @@ func (e *runExec[S]) emitEvent(event GraphEvent) {
 // 3. Enter data-flow scheduling loop:
 //   - scheduleReady() → if 1 node, execute sequentially; if N>1, executeConcurrent; if 0, terminate
 func (e *runExec[S]) execute(ctx context.Context) error {
+	// Stash the effective hook (graph-level + per-call) on the context so
+	// agent nodes can pick up per-call hooks like RunEventStream's channel
+	// without having to mutate g.eventHook for the duration of the call.
+	ctx = withEffectiveHook(ctx, effectiveEventHook{
+		graphHook: e.graph.eventHook,
+		extraHook: e.extraEventHook,
+	})
+
 	// Emit GraphStarted event at the beginning of execution.
 	e.emitEvent(GraphEvent{
 		Type:      EventGraphStarted,

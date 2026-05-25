@@ -101,10 +101,13 @@ func main() {
 			}
 			g := buildBlogGraph(agents, dt, cp)
 
-			// Resume always uses Run-style (no streaming) because by definition
-			// it picks up from a paused checkpoint and may immediately re-pause.
-			// The frontend already has the prior events from the original run.
-			if _, err := g.Resume(ctx, threadID, nil); !errors.Is(err, graph.ErrCheckpointNotFound) {
+			// Resume from the latest checkpoint when one exists, else start
+			// a fresh run. Both paths stream events into the devtools websocket
+			// via Pump so the timeline stays in sync regardless of which path
+			// fires.
+			resumeStream := g.ResumeEventStream(ctx, threadID, nil)
+			dt.Pump(resumeStream.Events())
+			if _, err := resumeStream.Result(); !errors.Is(err, graph.ErrCheckpointNotFound) {
 				if err != nil {
 					return err
 				}
@@ -112,12 +115,12 @@ func main() {
 				return nil
 			}
 
-			// Fresh run — stream events into devtools as they happen.
-			stream := g.RunEventStream(ctx, BlogState{
+			// Fresh run.
+			runStream := g.RunEventStream(ctx, BlogState{
 				Topic: "Why Go is the best language for building AI agents in 2026",
 			}, graph.WithRunOption(graph.WithThreadID(threadID)))
-			dt.Pump(stream.Events())
-			if _, err := stream.Result(); err != nil {
+			dt.Pump(runStream.Events())
+			if _, err := runStream.Result(); err != nil {
 				return err
 			}
 

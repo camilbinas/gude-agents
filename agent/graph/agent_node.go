@@ -248,8 +248,15 @@ func buildAgentNodeFunc[S any](g *Graph[S], name string, a *agent.Agent, accesso
 			}
 		}
 
-		// Configure bridge event hook (only if graph has an event hook).
-		bridgeEvent := newBridgeEventHook(g.eventHook, name, nil)
+		// Resolve the effective event hook for this run: the graph-level hook
+		// composed with any per-call hook injected via runConfig.extraEventHook
+		// (e.g. by RunEventStream). Reading from ctx instead of g.eventHook
+		// directly is what makes per-call event streaming reach Agent nodes.
+		effective := lookupEffectiveHook(ctx, g.eventHook)
+		runHook := effective.asGraphEventHook()
+
+		// Configure bridge event hook (only if there's any observer).
+		bridgeEvent := newBridgeEventHook(runHook, name, nil)
 		if bridgeEvent != nil {
 			c.WithEventHook(bridgeEvent)
 		}
@@ -275,8 +282,10 @@ func buildAgentNodeFunc[S any](g *Graph[S], name string, a *agent.Agent, accesso
 			}
 		}
 
-		// Use streaming invocation path.
-		result, err := agentNodeStream(a, c, msg, g.eventHook, name)
+		// Use streaming invocation path. The runHook here is the effective
+		// hook so per-call streams (RunEventStream's channel) receive
+		// EventAgentStreaming events for each chunk.
+		result, err := agentNodeStream(a, c, msg, runHook, name)
 		if err != nil {
 			var zero S
 			return zero, err

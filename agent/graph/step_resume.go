@@ -99,13 +99,20 @@ func (g *Graph[S]) Step(ctx context.Context, initialState S, threadID string) (S
 // Resume continues execution from the latest checkpoint for threadID.
 // Optional updates are merged into the checkpointed state before continuing.
 // Returns Result[S] on completion, or GraphInterruptError if another interrupt is hit.
-func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S) (Result[S], error) {
+func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S, opts ...RunOption) (Result[S], error) {
 	if g.checkpointer == nil {
 		return Result[S]{}, ErrNoCheckpointer
 	}
 	if threadID == "" {
 		return Result[S]{}, ErrThreadIDRequired
 	}
+
+	// Parse run options (e.g. extraEventHook from ResumeEventStream).
+	var cfg runConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	hooks := effectiveEventHook{graphHook: g.eventHook, extraHook: cfg.extraEventHook}
 
 	// Start graph tracing span for the resumed execution.
 	var finishTrace func(err error, iterations int)
@@ -135,10 +142,10 @@ func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S) (Res
 		g.ops.merge(&resumeState, *updates)
 	}
 
-	// Emit Resumed event.
-	if g.eventHook != nil {
+	// Emit Resumed event to graph-level + per-call hooks.
+	if !hooks.isZero() {
 		snapshot, _ := g.ops.toMap(resumeState)
-		g.eventHook.OnEvent(GraphEvent{
+		hooks.emit(GraphEvent{
 			Type:          EventResumed,
 			Timestamp:     time.Now(),
 			Version:       cp.Version,
@@ -178,6 +185,7 @@ func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S) (Res
 		workQueue:          workQueue,
 		threadID:           threadID,
 		skipFirstInterrupt: skipFirst,
+		extraEventHook:     cfg.extraEventHook,
 	}
 
 	// Initialize data-flow scheduling fields for resume.
@@ -229,10 +237,10 @@ func (g *Graph[S]) Resume(ctx context.Context, threadID string, updates *S) (Res
 
 	err = exec.execute(ctx)
 
-	// Emit GraphCompleted event.
-	if g.eventHook != nil {
+	// Emit GraphCompleted event to both graph-level and per-call hooks.
+	if !hooks.isZero() {
 		snapshot, _ := g.ops.toMap(exec.state)
-		g.eventHook.OnEvent(GraphEvent{
+		hooks.emit(GraphEvent{
 			Type:          EventGraphCompleted,
 			Timestamp:     time.Now(),
 			StateSnapshot: snapshot,
@@ -285,9 +293,10 @@ func (g *Graph[S]) RewindTo(ctx context.Context, threadID string, version int) e
 		return err
 	}
 
-	// Emit RewindCompleted event.
-	if g.eventHook != nil {
-		g.eventHook.OnEvent(GraphEvent{
+	// Emit RewindCompleted event to both graph-level and per-call hooks.
+	hooks := effectiveEventHook{graphHook: g.eventHook}
+	if !hooks.isZero() {
+		hooks.emit(GraphEvent{
 			Type:          EventRewindCompleted,
 			Timestamp:     time.Now(),
 			Version:       version,

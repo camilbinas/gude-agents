@@ -477,6 +477,32 @@ The per-call channel hook layers on top of any `WithEventHook` / `SetEventHook` 
 
 If the consumer falls behind, the engine blocks on send once the buffer fills. To stop the run early, cancel the context passed to `RunEventStream`.
 
+#### Coverage
+
+The stream channel delivers every event type emitted by the engine, including `EventAgent*` events from Agent nodes — the per-call hook is layered into the same `runConfig` plumbing the agent-node bridge reads, so streams work whether or not a graph-level `WithEventHook` is also configured.
+
+`Step` and `RewindTo` continue to dispatch only through the graph-level hook (set via `WithEventHook` / `SetEventHook`); use them with a graph-level hook if you need to observe them.
+
+### ResumeEventStream
+
+`ResumeEventStream` is the streaming counterpart of `Resume` for picking up after an `InterruptBefore`/`InterruptAfter`:
+
+```go
+func (g *Graph[S]) ResumeEventStream(ctx context.Context, threadID string, updates *S, opts ...EventStreamOption) *EventStream[S]
+```
+
+Same API shape and guarantees as `RunEventStream` (typed `Result()`, terminal `EventGraphCompleted`, panic-safe shutdown). Both `EventResumed` (start of resume) and `EventGraphCompleted` (end) reach the channel — neither flows through `RunEventStream`'s plumbing on the original run, so prefer `ResumeEventStream` when you want events from a resumed execution.
+
+```go
+stream := g.ResumeEventStream(ctx, threadID, nil)
+for ev := range stream.Events() {
+    // EventResumed → ... → EventGraphCompleted
+}
+res, err := stream.Result()
+```
+
+`Resume` itself also accepts variadic `RunOption`s now, so existing call sites that don't need a stream are unchanged but can opt into per-call options if needed.
+
 ### Graph Introspection
 
 `Structure()` returns the graph's topology as a serializable `GraphStructure`. Each `NodeInfo` includes `ID`, `Label`, `Provider`, `Model`, `Tools`, `InputKeys`, `OutputKeys`, `Layer` (BFS depth), and interrupt flags. Each `DataFlowEdge` has `From` (producer), `To` (consumer), and `Key` (the state key connecting them).

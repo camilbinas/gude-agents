@@ -148,6 +148,54 @@ func (g *Graph[S]) RunEventStream(ctx context.Context, initial S, opts ...EventS
 	return s
 }
 
+// ResumeEventStream is the streaming counterpart of Resume, returning an
+// EventStream[S] that delivers every event emitted during the resumed run —
+// including agent-level events from Agent nodes — and the typed Result.
+//
+// All semantics mirror RunEventStream: the channel ends with a single
+// EventGraphCompleted (carrying the final state, usage, and error if any),
+// safe under concurrent calls on the same graph, and consumes existing
+// graph-level WithEventHook callbacks alongside the channel.
+func (g *Graph[S]) ResumeEventStream(ctx context.Context, threadID string, updates *S, opts ...EventStreamOption) *EventStream[S] {
+	cfg := &eventStreamConfig{buffer: DefaultEventStreamBuffer}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	if cfg.buffer <= 0 {
+		cfg.buffer = DefaultEventStreamBuffer
+	}
+
+	s := &EventStream[S]{
+		events: make(chan GraphEvent, cfg.buffer),
+		done:   make(chan struct{}),
+	}
+	hook := &channelHook{ch: s.events}
+
+	go func() {
+		defer close(s.events)
+		defer close(s.done)
+
+		defer func() {
+			if r := recover(); r != nil {
+				s.err = fmt.Errorf("graph: panic in ResumeEventStream: %v", r)
+				select {
+				case s.events <- GraphEvent{
+					Type:      EventGraphCompleted,
+					Timestamp: time.Now(),
+					Error:     s.err,
+				}:
+				default:
+				}
+			}
+		}()
+
+		runOpts := append([]RunOption{withExtraEventHook(hook)}, cfg.runOpts...)
+		s.result, s.err = g.Resume(ctx, threadID, updates, runOpts...)
+	}()
+
+	return s
+}
+
 // withExtraEventHook is an internal RunOption that injects an extra GraphEventHook
 // for the duration of one Run call. Used by RunEventStream to fan events into a
 // per-call channel without mutating the shared graph.eventHook field.
