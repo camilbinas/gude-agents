@@ -1,13 +1,14 @@
 // Example: Extended thinking with live reasoning output.
 //
-// Shows how to enable extended thinking on a provider and use
-// EventHook.OnThinking to stream the model's internal reasoning
-// to the user in real-time, alongside the final answer.
+// Shows how to enable extended thinking on a provider and consume the model's
+// internal reasoning alongside the final answer using Agent.InvokeEventStream.
+// Both EventThinkingChunk and EventTextChunk are interleaved on the same
+// channel — no separate EventHook implementation needed.
 //
-// Note: with extended thinking enabled, Claude tends to also explain
-// its reasoning in the response text — this is intentional model behavior,
-// not a bug. The EventHook gives you the raw internal scratchpad;
-// the response is Claude's visible summary of that reasoning.
+// Note: with extended thinking enabled, Claude tends to also explain its
+// reasoning in the response text — this is intentional model behavior, not a
+// bug. The thinking_chunk events give you the raw internal scratchpad; the
+// text_chunk events are Claude's visible summary of that reasoning.
 //
 // Run:
 //
@@ -27,13 +28,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// thinkingHook prints thinking chunks to stdout.
-type thinkingHook struct {
-	agent.BaseEventHook
-}
-
-func (thinkingHook) OnThinking(_ *agent.Context, chunk string) { fmt.Print(chunk) }
-
 func main() {
 	godotenv.Load() //nolint
 
@@ -51,15 +45,28 @@ func main() {
 
 	question := "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?"
 
-	// Attach EventHook via context — scoped to this invocation.
-	ctx := agent.Background().WithEventHook(thinkingHook{})
+	fmt.Println("── reasoning ──")
+	inThinking := false
+	for ev := range a.InvokeEventStream(agent.Background(), question) {
+		switch ev.Type {
+		case agent.EventThinkingChunk:
+			if !inThinking {
+				inThinking = true
+			}
+			fmt.Print(ev.ThinkingChunk)
 
-	err = a.InvokeStream(ctx, question, func(chunk string) {
-		fmt.Print(chunk)
-	})
-	if err != nil {
-		log.Fatal(err)
+		case agent.EventTextChunk:
+			if inThinking {
+				fmt.Println("\n── answer ──")
+				inThinking = false
+			}
+			fmt.Print(ev.TextChunk)
+
+		case agent.EventInvokeEnd:
+			fmt.Println()
+			if ev.Err != nil {
+				log.Fatal(ev.Err)
+			}
+		}
 	}
-
-	fmt.Println()
 }

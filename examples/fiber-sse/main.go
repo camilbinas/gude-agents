@@ -1,11 +1,12 @@
 // Example: Streaming agent events over SSE with Fiber v3.
 //
-// Demonstrates how to use EventHook with a Fiber HTTP handler to stream
-// tool calls, model lifecycle, and thinking events to the browser in real-time
-// alongside the streamed text response.
+// Demonstrates how to use Agent.InvokeEventStream with a Fiber HTTP handler
+// to stream tool calls, model lifecycle, thinking, and text chunks to the
+// browser in real-time. Reading a single channel of typed AgentEvents replaces
+// implementing EventHook plus a separate StreamCallback.
 //
-// The agent is created once at startup and shared across requests.
-// Each request attaches its own EventHook via context — no concurrency issues.
+// The agent is created once at startup and shared across requests. Each
+// request gets its own event channel — no concurrency issues.
 //
 // Run:
 //
@@ -34,40 +35,11 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// sseHook streams agent events as Server-Sent Events.
-type sseHook struct {
-	agent.BaseEventHook
-	w *bufio.Writer
-}
-
-func (h *sseHook) OnToolCallStart(_ *agent.Context, toolName string, input json.RawMessage) {
-	h.send("tool_start", map[string]any{"tool": toolName, "input": json.RawMessage(input)})
-}
-
-func (h *sseHook) OnToolCallEnd(_ *agent.Context, toolName string, output string, err error, d time.Duration) {
-	data := map[string]any{"tool": toolName, "output": output, "duration_ms": d.Milliseconds()}
-	if err != nil {
-		data["error"] = err.Error()
-	}
-	h.send("tool_end", data)
-}
-
-func (h *sseHook) OnThinking(_ *agent.Context, chunk string) {
-	h.send("thinking", map[string]any{"chunk": chunk})
-}
-
-func (h *sseHook) OnModelStart(_ *agent.Context) {
-	h.send("model_start", nil)
-}
-
-func (h *sseHook) OnModelEnd(_ *agent.Context, stopReason string) {
-	h.send("model_end", map[string]any{"stop_reason": stopReason})
-}
-
-func (h *sseHook) send(event string, data any) {
+// sseEmit writes a single SSE event with a JSON-encoded payload.
+func sseEmit(w *bufio.Writer, event string, data any) {
 	payload, _ := json.Marshal(data)
-	fmt.Fprintf(h.w, "event: %s\tdata: %s\n", event, payload)
-	h.w.Flush()
+	fmt.Fprintf(w, "event: %s\tdata: %s\n", event, payload)
+	w.Flush()
 }
 
 func main() {
@@ -113,22 +85,50 @@ func main() {
 		c.Set("Connection", "keep-alive")
 
 		return c.SendStreamWriter(func(w *bufio.Writer) {
-			hook := &sseHook{w: w}
-			ctx := agent.NewContext(c.Context()).WithEventHook(hook)
+			ctx := agent.NewContext(c.Context())
 
-			err := a.InvokeStream(ctx, q, func(chunk string) {
-				payload, _ := json.Marshal(map[string]string{"chunk": chunk})
-				fmt.Fprintf(w, "event: text\tdata: %s\n", payload)
-				w.Flush()
-			})
+			for ev := range a.InvokeEventStream(ctx, q) {
+				switch ev.Type {
+				case agent.EventTextChunk:
+					sseEmit(w, "text", map[string]string{"chunk": ev.TextChunk})
 
-			if err != nil {
-				payload, _ := json.Marshal(map[string]string{"error": err.Error()})
-				fmt.Fprintf(w, "event: error\tdata: %s\n\n", payload)
-			} else {
-				fmt.Fprintf(w, "event: done\tdata: {}\n\n")
+				case agent.EventThinkingChunk:
+					sseEmit(w, "thinking", map[string]string{"chunk": ev.ThinkingChunk})
+
+				case agent.EventToolCallStart:
+					sseEmit(w, "tool_start", map[string]any{
+						"tool":  ev.ToolName,
+						"input": ev.ToolInput,
+					})
+
+				case agent.EventToolCallEnd:
+					data := map[string]any{
+						"tool":        ev.ToolName,
+						"output":      ev.ToolOutput,
+						"duration_ms": ev.Duration.Milliseconds(),
+					}
+					if ev.Err != nil {
+						data["error"] = ev.Err.Error()
+					}
+					sseEmit(w, "tool_end", data)
+
+				case agent.EventModelStart:
+					sseEmit(w, "model_start", nil)
+
+				case agent.EventModelEnd:
+					sseEmit(w, "model_end", map[string]string{"stop_reason": ev.StopReason})
+
+				case agent.EventInvokeEnd:
+					if ev.Err != nil {
+						sseEmit(w, "error", map[string]string{"error": ev.Err.Error()})
+					} else {
+						sseEmit(w, "done", map[string]any{
+							"input_tokens":  ev.Usage.InputTokens,
+							"output_tokens": ev.Usage.OutputTokens,
+						})
+					}
+				}
 			}
-			w.Flush()
 		})
 	})
 

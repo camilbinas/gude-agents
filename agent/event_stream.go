@@ -1,0 +1,304 @@
+package agent
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// EventType identifies the kind of AgentEvent emitted on an InvokeEventStream
+// channel. Consumers should switch on Type and read only the fields documented
+// for that variant.
+type EventType string
+
+// Event types emitted on an InvokeEventStream channel.
+const (
+	// EventInvokeStart is emitted once at the very beginning of an invocation,
+	// before any iterations or provider calls.
+	EventInvokeStart EventType = "invoke_start"
+
+	// EventIterationStart is emitted at the start of each agent loop iteration.
+	// Read Iteration for the 1-indexed iteration number.
+	EventIterationStart EventType = "iteration_start"
+
+	// EventModelStart is emitted just before each Provider.ConverseStream call.
+	EventModelStart EventType = "model_start"
+
+	// EventTextChunk is emitted for each incremental text chunk streamed from
+	// the model on the final iteration. Read TextChunk for the chunk content.
+	EventTextChunk EventType = "text_chunk"
+
+	// EventThinkingChunk is emitted for each thinking/reasoning chunk streamed
+	// from the model when extended thinking is enabled. Read ThinkingChunk.
+	EventThinkingChunk EventType = "thinking_chunk"
+
+	// EventToolCallStart is emitted before a tool handler is invoked. Read
+	// ToolName and ToolInput for the call details.
+	EventToolCallStart EventType = "tool_call_start"
+
+	// EventToolCallEnd is emitted after a tool handler completes. Read
+	// ToolName, ToolOutput, Err, and Duration. On error, ToolOutput is empty
+	// and Err is non-nil.
+	EventToolCallEnd EventType = "tool_call_end"
+
+	// EventModelEnd is emitted after each Provider call completes. Read
+	// StopReason ("end_turn", "tool_use", "error").
+	EventModelEnd EventType = "model_end"
+
+	// EventIterationEnd is emitted at the end of each agent loop iteration.
+	// Read Iteration, ToolCount, IsFinal, Duration.
+	EventIterationEnd EventType = "iteration_end"
+
+	// EventMaxIterations is emitted when the loop terminates because the
+	// configured maximum iteration count was reached without a final answer.
+	// Read IterationLimit.
+	EventMaxIterations EventType = "max_iterations_exceeded"
+
+	// EventInvokeEnd is the final event on the channel, emitted exactly once.
+	// Read Err for the invocation error (nil on success) and Usage for the
+	// cumulative token usage. The channel is closed immediately after.
+	EventInvokeEnd EventType = "invoke_end"
+)
+
+// AgentEvent is a tagged union of everything observable during an invocation,
+// delivered via Agent.InvokeEventStream. The Type field is the discriminator;
+// only the fields documented for that variant are populated.
+//
+// AgentEvent is intentionally a flat struct rather than an interface to make
+// it trivial to serialize for SSE / WebSocket / JSON transport.
+type AgentEvent struct {
+	Type      EventType `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+
+	// Iteration data (EventIterationStart, EventIterationEnd, EventMaxIterations).
+	Iteration      int           `json:"iteration,omitempty"`
+	IterationLimit int           `json:"iteration_limit,omitempty"`
+	ToolCount      int           `json:"tool_count,omitempty"`
+	IsFinal        bool          `json:"is_final,omitempty"`
+	Duration       time.Duration `json:"duration,omitempty"`
+
+	// Streaming chunks (EventTextChunk, EventThinkingChunk).
+	TextChunk     string `json:"text_chunk,omitempty"`
+	ThinkingChunk string `json:"thinking_chunk,omitempty"`
+
+	// Tool call data (EventToolCallStart, EventToolCallEnd).
+	ToolName   string          `json:"tool_name,omitempty"`
+	ToolInput  json.RawMessage `json:"tool_input,omitempty"`
+	ToolOutput string          `json:"tool_output,omitempty"`
+
+	// Model lifecycle (EventModelEnd).
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Invocation result (EventInvokeEnd).
+	Usage TokenUsage `json:"usage,omitempty"`
+	Err   error      `json:"-"` // not JSON-serializable; stringify at transport layer
+}
+
+// DefaultEventStreamBuffer is the default buffer size for InvokeEventStream's
+// channel. A modest buffer absorbs short consumer stalls without blocking the
+// agent loop, while still applying back-pressure if the consumer falls behind.
+const DefaultEventStreamBuffer = 64
+
+// EventStreamOption configures InvokeEventStream behavior.
+type EventStreamOption func(*eventStreamConfig)
+
+type eventStreamConfig struct {
+	buffer int
+}
+
+// WithEventStreamBuffer sets the channel buffer size for InvokeEventStream.
+// Larger buffers reduce the chance of blocking the agent loop on slow consumers
+// at the cost of more in-flight memory; smaller buffers (including 0) increase
+// back-pressure and keep events closer to real-time at the consumer.
+//
+// A negative or zero value falls back to DefaultEventStreamBuffer; pass a
+// positive value to override.
+func WithEventStreamBuffer(n int) EventStreamOption {
+	return func(c *eventStreamConfig) { c.buffer = n }
+}
+
+// InvokeEventStream runs the agent loop and returns a channel of events
+// representing everything that happens during the invocation: text chunks,
+// thinking chunks, tool calls, model lifecycle, and the final result.
+//
+// The channel is closed exactly once, after a single EventInvokeEnd event
+// carrying the final error (nil on success) and cumulative TokenUsage.
+//
+// Consumers must drain the channel to completion. If the consumer returns
+// early (e.g. its surrounding context is cancelled), the agent loop will
+// block on send once the buffer fills. To stop the agent in that case,
+// cancel the context backing the *Context passed in.
+//
+// Use options like WithEventStreamBuffer to tune channel behavior.
+//
+// InvokeEventStream coexists with EventHook: if c.EventHook() is set, those
+// callbacks still fire. Internally, this method clones the context and
+// installs a fan-in EventHook that wraps the user-supplied one (if any),
+// so the caller's *Context is never mutated and remains safe to reuse for
+// other invocations.
+func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventStreamOption) <-chan AgentEvent {
+	cfg := &eventStreamConfig{buffer: DefaultEventStreamBuffer}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	if cfg.buffer <= 0 {
+		cfg.buffer = DefaultEventStreamBuffer
+	}
+
+	ch := make(chan AgentEvent, cfg.buffer)
+
+	// Clone the caller's *Context so we don't mutate their state. Without this,
+	// calling InvokeEventStream installs the fan-in hook on the caller's
+	// context, which then bleeds into any later Invoke / InvokeStream / parallel
+	// InvokeEventStream calls sharing the same *Context — at best confusing,
+	// at worst a "send on closed channel" panic on a second invocation.
+	streamC := c.Clone()
+	upstream := streamC.EventHook()
+	streamC.WithEventHook(&eventStreamHook{ch: ch, next: upstream})
+
+	// StreamCallback fans text chunks into the same channel.
+	streamCB := func(chunk string) {
+		ch <- AgentEvent{
+			Type:      EventTextChunk,
+			Timestamp: time.Now(),
+			TextChunk: chunk,
+		}
+	}
+
+	go func() {
+		defer close(ch)
+
+		// Convert a panic in the agent loop into a terminal EventInvokeEnd
+		// so consumers always see a clean shutdown event before the channel
+		// closes. The panic is otherwise swallowed by the goroutine boundary.
+		var panicErr error
+		defer func() {
+			if r := recover(); r != nil {
+				panicErr = fmt.Errorf("agent: panic in InvokeEventStream: %v", r)
+			}
+			// Propagate cumulative usage from the cloned context back to the
+			// caller's context so c.Usage() reflects this invocation.
+			c.setUsage(streamC.Usage())
+			ch <- AgentEvent{
+				Type:      EventInvokeEnd,
+				Timestamp: time.Now(),
+				Err:       panicErr,
+				Usage:     streamC.Usage(),
+			}
+		}()
+
+		ch <- AgentEvent{Type: EventInvokeStart, Timestamp: time.Now()}
+
+		err := a.InvokeStream(streamC, userMessage, streamCB)
+		if err != nil {
+			panicErr = err
+		}
+	}()
+
+	return ch
+}
+
+// eventStreamHook adapts EventHook callbacks into AgentEvents on a channel.
+// It optionally chains to a user-supplied upstream hook so existing observers
+// keep working when InvokeEventStream is used.
+type eventStreamHook struct {
+	ch   chan<- AgentEvent
+	next EventHook // optional chain target, may be nil
+}
+
+func (h *eventStreamHook) OnIterationStart(c *Context, iteration int) {
+	h.ch <- AgentEvent{
+		Type:      EventIterationStart,
+		Timestamp: time.Now(),
+		Iteration: iteration,
+	}
+	if h.next != nil {
+		h.next.OnIterationStart(c, iteration)
+	}
+}
+
+func (h *eventStreamHook) OnIterationEnd(c *Context, iteration int, toolCount int, isFinal bool, duration time.Duration) {
+	h.ch <- AgentEvent{
+		Type:      EventIterationEnd,
+		Timestamp: time.Now(),
+		Iteration: iteration,
+		ToolCount: toolCount,
+		IsFinal:   isFinal,
+		Duration:  duration,
+	}
+	if h.next != nil {
+		h.next.OnIterationEnd(c, iteration, toolCount, isFinal, duration)
+	}
+}
+
+func (h *eventStreamHook) OnModelStart(c *Context) {
+	h.ch <- AgentEvent{Type: EventModelStart, Timestamp: time.Now()}
+	if h.next != nil {
+		h.next.OnModelStart(c)
+	}
+}
+
+func (h *eventStreamHook) OnModelEnd(c *Context, stopReason string) {
+	h.ch <- AgentEvent{
+		Type:       EventModelEnd,
+		Timestamp:  time.Now(),
+		StopReason: stopReason,
+	}
+	if h.next != nil {
+		h.next.OnModelEnd(c, stopReason)
+	}
+}
+
+func (h *eventStreamHook) OnThinking(c *Context, chunk string) {
+	h.ch <- AgentEvent{
+		Type:          EventThinkingChunk,
+		Timestamp:     time.Now(),
+		ThinkingChunk: chunk,
+	}
+	if h.next != nil {
+		h.next.OnThinking(c, chunk)
+	}
+}
+
+func (h *eventStreamHook) OnToolCallStart(c *Context, toolName string, input json.RawMessage) {
+	// Copy input so a downstream mutation can't corrupt the channel event.
+	var inputCopy json.RawMessage
+	if input != nil {
+		inputCopy = make(json.RawMessage, len(input))
+		copy(inputCopy, input)
+	}
+	h.ch <- AgentEvent{
+		Type:      EventToolCallStart,
+		Timestamp: time.Now(),
+		ToolName:  toolName,
+		ToolInput: inputCopy,
+	}
+	if h.next != nil {
+		h.next.OnToolCallStart(c, toolName, input)
+	}
+}
+
+func (h *eventStreamHook) OnToolCallEnd(c *Context, toolName string, output string, err error, duration time.Duration) {
+	h.ch <- AgentEvent{
+		Type:       EventToolCallEnd,
+		Timestamp:  time.Now(),
+		ToolName:   toolName,
+		ToolOutput: output,
+		Err:        err,
+		Duration:   duration,
+	}
+	if h.next != nil {
+		h.next.OnToolCallEnd(c, toolName, output, err, duration)
+	}
+}
+
+func (h *eventStreamHook) OnMaxIterationsExceeded(c *Context, limit int) {
+	h.ch <- AgentEvent{
+		Type:           EventMaxIterations,
+		Timestamp:      time.Now(),
+		IterationLimit: limit,
+	}
+	if h.next != nil {
+		h.next.OnMaxIterationsExceeded(c, limit)
+	}
+}
