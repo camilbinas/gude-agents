@@ -19,10 +19,11 @@ import (
 
 // GeminiProvider implements agent.Provider using the Google Gemini API.
 type GeminiProvider struct {
-	client        *genai.Client
-	model         string
-	maxTokens     int32
-	thinkingLevel string // "low", "medium", "high" — empty = disabled
+	client         *genai.Client
+	model          string
+	maxTokens      int32
+	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
+	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
 }
 
 // Name returns a human-readable identifier for this provider instance.
@@ -32,9 +33,10 @@ func (p *GeminiProvider) Name() string { return "gemini" }
 type Option func(*options)
 
 type options struct {
-	apiKey        string
-	maxTokens     int32
-	thinkingLevel string
+	apiKey         string
+	maxTokens      int32
+	thinkingEffort pvdr.ThinkingEffort
+	thinkingBudget int64
 }
 
 // WithAPIKey sets the Gemini API key. Defaults to GEMINI_API_KEY env var,
@@ -48,10 +50,25 @@ func WithMaxTokens(n int64) Option {
 	return func(o *options) { o.maxTokens = int32(n) }
 }
 
-// WithThinking enables extended thinking at the given effort level.
-// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
-func WithThinking(effort string) Option {
-	return func(o *options) { o.thinkingLevel = effort }
+// WithThinking enables extended thinking at the given effort level. The effort
+// is mapped to a token budget via provider.ThinkingBudgets. For direct control
+// over the token budget, use WithThinkingBudget instead — it takes precedence
+// when both are set.
+//
+// When thinking is enabled, the resolved budget is added on top of MaxTokens
+// so the model has headroom to both reason and produce a final answer.
+func WithThinking(effort pvdr.ThinkingEffort) Option {
+	return func(o *options) { o.thinkingEffort = effort }
+}
+
+// WithThinkingBudget enables extended thinking with an explicit token budget.
+// Use this when you need finer control than the predefined ThinkingEffort levels.
+// Takes precedence over WithThinking when both are set.
+//
+// The budget is added on top of MaxTokens so the model has headroom to both
+// reason and produce a final answer.
+func WithThinkingBudget(tokens int64) Option {
+	return func(o *options) { o.thinkingBudget = tokens }
 }
 
 // Must is a helper that wraps a (*GeminiProvider, error) call and panics on error.
@@ -91,10 +108,11 @@ func New(model string, opts ...Option) (*GeminiProvider, error) {
 	}
 
 	return &GeminiProvider{
-		client:        client,
-		model:         model,
-		maxTokens:     o.maxTokens,
-		thinkingLevel: o.thinkingLevel,
+		client:         client,
+		model:          model,
+		maxTokens:      o.maxTokens,
+		thinkingEffort: o.thinkingEffort,
+		thinkingBudget: o.thinkingBudget,
 	}, nil
 }
 
@@ -518,10 +536,33 @@ func toGeminiToolConfig(choice *tool.Choice) *genai.ToolConfig {
 	}
 }
 
+// resolveThinkingBudget returns the active thinking budget in tokens.
+// An explicit budget set via WithThinkingBudget takes precedence over an
+// effort level set via WithThinking. Returns 0 when thinking is disabled
+// or the effort level is unknown.
+func (p *GeminiProvider) resolveThinkingBudget() int64 {
+	if p.thinkingBudget > 0 {
+		return p.thinkingBudget
+	}
+	if p.thinkingEffort != "" {
+		return pvdr.ThinkingBudgets[p.thinkingEffort]
+	}
+	return 0
+}
+
 // buildConfig assembles a GenerateContentConfig from provider state and converse params.
 func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.GenerateContentConfig {
+	maxTokens := p.maxTokens
+	if cfg := params.InferenceConfig; cfg != nil && cfg.MaxTokens != nil {
+		maxTokens = int32(*cfg.MaxTokens)
+	}
+	thinkingBudget := int32(p.resolveThinkingBudget())
+	if thinkingBudget > 0 {
+		maxTokens += thinkingBudget
+	}
+
 	config := &genai.GenerateContentConfig{
-		MaxOutputTokens: p.maxTokens,
+		MaxOutputTokens: maxTokens,
 		Tools:           toGeminiTools(params.ToolConfig),
 		ToolConfig:      toGeminiToolConfig(params.ToolChoice),
 	}
@@ -530,12 +571,12 @@ func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.Generate
 			Parts: []*genai.Part{genai.NewPartFromText(params.System)},
 		}
 	}
-	if p.thinkingLevel != "" {
+	if thinkingBudget > 0 {
 		config.ThinkingConfig = &genai.ThinkingConfig{
-			ThinkingBudget: ptr(int32(pvdr.ThinkingBudgets[p.thinkingLevel])),
+			ThinkingBudget: ptr(thinkingBudget),
 		}
 	}
-	// Apply inference config overrides.
+	// Apply inference config overrides (excluding MaxTokens — already applied above).
 	if cfg := params.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
 			config.Temperature = ptr(float32(*cfg.Temperature))
@@ -548,9 +589,6 @@ func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.Generate
 		}
 		if cfg.StopSequences != nil {
 			config.StopSequences = cfg.StopSequences
-		}
-		if cfg.MaxTokens != nil {
-			config.MaxOutputTokens = int32(*cfg.MaxTokens)
 		}
 	}
 	return config

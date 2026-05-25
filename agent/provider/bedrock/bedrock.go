@@ -41,9 +41,10 @@ type BedrockProvider struct {
 	client           *bedrockruntime.Client
 	model            string
 	maxTokens        int32
-	thinkingStyle    thinkingStyle // set by model constructors
-	thinkingLevel    string        // "low", "medium", "high" — empty = disabled
-	guardrailID      string        // empty = no guardrail
+	thinkingStyle    thinkingStyle       // set by model constructors
+	thinkingEffort   pvdr.ThinkingEffort // empty = effort not set
+	thinkingBudget   int64               // 0 = budget not set; takes precedence over effort (Claude only)
+	guardrailID      string              // empty = no guardrail
 	guardrailVersion string
 }
 
@@ -53,7 +54,8 @@ type Option func(*options)
 type options struct {
 	region           string
 	maxTokens        int32
-	thinkingLevel    string
+	thinkingEffort   pvdr.ThinkingEffort
+	thinkingBudget   int64
 	thinkingStyle    thinkingStyle
 	apiKey           string
 	guardrailID      string
@@ -70,11 +72,26 @@ func WithMaxTokens(n int64) Option {
 	return func(o *options) { o.maxTokens = int32(n) }
 }
 
-// WithThinking enables extended thinking at the given effort level.
-// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
-// For Claude models this sets a token budget; for Nova 2 it sets maxReasoningEffort directly.
-func WithThinking(effort string) Option {
-	return func(o *options) { o.thinkingLevel = effort }
+// WithThinking enables extended thinking at the given effort level. For Claude
+// models the effort is mapped to a token budget via provider.ThinkingBudgets;
+// for Nova 2 the effort string is sent directly as maxReasoningEffort.
+//
+// For direct control over the Claude token budget, use WithThinkingBudget
+// instead — it takes precedence when both are set. For Claude models, the
+// resolved budget is added on top of MaxTokens so the model has headroom to
+// both reason and answer.
+func WithThinking(effort pvdr.ThinkingEffort) Option {
+	return func(o *options) { o.thinkingEffort = effort }
+}
+
+// WithThinkingBudget enables extended thinking with an explicit token budget.
+// Only meaningful for Claude models — Nova 2 uses an enum effort level and
+// ignores this option. Takes precedence over WithThinking when both are set.
+//
+// The budget is added on top of MaxTokens so the model has headroom to both
+// reason and produce a final answer.
+func WithThinkingBudget(tokens int64) Option {
+	return func(o *options) { o.thinkingBudget = tokens }
 }
 
 // WithAPIKey sets an Amazon Bedrock API key (bearer token) for authentication.
@@ -167,7 +184,8 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 		model:            model,
 		maxTokens:        o.maxTokens,
 		thinkingStyle:    o.thinkingStyle,
-		thinkingLevel:    o.thinkingLevel,
+		thinkingEffort:   o.thinkingEffort,
+		thinkingBudget:   o.thinkingBudget,
 		guardrailID:      o.guardrailID,
 		guardrailVersion: o.guardrailVersion,
 	}, nil
@@ -394,13 +412,42 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 // Inference config helpers
 // ---------------------------------------------------------------------------
 
+// resolveThinkingBudget returns the active Claude thinking budget in tokens.
+// An explicit budget set via WithThinkingBudget takes precedence over an
+// effort level set via WithThinking. Returns 0 when thinking is disabled,
+// the model is not a Claude-style thinking model, or the effort level is
+// unknown.
+func (p *BedrockProvider) resolveThinkingBudget() int64 {
+	if p.thinkingStyle != thinkingStyleClaude {
+		return 0
+	}
+	if p.thinkingBudget > 0 {
+		return p.thinkingBudget
+	}
+	if p.thinkingEffort != "" {
+		return pvdr.ThinkingBudgets[p.thinkingEffort]
+	}
+	return 0
+}
+
 // buildInferenceConfiguration builds the Bedrock InferenceConfiguration from
 // the provider's constructor defaults and the optional per-call InferenceConfig.
 // Temperature, TopP, StopSequences, and MaxTokens are mapped here.
 // TopK is handled separately via buildAdditionalFields.
+//
+// When thinking is enabled on a Claude model, the resolved thinking budget
+// is added on top of MaxTokens so the model has room to both reason and answer.
 func (p *BedrockProvider) buildInferenceConfiguration(cfg *agent.InferenceConfig) *types.InferenceConfiguration {
+	maxTokens := p.maxTokens
+	if cfg != nil && cfg.MaxTokens != nil {
+		maxTokens = int32(*cfg.MaxTokens)
+	}
+	if budget := p.resolveThinkingBudget(); budget > 0 {
+		maxTokens += int32(budget)
+	}
+
 	ic := &types.InferenceConfiguration{
-		MaxTokens: aws.Int32(p.maxTokens),
+		MaxTokens: aws.Int32(maxTokens),
 	}
 	if cfg == nil {
 		return ic
@@ -416,40 +463,46 @@ func (p *BedrockProvider) buildInferenceConfiguration(cfg *agent.InferenceConfig
 	if cfg.StopSequences != nil {
 		ic.StopSequences = cfg.StopSequences
 	}
-	if cfg.MaxTokens != nil {
-		ic.MaxTokens = aws.Int32(int32(*cfg.MaxTokens))
-	}
 	return ic
 }
 
 // buildAdditionalFields builds the AdditionalModelRequestFields document,
 // merging thinking configuration (if enabled) with TopK (if provided).
 func (p *BedrockProvider) buildAdditionalFields(cfg *agent.InferenceConfig) document.Interface {
-	hasThinking := p.thinkingLevel != "" && p.thinkingStyle != thinkingStyleNone
 	hasTopK := cfg != nil && cfg.TopK != nil
 
-	if !hasThinking && !hasTopK {
-		return nil
-	}
-
-	fields := map[string]any{}
-
-	// Merge thinking fields if enabled.
-	if hasThinking {
-		if p.thinkingStyle == thinkingStyleClaude {
-			fields["thinking"] = map[string]any{
-				"type":          "enabled",
-				"budget_tokens": pvdr.ThinkingBudgets[p.thinkingLevel],
+	// Thinking config differs by model style.
+	var thinkingFields map[string]any
+	switch p.thinkingStyle {
+	case thinkingStyleClaude:
+		if budget := p.resolveThinkingBudget(); budget > 0 {
+			thinkingFields = map[string]any{
+				"thinking": map[string]any{
+					"type":          "enabled",
+					"budget_tokens": budget,
+				},
 			}
-		} else {
-			fields["reasoningConfig"] = map[string]any{
-				"type":               "enabled",
-				"maxReasoningEffort": p.thinkingLevel,
+		}
+	case thinkingStyleNova2:
+		// Nova 2 takes the effort string directly. Budget is not applicable.
+		if p.thinkingEffort != "" {
+			thinkingFields = map[string]any{
+				"reasoningConfig": map[string]any{
+					"type":               "enabled",
+					"maxReasoningEffort": string(p.thinkingEffort),
+				},
 			}
 		}
 	}
 
-	// Add TopK for Anthropic models via model-specific fields.
+	if thinkingFields == nil && !hasTopK {
+		return nil
+	}
+
+	fields := map[string]any{}
+	for k, v := range thinkingFields {
+		fields[k] = v
+	}
 	if hasTopK {
 		fields["top_k"] = *cfg.TopK
 	}

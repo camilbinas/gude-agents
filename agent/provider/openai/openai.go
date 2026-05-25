@@ -19,10 +19,10 @@ import (
 
 // OpenAIProvider implements agent.Provider using the OpenAI Chat Completions API.
 type OpenAIProvider struct {
-	client        *openaisdk.Client
-	model         string
-	maxTokens     int64
-	thinkingLevel string // "low", "medium", "high" — mapped to OpenAI's reasoning_effort
+	client         *openaisdk.Client
+	model          string
+	maxTokens      int64
+	thinkingEffort pvdr.ThinkingEffort // mapped to OpenAI's reasoning_effort; empty = disabled
 }
 
 // Name returns a human-readable identifier for this provider instance.
@@ -32,10 +32,10 @@ func (p *OpenAIProvider) Name() string { return "openai" }
 type Option func(*options)
 
 type options struct {
-	apiKey        string
-	baseURL       string
-	maxTokens     int64
-	thinkingLevel string // "" = not set
+	apiKey         string
+	baseURL        string
+	maxTokens      int64
+	thinkingEffort pvdr.ThinkingEffort
 }
 
 // WithAPIKey sets the OpenAI API key. Defaults to OPENAI_API_KEY env var.
@@ -54,9 +54,10 @@ func WithMaxTokens(n int64) Option {
 }
 
 // WithThinking sets the reasoning effort for o-series and reasoning-capable models.
-// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
-func WithThinking(effort string) Option {
-	return func(o *options) { o.thinkingLevel = effort }
+// Use the predefined ThinkingEffort constants. OpenAI supports
+// ThinkingMinimal, ThinkingLow, ThinkingMedium, and ThinkingHigh.
+func WithThinking(effort pvdr.ThinkingEffort) Option {
+	return func(o *options) { o.thinkingEffort = effort }
 }
 
 // Must is a helper that wraps a (*OpenAIProvider, error) call and panics on error.
@@ -88,10 +89,10 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 
 	client := openaisdk.NewClient(clientOpts...)
 	return &OpenAIProvider{
-		client:        &client,
-		model:         model,
-		maxTokens:     o.maxTokens,
-		thinkingLevel: o.thinkingLevel,
+		client:         &client,
+		model:          model,
+		maxTokens:      o.maxTokens,
+		thinkingEffort: o.thinkingEffort,
 	}, nil
 }
 
@@ -224,8 +225,8 @@ func (p *OpenAIProvider) buildParams(params agent.ConverseParams) openaisdk.Chat
 	if params.ToolChoice != nil {
 		input.ToolChoice = toOpenAIToolChoice(params.ToolChoice)
 	}
-	if p.thinkingLevel != "" {
-		input.ReasoningEffort = shared.ReasoningEffort(p.thinkingLevel)
+	if p.thinkingEffort != "" {
+		input.ReasoningEffort = shared.ReasoningEffort(p.thinkingEffort)
 	}
 	// Apply inference config overrides.
 	// TopK is silently ignored — OpenAI Chat Completions API does not support it.

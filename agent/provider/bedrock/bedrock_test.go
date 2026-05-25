@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
+	pvdr "github.com/camilbinas/gude-agents/agent/provider"
 	"github.com/camilbinas/gude-agents/agent/tool"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -668,8 +669,8 @@ func TestBuildAdditionalFields_NoTopK_NoThinking_ReturnsNil(t *testing.T) {
 
 func TestBuildAdditionalFields_ThinkingAndTopK_Merged(t *testing.T) {
 	p := &BedrockProvider{
-		thinkingStyle: thinkingStyleClaude,
-		thinkingLevel: "medium",
+		thinkingStyle:  thinkingStyleClaude,
+		thinkingEffort: pvdr.ThinkingMedium,
 	}
 	topK := 40
 	result := p.buildAdditionalFields(&agent.InferenceConfig{TopK: &topK})
@@ -698,8 +699,8 @@ func TestBuildAdditionalFields_ThinkingAndTopK_Merged(t *testing.T) {
 
 func TestBuildAdditionalFields_ThinkingOnly_NoTopK(t *testing.T) {
 	p := &BedrockProvider{
-		thinkingStyle: thinkingStyleClaude,
-		thinkingLevel: "high",
+		thinkingStyle:  thinkingStyleClaude,
+		thinkingEffort: pvdr.ThinkingHigh,
 	}
 	result := p.buildAdditionalFields(nil)
 	if result == nil {

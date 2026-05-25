@@ -20,19 +20,21 @@ import (
 
 // AnthropicProvider implements agent.Provider using the Anthropic Messages API.
 type AnthropicProvider struct {
-	client        anthropicsdk.Client
-	model         anthropicsdk.Model
-	maxTokens     int64
-	thinkingLevel string // "low", "medium", "high" — empty = disabled
+	client         anthropicsdk.Client
+	model          anthropicsdk.Model
+	maxTokens      int64
+	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
+	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
 }
 
 // Option configures the AnthropicProvider.
 type Option func(*options)
 
 type options struct {
-	apiKey        string
-	maxTokens     int64
-	thinkingLevel string // "low", "medium", "high" — empty = disabled
+	apiKey         string
+	maxTokens      int64
+	thinkingEffort pvdr.ThinkingEffort
+	thinkingBudget int64
 }
 
 // WithAPIKey sets the Anthropic API key. Defaults to ANTHROPIC_API_KEY env var.
@@ -45,10 +47,25 @@ func WithMaxTokens(n int64) Option {
 	return func(o *options) { o.maxTokens = n }
 }
 
-// WithThinking enables extended thinking at the given effort level.
-// Use the shared constants: provider.ThinkingLow, provider.ThinkingMedium, provider.ThinkingHigh.
-func WithThinking(effort string) Option {
-	return func(o *options) { o.thinkingLevel = effort }
+// WithThinking enables extended thinking at the given effort level. The effort
+// is mapped to a token budget via provider.ThinkingBudgets. For direct control
+// over the token budget, use WithThinkingBudget instead — it takes precedence
+// when both are set.
+//
+// When thinking is enabled, the resolved budget is added on top of MaxTokens
+// so the model has headroom to both reason and produce a final answer.
+func WithThinking(effort pvdr.ThinkingEffort) Option {
+	return func(o *options) { o.thinkingEffort = effort }
+}
+
+// WithThinkingBudget enables extended thinking with an explicit token budget.
+// Use this when you need finer control than the predefined ThinkingEffort levels.
+// Takes precedence over WithThinking when both are set.
+//
+// The budget is added on top of MaxTokens so the model has headroom to both
+// reason and produce a final answer.
+func WithThinkingBudget(tokens int64) Option {
+	return func(o *options) { o.thinkingBudget = tokens }
 }
 
 // Must is a helper that wraps a (*AnthropicProvider, error) call and panics on error.
@@ -76,10 +93,11 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 	}
 
 	return &AnthropicProvider{
-		client:        anthropicsdk.NewClient(clientOpts...),
-		model:         anthropicsdk.Model(model),
-		maxTokens:     o.maxTokens,
-		thinkingLevel: o.thinkingLevel,
+		client:         anthropicsdk.NewClient(clientOpts...),
+		model:          anthropicsdk.Model(model),
+		maxTokens:      o.maxTokens,
+		thinkingEffort: o.thinkingEffort,
+		thinkingBudget: o.thinkingBudget,
 	}, nil
 }
 
@@ -202,6 +220,20 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 // Helpers
 // ---------------------------------------------------------------------------
 
+// resolveThinkingBudget returns the active thinking budget in tokens.
+// An explicit budget set via WithThinkingBudget takes precedence over an
+// effort level set via WithThinking. Returns 0 when thinking is disabled
+// or the effort level is unknown.
+func (p *AnthropicProvider) resolveThinkingBudget() int64 {
+	if p.thinkingBudget > 0 {
+		return p.thinkingBudget
+	}
+	if p.thinkingEffort != "" {
+		return pvdr.ThinkingBudgets[p.thinkingEffort]
+	}
+	return 0
+}
+
 func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsdk.MessageNewParams {
 	input := anthropicsdk.MessageNewParams{
 		Model:     p.model,
@@ -219,8 +251,12 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 	if params.ToolChoice != nil {
 		input.ToolChoice = toAnthropicToolChoice(params.ToolChoice)
 	}
-	if p.thinkingLevel != "" {
-		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(pvdr.ThinkingBudgets[p.thinkingLevel])
+	if budget := p.resolveThinkingBudget(); budget > 0 {
+		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(budget)
+		// Anthropic requires max_tokens > thinking.budget_tokens. Add the
+		// budget on top of the configured max so the model has room to
+		// both reason and answer.
+		input.MaxTokens = p.maxTokens + budget
 	}
 	// Apply inference config overrides.
 	if cfg := params.InferenceConfig; cfg != nil {
