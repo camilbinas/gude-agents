@@ -355,13 +355,14 @@ func (g *Graph[S]) Run(ctx context.Context, initial S, opts ...RunOption) (Resul
 	}
 
 	exec := &runExec[S]{
-		graph:     g,
-		state:     g.ops.copy(initial),
-		ops:       g.ops,
-		nodes:     g.nodes,
-		completed: make(map[string]bool),
-		workQueue: []string{g.entry},
-		threadID:  cfg.threadID,
+		graph:          g,
+		state:          g.ops.copy(initial),
+		ops:            g.ops,
+		nodes:          g.nodes,
+		completed:      make(map[string]bool),
+		workQueue:      []string{g.entry},
+		threadID:       cfg.threadID,
+		extraEventHook: cfg.extraEventHook,
 	}
 
 	// Initialize data-flow scheduling fields.
@@ -383,16 +384,23 @@ func (g *Graph[S]) Run(ctx context.Context, initial S, opts ...RunOption) (Resul
 	err := exec.execute(ctx)
 
 	// Emit GraphCompleted event with final state, usage, and error (if any).
-	if g.eventHook != nil {
+	// Both the graph-level hook and any per-run extra hook receive it.
+	if g.eventHook != nil || cfg.extraEventHook != nil {
 		snapshot, _ := g.ops.toMap(exec.state)
-		g.eventHook.OnEvent(GraphEvent{
+		completed := GraphEvent{
 			Type:          EventGraphCompleted,
 			Timestamp:     time.Now(),
 			StateSnapshot: snapshot,
 			Usage:         exec.usage,
 			ThreadID:      cfg.threadID,
 			Error:         err,
-		})
+		}
+		if g.eventHook != nil {
+			g.eventHook.OnEvent(completed)
+		}
+		if cfg.extraEventHook != nil {
+			cfg.extraEventHook.OnEvent(completed)
+		}
 	}
 
 	if finishTrace != nil {

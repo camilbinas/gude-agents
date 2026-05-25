@@ -192,6 +192,41 @@ func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) 
 
 Runs the agent loop, streaming the final text response via the callback. The callback receives chunks in real-time unless output guardrails are configured (in which case chunks are buffered).
 
+### InvokeEventStream
+
+```go
+func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventStreamOption) <-chan AgentEvent
+```
+
+Runs the agent loop and returns a single channel of `AgentEvent` values covering every observable step: text chunks, thinking chunks, tool calls (start + end with output and error), model lifecycle, iteration boundaries, and the final result. Useful for building UIs (SSE, WebSocket, CLI dashboards) without implementing the `EventHook` interface manually.
+
+The channel always ends with a single terminal `EventInvokeEnd` event carrying the final error (nil on success) and cumulative `TokenUsage`, then closes.
+
+```go
+events := a.InvokeEventStream(ctx, "user message")
+for ev := range events {
+    switch ev.Type {
+    case agent.EventTextChunk:        // ev.TextChunk
+        fmt.Print(ev.TextChunk)
+    case agent.EventThinkingChunk:    // ev.ThinkingChunk
+    case agent.EventToolCallStart:    // ev.ToolName, ev.ToolInput
+    case agent.EventToolCallEnd:      // ev.ToolName, ev.ToolOutput, ev.Err, ev.Duration
+    case agent.EventModelEnd:         // ev.StopReason
+    case agent.EventInvokeEnd:        // ev.Err, ev.Usage — terminal event
+    }
+}
+```
+
+The full event taxonomy is `EventInvokeStart`, `EventIterationStart`, `EventModelStart`, `EventTextChunk`, `EventThinkingChunk`, `EventToolCallStart`, `EventToolCallEnd`, `EventModelEnd`, `EventIterationEnd`, `EventMaxIterations`, `EventInvokeEnd`.
+
+The caller's `*Context` is cloned internally, so `InvokeEventStream` is safe to call multiple times (sequentially or in parallel) on the same context. Any `EventHook` set via `WithEventHook` still fires alongside the channel.
+
+| Option | Description |
+|---|---|
+| `WithEventStreamBuffer(n)` | Override the channel buffer (default `DefaultEventStreamBuffer = 64`). Smaller buffers tighten back-pressure; larger buffers absorb slow consumers. Zero or negative values fall back to the default |
+
+If the consumer falls behind, the agent loop blocks on send once the buffer fills. To stop the run early, cancel the `context.Context` backing the `*Context` you passed in.
+
 ### InvokeStructured
 
 For structured output, see [Structured Output](structured-output.md).

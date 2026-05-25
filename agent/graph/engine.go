@@ -35,14 +35,19 @@ type runExec[S any] struct {
 	readinessSet map[string]bool         // keys that have been produced
 	dataflowMeta map[string]DataFlowMeta // copied from graph at init
 	pending      map[string]bool         // nodes not yet executed (excludes entry)
+
+	// extraEventHook is a per-run hook injected via runConfig (e.g. by
+	// RunEventStream). It receives events alongside graph.eventHook without
+	// requiring mutation of the graph. Nil means no extra hook.
+	extraEventHook GraphEventHook
 }
 
-// emitEvent sends a GraphEvent to the configured event hook, if any.
-// This is a no-op when no event hook is configured (zero overhead).
-// It uses ops.toMap to produce the state snapshot for the event; if serialization
-// fails, the event is emitted with a nil StateSnapshot (non-fatal).
+// emitEvent sends a GraphEvent to the configured event hooks, if any.
+// Both the graph-level eventHook and any per-run extraEventHook receive the
+// event. The state snapshot is populated lazily from the current state when
+// not already set on the event.
 func (e *runExec[S]) emitEvent(event GraphEvent) {
-	if e.graph.eventHook == nil {
+	if e.graph.eventHook == nil && e.extraEventHook == nil {
 		return
 	}
 	// If StateSnapshot is not already set, populate it from a copy of the current state.
@@ -54,7 +59,12 @@ func (e *runExec[S]) emitEvent(event GraphEvent) {
 		}
 		// On error, emit with nil StateSnapshot (non-fatal).
 	}
-	e.graph.eventHook.OnEvent(event)
+	if e.graph.eventHook != nil {
+		e.graph.eventHook.OnEvent(event)
+	}
+	if e.extraEventHook != nil {
+		e.extraEventHook.OnEvent(event)
+	}
 }
 
 // execute runs the iterative work queue loop until the queue is empty,

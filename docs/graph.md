@@ -441,6 +441,42 @@ g, _ := graph.New[graph.State](
 
 `OnEvent` is called synchronously — implementations must not block (use buffered channels or async dispatch). Agent-level events include additional fields: `ToolName`, `ToolInput`, `ToolOutput`, and `ToolDuration` for tool calls; `StopReason` for model end; `Chunk` for streaming.
 
+### RunEventStream
+
+For consumers that want a channel of events instead of implementing `GraphEventHook`, use `RunEventStream`:
+
+```go
+func (g *Graph[S]) RunEventStream(ctx context.Context, initial S, opts ...EventStreamOption) *EventStream[S]
+```
+
+It runs the graph on a background goroutine and returns an `EventStream[S]` handle exposing both a live event channel and the typed `Result[S]`. The events channel ends with a single `EventGraphCompleted` carrying final state, usage, and any error, then closes.
+
+```go
+stream := g.RunEventStream(ctx, initial)
+
+for ev := range stream.Events() {
+    switch ev.Type {
+    case graph.EventNodeStarted:
+        fmt.Println("node:", ev.NodeName)
+    case graph.EventGraphCompleted:
+        // terminal event — Error is populated on failure
+    }
+}
+
+res, err := stream.Result() // blocks until the run completes
+```
+
+`Result()` blocks until the run is done, so it is safe to call before, during, or after draining `Events()`.
+
+| Option | Description |
+|---|---|
+| `WithEventStreamBuffer(n)` | Override the events channel buffer (default `DefaultEventStreamBuffer = 64`). Zero or negative falls back to the default |
+| `WithRunOption(opt)` | Forward any `RunOption` (e.g. `WithThreadID`) to the underlying `Run` call |
+
+The per-call channel hook layers on top of any `WithEventHook` / `SetEventHook` already configured on the graph, so existing observers keep firing. Multiple concurrent `RunEventStream` calls on the same graph are safe — each gets its own channel and per-call hook.
+
+If the consumer falls behind, the engine blocks on send once the buffer fills. To stop the run early, cancel the context passed to `RunEventStream`.
+
 ### Graph Introspection
 
 `Structure()` returns the graph's topology as a serializable `GraphStructure`. Each `NodeInfo` includes `ID`, `Label`, `Provider`, `Model`, `Tools`, `InputKeys`, `OutputKeys`, `Layer` (BFS depth), and interrupt flags. Each `DataFlowEdge` has `From` (producer), `To` (consumer), and `Key` (the state key connecting them).
