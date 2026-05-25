@@ -109,8 +109,24 @@ jobs:
 
       # Build and test BEFORE touching go.mod or creating any tags.
       # Uses go.work so local modules resolve without published tags.
+      #
+      # GOPRIVATE marks our own module path as private so Go does not
+      # consult sum.golang.org or proxy.golang.org to verify in-tree
+      # versions. Without it, Go tries to verify each submodule's go.mod
+      # requirement (e.g. github.com/camilbinas/gude-agents v0.68.0)
+      # against the sum DB, which fails on the release commit that first
+      # introduces the new version because the sum DB hasn't ingested it
+      # yet. External dependencies (AWS SDK, rapid, etc.) still go through
+      # the public proxy and sum DB normally.
+      #
+      # GOTOOLCHAIN=local prevents Go from auto-downloading a different
+      # toolchain if the workspace declares a newer go directive than the
+      # one setup-go installed — surface that as a hard error.
       - name: Verify build and tests
         if: steps.bump.outputs.skip == 'false'
+        env:
+          GOPRIVATE: 'github.com/camilbinas/*'
+          GOTOOLCHAIN: 'local'
         run: |
           GOWORK=$(pwd)/go.work go build ./agent/...
           GOWORK=$(pwd)/go.work go vet ./agent/...
