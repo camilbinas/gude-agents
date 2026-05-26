@@ -108,7 +108,9 @@ jobs:
           echo "Bump: $BUMP — $LATEST_TAG → $NEW_VERSION"
 
       # Build and test BEFORE touching go.mod or creating any tags.
-      # Uses go.work so local modules resolve without published tags.
+      #
+      # We generate a CI-only workspace file that excludes ./examples and
+      # ./integration. Those modules pull in heavy transitive deps.
       #
       # GOPRIVATE marks our own module path as private so Go does not
       # consult sum.golang.org or proxy.golang.org to verify in-tree
@@ -120,17 +122,19 @@ jobs:
       # the public proxy and sum DB normally.
       #
       # GOTOOLCHAIN=local prevents Go from auto-downloading a different
-      # toolchain if the workspace declares a newer go directive than the
-      # one setup-go installed — surface that as a hard error.
+      # toolchain if a transitive dep declares a newer go directive than
+      # the one setup-go installed — surface that as a hard error.
       - name: Verify build and tests
         if: steps.bump.outputs.skip == 'false'
         env:
           GOPRIVATE: 'github.com/camilbinas/*'
           GOTOOLCHAIN: 'local'
         run: |
-          GOWORK=$(pwd)/go.work go build ./agent/...
-          GOWORK=$(pwd)/go.work go vet ./agent/...
-          GOWORK=$(pwd)/go.work go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
+          grep -vE '^\s+\./(examples|integration)$' go.work > go.work.ci
+          GOWORK=$(pwd)/go.work.ci go build ./agent/...
+          GOWORK=$(pwd)/go.work.ci go vet ./agent/...
+          GOWORK=$(pwd)/go.work.ci go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
+          rm -f go.work.ci go.work.ci.sum
 
       # Everything below only runs if build+tests pass.
       # go.mod bump, tags, and push are done atomically so a failure
