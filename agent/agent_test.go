@@ -194,7 +194,7 @@ func TestNewAgent_NoTools(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Core loop tests (task 3.4)
+// Core loop tests
 // ---------------------------------------------------------------------------
 
 func TestInvoke_TextOnlyResponse(t *testing.T) {

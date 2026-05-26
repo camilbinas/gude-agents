@@ -193,8 +193,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 	pollErr := r.pollLoop(ctx, processCtx)
 
 	// --- Shutdown sequence ---
-	// Requirement 13.1: Stop accepting new events (pollLoop already returned).
-	// Requirement 13.2: Wait for in-flight goroutines up to shutdown timeout.
+	// Stop accepting new events (pollLoop already returned), then wait for
+	// in-flight goroutines up to shutdownTimeout. If the timeout is hit,
+	// cancel in-flight processing contexts so they unwind. Either way,
+	// deregister the worker (best-effort) and call Agent.Close with its
+	// own timeout guard. Returns nil on success or the first error
+	// encountered during the sequence.
 
 	heartbeatCancel()
 	heartbeatWg.Wait()
@@ -229,15 +233,17 @@ func (r *Runtime) Run(ctx context.Context) error {
 	case <-done:
 		// All in-flight work completed gracefully.
 	case <-time.After(r.cfg.shutdownTimeout):
-		// Requirement 13.3: Cancel processing contexts if timeout exceeded.
+		// Cancel processing contexts so handlers unwind promptly.
 		r.logf("agentcore:shutdown", "shutdown timeout exceeded, cancelling in-flight processing")
 		processCancel()
 	}
 
-	// Requirement 13.4, 13.5: Deregister the worker (best-effort).
+	// Best-effort deregister: log and swallow errors so a transient backend
+	// hiccup doesn't mask a more important shutdown error.
 	r.deregister(context.Background())
 
-	// Requirement 13.6: Call Agent.Close() with timeout guard.
+	// Close the agent with a timeout guard so a wedged Background_Tool can't
+	// pin the runtime forever.
 	closeDone := make(chan struct{})
 	go func() {
 		r.agent.Close()
@@ -254,7 +260,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 	}
 
-	// Requirement 13.7: Return nil on success or first failure error.
 	return shutdownErr
 }
 

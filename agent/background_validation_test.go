@@ -23,7 +23,7 @@ func validBackgroundTool(name string) tool.Tool {
 }
 
 // ---------------------------------------------------------------------------
-// Requirement 1.5: empty ack rejected at agent.New
+// Background_Tool empty Ack rejected at agent.New
 // ---------------------------------------------------------------------------
 
 func TestNewAgent_BackgroundTool_EmptyAck(t *testing.T) {
@@ -45,7 +45,7 @@ func TestNewAgent_BackgroundTool_EmptyAck(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Requirement 1.6: nil handler rejected at agent.New
+// Background_Tool nil handler rejected at agent.New
 // ---------------------------------------------------------------------------
 
 func TestNewAgent_BackgroundTool_NilHandler(t *testing.T) {
@@ -64,7 +64,7 @@ func TestNewAgent_BackgroundTool_NilHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Requirement 9.1: no Conversation_Store rejected at agent.New
+// Background_Tool requires a Conversation_Store at agent.New
 // ---------------------------------------------------------------------------
 
 func TestNewAgent_BackgroundTool_NoConversationStore(t *testing.T) {
@@ -83,7 +83,7 @@ func TestNewAgent_BackgroundTool_NoConversationStore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Requirement 9.3: success when WithConversation is supplied
+// Background_Tool: agent.New succeeds when WithConversation is supplied
 // ---------------------------------------------------------------------------
 
 func TestNewAgent_BackgroundTool_WithConversation_Succeeds(t *testing.T) {
@@ -117,7 +117,7 @@ func TestNewAgent_BackgroundTool_WithSharedConversation_Succeeds(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Requirement 9.2: RegisterTool returns error without Conversation_Store
+// RegisterTool returns an error for Background_Tools without a Conversation_Store
 // ---------------------------------------------------------------------------
 
 func TestRegisterTool_BackgroundTool_NoConversationStore(t *testing.T) {
@@ -141,7 +141,7 @@ func TestRegisterTool_BackgroundTool_NoConversationStore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Requirement 8.1: WithBackgroundNotify wires notify onto the registry
+// WithBackgroundNotify wires the notify callback onto the registry
 // ---------------------------------------------------------------------------
 
 func TestWithBackgroundNotify_WiredOntoRegistry(t *testing.T) {
@@ -206,17 +206,17 @@ func TestDocumentation_V1ScopeNotes(t *testing.T) {
 	}
 	src := string(data)
 
-	// Requirement 13.3 / 13.4: in-memory-only note
+	// Asserts the in-memory-only note.
 	if !strings.Contains(src, "process memory only") {
 		t.Error("background.go package doc must contain the in-memory-only note ('process memory only')")
 	}
 
-	// Requirement 13.3: abandonment-on-exit note
+	// Asserts the abandonment-on-exit note.
 	if !strings.Contains(src, "abandoned") && !strings.Contains(src, "results are lost") {
 		t.Error("background.go package doc must contain the abandonment-on-exit note ('abandoned' or 'results are lost')")
 	}
 
-	// Requirement 11.3: no-streaming-notification note
+	// Asserts the no-streaming-notification note.
 	if !strings.Contains(src, "Streaming") || !strings.Contains(src, "future extension") {
 		t.Error("background.go package doc must contain the no-streaming-notification note ('Streaming' and 'future extension')")
 	}

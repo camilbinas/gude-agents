@@ -371,7 +371,7 @@ func TestNormalize_OriginalSliceNotMutated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent option integration tests (task 3.3)
+// Agent option integration tests
 // ---------------------------------------------------------------------------
 
 // TestWithMessageNormalizer_ValidStrategies verifies that WithMessageNormalizer

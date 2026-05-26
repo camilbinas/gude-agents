@@ -113,7 +113,8 @@ func TestConversation_Load_UnknownConversationID(t *testing.T) {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 
-	// Must return non-nil empty slice per requirement 6.5.
+	// Must return non-nil empty slice — callers rely on len()/range without
+	// nil-check.
 	if messages == nil {
 		t.Fatal("expected non-nil slice, got nil")
 	}

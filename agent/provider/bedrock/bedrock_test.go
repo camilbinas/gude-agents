@@ -723,7 +723,7 @@ func TestBuildAdditionalFields_ThinkingOnly_NoTopK(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ImageBlock translation tests (sub-task 5.1)
+// ImageBlock translation tests
 // ---------------------------------------------------------------------------
 
 func TestToBedrockContentBlocks_ImageBlock_RawBytes(t *testing.T) {

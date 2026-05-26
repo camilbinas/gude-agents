@@ -199,7 +199,7 @@ func (r *backgroundRegistry) logBackgroundCompletion(d backgroundDispatch, err e
 func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
 	// Guard: if the registry or conversation store is not wired, we cannot
 	// perform a re-entry turn. This can happen in unit tests that exercise
-	// handler dispatch in isolation before task 7.3 wires the registry field.
+	// handler dispatch in isolation without a Conversation_Store.
 	if a.backgroundRegistry == nil || a.conversation == nil {
 		return
 	}

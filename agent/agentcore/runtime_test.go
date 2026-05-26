@@ -91,7 +91,7 @@ func TestNewRuntime_AgentNameFallback(t *testing.T) {
 	}
 }
 
-// --- Tests for task 4.1: register, heartbeat, deregister, double-Run ---
+// --- Tests for Run lifecycle: register, heartbeat, deregister, double-Run ---
 
 func TestRun_DoubleRunRejection(t *testing.T) {
 	// Create a mock that succeeds on registration (returns a worker ID).

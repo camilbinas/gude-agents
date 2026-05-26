@@ -528,8 +528,8 @@ func TestProperty_P1_OriginatingTurnAckInvariant(t *testing.T) {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
 
-		// The backgroundRegistry is now lazily constructed in agent.New (task 7.3),
-		// so no manual setup is needed.
+		// The backgroundRegistry is constructed lazily by agent.New, so no
+		// manual setup is needed.
 
 		// Invoke the agent.
 		ctx := Background().WithConversationID("conv-p1")
@@ -753,8 +753,8 @@ func TestProperty_P18_IndependenceFromSyncAndAsync(t *testing.T) {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
 
-		// The backgroundRegistry is now lazily constructed in agent.New (task 7.3),
-		// so no manual setup is needed.
+		// The backgroundRegistry is constructed lazily by agent.New, so no
+		// manual setup is needed.
 
 		// Invoke the agent.
 		ctx := Background().WithConversationID("conv-p18")
@@ -846,11 +846,11 @@ func TestProperty_P18_IndependenceFromSyncAndAsync(t *testing.T) {
 		}
 
 		// Assert no Re_Entry_Turn was initiated for Sync or Async tools.
-		// With the backgroundRegistry properly wired (task 7.3), the Background_Tool's
-		// Re_Entry_Turn DOES run and makes one additional provider call. So we expect
-		// exactly 3 calls: 2 from the originating turn + 1 from the Background_Tool's
-		// Re_Entry_Turn. If a Re_Entry_Turn had been initiated for Sync or Async tools,
-		// we would see more than 3 provider calls.
+		// The Background_Tool's Re_Entry_Turn does run and makes one additional
+		// provider call, so we expect exactly 3 calls: 2 from the originating
+		// turn + 1 from the Background_Tool's Re_Entry_Turn. If a Re_Entry_Turn
+		// had been initiated for Sync or Async tools, we would see more than 3
+		// provider calls.
 		recordMu.Lock()
 		finalCallCount := len(recordedCalls)
 		recordMu.Unlock()
@@ -965,8 +965,7 @@ func TestProperty_P2_SchemaValidationGatesDispatch(t *testing.T) {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
 
-		// Manually set up the backgroundRegistry since task 7.3 (lazy construction
-		// in agent.New) hasn't been implemented yet.
+		// Override the backgroundRegistry with a clean instance for the test.
 		a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
 		// Invoke the agent.
@@ -1137,7 +1136,7 @@ func TestProperty_P3_DispatchMetadataFidelity(t *testing.T) {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
 
-		// Wire up the backgroundRegistry (task 7.3 not yet implemented).
+		// Wire up the backgroundRegistry for the test.
 		a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
 		// --- Invoke the agent with the generated metadata ---
@@ -1370,7 +1369,7 @@ func TestProperty_P6_ResultInjectionShape(t *testing.T) {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
 
-		// Wire up the backgroundRegistry (task 7.3 not yet implemented).
+		// Wire up the backgroundRegistry for the test.
 		a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
 		// --- Invoke the agent ---
@@ -1934,7 +1933,7 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
 
-		// Wire up the backgroundRegistry (task 7.3 not yet implemented).
+		// Wire up the backgroundRegistry for the test.
 		a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
 		// --- Invoke the agent (originating turn) ---
@@ -3511,7 +3510,7 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 		t.Fatalf("agent.New failed: %v", err)
 	}
 
-	// Manually set up the backgroundRegistry (task 7.3 lazy construction hasn't landed yet).
+	// Override the backgroundRegistry with a clean instance for the test.
 	a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
 	// Invoke the agent with a *Context that has NO conversation ID override.

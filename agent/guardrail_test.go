@@ -47,7 +47,7 @@ func (cp *capturingProvider) ConverseStream(ctx context.Context, params Converse
 }
 
 // ---------------------------------------------------------------------------
-// Guardrail tests (task 9.3)
+// Guardrail tests
 // ---------------------------------------------------------------------------
 
 func TestInputGuardrail_TransformsMessage(t *testing.T) {

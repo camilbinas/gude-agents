@@ -20,7 +20,7 @@ func (h *collectingHook) OnEvent(e GraphEvent) {
 	h.mu.Unlock()
 }
 
-// ── Task 13.1 & 13.2: Event emission for data-flow nodes ────────────────────
+// ── Event emission for data-flow nodes ────────────────────────────────────
 
 func TestDataFlowEvent_NodeStartedAndCompletedForSequentialNodes(t *testing.T) {
 	// Verify EventNodeStarted emitted before each node executes and
