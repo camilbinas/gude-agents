@@ -59,6 +59,11 @@ const (
 	// cumulative token usage. The channel is closed immediately after.
 	EventInvokeEnd EventType = "invoke_end"
 
+	// EventWidget is emitted when a tool handler produces a WidgetBlock via
+	// Context.EmitWidget. It is delivered before the corresponding EventToolCallEnd
+	// for the same tool call. Read WidgetType and WidgetPayload for the block data.
+	EventWidget EventType = "widget"
+
 	// EventCustom carries a user-defined event emitted from inside a tool
 	// handler, middleware, or graph node via Context.EmitEvent. The payload
 	// is opaque JSON; the receiver typically discriminates on CustomName.
@@ -105,6 +110,11 @@ type AgentEvent struct {
 	// Both are populated only when Type is EventCustom.
 	CustomName    string          `json:"custom_name,omitempty"`
 	CustomPayload json.RawMessage `json:"custom_payload,omitempty"`
+
+	// Widget event payload (EventWidget). Both fields are populated only when
+	// Type is EventWidget.
+	WidgetType    string          `json:"widget_type,omitempty"`
+	WidgetPayload json.RawMessage `json:"widget_payload,omitempty"`
 }
 
 // DefaultEventStreamBuffer is the default buffer size for InvokeEventStream's

@@ -308,6 +308,35 @@ func GetTyped[T any](c *Context, key any) (T, bool) {
 	return t, ok
 }
 
+// EmitWidget emits a WidgetBlock from inside a tool handler, middleware, or
+// graph node. It validates the block, appends it to the per-call widget
+// accumulator (thread-safe), and delivers an EventWidget event to the active
+// InvokeEventStream channel (if any).
+//
+// Returns a non-nil error if block.Type is empty; in that case no event is
+// emitted and the accumulator is unchanged.
+//
+// Safe for concurrent use when parallelTools is enabled. All synchronization
+// is internal to the agent package.
+func (c *Context) EmitWidget(block WidgetBlock) error {
+	if err := block.Validate(); err != nil {
+		return err
+	}
+	// Append to the per-call accumulator (see widgetAccumulatorKey).
+	if acc, ok := GetTyped[*widgetAccumulator](c, widgetAccumulatorKey{}); ok {
+		acc.append(block)
+	}
+	// Deliver the event to the stream hook if present.
+	hook := c.EventHook()
+	if hook == nil {
+		return nil
+	}
+	if emitter, ok := hook.(WidgetEmitter); ok {
+		emitter.OnWidget(c, block)
+	}
+	return nil
+}
+
 // WithValue returns a new *Context that carries the given key-value pair in the
 // embedded context.Context. Use this to pass values that downstream libraries
 // read via ctx.Value (e.g. request IDs, trace baggage).

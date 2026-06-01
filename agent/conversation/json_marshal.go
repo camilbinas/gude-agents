@@ -29,6 +29,9 @@ type jsonContentBlock struct {
 	DocName     string `json:"doc_name,omitempty"`      // optional filename hint
 	// Tool result images (populated when Type == "tool_result" and images are present).
 	ToolResultImages []jsonToolResultImage `json:"tool_result_images,omitempty"`
+	// Widget fields (populated when Type == "widget").
+	WidgetType    string          `json:"widget_type,omitempty"`
+	WidgetPayload json.RawMessage `json:"widget_payload,omitempty"`
 }
 
 // jsonToolResultImage is the JSON envelope for an image in a tool result.
@@ -117,6 +120,12 @@ func contentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 			DocMIMEType: b.Source.MIMEType,
 			DocName:     b.Source.Name,
 		}
+	case agent.WidgetBlock:
+		return jsonContentBlock{
+			Type:          "widget",
+			WidgetType:    b.Type,
+			WidgetPayload: b.Payload,
+		}
 	default:
 		return jsonContentBlock{Type: "unknown"}
 	}
@@ -160,6 +169,11 @@ func jsonToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 				MIMEType: jcb.DocMIMEType,
 				Name:     jcb.DocName,
 			},
+		}
+	case "widget":
+		return agent.WidgetBlock{
+			Type:    jcb.WidgetType,
+			Payload: jcb.WidgetPayload,
 		}
 	default:
 		return agent.TextBlock{}

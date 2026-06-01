@@ -204,14 +204,17 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			}
 		}
 
+		// Strip WidgetBlocks before sending to the provider.
+		providerMessages := stripWidgets(messages)
+
 		// Normalize messages.
-		converseMessages := messages
+		converseMessages := providerMessages
 		if !a.normDisabled {
 			strategy := NormMerge
 			if a.normStrategy != nil {
 				strategy = *a.normStrategy
 			}
-			converseMessages = NormalizeMessages(messages, strategy)
+			converseMessages = NormalizeMessages(providerMessages, strategy)
 		}
 
 		// Call provider.
@@ -264,26 +267,32 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 
 		// Tool calls — execute and loop.
 		if len(resp.ToolCalls) > 0 {
-			assistantContent := make([]ContentBlock, 0, len(resp.ToolCalls))
-			if resp.Text != "" {
-				assistantContent = append(assistantContent, TextBlock{Text: resp.Text})
-			}
-			for _, tc := range resp.ToolCalls {
-				assistantContent = append(assistantContent, ToolUseBlock{
-					ToolUseID: tc.ToolUseID,
-					Name:      tc.Name,
-					Input:     tc.Input,
-				})
-			}
-			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
-
 			// Determine middleware for tool execution.
 			var extraMW []Middleware
 			if cfg != nil {
 				extraMW = cfg.extraMiddleware
 			}
-			results := a.executeToolsWithMiddleware(iterC, resp.ToolCalls, availableTools, h, extraMW)
+			results, widgetsByCall := a.executeToolsWithMiddleware(iterC, resp.ToolCalls, availableTools, h, extraMW)
 			iterF.finish(len(resp.ToolCalls), false)
+
+			// Build assistantContent after executeToolsWithMiddleware returns so
+			// that drained WidgetBlocks can be appended after each ToolUseBlock
+			// (per design: widgets appended after ToolUseBlock for the same call).
+			assistantContent := make([]ContentBlock, 0, len(resp.ToolCalls))
+			if resp.Text != "" {
+				assistantContent = append(assistantContent, TextBlock{Text: resp.Text})
+			}
+			for i, tc := range resp.ToolCalls {
+				assistantContent = append(assistantContent, ToolUseBlock{
+					ToolUseID: tc.ToolUseID,
+					Name:      tc.Name,
+					Input:     tc.Input,
+				})
+				for _, w := range widgetsByCall[i] {
+					assistantContent = append(assistantContent, w)
+				}
+			}
+			messages = append(messages, Message{Role: RoleAssistant, Content: assistantContent})
 
 			// Tool result interceptor — allows callers to inspect
 			// results and signal the loop to stop.
@@ -362,8 +371,11 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 
 // executeToolsWithMiddleware runs tool calls with optional extra middleware prepended.
 // If extraMiddleware is nil or empty, behaves identically to executeTools.
-func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks, extraMiddleware []Middleware) []ToolResultBlock {
+// It returns the tool results and, for each call at the same index, any WidgetBlocks
+// emitted by the handler via Context.EmitWidget.
+func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks, extraMiddleware []Middleware) ([]ToolResultBlock, [][]WidgetBlock) {
 	results := make([]ToolResultBlock, len(calls))
+	widgetsByCall := make([][]WidgetBlock, len(calls))
 
 	exec := func(i int, tc tool.Call) {
 		t, ok := availableTools[tc.Name]
@@ -377,6 +389,11 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 		}
 
 		toolC, tf := h.onToolStart(c, tc.Name, tc.Input)
+
+		// Inject a fresh widget accumulator for this tool call so that
+		// Context.EmitWidget can collect WidgetBlocks during handler execution.
+		acc := &widgetAccumulator{}
+		toolC.Set(widgetAccumulatorKey{}, acc)
 
 		if err := ValidateToolInput(t.Spec.InputSchema, tc.Input); err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
@@ -444,6 +461,7 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 				})
 			}
 			results[i] = result
+			widgetsByCall[i] = acc.drain()
 			return
 		}
 
@@ -500,6 +518,7 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 
 		tf.finish(nil, out)
 		results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: out}
+		widgetsByCall[i] = acc.drain()
 	}
 
 	if a.parallelTools {
@@ -518,7 +537,7 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 		}
 	}
 
-	return results
+	return results, widgetsByCall
 }
 
 // saveConversation persists conversation history if configured.
