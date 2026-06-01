@@ -22,6 +22,7 @@ Assistant: TextBlock (response) | ToolUseBlock (tool call request) | both
 | `ToolResultBlock` | user | Tool execution result (`ToolUseID`, `Content`, `IsError`, optional `Images`) |
 | `ImageBlock` | user | Image attachment (`Source ImageSource`) |
 | `DocumentBlock` | user | Document attachment (`Source DocumentSource`) |
+| `WidgetBlock` | assistant | Structured UI data emitted by a tool handler (`Type`, `Payload json.RawMessage`) — stripped before provider calls |
 
 `ToolUseID` links a `ToolUseBlock` to its corresponding `ToolResultBlock`.
 
@@ -109,6 +110,7 @@ type TokenUsage struct {
 
 - [Agent API Reference](agent-api.md) — constructor, options, and invoke methods
 - [Tool System](tools.md) — `Tool`, `Spec`, `Call`, and `Choice` types
+- [Widget Blocks](widgets.md) — emitting structured UI data from tool handlers
 - [RAG Pipeline](rag.md) — `Embedder`, `VectorStore`, `Retriever` interfaces
 - [Conversation System](conversation.md) — storing and loading `Message` history
 - [Providers](providers.md) — `Provider` interface
