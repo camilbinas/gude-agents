@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -64,6 +65,16 @@ const (
 	// for the same tool call. Read WidgetType and WidgetPayload for the block data.
 	EventWidget EventType = "widget"
 
+	// EventHandoffRequested is emitted by InvokeEventStream when the agent loop
+	// returns ErrHandoffRequested. Read HandoffReason and HandoffQuestion for the
+	// human-facing ask. The HandoffRequest itself (including the full message
+	// snapshot) is available via GetHandoffRequest on the cloned context that
+	// InvokeEventStream uses internally; callers that need cross-process
+	// durability should call GetHandoffRequest on their own *Context after
+	// receiving this event (or use WithHandoffStore for automatic persistence).
+	// This event is emitted before the terminal EventInvokeEnd.
+	EventHandoffRequested EventType = "handoff_requested"
+
 	// EventCustom carries a user-defined event emitted from inside a tool
 	// handler, middleware, or graph node via Context.EmitEvent. The payload
 	// is opaque JSON; the receiver typically discriminates on CustomName.
@@ -115,6 +126,11 @@ type AgentEvent struct {
 	// Type is EventWidget.
 	WidgetType    string          `json:"widget_type,omitempty"`
 	WidgetPayload json.RawMessage `json:"widget_payload,omitempty"`
+
+	// Handoff event payload (EventHandoffRequested). Both fields are populated
+	// only when Type is EventHandoffRequested.
+	HandoffReason   string `json:"handoff_reason,omitempty"`
+	HandoffQuestion string `json:"handoff_question,omitempty"`
 }
 
 // DefaultEventStreamBuffer is the default buffer size for InvokeEventStream's
@@ -216,6 +232,18 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 		err := a.InvokeStream(streamC, userMessage, streamCB)
 		if err != nil {
 			panicErr = err
+			// Emit a dedicated event so consumers don't have to inspect EventInvokeEnd.Err.
+			if errors.Is(err, ErrHandoffRequested) {
+				ev := AgentEvent{
+					Type:      EventHandoffRequested,
+					Timestamp: time.Now(),
+				}
+				if hr, ok := GetHandoffRequest(streamC); ok {
+					ev.HandoffReason = hr.Reason
+					ev.HandoffQuestion = hr.Question
+				}
+				ch <- ev
+			}
 		}
 	}()
 

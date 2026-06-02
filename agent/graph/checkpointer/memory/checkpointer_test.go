@@ -236,3 +236,60 @@ func TestLoadAt_NonExistentVersion_ReturnsErrCheckpointNotFound(t *testing.T) {
 		t.Errorf("expected ErrCheckpointNotFound for non-existent version, got %v", err)
 	}
 }
+
+func TestSave_PreservesReadinessSet(t *testing.T) {
+	cp := New()
+	ctx := context.Background()
+
+	readiness := map[string]bool{"output_a": true, "output_b": false}
+	_, err := cp.Save(ctx, "thread-rs", graph.Checkpoint{
+		State:        graph.State{"x": 1},
+		NodeName:     "node",
+		ReadinessSet: readiness,
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := cp.Load(ctx, "thread-rs")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if loaded.ReadinessSet == nil {
+		t.Fatal("expected ReadinessSet to be preserved, got nil")
+	}
+	if loaded.ReadinessSet["output_a"] != true {
+		t.Errorf("ReadinessSet['output_a'] = %v, want true", loaded.ReadinessSet["output_a"])
+	}
+	if loaded.ReadinessSet["output_b"] != false {
+		t.Errorf("ReadinessSet['output_b'] = %v, want false", loaded.ReadinessSet["output_b"])
+	}
+}
+
+func TestSave_ReadinessSetIsolatedFromMutation(t *testing.T) {
+	cp := New()
+	ctx := context.Background()
+
+	readiness := map[string]bool{"k": true}
+	_, err := cp.Save(ctx, "thread-iso", graph.Checkpoint{
+		State:        graph.State{"x": 1},
+		NodeName:     "node",
+		ReadinessSet: readiness,
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Mutate the original map after Save.
+	readiness["injected"] = true
+
+	loaded, err := cp.Load(ctx, "thread-iso")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if loaded.ReadinessSet["injected"] {
+		t.Error("ReadinessSet was not deep-copied: mutation after Save leaked into stored value")
+	}
+}

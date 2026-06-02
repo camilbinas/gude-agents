@@ -149,6 +149,11 @@ func (a *Agent) Resume(c *Context, hr *HandoffRequest, humanResponse string, cb 
 	// Store cumulative usage on the Context for caller access.
 	c.setUsage(usage)
 
+	// On successful resume, remove the persisted HandoffRequest if a store is configured.
+	if err == nil && a.handoffStore != nil && convID != "" {
+		_ = a.handoffStore.DeleteHandoff(c, convID)
+	}
+
 	return err
 }
 

@@ -62,6 +62,9 @@ type Agent struct {
 	metricsHook MetricsHook // nil = no metrics
 	loggingHook LoggingHook // nil = no logging
 
+	// Handoff
+	handoffStore HandoffStore // nil = caller manages HandoffRequest persistence
+
 	// Background tools
 	backgroundRegistry *backgroundRegistry                       // nil until a Background_Tool is registered; manages dispatch, locks, and shutdown
 	bgNotify           func(conversationID, agentMessage string) // Notify_Callback set via WithBackgroundNotify; wired onto the registry at construction

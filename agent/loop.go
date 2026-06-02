@@ -324,6 +324,10 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 				if hr, ok := GetHandoffRequest(c); ok {
 					hr.Messages = messages
 					hr.ConversationID = convID
+					// Auto-persist to HandoffStore when configured.
+					if a.handoffStore != nil && convID != "" {
+						_ = a.handoffStore.SaveHandoff(c, convID, hr)
+					}
 				}
 				if cfg == nil || !cfg.skipConversationSave {
 					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)

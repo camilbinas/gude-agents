@@ -288,3 +288,19 @@ func WithBackgroundNotify(fn func(conversationID, agentMessage string)) Option {
 		return nil
 	}
 }
+
+// WithHandoffStore configures a durable store for in-flight HandoffRequests.
+// When set, the agent automatically persists the HandoffRequest to the store
+// whenever ErrHandoffRequested is returned, and deletes it from the store
+// after a successful Resume. This makes it safe to store pending handoffs
+// across process restarts or in multi-process HTTP servers without managing
+// the HandoffRequest lifecycle manually.
+func WithHandoffStore(s HandoffStore) Option {
+	return func(a *Agent) error {
+		if s == nil {
+			return fmt.Errorf("WithHandoffStore: store must not be nil")
+		}
+		a.handoffStore = s
+		return nil
+	}
+}

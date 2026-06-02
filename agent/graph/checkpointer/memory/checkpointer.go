@@ -33,14 +33,15 @@ func (c *Checkpointer) Save(_ context.Context, threadID string, cp graph.Checkpo
 	version := len(existing) + 1
 
 	saved := graph.Checkpoint{
-		ThreadID:   threadID,
-		Version:    version,
-		State:      deepCopyState(cp.State),
-		Completed:  deepCopyCompleted(cp.Completed),
-		Iterations: cp.Iterations,
-		Usage:      cp.Usage,
-		NodeName:   cp.NodeName,
-		Timestamp:  cp.Timestamp,
+		ThreadID:     threadID,
+		Version:      version,
+		State:        deepCopyState(cp.State),
+		Completed:    deepCopyCompleted(cp.Completed),
+		ReadinessSet: deepCopyCompleted(cp.ReadinessSet),
+		Iterations:   cp.Iterations,
+		Usage:        cp.Usage,
+		NodeName:     cp.NodeName,
+		Timestamp:    cp.Timestamp,
 	}
 	if saved.Timestamp.IsZero() {
 		saved.Timestamp = time.Now()
@@ -144,16 +145,17 @@ func deepCopyCompleted(m map[string]bool) map[string]bool {
 	return out
 }
 
-// deepCopyCheckpoint returns a deep copy of a checkpoint with copied State and Completed maps.
+// deepCopyCheckpoint returns a deep copy of a checkpoint with copied State, Completed, and ReadinessSet maps.
 func deepCopyCheckpoint(cp graph.Checkpoint) graph.Checkpoint {
 	return graph.Checkpoint{
-		ThreadID:   cp.ThreadID,
-		Version:    cp.Version,
-		State:      deepCopyState(cp.State),
-		Completed:  deepCopyCompleted(cp.Completed),
-		Iterations: cp.Iterations,
-		Usage:      cp.Usage,
-		NodeName:   cp.NodeName,
-		Timestamp:  cp.Timestamp,
+		ThreadID:     cp.ThreadID,
+		Version:      cp.Version,
+		State:        deepCopyState(cp.State),
+		Completed:    deepCopyCompleted(cp.Completed),
+		ReadinessSet: deepCopyCompleted(cp.ReadinessSet),
+		Iterations:   cp.Iterations,
+		Usage:        cp.Usage,
+		NodeName:     cp.NodeName,
+		Timestamp:    cp.Timestamp,
 	}
 }
