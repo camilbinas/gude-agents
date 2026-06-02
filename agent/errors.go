@@ -18,6 +18,12 @@ var ErrTokenBudgetExceeded = errors.New("token budget exceeded")
 // collect the needed input, then call Agent.Resume to continue.
 var ErrHandoffRequested = errors.New("handoff requested")
 
+// ErrToolApprovalRequired is returned when a tool marked with RequiresApproval is
+// called by the LLM. The caller should inspect the ApprovalRequest via
+// GetApprovalRequest, collect the human decision, then call
+// Agent.ResumeWithApproval to either run the tool or inject a denial.
+var ErrToolApprovalRequired = errors.New("tool approval required")
+
 // ErrLoopStopped is returned by RunLoop when a ToolResultInterceptor signals stop.
 var ErrLoopStopped = errors.New("loop stopped by interceptor")
 

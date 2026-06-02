@@ -335,6 +335,32 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 				return cumulative, "", ErrHandoffRequested
 			}
 
+			// Handle tool approval.
+			if isApprovalResult(results) {
+				// Snapshot messages NOW — before appending any placeholder result.
+				// The snapshot ends at the assistant message containing the ToolUseBlock.
+				// ResumeWithApproval will append the real tool result on top of this,
+				// so we must NOT include a placeholder here to avoid duplicate ToolUseIDs.
+				if ar, ok := GetApprovalRequest(iterC); ok {
+					ar.Messages = append([]Message(nil), messages...)
+					ar.ConversationID = convID
+					// Propagate onto the outer context so callers can call GetApprovalRequest(c).
+					c.Set(approvalKey{}, ar)
+					if a.handoffStore != nil && convID != "" {
+						_ = a.handoffStore.SaveHandoff(c, approvalStoreKey(convID), &HandoffRequest{
+							Reason:         "tool approval pending",
+							Question:       ar.ToolName,
+							ConversationID: convID,
+							Messages:       ar.Messages,
+						})
+					}
+				}
+				if cfg == nil || !cfg.skipConversationSave {
+					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
+				}
+				return cumulative, "", ErrToolApprovalRequired
+			}
+
 			resultBlocks := make([]ContentBlock, len(results))
 			for i, r := range results {
 				resultBlocks[i] = r
@@ -442,6 +468,21 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 			})
 			tf.finish(nil, t.Ack())
 			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: t.Ack()}
+			return
+		}
+
+		// RequiresApproval: pause before invoking — store an ApprovalRequest on the
+		// context and return the sentinel so runLoop can snapshot and surface it.
+		if t.NeedsApproval() {
+			if ctxAgent := FromContext(toolC); ctxAgent != nil {
+				ctxAgent.Set(approvalKey{}, &ApprovalRequest{
+					ToolName:  tc.Name,
+					ToolInput: tc.Input,
+					ToolUseID: tc.ToolUseID,
+				})
+			}
+			tf.finish(nil, approvalSentinel)
+			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: approvalSentinel}
 			return
 		}
 

@@ -20,6 +20,14 @@ func AgentNode(a agent.Invoker, inputKey, outputKey string) NodeFunc[State] {
 		c := agent.NewContext(ctx)
 		result, err := a.Invoke(c, msg)
 		if err != nil {
+			// Surface tool approval errors with the correct type so callers can
+			// use Graph.ResumeWithApproval. The checkpoint is saved by executeNode.
+			if ar, ok := agent.GetApprovalRequest(c); ok {
+				return nil, &GraphToolApprovalError{
+					Approval:  ar,
+					Interrupt: InterruptResult{NodeName: inputKey},
+				}
+			}
 			return nil, err
 		}
 		out := CopyState(state)
@@ -282,12 +290,35 @@ func buildAgentNodeFunc[S any](g *Graph[S], name string, a *agent.Agent, accesso
 			}
 		}
 
-		// Use streaming invocation path. The runHook here is the effective
-		// hook so per-call streams (RunEventStream's channel) receive
-		// EventAgentStreaming events for each chunk.
-		result, err := agentNodeStream(a, c, msg, runHook, name)
+		var result string
+		var err error
+
+		// If an approval decision was injected for THIS specific node (graph is
+		// resuming after a tool approval interrupt at this node), use
+		// ResumeWithApproval instead of Invoke. Check the node name matches to
+		// avoid consuming the decision in the wrong node when a graph has multiple
+		// agent nodes.
+		if dec, ok := ctx.Value(graphApprovalKey{}).(*graphApprovalDecision); ok && dec != nil && dec.Request.NodeName == name {
+			result, err = a.ResumeWithApprovalInvoke(c, dec.Request, dec.Decision)
+		} else {
+			// Normal path: use streaming invocation. The runHook here is the
+			// effective hook so per-call streams (RunEventStream's channel)
+			// receive EventAgentStreaming events for each chunk.
+			result, err = agentNodeStream(a, c, msg, runHook, name)
+		}
+
 		if err != nil {
 			var zero S
+			// If the agent paused for tool approval, wrap as a GraphToolApprovalError
+			// so the caller can collect a decision and call Graph.ResumeWithApproval.
+			// The checkpoint will be saved by executeNode after this returns.
+			if ar, ok := agent.GetApprovalRequest(c); ok {
+				ar.NodeName = name // record which node was interrupted
+				return zero, &GraphToolApprovalError{
+					Approval:  ar,
+					Interrupt: InterruptResult{NodeName: name},
+				}
+			}
 			return zero, err
 		}
 

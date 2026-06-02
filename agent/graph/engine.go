@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -493,6 +494,18 @@ func (e *runExec[S]) executeNode(ctx context.Context, nodeName string) (S, error
 	}
 
 	if err != nil {
+		// If an agent node paused for tool approval, save a checkpoint so
+		// Graph.ResumeWithApproval can restart from exactly this point.
+		var ae *GraphToolApprovalError
+		if errors.As(err, &ae) && e.graph.checkpointer != nil && ae.Interrupt.Checkpoint.Version == 0 {
+			saved, saveErr := e.saveCheckpoint(ctx, nodeName)
+			if saveErr != nil {
+				return zero, saveErr
+			}
+			ae.Interrupt.Checkpoint = saved
+			ae.Interrupt.NodeName = nodeName
+			ae.Interrupt.Type = InterruptTypeBefore
+		}
 		return zero, err
 	}
 

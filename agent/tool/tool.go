@@ -70,6 +70,10 @@ type Tool struct {
 	// Background marker fields. Set only by NewBackground / NewBackgroundRaw.
 	isBackground bool
 	ack          string
+
+	// needsApproval marks the tool as requiring explicit human approval before
+	// the handler is invoked. Set via RequiresApproval().
+	needsApproval bool
 }
 
 // IsBackground reports whether t was constructed via NewBackground / NewBackgroundRaw.
@@ -78,6 +82,21 @@ func (t Tool) IsBackground() bool { return t.isBackground }
 // Ack returns the ack string supplied at construction time.
 // Empty for non-Background_Tools.
 func (t Tool) Ack() string { return t.ack }
+
+// NeedsApproval reports whether this tool requires explicit human approval
+// before its handler is invoked.
+func (t Tool) NeedsApproval() bool { return t.needsApproval }
+
+// RequiresApproval marks a tool as requiring human approval before execution.
+// When the LLM calls this tool the agent pauses and returns ErrToolApprovalRequired.
+// Use GetApprovalRequest to retrieve the pending call, then Agent.ResumeWithApproval
+// to run the tool or inject a denial. Unlike Guard, this is designed for async
+// flows — HTTP round-trips, Slack approvals, etc.
+func RequiresApproval() func(*Tool) {
+	return func(t *Tool) {
+		t.needsApproval = true
+	}
+}
 
 // BackgroundHandler is the function signature for typed background tool execution.
 // The handler runs in a detached goroutine; its result is injected back into the

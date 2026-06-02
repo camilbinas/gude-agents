@@ -75,6 +75,13 @@ const (
 	// This event is emitted before the terminal EventInvokeEnd.
 	EventHandoffRequested EventType = "handoff_requested"
 
+	// EventToolApprovalRequired is emitted by InvokeEventStream when a tool
+	// marked with RequiresApproval is called by the LLM. Read ApprovalToolName
+	// and ApprovalToolInput for the pending call details. The full ApprovalRequest
+	// (including the message snapshot) is available via GetApprovalRequest on
+	// the caller's *Context. This event is emitted before the terminal EventInvokeEnd.
+	EventToolApprovalRequired EventType = "tool_approval_required"
+
 	// EventCustom carries a user-defined event emitted from inside a tool
 	// handler, middleware, or graph node via Context.EmitEvent. The payload
 	// is opaque JSON; the receiver typically discriminates on CustomName.
@@ -131,6 +138,11 @@ type AgentEvent struct {
 	// only when Type is EventHandoffRequested.
 	HandoffReason   string `json:"handoff_reason,omitempty"`
 	HandoffQuestion string `json:"handoff_question,omitempty"`
+
+	// Tool approval event payload (EventToolApprovalRequired). Both fields are
+	// populated only when Type is EventToolApprovalRequired.
+	ApprovalToolName  string          `json:"approval_tool_name,omitempty"`
+	ApprovalToolInput json.RawMessage `json:"approval_tool_input,omitempty"`
 }
 
 // DefaultEventStreamBuffer is the default buffer size for InvokeEventStream's
@@ -241,6 +253,20 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 				if hr, ok := GetHandoffRequest(streamC); ok {
 					ev.HandoffReason = hr.Reason
 					ev.HandoffQuestion = hr.Question
+				}
+				ch <- ev
+			} else if errors.Is(err, ErrToolApprovalRequired) {
+				ev := AgentEvent{
+					Type:      EventToolApprovalRequired,
+					Timestamp: time.Now(),
+				}
+				if ar, ok := GetApprovalRequest(streamC); ok {
+					ev.ApprovalToolName = ar.ToolName
+					if ar.ToolInput != nil {
+						inputCopy := make(json.RawMessage, len(ar.ToolInput))
+						copy(inputCopy, ar.ToolInput)
+						ev.ApprovalToolInput = inputCopy
+					}
 				}
 				ch <- ev
 			}
