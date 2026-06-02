@@ -12,8 +12,7 @@ import (
 
 // TestJSONRoundTrip_EmptyWidgetType verifies that a "widget" JSON block with
 // an empty widget_type field deserializes to agent.WidgetBlock{Type: ""} —
-// the zero value. This exercises the "widget" case in jsonToContentBlock.
-// Requirements: 3.3, 1.4
+// the zero value.
 func TestJSONRoundTrip_EmptyWidgetType(t *testing.T) {
 	// Craft raw JSON that has type="widget" but no widget_type field.
 	raw := []byte(`[{"role":"assistant","content":[{"type":"widget"}]}]`)
@@ -45,7 +44,6 @@ func TestJSONRoundTrip_EmptyWidgetType(t *testing.T) {
 // TestJSONRoundTrip_UnknownType verifies that a content block with an
 // unrecognized type falls through to the default branch in jsonToContentBlock
 // and returns agent.TextBlock{} (empty text).
-// Requirements: 3.3
 func TestJSONRoundTrip_UnknownType(t *testing.T) {
 	// Craft raw JSON with a type that doesn't match any known case.
 	raw := []byte(`[{"role":"assistant","content":[{"type":"future_unknown_type","text":"ignored"}]}]`)

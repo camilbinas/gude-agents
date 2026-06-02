@@ -8,8 +8,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// **Validates: Requirements 2.3, 2.4, 2.5, 5.2, 5.3, 5.4**
-
 // widgetTypeGen generates a non-empty widget type string.
 var widgetTypeGen = rapid.StringMatching(`[a-zA-Z][a-zA-Z0-9_-]{0,30}`)
 

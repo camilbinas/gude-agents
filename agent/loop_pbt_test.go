@@ -12,8 +12,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// **Validates: Requirements 2.2, 2.6, 3.1, 3.2, 4.2, 4.4, 4.5**
-
 // ---------------------------------------------------------------------------
 // Shared generators (reuse widgetTypeGen from event_stream_pbt_test.go is not
 // possible across files, so we define local helpers here).
@@ -377,12 +375,9 @@ func loopGenerateMixedMessages(t *rapid.T) []Message {
 	return msgs
 }
 
-// TestProperty_StripWidgetsNoWidgetBlocks verifies Property 11:
-// For any []Message slice with arbitrary WidgetBlock distributions, stripWidgets
-// must return a slice where no Message.Content contains a WidgetBlock and no
-// widget-only messages are included.
-//
-// **Validates: Requirements 6.1, 6.2, 6.3, 6.4**
+// TestProperty_StripWidgetsNoWidgetBlocks verifies that stripWidgets returns
+// a slice where no Message.Content contains a WidgetBlock and no widget-only
+// messages are included.
 func TestProperty_StripWidgetsNoWidgetBlocks(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := loopGenerateMixedMessages(t)
@@ -399,7 +394,7 @@ func TestProperty_StripWidgetsNoWidgetBlocks(t *testing.T) {
 
 		result := stripWidgets(msgs)
 
-		// Assert 1 (Req 6.1, 6.2): no WidgetBlock in any result message.
+		// No WidgetBlock in any result message.
 		for i, m := range result {
 			for j, b := range m.Content {
 				if _, isWidget := b.(WidgetBlock); isWidget {
@@ -408,14 +403,14 @@ func TestProperty_StripWidgetsNoWidgetBlocks(t *testing.T) {
 			}
 		}
 
-		// Assert 2 (Req 6.3): no empty-content messages in result.
+		// No empty-content messages in result.
 		for i, m := range result {
 			if len(m.Content) == 0 {
 				t.Fatalf("stripWidgets returned a message with empty Content at result[%d]", i)
 			}
 		}
 
-		// Assert 3 (Req 6.4): input not mutated — original messages still have their WidgetBlocks.
+		// Input not mutated — original messages still have their WidgetBlocks.
 		for i, m := range msgs {
 			actualWidgets := 0
 			for _, b := range m.Content {

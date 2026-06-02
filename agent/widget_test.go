@@ -11,9 +11,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestEmitWidget_NilPayload verifies that EmitWidget with a nil Payload
-// succeeds (returns nil error) and stores a WidgetBlock with nil Payload
-// in the accumulator.
-// Requirements: 1.3, 4.1, 4.3
+// succeeds and stores a WidgetBlock with nil Payload in the accumulator.
 func TestEmitWidget_NilPayload(t *testing.T) {
 	c := Background()
 
@@ -39,9 +37,8 @@ func TestEmitWidget_NilPayload(t *testing.T) {
 }
 
 // TestEmitWidget_NoEventHook_UpdatesAccumulator verifies that when no
-// EventHook is set on the context, EmitWidget still appends the block to
-// the accumulator (widget persists) and returns nil.
-// Requirements: 4.1, 5.3
+// EventHook is set, EmitWidget still appends the block to the accumulator
+// and returns nil.
 func TestEmitWidget_NoEventHook_UpdatesAccumulator(t *testing.T) {
 	c := Background()
 	// No EventHook set — c.EventHook() returns nil.
@@ -92,7 +89,6 @@ var _ = time.Duration(0)
 // TestEmitWidget_HookNotWidgetEmitter_NoEvent_UpdatesAccumulator verifies
 // that when the EventHook does not implement WidgetEmitter, EmitWidget is a
 // no-op for event delivery but still updates the accumulator.
-// Requirements: 4.1, 5.3
 func TestEmitWidget_HookNotWidgetEmitter_NoEvent_UpdatesAccumulator(t *testing.T) {
 	c := Background()
 

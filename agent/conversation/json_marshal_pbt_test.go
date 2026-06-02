@@ -78,11 +78,9 @@ func TestProperty_MarshalUnmarshalRoundTrip(t *testing.T) {
 	})
 }
 
-// **Validates: Requirements 3.3, 3.4**
-
-// TestProperty_WidgetBlockRoundTrip verifies Property 6: for any WidgetBlock with a
+// TestProperty_WidgetBlockRoundTrip verifies that for any WidgetBlock with a
 // non-empty Type and any Payload (including nil), passing it through MarshalMessages
-// then UnmarshalMessages produces a WidgetBlock with equal Type and Payload.
+// then UnmarshalMessages produces an equal WidgetBlock.
 func TestProperty_WidgetBlockRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a WidgetBlock with a non-empty Type.
@@ -140,11 +138,9 @@ func TestProperty_WidgetBlockRoundTrip(t *testing.T) {
 	})
 }
 
-// **Validates: Requirements 3.5**
-
-// TestProperty_WidgetBlockOrderPreserved verifies Property 7: for any ordered sequence
-// of WidgetBlock values in a Message.Content slice, the round-trip preserves their
-// relative order.
+// TestProperty_WidgetBlockOrderPreserved verifies that for any ordered sequence
+// of WidgetBlock values in a Message.Content slice, the round-trip preserves
+// their relative order.
 func TestProperty_WidgetBlockOrderPreserved(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate between 1 and 10 WidgetBlocks with distinct types.

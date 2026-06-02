@@ -7,11 +7,9 @@ import (
 	"pgregory.net/rapid"
 )
 
-// **Validates: Requirements 1.4, 4.3**
-
-// TestProperty_WidgetBlockValidateRejectsEmptyType verifies Property 1:
-// for any WidgetBlock with Type == "", Validate() must return non-nil,
-// and for any WidgetBlock with a non-empty Type, Validate() must return nil.
+// TestProperty_WidgetBlockValidateRejectsEmptyType verifies that Validate()
+// returns non-nil for any WidgetBlock with an empty Type, and nil for any
+// non-empty Type.
 func TestProperty_WidgetBlockValidateRejectsEmptyType(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate an arbitrary payload (nil or some JSON bytes).
