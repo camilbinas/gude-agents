@@ -125,6 +125,6 @@ func deleteOrderTool() tool.Tool {
 			json.Unmarshal(input, &p)
 			return fmt.Sprintf(`{"deleted":true,"order_id":%q}`, p.OrderID), nil
 		},
-		tool.RequiresApproval(), // pause the loop before this tool runs
+		tool.RequiresApproval(),
 	)
 }
