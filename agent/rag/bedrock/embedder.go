@@ -18,13 +18,17 @@ import (
 // It supports Amazon Titan Embeddings V2 and Cohere Embed v3/v4 models,
 // selecting the correct request/response format by model ID prefix.
 type Embedder struct {
-	client  *bedrockruntime.Client
-	modelID string
+	client         *bedrockruntime.Client
+	modelID        string
+	dimensions     int      // Cohere v4: output_dimension
+	embeddingTypes []string // Cohere v3/v4: embedding_types
 }
 
 // embedderOptions holds configuration for the Embedder constructor.
 type embedderOptions struct {
-	region string
+	region         string
+	dimensions     int      // Cohere v4 only: output_dimension (256, 512, 1024, 1536)
+	embeddingTypes []string // Cohere v3/v4: embedding_types (float, int8, uint8, binary, ubinary)
 }
 
 // EmbedderOption configures the Embedder.
@@ -33,6 +37,23 @@ type EmbedderOption func(*embedderOptions)
 // WithRegion sets a custom AWS region for the Bedrock embedder client.
 func WithRegion(region string) EmbedderOption {
 	return func(o *embedderOptions) { o.region = region }
+}
+
+// WithDimensions sets the output vector dimension for Cohere Embed v4 models.
+// Allowed values are 256, 512, 1024, and 1536 (default 1536 when unset).
+// This option has no effect on Cohere v3 or Titan models.
+func WithDimensions(d int) EmbedderOption {
+	return func(o *embedderOptions) { o.dimensions = d }
+}
+
+// WithEmbeddingTypes sets the embedding type(s) returned by Cohere v3/v4 models.
+// Accepted values: "float" (default), "int8", "uint8", "binary", "ubinary".
+// When exactly one type is specified the embedder returns that vector directly.
+// When multiple types are specified the model returns a keyed map and the embedder
+// returns the "float" vector; if "float" is absent it returns the first type found.
+// This option has no effect on Titan models.
+func WithEmbeddingTypes(types ...string) EmbedderOption {
+	return func(o *embedderOptions) { o.embeddingTypes = types }
 }
 
 // MustEmbedder is a helper that wraps a (*Embedder, error) call and panics on error.
@@ -68,8 +89,10 @@ func NewEmbedder(modelID string, opts ...EmbedderOption) (*Embedder, error) {
 	}
 
 	return &Embedder{
-		client:  bedrockruntime.NewFromConfig(cfg),
-		modelID: modelID,
+		client:         bedrockruntime.NewFromConfig(cfg),
+		modelID:        modelID,
+		dimensions:     o.dimensions,
+		embeddingTypes: o.embeddingTypes,
 	}, nil
 }
 
@@ -107,21 +130,31 @@ type titanEmbedResponse struct {
 
 // cohereEmbedRequest is the JSON request body for Cohere Embed v3 on Bedrock.
 type cohereEmbedRequest struct {
-	Texts     []string `json:"texts"`
-	InputType string   `json:"input_type"`
-	Truncate  string   `json:"truncate"`
+	Texts          []string `json:"texts"`
+	InputType      string   `json:"input_type"`
+	Truncate       string   `json:"truncate"`
+	EmbeddingTypes []string `json:"embedding_types,omitempty"`
 }
 
 // cohereEmbedV4Request is the JSON request body for Cohere Embed v4 on Bedrock.
 type cohereEmbedV4Request struct {
-	Texts     []string `json:"texts"`
-	Images    []string `json:"images"`
-	InputType string   `json:"input_type"`
+	Texts           []string `json:"texts"`
+	Images          []string `json:"images"`
+	InputType       string   `json:"input_type"`
+	EmbeddingTypes  []string `json:"embedding_types,omitempty"`
+	OutputDimension int      `json:"output_dimension,omitempty"`
 }
 
-// cohereEmbedResponse is the JSON response body from Cohere Embed v3 on Bedrock.
+// cohereEmbedResponse is the JSON response body from Cohere Embed v3 on Bedrock
+// when no embedding_types are requested (returns float embeddings directly).
 type cohereEmbedResponse struct {
 	Embeddings [][]float64 `json:"embeddings"`
+}
+
+// cohereEmbedTypedResponse is the JSON response body from Cohere Embed v3/v4
+// when embedding_types are specified (embeddings keyed by type name).
+type cohereEmbedTypedResponse struct {
+	Embeddings map[string][][]float64 `json:"embeddings"`
 }
 
 // cohereEmbedV4Response is the JSON response body from Cohere Embed v4 on Bedrock.
@@ -148,15 +181,18 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	if isCohere {
 		if strings.Contains(e.modelID, "embed-v4") {
 			reqBody, err = json.Marshal(cohereEmbedV4Request{
-				Texts:     []string{text},
-				Images:    []string{},
-				InputType: "search_document",
+				Texts:           []string{text},
+				Images:          []string{},
+				InputType:       "search_document",
+				EmbeddingTypes:  e.embeddingTypes,
+				OutputDimension: e.dimensions,
 			})
 		} else {
 			reqBody, err = json.Marshal(cohereEmbedRequest{
-				Texts:     []string{text},
-				InputType: "search_document",
-				Truncate:  "END",
+				Texts:          []string{text},
+				InputType:      "search_document",
+				Truncate:       "END",
+				EmbeddingTypes: e.embeddingTypes,
 			})
 		}
 	} else {
@@ -182,6 +218,11 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 
 	if isCohere {
 		if strings.Contains(e.modelID, "embed-v4") {
+			// When embedding_types are specified the v4 response has the same keyed
+			// structure as v3; when unspecified it uses the legacy float array shape.
+			if len(e.embeddingTypes) > 0 {
+				return parseCohereTypedResponse(out.Body, e.embeddingTypes)
+			}
 			var resp cohereEmbedV4Response
 			if err := json.Unmarshal(out.Body, &resp); err != nil {
 				return nil, fmt.Errorf("bedrock embedder: unmarshal response: %w", err)
@@ -190,6 +231,11 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 				return nil, fmt.Errorf("bedrock embedder: empty embeddings in response")
 			}
 			return resp.Embeddings.Float[0], nil
+		}
+		// Cohere v3: when embedding_types are set the response shape changes to a
+		// keyed map; otherwise it returns a plain float array.
+		if len(e.embeddingTypes) > 0 {
+			return parseCohereTypedResponse(out.Body, e.embeddingTypes)
 		}
 		var resp cohereEmbedResponse
 		if err := json.Unmarshal(out.Body, &resp); err != nil {
@@ -206,4 +252,29 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 		return nil, fmt.Errorf("bedrock embedder: unmarshal response: %w", err)
 	}
 	return resp.Embedding, nil
+}
+
+// parseCohereTypedResponse extracts a float64 vector from a typed Cohere
+// response ({"embeddings": {"float": [[...]], "int8": [[...]]}, ...}).
+// It prefers the "float" type; if absent it returns the first type in the
+// requestedTypes list that is present in the response.
+func parseCohereTypedResponse(body []byte, requestedTypes []string) ([]float64, error) {
+	var resp cohereEmbedTypedResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("bedrock embedder: unmarshal response: %w", err)
+	}
+	if len(resp.Embeddings) == 0 {
+		return nil, fmt.Errorf("bedrock embedder: empty embeddings in response")
+	}
+	// Prefer float if present.
+	if vecs, ok := resp.Embeddings["float"]; ok && len(vecs) > 0 {
+		return vecs[0], nil
+	}
+	// Fall back to first requested type that is present.
+	for _, t := range requestedTypes {
+		if vecs, ok := resp.Embeddings[t]; ok && len(vecs) > 0 {
+			return vecs[0], nil
+		}
+	}
+	return nil, fmt.Errorf("bedrock embedder: no usable float embeddings in typed response")
 }
