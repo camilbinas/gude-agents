@@ -252,6 +252,8 @@ g.Node("my_node", func(ctx context.Context, s graph.State) (graph.State, error) 
 
 `LLMRouter` and `LLMRouterFunc` are available for building nodes that use an LLM to decide which output key to write, enabling data-flow gating based on LLM classification.
 
+See `examples/graph-llm-router/`.
+
 ## Typed State
 
 `Graph[S]` works directly with custom struct types — no `map[string]any`, no type assertions:
@@ -272,6 +274,8 @@ fmt.Println(result.State.Output)
 ```
 
 For typed state, readiness is determined by non-zero struct field values. A field left at its zero value (empty string, 0, false, nil) is not considered "present" for scheduling purposes.
+
+See `examples/graph-typed/`.
 
 ## Validation
 
@@ -313,6 +317,8 @@ g.Node("complex", func(ctx context.Context, s graph.State) (graph.State, error) 
 result, _ := g.Run(context.Background(), graph.State{"input": "What is Go?"})
 fmt.Println(result.State["output"])
 ```
+
+See `examples/graph-blog-pipeline/`.
 
 ## Checkpointing
 
@@ -378,6 +384,45 @@ result, err := g.Resume(ctx, "thread-1", &updates)
 ```
 
 Returns `Result[S]` on completion or `*GraphInterruptError` if another interrupt is hit.
+
+### Tool Approval in Graphs
+
+When a node invokes an agent that has a tool marked with `tool.RequiresApproval()`, the graph pauses and returns a `*GraphToolApprovalError` instead of a `*GraphInterruptError`. The error carries the full `ApprovalRequest` (tool name, tool input, conversation ID, etc.) and the `InterruptResult` with the checkpoint details.
+
+```go
+var ae *graph.GraphToolApprovalError
+result, err := g.Run(ctx, state, graph.WithThreadID("thread-1"))
+if errors.As(err, &ae) {
+    fmt.Println("approval needed for:", ae.Approval.ToolName)
+    fmt.Println("input:", ae.Approval.ToolInput)
+
+    // Approve — continue execution with the tool allowed
+    result, err = g.ResumeWithApproval(ctx, ae, tool.Allow())
+
+    // Or deny — continue execution with the tool blocked
+    // result, err = g.ResumeWithApproval(ctx, ae, tool.Deny("not authorised"))
+}
+```
+
+`g.ResumeWithApproval(ctx, ae, decision, opts...)` resumes the graph from the saved checkpoint with the approval decision injected. The signature is:
+
+```go
+func (g *Graph[S]) ResumeWithApproval(ctx context.Context, ae *GraphToolApprovalError, decision tool.Decision, opts ...RunOption) (Result[S], error)
+```
+
+The decision is a `tool.Decision{Allow: bool, Reason: string}`. Use `tool.Allow()` to permit the call or `tool.Deny(reason)` to block it. A denied call causes the agent to receive `agent.ErrToolCallDenied` and the graph continues normally from that point.
+
+**Flow summary:**
+
+1. `g.Run` (or `g.Resume`) reaches an agent node that calls an approval-required tool
+2. The graph saves a checkpoint and returns `*GraphToolApprovalError`
+3. Inspect `ae.Approval.ToolName`, `ae.Approval.ToolInput`, and `ae.Approval.ToolUseID`
+4. Call `g.ResumeWithApproval(ctx, ae, tool.Allow())` to permit or `g.ResumeWithApproval(ctx, ae, tool.Deny(reason))` to block
+5. Execution continues from the checkpoint — the approved/denied tool result is fed back into the agent
+
+A checkpointer is required; `ResumeWithApproval` returns `ErrNoCheckpointer` if none is configured. All `RunOption`s accepted by `Run` (e.g. `WithThreadID`) are also accepted by `ResumeWithApproval`.
+
+See [Tool Approval](tool-approval.md) for the agent-layer API (`ApprovalRequest`, `ResumeWithApproval` on `*Agent`, CLI/HTTP patterns).
 
 ### RewindTo
 
@@ -532,6 +577,8 @@ All values in `State` must be JSON-serializable. The graph validates this before
 // This will fail at checkpoint time:
 state["bad"] = make(chan int) // StateSerializationError{Key: "bad", Type: "chan int"}
 ```
+
+See `examples/graph-checkpointing/`.
 
 ## See Also
 

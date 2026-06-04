@@ -282,6 +282,8 @@ filtered := conversation.NewFilter(windowed)  // strip tool blocks
 
 `Save` writes through to the base store unchanged. `Load` reads from the base store and transforms on the way back up — Window trims, Filter strips tool blocks.
 
+See `examples/conversation-strategies/`.
+
 ## Code Example
 
 Compose Window and Filter strategies to keep the last 20 messages with tool blocks stripped:
@@ -320,21 +322,7 @@ For production use cases where conversation history must survive process restart
 
 ### Redis — agent/conversation/redis
 
-Import: `github.com/camilbinas/gude-agents/agent/conversation/redis`
-
-Stores conversation history as JSON in Redis string keys. Requires a running Redis instance.
-
-```go
-mem, err := redismemory.New(
-    redismemory.Options{Addr: "localhost:6379"},
-    redismemory.WithTTL(24*time.Hour),
-    redismemory.WithKeyPrefix("myapp:"),
-)
-```
-
-Options: `WithTTL(d time.Duration)`, `WithKeyPrefix(prefix string)`.
-
-See [Redis Providers](redis.md) for full documentation.
+Stores conversation history as JSON in Redis string keys with optional TTL and key prefix. See [Redis Providers](redis.md) for the full constructor, options, and code examples.
 
 ### S3 — agent/conversation/s3
 
@@ -435,12 +423,28 @@ mem, err := diskmemory.New("/tmp/agent-conversations")
 
 Conversation IDs are sanitized to prevent path traversal.
 
-## Forking
+## Forking Conversations
 
-`agent.ForkConversation` copies history to a new ID, creating an independent branch.
+### agent.ForkConversation
 
 ```go
-agent.ForkConversation(ctx, store, "conv-main", "conv-what-if")
+func ForkConversation(ctx context.Context, store Conversation, sourceID, newID string) error
+```
+
+Copies the full message history from `sourceID` into `newID`, creating an independent branch. After the fork, both conversations evolve independently — changes to one do not affect the other. Returns an error if `Load` or `Save` fails. If `sourceID` has never been saved, the new branch is created empty (no error).
+
+**Use case:** exploring "what-if" branches — fork the current conversation, continue one branch with a different user message or system prompt, and compare results.
+
+```go
+// Branch after turn 3 to explore an alternative path.
+err := agent.ForkConversation(ctx, store, "conv-main", "conv-what-if")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Continue both branches independently.
+mainResult, _ := a.Invoke(mainCtx, "Keep going on the original path.")
+whatIfResult, _ := a.Invoke(whatIfCtx, "What if we used a different approach?")
 ```
 
 ## See Also

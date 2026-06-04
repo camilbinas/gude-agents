@@ -33,7 +33,7 @@ Sets the maximum number of tokens the model can generate in a response.
 ### `WithThinking`
 
 ```go
-func WithThinking(effort string) Option
+func WithThinking(effort pvdr.ThinkingEffort) Option
 ```
 
 Enables extended thinking at the given effort level. Use the shared constants from the `provider` package:

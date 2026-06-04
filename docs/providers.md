@@ -84,6 +84,31 @@ provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
 
 `WithThinking` is silently ignored for models that don't support it.
 
+### Token Budget Override
+
+`WithThinkingBudget` sets an explicit token budget instead of relying on the effort-level presets. Use it when you need finer control than `ThinkingLow/Medium/High` provides. It takes precedence over `WithThinking` when both are set.
+
+| Option | Signature | Support |
+| ------ | --------- | ------- |
+| `WithThinkingBudget` | `WithThinkingBudget(tokens int64)` | Anthropic, Bedrock Claude |
+
+```go
+import pvdr "github.com/camilbinas/gude-agents/agent/provider"
+
+// Pin to exactly 5 000 thinking tokens (Anthropic)
+provider, _ := anthropic.New("claude-sonnet-4-6",
+    anthropic.WithThinkingBudget(5000),
+    anthropic.WithMaxTokens(16000),
+)
+
+// Same on Bedrock Claude
+provider, _ := bedrock.GlobalClaudeSonnet4_6(
+    bedrock.WithThinkingBudget(5000),
+)
+```
+
+The budget is added on top of `WithMaxTokens`, so the model has headroom to reason and then produce a final answer. Not meaningful for Nova 2 (effort-string only) or OpenAI (effort-level only).
+
 ### Streaming Thinking Output
 
 Use `EventHook.OnThinking` to receive reasoning chunks in real-time:

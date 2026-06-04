@@ -183,6 +183,80 @@ a, _ := agent.New(provider, instructions, []tool.Tool{deployTool},
 func NewBackgroundRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage) (string, error)) Tool
 ```
 
+See `examples/background-deploy/`.
+
+## Constructor Options
+
+All constructors (`New`, `NewRaw`, `NewSimple`, `NewString`, `NewAsync`, `NewBackground`, `NewRich`, and their `*Raw` variants) accept a variadic `opts ...func(*Tool)` parameter. Pass any combination of the following options:
+
+| Option | Description |
+|--------|-------------|
+| `tool.RequiresApproval()` | Marks the tool as requiring explicit human approval before execution. See [Tool Approval](tool-approval.md) |
+| `tool.AllowRoles(roles ...string)` | Restricts calls to principals that hold at least one of the given roles. See [RBAC & Identity](rbac.md) |
+| `tool.DenyRoles(roles ...string)` | Blocks callers that hold any of the given roles. See [RBAC & Identity](rbac.md) |
+| `tool.WithGuard[T](guard)` | Runs a typed guard function before the handler for per-call authorization. See below |
+
+### tool.WithGuard[T] — Per-Call Authorization
+
+```go
+func WithGuard[T any](guard func(ctx context.Context, input T) (Decision, error)) func(*Tool)
+```
+
+`WithGuard` attaches an inline authorization check that runs before the tool handler. The guard receives the fully deserialized input and returns a `Decision`. If the guard denies, the handler is not invoked and the LLM receives a structured denial result.
+
+```go
+deleteTool := tool.New("delete_record", "Delete a record by ID",
+    func(ctx context.Context, in DeleteInput) (string, error) {
+        return deleteRecord(in.ID)
+    },
+    tool.WithGuard(func(ctx context.Context, in DeleteInput) (tool.Decision, error) {
+        c := agent.FromContext(ctx)
+        if c == nil {
+            return tool.Deny("no agent context"), nil
+        }
+        p, ok := agent.PrincipalFrom(c)
+        if !ok || !p.HasRole("admin") {
+            return tool.Denyf("role admin required, got %v", p.Roles), nil
+        }
+        return tool.Allow(), nil
+    }),
+)
+```
+
+Use `WithGuard` for synchronous, per-call checks. For asynchronous human approval flows (Slack, HTTP callbacks) use `tool.RequiresApproval()` instead.
+
+### tool.Decision
+
+```go
+type Decision struct {
+    Allow  bool
+    Reason string
+}
+```
+
+`Decision` is the return type of guard functions and the type passed to `Agent.ResumeWithApproval`. Set `Allow: true` to permit the call, or `Allow: false` with a human-readable `Reason` to deny it. See [Tool Approval](tool-approval.md) for the full approval flow.
+
+Convenience constructors:
+
+| Function | Result |
+|----------|--------|
+| `tool.Allow()` | `Decision{Allow: true}` |
+| `tool.Deny(reason)` | `Decision{Allow: false, Reason: reason}` |
+| `tool.Denyf(format, ...)` | `Decision{Allow: false, Reason: fmt.Sprintf(...)}` |
+
+## Tool Introspection
+
+`Tool` exposes read-only methods for inspecting its configuration:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `NeedsApproval() bool` | `bool` | Reports whether the tool was tagged with `RequiresApproval()` |
+| `IsBackground() bool` | `bool` | Reports whether the tool was created via `NewBackground` / `NewBackgroundRaw` |
+| `Ack() string` | `string` | Returns the acknowledgement string supplied at construction time (empty for non-background tools) |
+| `RolesAllowed(roles []string) bool` | `bool` | Reports whether the given roles satisfy the tool's role policy; returns `true` when no policy is set |
+
+These are useful for middleware, routers, and approval handlers that need to inspect a tool's properties before or after dispatch.
+
 ## ChoiceMode and Choice
 
 `ChoiceMode` controls how the LLM selects tools during a conversation:
@@ -234,6 +308,8 @@ a, _ := agent.Default(provider,
 )
 result, _ := a.Invoke(agent.Background(), "What's the weather in Berlin?")
 ```
+
+See `examples/tool-presets/`, `examples/tool-filter/`, `examples/tool-images/`.
 
 The generated JSON Schema for `WeatherInput`:
 

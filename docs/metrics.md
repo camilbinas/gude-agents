@@ -204,9 +204,52 @@ families, _ := reg.Gather()
 
 ## Graph Metrics
 
-The core `agent` package also defines `GraphMetricsHook` interface for graph-level metrics (node execution durations, graph run durations). This is wired into `Graph.Run` alongside the existing tracing and logging hooks.
+The core `agent` package defines a `GraphMetricsHook` interface for graph-level metrics: per-node execution durations and total graph run durations. This is wired into `Graph.Run` alongside the existing tracing and logging hooks. Both the Prometheus and OTEL exporters implement this interface via a separate `WithGraphMetrics` constructor.
 
-Metrics exporters can implement this interface to add orchestration-level counters and histograms on top of the per-agent metrics that `MetricsHook` already provides.
+### Prometheus
+
+```go
+import (
+    "github.com/camilbinas/gude-agents/agent/graph"
+    prometheus "github.com/camilbinas/gude-agents/agent/metrics/prometheus"
+)
+
+g, err := graph.New(nodes,
+    prometheus.WithGraphMetrics(
+        prometheus.WithNamespace("myapp"),
+    ),
+)
+```
+
+`WithGraphMetrics` accepts the same `Option` functions as `WithMetrics` (`WithNamespace`, `WithRegisterer`). When no registerer is provided, `prometheus.DefaultRegisterer` is used.
+
+### OTEL
+
+```go
+import (
+    "github.com/camilbinas/gude-agents/agent/graph"
+    otelmetrics "github.com/camilbinas/gude-agents/agent/metrics/otel"
+)
+
+g, err := graph.New(nodes,
+    otelmetrics.WithGraphMetrics(mp,
+        otelmetrics.WithNamespace("myapp"),
+    ),
+)
+```
+
+Pass a `metric.MeterProvider` as the first argument. If `nil`, the global meter provider (`otel.GetMeterProvider()`) is used.
+
+### Graph Metrics Reference
+
+| Metric | Type | Labels/Dimensions | Description |
+|--------|------|-------------------|-------------|
+| `graph_run_total` / `graph.run.total` | Counter | `status` | Total graph runs |
+| `graph_run_duration_seconds` / `graph.run.duration` | Histogram | — | Graph run duration |
+| `graph_node_total` / `graph.node.total` | Counter | `node_name`, `status` | Total node executions |
+| `graph_node_duration_seconds` / `graph.node.duration` | Histogram | `node_name` | Node execution duration |
+
+Prometheus names use snake_case; OTEL names use dot notation. See `examples/metrics-graph` for a complete runnable example.
 
 ## See Also
 

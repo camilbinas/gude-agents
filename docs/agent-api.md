@@ -35,6 +35,8 @@ Use `agent.Default` for most cases. Use `agent.Orchestrator` + `agent.Worker` wh
 | `WithRetry(maxRetries, baseDelay)` | no retry | Exponential backoff for transient provider errors |
 | `WithTokenBudget(maxTokens)` | no budget | Max cumulative tokens (input + output) per invocation |
 | `WithRateLimiter(rl)` | no limiter | Rate limiter enforcing RPM/TPM limits. Per-conversation when conversation IDs are used, shared otherwise. See [Rate Limiting](#rate-limiting) |
+| `WithMessageNormalizer(s NormStrategy)` | `NormMerge` | Controls how back-to-back same-role messages are repaired before each provider call. Strategies: `NormMerge` (combine), `NormFill` (insert synthetic opposite-role), `NormRemove` (drop all but last). See `examples/message-normalizer` |
+| `WithoutMessageNormalizer()` | — | Disables message normalization entirely; raw message sequences are forwarded to the provider unchanged |
 
 `WithTimeout` and `WithRetry` compose naturally — each retry attempt gets its own fresh timeout:
 
@@ -51,6 +53,8 @@ a, err := agent.Default(provider, instructions, tools,
 |---|---|
 | `WithConversation(c, conversationID)` | Attach a conversation store with a default conversation ID for multi-turn support |
 | `WithSharedConversation(c)` | Attach a conversation store without a default ID — each invocation must provide one via `WithConversationID` on the context |
+| `WithSyncConversation()` | Forces synchronous conversation saves; by default saves run in a background goroutine |
+| `WithHandoffStore(s HandoffStore)` | Custom handoff persistence backend; defaults to in-context storage |
 | `WithBackgroundNotify(fn)` | Callback invoked with `(conversationID, agentMessage)` after a Background_Tool's Re_Entry_Turn completes. Use to push reactive responses to the user via SSE, websocket, etc. |
 
 `WithSharedConversation` is the recommended pattern for HTTP servers where a single Agent instance serves multiple concurrent conversations:
@@ -73,6 +77,8 @@ result, err := a.Invoke(c, req.Message)
 | `WithStopSequences(s)` | Strings that cause the LLM to stop generating |
 
 When none are set, the provider uses its own defaults. Per-invocation overrides via `WithInferenceConfig` on the `*Context`. See [Agent Context](invocation-context.md).
+
+See `examples/inference-params/`.
 
 ### Retrieval
 
@@ -104,6 +110,8 @@ a, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
 | `WithBlock()` | — | Waits until capacity is available (respects context cancellation) |
 
 `ErrRateLimitExceeded` short-circuits retries — if the limiter rejects a call during a retry attempt, the error propagates immediately.
+
+See `examples/rate-limiting/`.
 
 ### Guardrails & Middleware
 
@@ -174,6 +182,8 @@ func (h *myHook) OnThinking(_ *agent.Context, chunk string) {
 }
 ```
 
+See `examples/agent-devtools/`.
+
 ## Invocation
 
 ### Invoke
@@ -206,18 +216,21 @@ The channel always ends with a single terminal `EventInvokeEnd` event carrying t
 events := a.InvokeEventStream(ctx, "user message")
 for ev := range events {
     switch ev.Type {
-    case agent.EventTextChunk:        // ev.TextChunk
+    case agent.EventTextChunk:            // ev.TextChunk
         fmt.Print(ev.TextChunk)
-    case agent.EventThinkingChunk:    // ev.ThinkingChunk
-    case agent.EventToolCallStart:    // ev.ToolName, ev.ToolInput
-    case agent.EventToolCallEnd:      // ev.ToolName, ev.ToolOutput, ev.Err, ev.Duration
-    case agent.EventModelEnd:         // ev.StopReason
-    case agent.EventInvokeEnd:        // ev.Err, ev.Usage — terminal event
+    case agent.EventThinkingChunk:        // ev.ThinkingChunk
+    case agent.EventToolCallStart:        // ev.ToolName, ev.ToolInput
+    case agent.EventToolCallEnd:          // ev.ToolName, ev.ToolOutput, ev.Err, ev.Duration
+    case agent.EventModelEnd:             // ev.StopReason
+    case agent.EventHandoffRequested:     // ev.HandoffReason, ev.HandoffQuestion
+    case agent.EventToolApprovalRequired: // ev.ApprovalToolName, ev.ApprovalToolInput
+    case agent.EventCustom:               // ev.CustomName, ev.CustomPayload
+    case agent.EventInvokeEnd:            // ev.Err, ev.Usage — terminal event
     }
 }
 ```
 
-The full event taxonomy is `EventInvokeStart`, `EventIterationStart`, `EventModelStart`, `EventTextChunk`, `EventThinkingChunk`, `EventToolCallStart`, `EventToolCallEnd`, `EventModelEnd`, `EventIterationEnd`, `EventMaxIterations`, `EventInvokeEnd`.
+The full event taxonomy is `EventInvokeStart`, `EventIterationStart`, `EventModelStart`, `EventTextChunk`, `EventThinkingChunk`, `EventToolCallStart`, `EventToolCallEnd`, `EventModelEnd`, `EventIterationEnd`, `EventMaxIterations`, `EventHandoffRequested`, `EventToolApprovalRequired`, `EventCustom`, `EventInvokeEnd`.
 
 The caller's `*Context` is cloned internally, so `InvokeEventStream` is safe to call multiple times (sequentially or in parallel) on the same context. Any `EventHook` set via `WithEventHook` still fires alongside the channel.
 

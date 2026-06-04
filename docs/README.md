@@ -26,9 +26,14 @@ Each provider and driver is a separate module — you only pull the dependencies
 | **OpenAI** | GPT, O-series |
 | **Google Gemini** | Gemini 2.5, 3, 3.1 |
 
+## Recent Additions
+
+- [What's New](whats-new.md) — Widget blocks, RBAC & identity, tool approval, A2A protocol, AgentCore integration, and the eval framework
+
 ## Getting Started
 
 - [Getting Started Guide](getting-started.md) — Installation, first agent, and provider setup
+- [Decision Guide](decision-guide.md) — which store, which provider pattern, which invocation method
 
 ## Core Concepts
 
@@ -51,6 +56,8 @@ Each provider and driver is a separate module — you only pull the dependencies
 - [Long-Term Memory](memory.md) — Long-term knowledge storage with Remember/Recall tools
 - [Redis Providers](redis.md) — Redis-backed conversation store and vector store
 - [Tool System](tools.md) — Typed tools, schema generation, and tool choice
+- [Tool Approval](tool-approval.md) — Human-in-the-loop approval flow for individual tool calls
+- [RBAC & Identity](rbac.md) — Per-invocation principals, role-based tool filtering, and custom policy enforcement
 - [RAG Pipeline](rag.md) — Embedders, vector stores, retrieval, and ingestion
 - [Guardrails](guardrails.md) — Input and output validation
 - [Middleware](middleware.md) — Tool execution middleware
@@ -70,3 +77,5 @@ Each provider and driver is a separate module — you only pull the dependencies
 - [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern
 - [MCP Integration](mcp.md) — Connect to MCP servers and use their tools
 - [Agent Context](invocation-context.md) — Per-invocation state sharing
+- [AWS Bedrock AgentCore](agentcore.md) — AgentCore-backed conversation store, browser tool, and code interpreter
+- [Agent-to-Agent (A2A) Protocol](a2a.md) — Remote agent clients, local agent hosting, and multi-server setup

@@ -108,6 +108,8 @@ Each log entry includes relevant key-value attributes:
 
 Tools can emit log messages during execution via `agent.ToolLoggerFrom(ctx)`. The logger is automatically injected when a `LoggingHook` is configured.
 
+`tool.WithLogger(ctx context.Context, l tool.Logger) context.Context` injects a logger directly into a context. Use this in tool handlers that construct their own context and don't have access to the agent's `LoggingHook` — for example, when calling a sub-tool manually or passing context into a helper that expects a logger already attached.
+
 ```go
 func myTool(ctx context.Context, input MyInput) (string, error) {
     log := agent.ToolLoggerFrom(ctx)

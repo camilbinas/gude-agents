@@ -28,6 +28,24 @@ a, err := agent.New(provider, instructions, tools,
 
 When tracing is not enabled, the agent creates no spans and allocates no tracing objects. The core `agent/` package has zero OpenTelemetry imports.
 
+## Tracing Options
+
+`WithTracing` accepts variadic `TracingOption` values to customize hook behaviour:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithContentCapture()` | disabled | Includes message content (prompts, responses, tool inputs/outputs, guardrail text) as span attributes. Disable in production if messages may contain PII. |
+| `WithScheme(scheme AttributeScheme)` | `DefaultScheme()` | Switches the attribute naming convention. The default scheme uses `agent.*` / `tool.*` / `provider.*` keys. Pass `AgentCoreScheme()` to emit OpenTelemetry GenAI semantic convention keys (`gen_ai.*`) compatible with AWS AgentCore Observability. |
+
+```go
+a, err := agent.New(provider, instructions, tools,
+    tracing.WithTracing(tp,
+        tracing.WithContentCapture(),
+        tracing.WithScheme(tracing.AgentCoreScheme()),
+    ),
+)
+```
+
 ## Quick Start with Setup
 
 The `Setup` function configures a `TracerProvider` with a batch `SpanProcessor` and OTLP gRPC exporter in one call. It reads `OTEL_EXPORTER_OTLP_ENDPOINT` from the environment, defaulting to `localhost:4317`.
@@ -173,6 +191,8 @@ graph.run
 - `graph.checkpoint.save` records `graph.checkpoint.node` and `graph.checkpoint.version`.
 - `graph.interrupt` records `graph.interrupt.node`, `graph.interrupt.type`, and `graph.interrupt.version`.
 - `graph.resume` and `graph.rewind` record `graph.thread_id` and the relevant version.
+
+See `examples/tracing-graph/`.
 
 ## Multi-Agent Trace Propagation
 

@@ -35,6 +35,10 @@ go get github.com/camilbinas/gude-agents/agent/rag/postgres         # PostgreSQL
 
 # Optional: MCP tool integration
 go get github.com/camilbinas/gude-agents/agent/mcp
+
+# Optional: AgentCore and A2A
+go get github.com/camilbinas/gude-agents/agent/agentcore  # AWS Bedrock AgentCore integration
+go get github.com/camilbinas/gude-agents/agent/a2a        # Agent-to-Agent (A2A) protocol
 ```
 
 Each module only pulls the dependencies it needs — using Bedrock won't download the OpenAI or Gemini SDKs.
@@ -145,7 +149,7 @@ Under the hood, `Invoke` is a thin wrapper around `InvokeStream` that concatenat
 
 ## Logging
 
-gude-agents ships two logging packages. Both implement the same hook interfaces so you can swap them without changing your agent code.
+gude-agents ships two logging packages. Both implement the same hook interfaces so you can swap them without changing your agent code. See [Structured Logging](logging.md) for the full logging API including `auto.WithLogging()`, structured slog output, and the `WithLogger` context helper.
 
 ### debug — colored output for local development
 

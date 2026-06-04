@@ -41,7 +41,7 @@ Sets the maximum number of tokens the model can generate in a response.
 ### `WithThinking`
 
 ```go
-func WithThinking(effort string) Option
+func WithThinking(effort pvdr.ThinkingEffort) Option
 ```
 
 Sets the reasoning effort for o-series and reasoning-capable models. Mapped to OpenAI's `reasoning_effort` parameter. Use the shared constants from the `provider` package:

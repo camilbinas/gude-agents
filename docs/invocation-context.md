@@ -59,6 +59,9 @@ All `With*` methods mutate the `*Context` and return the same pointer for chaini
 | `WithMetricsHook(h)` | Per-invocation metrics hook (overrides agent-level) |
 | `WithLoggingHook(h)` | Per-invocation logging hook (overrides agent-level) |
 | `WithValue(key, val)` | Attach to the embedded `context.Context` (for `ctx.Value` consumers) |
+| `WithPrincipal(p Principal)` | Attach a `Principal` (identity + roles) for RBAC enforcement. See [RBAC & Identity](rbac.md) |
+| `EmitEvent(name string, payload any)` | Emit a custom `EventCustom` event on the event stream, readable via `InvokeEventStream` |
+| `WithSystemPromptOverride(s string)` | Override the agent's system prompt for this invocation only — useful for A/B testing |
 
 ```go
 c := agent.Background().

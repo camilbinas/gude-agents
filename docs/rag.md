@@ -17,7 +17,7 @@ Defaults: `topK=4`, `scoreThreshold=0.0`, no reranker.
 
 | Option | Description |
 |--------|-------------|
-| `WithMaxResults(k int)` | Maximum number of documents to retrieve (default: 4) |
+| `WithMaxResults(k int)` | Maximum number of documents to retrieve (default: 4). `WithTopK(k int)` is an alias |
 | `WithScoreThreshold(t float64)` | Minimum cosine similarity score for returned documents (default: 0.0) |
 | `WithReranker(rr agent.Reranker)` | Attaches a reranker that re-scores candidates after retrieval |
 
@@ -82,9 +82,9 @@ store, err := ragredis.New(
 
 See [Redis Providers](redis.md) for full documentation.
 
-## Identifier-Scoped Storage (Moved)
+## Identifier-Scoped Storage
 
-Identifier-scoped storage — partitioning documents by user, tenant, or session — has moved to the [`agent/memory`](memory.md) package. If you were using `ScopedStore`, `ScopedSearcher`, or `ScopeMetadataKey` from this package, see the [Long-Term Memory](memory.md) docs for the replacement APIs.
+For per-user or per-tenant document storage, see [Long-Term Memory](memory.md).
 
 ## rag.Ingest
 
@@ -131,6 +131,8 @@ Uses `amazon.titan-embed-text-v2:0` (1024 dimensions). Uses the default AWS cred
 | Option | Description |
 |--------|-------------|
 | `WithRegion(region string)` | AWS region (defaults to `AWS_REGION` env var, then `us-east-1`) |
+| `WithDimensions(d int)` | Output vector dimension — Cohere Embed v4 only. Allowed values: 256, 512, 1024, 1536 (default 1536). No effect on v3 or Titan models. |
+| `WithEmbeddingTypes(types ...string)` | Embedding type(s) returned by Cohere v3/v4 models. Accepted values: `"float"` (default), `"int8"`, `"uint8"`, `"binary"`, `"ubinary"`. No effect on Titan models. |
 
 Other convenience constructors: `bedrock.CohereEmbedEnglishV3()`, `bedrock.CohereEmbedMultilingualV3()`, `bedrock.CohereEmbedV4()`. For a custom model ID use `ragbedrock.NewEmbedder(modelID, opts...)`.
 
@@ -234,6 +236,8 @@ Convenience constructors: `CohereRerank35()`, `AmazonRerank10()`. For a custom m
 |--------|-------------|
 | `WithRerankerRegion(region string)` | AWS region (defaults to `AWS_REGION` env var, then `us-east-1`) |
 | `WithRerankerTopN(n int)` | Max documents to return after reranking (default: 0 = all) |
+
+See `examples/rag-reranker/`.
 
 ## Integration Patterns
 

@@ -1,8 +1,10 @@
 # Redis Providers
 
+> **Scope:** This page covers both Redis-backed drivers: the `agent/conversation/redis` conversation store and the `agent/rag/redis` vector store. Both ship as separate Go modules — you only need to import the one(s) you use.
+
 The `agent/conversation/redis` package provides a persistent, Redis-backed implementation of `agent.Conversation`. Use it for multi-turn conversation storage that survives restarts.
 
-For Redis-backed vector search, see `agent/rag/redis` — it provides `VectorStore` (formerly `RedisVectorStore`) for similarity search powered by Redis Stack's HNSW indexing.
+For Redis-backed vector search, see `agent/rag/redis` — it provides `VectorStore` for similarity search powered by Redis Stack's HNSW indexing.
 
 ## Options
 
@@ -80,8 +82,6 @@ Closes the underlying Redis client. Call this when you're done with the conversa
 ## VectorStore (Redis RAG)
 
 `VectorStore` implements `agent.VectorStoreManager` using Redis Stack's RediSearch module. It stores document embeddings as Redis hashes and creates an HNSW index for KNN similarity search.
-
-> **Note:** `VectorStore` was previously named `RedisVectorStore` and lived in `agent/redis`. It now lives in `agent/rag/redis` as `VectorStore`. The constructor is `ragredis.New` (using the import alias below).
 
 > **Requirement:** `VectorStore` requires [Redis Stack](https://redis.io/docs/stack/) (or the RediSearch module). Standard Redis does not support `FT.CREATE` / `FT.SEARCH` commands.
 

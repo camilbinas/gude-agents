@@ -26,6 +26,13 @@ The shutdown function stops the background flush goroutine and performs a final 
 
 ## Option Functions
 
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithNamespace(ns string)` | `"GudeAgents"` | CloudWatch namespace for all published metrics |
+| `WithClient(c *cw.Client)` | SDK default credential chain | Pre-configured CloudWatch client; bypasses default credential init |
+| `WithFlushInterval(d time.Duration)` | 60s | Time between background flush cycles |
+| `WithDimensions(dims map[string]string)` | none | Extra key-value pairs added as dimensions to every data point |
+
 ### `WithMetrics`
 
 ```go

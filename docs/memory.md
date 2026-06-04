@@ -122,6 +122,7 @@ store, err := memredis.NewStore[MyStruct](
 |--------|---------|-------------|
 | `WithIndexName(name)` | `"gude_typed_idx"` | RediSearch index name |
 | `WithKeyPrefix(prefix)` | `"gude:typed:"` | Redis key prefix |
+| `WithDropExisting()` | off | ⚠️ Drops and recreates the index on startup — for development only. Deprecated: prefer `ForgetAll` or manage index lifecycle externally via `FT.DROPINDEX` |
 
 Strings become TAG fields, numbers become NUMERIC fields (sortable/filterable). Same `RecallOption` filters as Postgres.
 

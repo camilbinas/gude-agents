@@ -33,7 +33,7 @@ Sets the maximum number of tokens the model can generate in a response.
 ### `WithThinking`
 
 ```go
-func WithThinking(effort string) Option
+func WithThinking(effort pvdr.ThinkingEffort) Option
 ```
 
 Enables extended thinking at the given effort level. Internally maps the effort level to a token budget sent to the Anthropic API. Use the shared constants from the `provider` package:
@@ -60,6 +60,7 @@ The API key comes from the environment. All convenience functions accept `...Opt
 | `ClaudeSonnet4_6()` | `claude-sonnet-4-6` |
 | `ClaudeOpus4_5()` | `claude-opus-4-5` |
 | `ClaudeOpus4_6()` | `claude-opus-4-6` |
+| `ClaudeOpus4_7()` | `claude-opus-4-7` |
 
 ```go
 anthropic.ClaudeSonnet4_6(anthropic.WithAPIKey("..."), anthropic.WithMaxTokens(8000))
@@ -71,7 +72,7 @@ anthropic.ClaudeSonnet4_6(anthropic.WithAPIKey("..."), anthropic.WithMaxTokens(8
 |---|---|---|
 | `Cheapest()` | Claude Haiku 4.5 | Fastest model with near-frontier intelligence |
 | `Standard()` | Claude Sonnet 4.6 | Best combination of speed and intelligence |
-| `Smartest()` | Claude Opus 4.6 | Most intelligent model for agents and coding |
+| `Smartest()` | Claude Opus 4.7 | Most intelligent model for agents and coding |
 
 ```go
 provider, err := anthropic.Standard() // Claude Sonnet 4.6
