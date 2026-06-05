@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
-	pvdr "github.com/camilbinas/gude-agents/agent/provider"
 
 	"google.golang.org/genai"
 )
@@ -34,9 +33,8 @@ func newTestProvider(t *testing.T, serverURL string) *GeminiProvider {
 		t.Fatalf("failed to create genai client: %v", err)
 	}
 	return &GeminiProvider{
-		client:    client,
-		model:     "gemini-2.5-flash",
-		maxTokens: ptr(int32(pvdr.DefaultMaxTokens)),
+		client: client,
+		model:  "gemini-2.5-flash",
 	}
 }
 

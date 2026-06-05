@@ -451,8 +451,8 @@ func (p *BedrockProvider) buildInferenceConfiguration(cfg *agent.InferenceConfig
 	}
 	if budget := p.resolveThinkingBudget(); budget > 0 {
 		// Claude requires max_tokens > budget_tokens. When no explicit limit is
-		// set, use DefaultMaxTokens as the answer headroom on top of the budget.
-		base := int32(pvdr.DefaultMaxTokens)
+		// set, use ThinkingOutputHeadroom as the answer headroom on top of the budget.
+		base := int32(pvdr.ThinkingOutputHeadroom)
 		if maxTokens != nil {
 			base = *maxTokens
 		}

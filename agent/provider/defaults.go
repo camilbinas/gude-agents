@@ -1,8 +1,12 @@
 // Package provider contains shared constants used across all provider implementations.
 package provider
 
-// DefaultMaxTokens is the default maximum number of tokens in a provider response.
-const DefaultMaxTokens = 8192
+// ThinkingOutputHeadroom is the number of output tokens reserved for the model's
+// final answer when thinking/reasoning is enabled and no explicit max_tokens has
+// been set. Providers that require max_tokens > thinking_budget (Anthropic, Bedrock
+// Claude, Gemini) add this on top of the thinking budget so the model has room to
+// both reason and produce a response.
+const ThinkingOutputHeadroom = 8192
 
 // ThinkingEffort is a typed effort level for extended thinking / reasoning.
 // Use the predefined constants — arbitrary string values are not supported and

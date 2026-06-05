@@ -564,9 +564,9 @@ func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.Generate
 	thinkingBudget := int32(p.resolveThinkingBudget())
 	if thinkingBudget > 0 {
 		// Gemini requires max_tokens > budget_tokens. When no explicit limit is
-		// set, use DefaultMaxTokens as the answer headroom on top of the budget.
+		// set, use ThinkingOutputHeadroom as the answer headroom on top of the budget.
 		if maxTokens == 0 {
-			maxTokens = int32(pvdr.DefaultMaxTokens)
+			maxTokens = int32(pvdr.ThinkingOutputHeadroom)
 		}
 		maxTokens += thinkingBudget
 	}
