@@ -22,7 +22,7 @@ import (
 type AnthropicProvider struct {
 	client         anthropicsdk.Client
 	model          anthropicsdk.Model
-	maxTokens      int64
+	maxTokens      *int64              // nil = no explicit limit (provider default)
 	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
 }
@@ -32,7 +32,7 @@ type Option func(*options)
 
 type options struct {
 	apiKey         string
-	maxTokens      int64
+	maxTokens      *int64 // nil = no explicit limit
 	thinkingEffort pvdr.ThinkingEffort
 	thinkingBudget int64
 }
@@ -44,7 +44,7 @@ func WithAPIKey(key string) Option {
 
 // WithMaxTokens sets the max tokens for responses.
 func WithMaxTokens(n int64) Option {
-	return func(o *options) { o.maxTokens = n }
+	return func(o *options) { o.maxTokens = &n }
 }
 
 // WithThinking enables extended thinking at the given effort level. The effort
@@ -82,7 +82,7 @@ func Must(p *AnthropicProvider, err error) *AnthropicProvider {
 
 // New creates a new AnthropicProvider.
 func New(model string, opts ...Option) (*AnthropicProvider, error) {
-	o := &options{maxTokens: pvdr.DefaultMaxTokens}
+	o := &options{}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -235,9 +235,15 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 }
 
 func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsdk.MessageNewParams {
+	// Anthropic's API requires max_tokens. Use the configured value, or fall
+	// back to DefaultMaxTokens when no explicit limit has been set.
+	var maxTokens int64 = int64(pvdr.DefaultMaxTokens)
+	if p.maxTokens != nil {
+		maxTokens = *p.maxTokens
+	}
 	input := anthropicsdk.MessageNewParams{
 		Model:     p.model,
-		MaxTokens: p.maxTokens,
+		MaxTokens: int64(maxTokens),
 		Messages:  toAnthropicMessages(params.Messages),
 	}
 	if params.System != "" {
@@ -256,7 +262,7 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 		// Anthropic requires max_tokens > thinking.budget_tokens. Add the
 		// budget on top of the configured max so the model has room to
 		// both reason and answer.
-		input.MaxTokens = p.maxTokens + budget
+		input.MaxTokens = maxTokens + budget
 	}
 	// Apply inference config overrides.
 	if cfg := params.InferenceConfig; cfg != nil {

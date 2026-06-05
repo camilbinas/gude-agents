@@ -20,6 +20,9 @@ import (
 // toBedrockRole
 // ---------------------------------------------------------------------------
 
+// ptr returns a pointer to the given int32 value. Used in tests to set *int32 fields inline.
+func ptr(v int32) *int32 { return &v }
+
 func TestToBedrockRole_User(t *testing.T) {
 	got := toBedrockRole(agent.RoleUser)
 	if got != types.ConversationRoleUser {
@@ -525,7 +528,7 @@ func TestProperty_BedrockTokenUsagePopulation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildInferenceConfiguration_NilConfig_UsesConstructorDefaults(t *testing.T) {
-	p := &BedrockProvider{maxTokens: 4096}
+	p := &BedrockProvider{maxTokens: ptr(4096)}
 	ic := p.buildInferenceConfiguration(nil)
 	if ic == nil {
 		t.Fatal("expected non-nil InferenceConfiguration")
@@ -545,7 +548,7 @@ func TestBuildInferenceConfiguration_NilConfig_UsesConstructorDefaults(t *testin
 }
 
 func TestBuildInferenceConfiguration_TemperatureMapping(t *testing.T) {
-	p := &BedrockProvider{maxTokens: 8192}
+	p := &BedrockProvider{maxTokens: ptr(8192)}
 	temp := 0.7
 	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{Temperature: &temp})
 	if ic.Temperature == nil {
@@ -561,7 +564,7 @@ func TestBuildInferenceConfiguration_TemperatureMapping(t *testing.T) {
 }
 
 func TestBuildInferenceConfiguration_TopPMapping(t *testing.T) {
-	p := &BedrockProvider{maxTokens: 8192}
+	p := &BedrockProvider{maxTokens: ptr(8192)}
 	topP := 0.9
 	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{TopP: &topP})
 	if ic.TopP == nil {
@@ -573,7 +576,7 @@ func TestBuildInferenceConfiguration_TopPMapping(t *testing.T) {
 }
 
 func TestBuildInferenceConfiguration_StopSequencesMapping(t *testing.T) {
-	p := &BedrockProvider{maxTokens: 8192}
+	p := &BedrockProvider{maxTokens: ptr(8192)}
 	stops := []string{"STOP", "END"}
 	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{StopSequences: stops})
 	if len(ic.StopSequences) != 2 {
@@ -585,7 +588,7 @@ func TestBuildInferenceConfiguration_StopSequencesMapping(t *testing.T) {
 }
 
 func TestBuildInferenceConfiguration_MaxTokensOverridesDefault(t *testing.T) {
-	p := &BedrockProvider{maxTokens: 8192}
+	p := &BedrockProvider{maxTokens: ptr(8192)}
 	maxTok := 2048
 	ic := p.buildInferenceConfiguration(&agent.InferenceConfig{MaxTokens: &maxTok})
 	if aws.ToInt32(ic.MaxTokens) != 2048 {
@@ -594,7 +597,7 @@ func TestBuildInferenceConfiguration_MaxTokensOverridesDefault(t *testing.T) {
 }
 
 func TestBuildInferenceConfiguration_AllFieldsSet(t *testing.T) {
-	p := &BedrockProvider{maxTokens: 8192}
+	p := &BedrockProvider{maxTokens: ptr(8192)}
 	temp := 0.5
 	topP := 0.8
 	maxTok := 1024

@@ -74,7 +74,7 @@ func Must(p *OpenAIProvider, err error) *OpenAIProvider {
 
 // New creates a new OpenAIProvider.
 func New(model string, opts ...Option) (*OpenAIProvider, error) {
-	o := &options{maxTokens: pvdr.DefaultMaxTokens}
+	o := &options{}
 	for _, fn := range opts {
 		fn(o)
 	}

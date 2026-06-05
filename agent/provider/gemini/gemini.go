@@ -21,7 +21,7 @@ import (
 type GeminiProvider struct {
 	client         *genai.Client
 	model          string
-	maxTokens      int32
+	maxTokens      *int32              // nil = no explicit limit (provider default)
 	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
 }
@@ -34,7 +34,7 @@ type Option func(*options)
 
 type options struct {
 	apiKey         string
-	maxTokens      int32
+	maxTokens      *int32 // nil = no explicit limit
 	thinkingEffort pvdr.ThinkingEffort
 	thinkingBudget int64
 }
@@ -47,7 +47,8 @@ func WithAPIKey(key string) Option {
 
 // WithMaxTokens sets the max tokens for responses.
 func WithMaxTokens(n int64) Option {
-	return func(o *options) { o.maxTokens = int32(n) }
+	v := int32(n)
+	return func(o *options) { o.maxTokens = &v }
 }
 
 // WithThinking enables extended thinking at the given effort level. The effort
@@ -85,7 +86,7 @@ func Must(p *GeminiProvider, err error) *GeminiProvider {
 
 // New creates a new GeminiProvider.
 func New(model string, opts ...Option) (*GeminiProvider, error) {
-	o := &options{maxTokens: int32(pvdr.DefaultMaxTokens)}
+	o := &options{}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -552,19 +553,30 @@ func (p *GeminiProvider) resolveThinkingBudget() int64 {
 
 // buildConfig assembles a GenerateContentConfig from provider state and converse params.
 func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.GenerateContentConfig {
-	maxTokens := p.maxTokens
+	// Determine maxTokens: per-call override > provider-level > 0 (omit).
+	var maxTokens int32
+	if p.maxTokens != nil {
+		maxTokens = *p.maxTokens
+	}
 	if cfg := params.InferenceConfig; cfg != nil && cfg.MaxTokens != nil {
 		maxTokens = int32(*cfg.MaxTokens)
 	}
 	thinkingBudget := int32(p.resolveThinkingBudget())
 	if thinkingBudget > 0 {
+		// Gemini requires max_tokens > budget_tokens. When no explicit limit is
+		// set, use DefaultMaxTokens as the answer headroom on top of the budget.
+		if maxTokens == 0 {
+			maxTokens = int32(pvdr.DefaultMaxTokens)
+		}
 		maxTokens += thinkingBudget
 	}
 
 	config := &genai.GenerateContentConfig{
-		MaxOutputTokens: maxTokens,
-		Tools:           toGeminiTools(params.ToolConfig),
-		ToolConfig:      toGeminiToolConfig(params.ToolChoice),
+		Tools:      toGeminiTools(params.ToolConfig),
+		ToolConfig: toGeminiToolConfig(params.ToolChoice),
+	}
+	if maxTokens > 0 {
+		config.MaxOutputTokens = maxTokens
 	}
 	if params.System != "" {
 		config.SystemInstruction = &genai.Content{

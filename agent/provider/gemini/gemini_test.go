@@ -36,7 +36,7 @@ func newTestProvider(t *testing.T, serverURL string) *GeminiProvider {
 	return &GeminiProvider{
 		client:    client,
 		model:     "gemini-2.5-flash",
-		maxTokens: int32(pvdr.DefaultMaxTokens),
+		maxTokens: ptr(int32(pvdr.DefaultMaxTokens)),
 	}
 }
 
@@ -66,8 +66,8 @@ func TestNew_DefaultMaxTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.maxTokens != int32(pvdr.DefaultMaxTokens) {
-		t.Errorf("expected maxTokens %d, got %d", pvdr.DefaultMaxTokens, p.maxTokens)
+	if p.maxTokens != nil {
+		t.Errorf("expected maxTokens nil by default, got %d", *p.maxTokens)
 	}
 }
 
@@ -117,8 +117,12 @@ func TestNew_WithMaxTokensOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.maxTokens != 4096 {
-		t.Errorf("expected maxTokens 4096, got %d", p.maxTokens)
+	if p.maxTokens == nil || *p.maxTokens != 4096 {
+		got := "nil"
+		if p.maxTokens != nil {
+			got = fmt.Sprintf("%d", *p.maxTokens)
+		}
+		t.Errorf("expected maxTokens 4096, got %s", got)
 	}
 }
 
@@ -337,7 +341,7 @@ func TestToGeminiParts_EmptyToolUseInput(t *testing.T) {
 func TestBuildConfig_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 	p := &GeminiProvider{
 		model:     "gemini-2.5-flash",
-		maxTokens: 4096,
+		maxTokens: ptr(int32(4096)),
 	}
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -364,7 +368,7 @@ func TestBuildConfig_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 }
 
 func TestBuildConfig_TemperatureMapping(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	temp := 0.7
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -387,7 +391,7 @@ func TestBuildConfig_TemperatureMapping(t *testing.T) {
 }
 
 func TestBuildConfig_TopPMapping(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	topP := 0.9
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -406,7 +410,7 @@ func TestBuildConfig_TopPMapping(t *testing.T) {
 }
 
 func TestBuildConfig_TopKMapping(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	topK := 50
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -425,7 +429,7 @@ func TestBuildConfig_TopKMapping(t *testing.T) {
 }
 
 func TestBuildConfig_StopSequencesMapping(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	stops := []string{"STOP", "END"}
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -444,7 +448,7 @@ func TestBuildConfig_StopSequencesMapping(t *testing.T) {
 }
 
 func TestBuildConfig_MaxTokensOverridesDefault(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	maxTok := 2048
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -460,7 +464,7 @@ func TestBuildConfig_MaxTokensOverridesDefault(t *testing.T) {
 }
 
 func TestBuildConfig_AllFieldsSet(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 8192}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	temp := 0.5
 	topP := 0.8
 	topK := 40
@@ -498,7 +502,7 @@ func TestBuildConfig_AllFieldsSet(t *testing.T) {
 }
 
 func TestBuildConfig_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
-	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: 4096}
+	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(4096))}
 	temp := 0.3
 	params := agent.ConverseParams{
 		Messages: []agent.Message{

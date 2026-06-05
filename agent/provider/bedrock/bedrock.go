@@ -40,7 +40,7 @@ const (
 type BedrockProvider struct {
 	client           *bedrockruntime.Client
 	model            string
-	maxTokens        int32
+	maxTokens        *int32              // nil = no explicit limit (provider default)
 	thinkingStyle    thinkingStyle       // set by model constructors
 	thinkingEffort   pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget   int64               // 0 = budget not set; takes precedence over effort (Claude only)
@@ -53,7 +53,7 @@ type Option func(*options)
 
 type options struct {
 	region           string
-	maxTokens        int32
+	maxTokens        *int32 // nil = no explicit limit
 	thinkingEffort   pvdr.ThinkingEffort
 	thinkingBudget   int64
 	thinkingStyle    thinkingStyle
@@ -69,7 +69,8 @@ func WithRegion(region string) Option {
 
 // WithMaxTokens sets the maximum number of tokens in the response.
 func WithMaxTokens(n int64) Option {
-	return func(o *options) { o.maxTokens = int32(n) }
+	v := int32(n)
+	return func(o *options) { o.maxTokens = &v }
 }
 
 // WithThinking enables extended thinking at the given effort level. For Claude
@@ -135,7 +136,7 @@ func Must(p *BedrockProvider, err error) *BedrockProvider {
 // New creates a new BedrockProvider. It loads AWS config from the default
 // credential chain and accepts optional configuration.
 func New(model string, opts ...Option) (*BedrockProvider, error) {
-	o := &options{maxTokens: pvdr.DefaultMaxTokens}
+	o := &options{}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -438,16 +439,29 @@ func (p *BedrockProvider) resolveThinkingBudget() int64 {
 // When thinking is enabled on a Claude model, the resolved thinking budget
 // is added on top of MaxTokens so the model has room to both reason and answer.
 func (p *BedrockProvider) buildInferenceConfiguration(cfg *agent.InferenceConfig) *types.InferenceConfiguration {
-	maxTokens := p.maxTokens
+	// Determine maxTokens: per-call override > provider-level > nil (omit).
+	var maxTokens *int32
+	if p.maxTokens != nil {
+		v := *p.maxTokens
+		maxTokens = &v
+	}
 	if cfg != nil && cfg.MaxTokens != nil {
-		maxTokens = int32(*cfg.MaxTokens)
+		v := int32(*cfg.MaxTokens)
+		maxTokens = &v
 	}
 	if budget := p.resolveThinkingBudget(); budget > 0 {
-		maxTokens += int32(budget)
+		// Claude requires max_tokens > budget_tokens. When no explicit limit is
+		// set, use DefaultMaxTokens as the answer headroom on top of the budget.
+		base := int32(pvdr.DefaultMaxTokens)
+		if maxTokens != nil {
+			base = *maxTokens
+		}
+		v := base + int32(budget)
+		maxTokens = &v
 	}
 
 	ic := &types.InferenceConfiguration{
-		MaxTokens: aws.Int32(maxTokens),
+		MaxTokens: maxTokens,
 	}
 	if cfg == nil {
 		return ic

@@ -95,6 +95,9 @@ func TestProperty_AnthropicTokenUsagePopulation(t *testing.T) {
 // Helpers for streaming token tests
 // ---------------------------------------------------------------------------
 
+// ptr returns a pointer to the given int64 value. Used in tests to set *int64 fields inline.
+func ptr(v int64) *int64 { return &v }
+
 // sseBody builds a minimal SSE response body with the given events.
 // Each entry is (eventType, jsonData).
 func sseBody(events [][2]string) string {
@@ -114,7 +117,7 @@ func newTestProvider(serverURL string) *AnthropicProvider {
 	return &AnthropicProvider{
 		client:    client,
 		model:     "claude-3-5-haiku-20241022",
-		maxTokens: 1024,
+		maxTokens: ptr(1024),
 	}
 }
 
@@ -260,7 +263,7 @@ func TestProperty_StreamingNonStreamingTokenConsistency(t *testing.T) {
 func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 	p := &AnthropicProvider{
 		model:     "claude-3-5-haiku-20241022",
-		maxTokens: 4096,
+		maxTokens: ptr(4096),
 	}
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -287,7 +290,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 }
 
 func TestBuildParams_TemperatureMapping(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	temp := 0.7
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -310,7 +313,7 @@ func TestBuildParams_TemperatureMapping(t *testing.T) {
 }
 
 func TestBuildParams_TopPMapping(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	topP := 0.9
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -329,7 +332,7 @@ func TestBuildParams_TopPMapping(t *testing.T) {
 }
 
 func TestBuildParams_TopKMapping(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	topK := 50
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -348,7 +351,7 @@ func TestBuildParams_TopKMapping(t *testing.T) {
 }
 
 func TestBuildParams_StopSequencesMapping(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	stops := []string{"STOP", "END"}
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -367,7 +370,7 @@ func TestBuildParams_StopSequencesMapping(t *testing.T) {
 }
 
 func TestBuildParams_MaxTokensOverridesDefault(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	maxTok := 2048
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
@@ -383,7 +386,7 @@ func TestBuildParams_MaxTokensOverridesDefault(t *testing.T) {
 }
 
 func TestBuildParams_AllFieldsSet(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 8192}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	temp := 0.5
 	topP := 0.8
 	topK := 40
@@ -421,7 +424,7 @@ func TestBuildParams_AllFieldsSet(t *testing.T) {
 }
 
 func TestBuildParams_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
-	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: 4096}
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(4096)}
 	temp := 0.3
 	params := agent.ConverseParams{
 		Messages: []agent.Message{
