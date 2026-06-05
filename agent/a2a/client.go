@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -252,6 +253,19 @@ func (c *Client) makeToolHandler(_ string) func(ctx context.Context, input json.
 			return "", fmt.Errorf("a2a client: creating request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+
+		// Propagate principal identity headers if a principal is set.
+		if p, ok := agent.PrincipalFrom(ctx); ok {
+			httpReq.Header.Set("X-Agent-Principal-ID", p.ID)
+			if len(p.Roles) > 0 {
+				httpReq.Header.Set("X-Agent-Principal-Roles", strings.Join(p.Roles, ","))
+			}
+			if len(p.Attrs) > 0 {
+				if attrsJSON, err := json.Marshal(p.Attrs); err == nil {
+					httpReq.Header.Set("X-Agent-Principal-Attrs", string(attrsJSON))
+				}
+			}
+		}
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {

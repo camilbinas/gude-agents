@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -84,6 +85,19 @@ func (a *Agent) ResumeWithApproval(c *Context, ar *ApprovalRequest, decision too
 			toolResult = ToolResultBlock{ToolUseID: ar.ToolUseID, Content: out}
 		}
 	} else {
+		if a.auditHook != nil {
+			p, _ := GetTyped[Principal](c, principalKey{})
+			a.auditHook.OnToolCall(AuditRecord{
+				Event:          AuditEventToolCall,
+				Principal:      p,
+				ToolName:       ar.ToolName,
+				ToolInput:      inputForAudit(ar.ToolInput, a.auditCaptureContent),
+				Allowed:        false,
+				DenialReason:   DenialReasonToolApprovalDenied,
+				ConversationID: convID,
+				Timestamp:      time.Now(),
+			})
+		}
 		reason := decision.Reason
 		if reason == "" {
 			reason = "request denied by human reviewer"

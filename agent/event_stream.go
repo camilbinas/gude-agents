@@ -114,6 +114,9 @@ type AgentEvent struct {
 	ToolName   string          `json:"tool_name,omitempty"`
 	ToolInput  json.RawMessage `json:"tool_input,omitempty"`
 	ToolOutput string          `json:"tool_output,omitempty"`
+	// PrincipalID is the ID of the principal that triggered the tool call.
+	// Populated on EventToolCallStart only; correlate with ToolName for attribution.
+	PrincipalID string `json:"principal_id,omitempty"`
 
 	// Model lifecycle (EventModelEnd).
 	StopReason string `json:"stop_reason,omitempty"`
@@ -345,19 +348,23 @@ func (h *eventStreamHook) OnToolCallStart(c *Context, toolName string, input jso
 		inputCopy = make(json.RawMessage, len(input))
 		copy(inputCopy, input)
 	}
-	h.ch <- AgentEvent{
+	ev := AgentEvent{
 		Type:      EventToolCallStart,
 		Timestamp: time.Now(),
 		ToolName:  toolName,
 		ToolInput: inputCopy,
 	}
+	if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+		ev.PrincipalID = p.ID
+	}
+	h.ch <- ev
 	if h.next != nil {
 		h.next.OnToolCallStart(c, toolName, input)
 	}
 }
 
 func (h *eventStreamHook) OnToolCallEnd(c *Context, toolName string, output string, err error, duration time.Duration) {
-	h.ch <- AgentEvent{
+	ev := AgentEvent{
 		Type:       EventToolCallEnd,
 		Timestamp:  time.Now(),
 		ToolName:   toolName,
@@ -365,6 +372,7 @@ func (h *eventStreamHook) OnToolCallEnd(c *Context, toolName string, output stri
 		Err:        err,
 		Duration:   duration,
 	}
+	h.ch <- ev
 	if h.next != nil {
 		h.next.OnToolCallEnd(c, toolName, output, err, duration)
 	}

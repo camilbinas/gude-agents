@@ -74,6 +74,9 @@ type Tool struct {
 	// needsApproval marks the tool as requiring explicit human approval before
 	// the handler is invoked. Set via RequiresApproval().
 	needsApproval bool
+
+	// rolePolicy holds the role allowlist/denylist set via AllowRoles/DenyRoles.
+	rolePolicy *rolePolicy
 }
 
 // IsBackground reports whether t was constructed via NewBackground / NewBackgroundRaw.

@@ -58,9 +58,11 @@ type Agent struct {
 	retryBaseDelay  time.Duration
 
 	// Observability
-	tracingHook TracingHook // nil = no tracing
-	metricsHook MetricsHook // nil = no metrics
-	loggingHook LoggingHook // nil = no logging
+	tracingHook         TracingHook // nil = no tracing
+	metricsHook         MetricsHook // nil = no metrics
+	loggingHook         LoggingHook // nil = no logging
+	auditHook           AuditHook   // nil = no audit
+	auditCaptureContent bool
 
 	// Handoff
 	handoffStore HandoffStore // nil = caller manages HandoffRequest persistence

@@ -311,4 +311,5 @@ func main() {
 - [Tools](tools.md) — tool constructors, `WithGuard`, `Decision`, and introspection methods
 - [Graph Workflows](graph.md) — `GraphToolApprovalError` and graph-layer resumption
 - [Invocation Context](invocation-context.md) — `WithConversationID` for multi-tenant HTTP flows
+- [RBAC & Identity](rbac.md) — `WithRoleEnforcement` and the full identity system
 - [Event Stream](agent-api.md#invokeeventstream) — `EventToolApprovalRequired` event emitted on the event stream channel

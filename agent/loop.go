@@ -19,13 +19,47 @@ import (
 func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) error {
 	convID := resolveConversationID(c, a.conversationID)
 	h := a.hooks(c)
+	start := time.Now()
 
 	c, invoke := h.onInvokeStart(c, a.invokeParams(convID, userMessage, c))
+
+	if a.auditHook != nil {
+		startRec := InvokeAuditRecord{
+			Event:          AuditEventInvokeStart,
+			AgentName:      a.name,
+			ConversationID: convID,
+			Timestamp:      time.Now(),
+		}
+		if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+			startRec.Principal = p
+		}
+		if a.auditCaptureContent {
+			startRec.UserMessage = userMessage
+		}
+		a.auditHook.OnInvokeStart(startRec)
+	}
+
 	usage, err := a.invokeStreamInner(c, userMessage, convID, cb, &h)
 	invoke.finish(err, usage)
 
 	// Store cumulative usage on the Context for caller access.
 	c.setUsage(usage)
+
+	if a.auditHook != nil {
+		endRec := InvokeAuditRecord{
+			Event:          AuditEventInvokeEnd,
+			AgentName:      a.name,
+			ConversationID: convID,
+			Usage:          usage,
+			Duration:       time.Since(start),
+			Err:            err,
+			Timestamp:      time.Now(),
+		}
+		if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+			endRec.Principal = p
+		}
+		a.auditHook.OnInvokeEnd(endRec)
+	}
 
 	return err
 }
@@ -35,11 +69,46 @@ func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) 
 func (a *Agent) Invoke(c *Context, userMessage string) (string, error) {
 	convID := resolveConversationID(c, a.conversationID)
 	h := a.hooks(c)
+	start := time.Now()
 
 	c, invoke := h.onInvokeStart(c, a.invokeParams(convID, userMessage, c))
+
+	if a.auditHook != nil {
+		startRec := InvokeAuditRecord{
+			Event:          AuditEventInvokeStart,
+			AgentName:      a.name,
+			ConversationID: convID,
+			Timestamp:      time.Now(),
+		}
+		if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+			startRec.Principal = p
+		}
+		if a.auditCaptureContent {
+			startRec.UserMessage = userMessage
+		}
+		a.auditHook.OnInvokeStart(startRec)
+	}
+
 	usage, text, err := a.invokeInner(c, userMessage, convID, &h)
 	invoke.finish(err, usage)
 	c.setUsage(usage)
+
+	if a.auditHook != nil {
+		endRec := InvokeAuditRecord{
+			Event:          AuditEventInvokeEnd,
+			AgentName:      a.name,
+			ConversationID: convID,
+			Usage:          usage,
+			Duration:       time.Since(start),
+			Err:            err,
+			Timestamp:      time.Now(),
+			Response:       outputForAudit(text, a.auditCaptureContent),
+		}
+		if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+			endRec.Principal = p
+		}
+		a.auditHook.OnInvokeEnd(endRec)
+	}
 
 	if err != nil {
 		return "", err
@@ -272,7 +341,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			if cfg != nil {
 				extraMW = cfg.extraMiddleware
 			}
-			results, widgetsByCall := a.executeToolsWithMiddleware(iterC, resp.ToolCalls, availableTools, h, extraMW)
+			results, widgetsByCall := a.executeToolsWithMiddleware(iterC, resp.ToolCalls, availableTools, h, extraMW, convID)
 			iterF.finish(len(resp.ToolCalls), false)
 
 			// Build assistantContent after executeToolsWithMiddleware returns so
@@ -332,6 +401,21 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 				if cfg == nil || !cfg.skipConversationSave {
 					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
 				}
+				if a.auditHook != nil {
+					rec := HandoffAuditRecord{
+						Event:          AuditEventHandoff,
+						ConversationID: convID,
+						Timestamp:      time.Now(),
+					}
+					if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+						rec.Principal = p
+					}
+					if hr, ok := GetHandoffRequest(c); ok {
+						rec.Reason = hr.Reason
+						rec.Question = hr.Question
+					}
+					a.auditHook.OnHandoff(rec)
+				}
 				return cumulative, "", ErrHandoffRequested
 			}
 
@@ -357,6 +441,21 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 				}
 				if cfg == nil || !cfg.skipConversationSave {
 					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
+				}
+				if a.auditHook != nil {
+					rec := ApprovalAuditRecord{
+						Event:          AuditEventApprovalRequest,
+						ConversationID: convID,
+						Timestamp:      time.Now(),
+					}
+					if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+						rec.Principal = p
+					}
+					if ar, ok := GetApprovalRequest(iterC); ok {
+						rec.ToolName = ar.ToolName
+						rec.ToolInput = inputForAudit(ar.ToolInput, a.auditCaptureContent)
+					}
+					a.auditHook.OnApprovalRequest(rec)
 				}
 				return cumulative, "", ErrToolApprovalRequired
 			}
@@ -403,7 +502,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 // If extraMiddleware is nil or empty, behaves identically to executeTools.
 // It returns the tool results and, for each call at the same index, any WidgetBlocks
 // emitted by the handler via Context.EmitWidget.
-func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks, extraMiddleware []Middleware) ([]ToolResultBlock, [][]WidgetBlock) {
+func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availableTools map[string]tool.Tool, h *hooks, extraMiddleware []Middleware, convID string) ([]ToolResultBlock, [][]WidgetBlock) {
 	results := make([]ToolResultBlock, len(calls))
 	widgetsByCall := make([][]WidgetBlock, len(calls))
 
@@ -419,6 +518,40 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 		}
 
 		toolC, tf := h.onToolStart(c, tc.Name, tc.Input)
+
+		// Execution-time role check — defense in depth against calls that
+		// bypassed filterTools (e.g. prompt injection, RunLoop with custom calls).
+		if p, ok := GetTyped[Principal](c, principalKey{}); ok {
+			if !t.AllowedWithAttrs(p.Roles, p.Attrs) {
+				var denialReason string
+				if !t.RolesAllowed(p.Roles) {
+					denialReason = DenialReasonRolePolicy
+				} else {
+					denialReason = DenialReasonAttrCondition
+				}
+				reason := "caller does not have the required role"
+				denyErr := fmt.Errorf("%w: tool=%q reason=%q", ErrToolCallDenied, tc.Name, reason)
+				tf.finish(denyErr, "")
+				if a.auditHook != nil {
+					a.auditHook.OnToolCall(AuditRecord{
+						Event:          AuditEventToolCall,
+						Principal:      p,
+						ToolName:       tc.Name,
+						ToolInput:      inputForAudit(tc.Input, a.auditCaptureContent),
+						Allowed:        false,
+						DenialReason:   denialReason,
+						ConversationID: convID,
+						Timestamp:      time.Now(),
+					})
+				}
+				results[i] = ToolResultBlock{
+					ToolUseID: tc.ToolUseID,
+					Content:   denialResultJSON(tc.Name, reason),
+					IsError:   true,
+				}
+				return
+			}
+		}
 
 		// Inject a fresh widget accumulator for this tool call so that
 		// Context.EmitWidget can collect WidgetBlocks during handler execution.
@@ -488,14 +621,46 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 
 		// Rich handlers (returning images) take precedence.
 		if t.RichHandler != nil {
+			start := time.Now()
 			richOut, err := t.RichHandler(toolC, tc.Input)
+			dur := time.Since(start)
 			if err != nil {
 				toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 				tf.finish(err, "")
+				if a.auditHook != nil {
+					p, _ := GetTyped[Principal](c, principalKey{})
+					a.auditHook.OnToolCall(AuditRecord{
+						Event:          AuditEventToolCall,
+						Principal:      p,
+						ToolName:       tc.Name,
+						ToolInput:      inputForAudit(tc.Input, a.auditCaptureContent),
+						Err:            err,
+						Allowed:        true,
+						DenialReason:   "",
+						ConversationID: convID,
+						Duration:       dur,
+						Timestamp:      time.Now(),
+					})
+				}
 				results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
 				return
 			}
 			tf.finish(nil, richOut.Text)
+			if a.auditHook != nil {
+				p, _ := GetTyped[Principal](c, principalKey{})
+				a.auditHook.OnToolCall(AuditRecord{
+					Event:          AuditEventToolCall,
+					Principal:      p,
+					ToolName:       tc.Name,
+					ToolInput:      inputForAudit(tc.Input, a.auditCaptureContent),
+					ToolOutput:     outputForAudit(richOut.Text, a.auditCaptureContent),
+					Allowed:        true,
+					DenialReason:   "",
+					ConversationID: convID,
+					Duration:       dur,
+					Timestamp:      time.Now(),
+				})
+			}
 			result := ToolResultBlock{ToolUseID: tc.ToolUseID, Content: richOut.Text}
 			for _, img := range richOut.Images {
 				result.Images = append(result.Images, ImageBlock{
@@ -540,12 +705,29 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 		// Clear any stale guard denial state from a previous tool call.
 		toolC.Set(guardDenialKey{}, nil)
 
+		handlerStart := time.Now()
 		out, err := handler(toolC, tc.Name, tc.Input)
+		handlerDur := time.Since(handlerStart)
 
 		// Guard deny: translate stashed denial into IsError ToolResultBlock.
 		if denial, ok := GetTyped[guardDenialState](toolC, guardDenialKey{}); ok {
 			denyErr := fmt.Errorf("%w: tool=%q reason=%q", ErrToolCallDenied, denial.Tool, denial.Reason)
 			tf.finish(denyErr, "")
+			if a.auditHook != nil {
+				p, _ := GetTyped[Principal](c, principalKey{})
+				a.auditHook.OnToolCall(AuditRecord{
+					Event:          AuditEventToolCall,
+					Principal:      p,
+					ToolName:       tc.Name,
+					ToolInput:      inputForAudit(tc.Input, a.auditCaptureContent),
+					Err:            denyErr,
+					Allowed:        false,
+					DenialReason:   DenialReasonGuard,
+					ConversationID: convID,
+					Duration:       handlerDur,
+					Timestamp:      time.Now(),
+				})
+			}
 			results[i] = ToolResultBlock{
 				ToolUseID: tc.ToolUseID,
 				Content:   denial.Result,
@@ -557,11 +739,41 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 		if err != nil {
 			toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 			tf.finish(err, "")
+			if a.auditHook != nil {
+				p, _ := GetTyped[Principal](c, principalKey{})
+				a.auditHook.OnToolCall(AuditRecord{
+					Event:          AuditEventToolCall,
+					Principal:      p,
+					ToolName:       tc.Name,
+					ToolInput:      inputForAudit(tc.Input, a.auditCaptureContent),
+					Err:            err,
+					Allowed:        true,
+					DenialReason:   "",
+					ConversationID: convID,
+					Duration:       handlerDur,
+					Timestamp:      time.Now(),
+				})
+			}
 			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: toolErr.Error(), IsError: true}
 			return
 		}
 
 		tf.finish(nil, out)
+		if a.auditHook != nil {
+			p, _ := GetTyped[Principal](c, principalKey{})
+			a.auditHook.OnToolCall(AuditRecord{
+				Event:          AuditEventToolCall,
+				Principal:      p,
+				ToolName:       tc.Name,
+				ToolInput:      inputForAudit(tc.Input, a.auditCaptureContent),
+				ToolOutput:     outputForAudit(out, a.auditCaptureContent),
+				Allowed:        true,
+				DenialReason:   "",
+				ConversationID: convID,
+				Duration:       handlerDur,
+				Timestamp:      time.Now(),
+			})
+		}
 		results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: out}
 		widgetsByCall[i] = acc.drain()
 	}

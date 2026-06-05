@@ -357,8 +357,13 @@ func (c *Context) Clone() *Context {
 			scopesCopy[k] = v
 		}
 	}
+	// Copy principal if set, so it's available in the clone's independent KV store.
+	var principalCopy map[any]any
+	if p, ok := c.data[principalKey{}]; ok {
+		principalCopy = map[any]any{principalKey{}: p}
+	}
 	c.mu.RUnlock()
-	return &Context{
+	clone := &Context{
 		Context:              c.Context,
 		data:                 make(map[any]any),
 		conversationID:       c.conversationID,
@@ -373,6 +378,10 @@ func (c *Context) Clone() *Context {
 		loggingHook:          c.loggingHook,
 		systemPromptOverride: c.systemPromptOverride,
 	}
+	for k, v := range principalCopy {
+		clone.data[k] = v
+	}
+	return clone
 }
 
 // setUsage sets the cumulative token usage. This is internal to the agent loop.
