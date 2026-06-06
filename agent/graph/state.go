@@ -215,6 +215,8 @@ type GraphState struct {
 func (g *GraphState) AddUsage(u agent.TokenUsage) {
 	g.pendingUsage.InputTokens += u.InputTokens
 	g.pendingUsage.OutputTokens += u.OutputTokens
+	g.pendingUsage.CacheReadTokens += u.CacheReadTokens
+	g.pendingUsage.CacheWriteTokens += u.CacheWriteTokens
 }
 
 // usageCarrier is the interface used internally to extract pending usage from a state.

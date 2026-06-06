@@ -154,6 +154,14 @@ func (h *otelHook) OnProviderCallStart(modelID string) func(err error, usage age
 				metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "input"))...))
 			h.providerTokensTotal.Add(context.Background(), int64(usage.OutputTokens),
 				metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "output"))...))
+			if usage.CacheReadTokens > 0 {
+				h.providerTokensTotal.Add(context.Background(), int64(usage.CacheReadTokens),
+					metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "cache_read"))...))
+			}
+			if usage.CacheWriteTokens > 0 {
+				h.providerTokensTotal.Add(context.Background(), int64(usage.CacheWriteTokens),
+					metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "cache_write"))...))
+			}
 		}
 	}
 }

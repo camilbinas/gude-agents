@@ -168,6 +168,12 @@ func (h *prometheusHook) OnProviderCallStart(modelID string) func(err error, usa
 		if err == nil {
 			h.providerTokensTotal.WithLabelValues(modelID, "input").Add(float64(usage.InputTokens))
 			h.providerTokensTotal.WithLabelValues(modelID, "output").Add(float64(usage.OutputTokens))
+			if usage.CacheReadTokens > 0 {
+				h.providerTokensTotal.WithLabelValues(modelID, "cache_read").Add(float64(usage.CacheReadTokens))
+			}
+			if usage.CacheWriteTokens > 0 {
+				h.providerTokensTotal.WithLabelValues(modelID, "cache_write").Add(float64(usage.CacheWriteTokens))
+			}
 		}
 	}
 }

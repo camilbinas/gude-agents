@@ -24,6 +24,7 @@ type GeminiProvider struct {
 	maxTokens      *int32              // nil = no explicit limit (provider default)
 	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
+	cachingEnabled bool                // true = surface CachedContentTokenCount in usage
 }
 
 // Name returns a human-readable identifier for this provider instance.
@@ -37,6 +38,7 @@ type options struct {
 	maxTokens      *int32 // nil = no explicit limit
 	thinkingEffort pvdr.ThinkingEffort
 	thinkingBudget int64
+	cachingEnabled bool
 }
 
 // WithAPIKey sets the Gemini API key. Defaults to GEMINI_API_KEY env var,
@@ -70,6 +72,13 @@ func WithThinking(effort pvdr.ThinkingEffort) Option {
 // reason and produce a final answer.
 func WithThinkingBudget(tokens int64) Option {
 	return func(o *options) { o.thinkingBudget = tokens }
+}
+
+// WithCaching stores a flag signaling that caching is desired.
+// Gemini manages caching automatically; this option enables surfacing of
+// CachedContentTokenCount from UsageMetadata into CacheReadTokens.
+func WithCaching() Option {
+	return func(o *options) { o.cachingEnabled = true }
 }
 
 // Must is a helper that wraps a (*GeminiProvider, error) call and panics on error.
@@ -114,6 +123,7 @@ func New(model string, opts ...Option) (*GeminiProvider, error) {
 		maxTokens:      o.maxTokens,
 		thinkingEffort: o.thinkingEffort,
 		thinkingBudget: o.thinkingBudget,
+		cachingEnabled: o.cachingEnabled,
 	}, nil
 }
 
@@ -169,6 +179,7 @@ func (p *GeminiProvider) ConverseStream(ctx context.Context, params agent.Conver
 			if resp != nil && resp.UsageMetadata != nil {
 				result.Usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
 				result.Usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+				result.Usage.CacheReadTokens = int(resp.UsageMetadata.CachedContentTokenCount)
 			}
 			continue
 		}
@@ -222,6 +233,7 @@ func (p *GeminiProvider) ConverseStream(ctx context.Context, params agent.Conver
 		if resp.UsageMetadata != nil {
 			result.Usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
 			result.Usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+			result.Usage.CacheReadTokens = int(resp.UsageMetadata.CachedContentTokenCount)
 		}
 	}
 
@@ -244,6 +256,7 @@ func parseResponse(resp *genai.GenerateContentResponse) *agent.ProviderResponse 
 	if resp.UsageMetadata != nil {
 		result.Usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
 		result.Usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+		result.Usage.CacheReadTokens = int(resp.UsageMetadata.CachedContentTokenCount)
 	}
 
 	if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
@@ -411,6 +424,14 @@ func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 				}
 				parts = append(parts, genai.NewPartFromBytes(bytes, mimeType))
 			}
+		case agent.CacheableBlock:
+			// Gemini does not support explicit cache breakpoints.
+			// Unwrap and translate the inner block as a plain part.
+			innerParts, err := toGeminiParts([]agent.ContentBlock{v.Inner})
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, innerParts...)
 		}
 	}
 	return parts, nil

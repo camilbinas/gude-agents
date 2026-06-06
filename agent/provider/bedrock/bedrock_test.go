@@ -51,7 +51,7 @@ func TestToBedrockRole_UnknownDefaultsToUser(t *testing.T) {
 func TestToBedrockContentBlocks_TextBlock(t *testing.T) {
 	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.TextBlock{Text: "hello"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestToBedrockContentBlocks_ToolUseBlock(t *testing.T) {
 	input := json.RawMessage(`{"query":"test"}`)
 	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: input},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestToBedrockContentBlocks_ToolUseBlock(t *testing.T) {
 func TestToBedrockContentBlocks_ToolResultBlock(t *testing.T) {
 	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.ToolResultBlock{ToolUseID: "tu-1", Content: "result text", IsError: false},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestToBedrockContentBlocks_ToolResultBlock(t *testing.T) {
 func TestToBedrockContentBlocks_ToolResultBlockWithError(t *testing.T) {
 	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.ToolResultBlock{ToolUseID: "tu-2", Content: "something failed", IsError: true},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestToBedrockContentBlocks_MixedBlocks(t *testing.T) {
 	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
 		agent.TextBlock{Text: "thinking..."},
 		agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: json.RawMessage(`{}`)},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestToBedrockContentBlocks_MixedBlocks(t *testing.T) {
 }
 
 func TestToBedrockContentBlocks_Empty(t *testing.T) {
-	blocks, err := toBedrockContentBlocks(nil)
+	blocks, err := toBedrockContentBlocks(nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestToBedrockContentBlocks_Empty(t *testing.T) {
 func TestToBedrockMessages_SingleUserMessage(t *testing.T) {
 	msgs, err := toBedrockMessages([]agent.Message{
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestToBedrockMessages_MultiTurnConversation(t *testing.T) {
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi there"}}},
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "bye"}}},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestToBedrockMessages_WithToolResultContent(t *testing.T) {
 				agent.ToolResultBlock{ToolUseID: "tu-1", Content: "42"},
 			},
 		},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -738,7 +738,7 @@ func TestToBedrockContentBlocks_ImageBlock_RawBytes(t *testing.T) {
 				MIMEType: "image/jpeg",
 			},
 		},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -772,7 +772,7 @@ func TestToBedrockContentBlocks_ImageBlock_Base64String(t *testing.T) {
 				MIMEType: "image/png",
 			},
 		},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestToBedrockContentBlocks_ImageBlock_InvalidBase64_ReturnsError(t *testing
 				MIMEType: "image/jpeg",
 			},
 		},
-	})
+	}, "")
 	if err == nil {
 		t.Fatal("expected an error for invalid base64, got nil")
 	}

@@ -86,10 +86,11 @@ func (h *debugHook) OnInvokeEnd(err error, usage agent.TokenUsage, duration time
 		h.p("\n%s✗ invoke%s  %s  %s\n%s\n", bold+red, reset, fmtDur(duration), fmtErr(err), divider)
 		return
 	}
-	h.p("\n%s✓ invoke%s  %s  %s↑%d ↓%d%s\n%s\n",
+	cacheInfo := fmtCacheTokens(usage)
+	h.p("\n%s✓ invoke%s  %s  %s↑%d ↓%d%s%s\n%s\n",
 		bold+green, reset,
 		fmtDur(duration),
-		dim, usage.InputTokens, usage.OutputTokens, reset,
+		dim, usage.InputTokens, usage.OutputTokens, cacheInfo, reset,
 		divider,
 	)
 }
@@ -117,9 +118,10 @@ func (h *debugHook) OnProviderCallEnd(err error, usage agent.TokenUsage, toolCal
 	if toolCallCount > 0 {
 		tools = fmt.Sprintf("  %d tool(s)", toolCallCount)
 	}
-	h.p("\n%s⚡provider  %s  %s↑%d ↓%d%s%s\n",
+	cacheInfo := fmtCacheTokens(usage)
+	h.p("\n%s⚡provider  %s  %s↑%d ↓%d%s%s%s\n",
 		dim, fmtDur(duration),
-		dim, usage.InputTokens, usage.OutputTokens, tools, reset,
+		dim, usage.InputTokens, usage.OutputTokens, cacheInfo, tools, reset,
 	)
 }
 
@@ -202,10 +204,11 @@ func (h *debugHook) OnGraphRunEnd(err error, iterations int, usage agent.TokenUs
 		h.p("\n%s✗ graph run%s  %s  %s\n%s\n\n", bold+red, reset, fmtDur(duration), fmtErr(err), divider)
 		return
 	}
-	h.p("\n%s✓ graph run%s  %s  %s%d nodes  ↑%d ↓%d%s\n%s\n\n",
+	cacheInfo := fmtCacheTokens(usage)
+	h.p("\n%s✓ graph run%s  %s  %s%d nodes  ↑%d ↓%d%s%s\n%s\n\n",
 		bold+green, reset,
 		fmtDur(duration),
-		dim, iterations, usage.InputTokens, usage.OutputTokens, reset,
+		dim, iterations, usage.InputTokens, usage.OutputTokens, cacheInfo, reset,
 		divider,
 	)
 }
@@ -259,6 +262,13 @@ func fmtDur(d time.Duration) string {
 		return fmt.Sprintf("%s%dms%s", dim, d.Milliseconds(), reset)
 	}
 	return fmt.Sprintf("%s%.1fs%s", dim, d.Seconds(), reset)
+}
+
+func fmtCacheTokens(u agent.TokenUsage) string {
+	if u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+		return ""
+	}
+	return fmt.Sprintf("  cache_w=%d cache_r=%d", u.CacheWriteTokens, u.CacheReadTokens)
 }
 
 func fmtErr(err error) string {

@@ -25,6 +25,7 @@ type AnthropicProvider struct {
 	maxTokens      *int64              // nil = no explicit limit (provider default)
 	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
+	cachingEnabled bool
 }
 
 // Option configures the AnthropicProvider.
@@ -35,6 +36,7 @@ type options struct {
 	maxTokens      *int64 // nil = no explicit limit
 	thinkingEffort pvdr.ThinkingEffort
 	thinkingBudget int64
+	cachingEnabled bool
 }
 
 // WithAPIKey sets the Anthropic API key. Defaults to ANTHROPIC_API_KEY env var.
@@ -68,6 +70,13 @@ func WithThinkingBudget(tokens int64) Option {
 	return func(o *options) { o.thinkingBudget = tokens }
 }
 
+// WithCaching enables prompt caching. When set and ConverseParams.System is
+// non-empty, cache_control is attached to the last system TextBlockParam.
+// CacheableBlock markers in messages are also translated to cache_control.
+func WithCaching() Option {
+	return func(o *options) { o.cachingEnabled = true }
+}
+
 // Must is a helper that wraps a (*AnthropicProvider, error) call and panics on error.
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
@@ -98,6 +107,7 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 		maxTokens:      o.maxTokens,
 		thinkingEffort: o.thinkingEffort,
 		thinkingBudget: o.thinkingBudget,
+		cachingEnabled: o.cachingEnabled,
 	}, nil
 }
 
@@ -124,6 +134,8 @@ func (p *AnthropicProvider) Converse(ctx context.Context, params agent.ConverseP
 	resp := parseMessage(msg)
 	resp.Usage.InputTokens = int(msg.Usage.InputTokens)
 	resp.Usage.OutputTokens = int(msg.Usage.OutputTokens)
+	resp.Usage.CacheReadTokens = int(msg.Usage.CacheReadInputTokens)
+	resp.Usage.CacheWriteTokens = int(msg.Usage.CacheCreationInputTokens)
 	return resp, nil
 }
 
@@ -202,6 +214,8 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 		case "message_start":
 			ev := event.AsMessageStart()
 			resp.Usage.InputTokens = int(ev.Message.Usage.InputTokens)
+			resp.Usage.CacheReadTokens = int(ev.Message.Usage.CacheReadInputTokens)
+			resp.Usage.CacheWriteTokens = int(ev.Message.Usage.CacheCreationInputTokens)
 
 		case "message_delta":
 			ev := event.AsMessageDelta()
@@ -249,9 +263,11 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 		Messages:  toAnthropicMessages(params.Messages),
 	}
 	if params.System != "" {
-		input.System = []anthropicsdk.TextBlockParam{
-			{Text: params.System},
+		blocks := []anthropicsdk.TextBlockParam{{Text: params.System}}
+		if p.cachingEnabled {
+			blocks[len(blocks)-1].CacheControl = anthropicsdk.NewCacheControlEphemeralParam()
 		}
+		input.System = blocks
 	}
 	if len(params.ToolConfig) > 0 {
 		input.Tools = toAnthropicTools(params.ToolConfig)
@@ -351,6 +367,195 @@ func imageBytes(src agent.ImageSource) ([]byte, error) {
 	return b, nil
 }
 
+// buildAnthropicToolResultParam constructs a ToolResultBlockParam from a
+// ToolResultBlock. The caller may set CacheControl on the returned struct.
+func buildAnthropicToolResultParam(v agent.ToolResultBlock) anthropicsdk.ToolResultBlockParam {
+	if len(v.Images) == 0 {
+		return anthropicsdk.ToolResultBlockParam{
+			ToolUseID: v.ToolUseID,
+			Content: []anthropicsdk.ToolResultBlockParamContentUnion{
+				{OfText: &anthropicsdk.TextBlockParam{Text: v.Content}},
+			},
+			IsError: anthropicsdk.Bool(v.IsError),
+		}
+	}
+	content := []anthropicsdk.ToolResultBlockParamContentUnion{
+		{OfText: &anthropicsdk.TextBlockParam{Text: v.Content}},
+	}
+	for _, img := range v.Images {
+		if img.Source.URL != "" {
+			content = append(content, anthropicsdk.ToolResultBlockParamContentUnion{
+				OfImage: &anthropicsdk.ImageBlockParam{
+					Source: anthropicsdk.ImageBlockParamSourceUnion{
+						OfURL: &anthropicsdk.URLImageSourceParam{URL: img.Source.URL},
+					},
+				},
+			})
+		} else {
+			var encoded string
+			if img.Source.Base64 != "" {
+				encoded = img.Source.Base64
+			} else if len(img.Source.Data) > 0 {
+				encoded = base64.StdEncoding.EncodeToString(img.Source.Data)
+			}
+			content = append(content, anthropicsdk.ToolResultBlockParamContentUnion{
+				OfImage: &anthropicsdk.ImageBlockParam{
+					Source: anthropicsdk.ImageBlockParamSourceUnion{
+						OfBase64: &anthropicsdk.Base64ImageSourceParam{
+							MediaType: anthropicsdk.Base64ImageSourceMediaType(img.Source.MIMEType),
+							Data:      encoded,
+						},
+					},
+				},
+			})
+		}
+	}
+	return anthropicsdk.ToolResultBlockParam{
+		ToolUseID: v.ToolUseID,
+		Content:   content,
+		IsError:   anthropicsdk.Bool(v.IsError),
+	}
+}
+
+// buildAnthropicImageParam constructs an ImageBlockParam from an ImageBlock.
+// Returns (param, true) on success or (zero, false) if the image bytes cannot
+// be decoded. The caller may set CacheControl on the returned struct.
+func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam, bool) {
+	if v.Source.URL != "" {
+		return anthropicsdk.ImageBlockParam{
+			Source: anthropicsdk.ImageBlockParamSourceUnion{
+				OfURL: &anthropicsdk.URLImageSourceParam{URL: v.Source.URL},
+			},
+		}, true
+	}
+	var encoded string
+	if v.Source.Base64 != "" {
+		encoded = v.Source.Base64
+	} else {
+		bytes, err := imageBytes(v.Source)
+		if err != nil {
+			log.Printf("anthropic: failed to get image bytes: %v (skipping block)", err)
+			return anthropicsdk.ImageBlockParam{}, false
+		}
+		encoded = base64.StdEncoding.EncodeToString(bytes)
+	}
+	return anthropicsdk.ImageBlockParam{
+		Source: anthropicsdk.ImageBlockParamSourceUnion{
+			OfBase64: &anthropicsdk.Base64ImageSourceParam{
+				MediaType: anthropicsdk.Base64ImageSourceMediaType(v.Source.MIMEType),
+				Data:      encoded,
+			},
+		},
+	}, true
+}
+
+// buildAnthropicDocParam constructs a DocumentBlockParam from a DocumentBlock.
+// Returns (param, true) on success or (zero, false) if the document bytes
+// cannot be decoded. The caller may set CacheControl on the returned struct.
+func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockParam, bool) {
+	if v.Source.URL != "" {
+		return anthropicsdk.DocumentBlockParam{
+			Source: anthropicsdk.DocumentBlockParamSourceUnion{
+				OfURL: &anthropicsdk.URLPDFSourceParam{URL: v.Source.URL},
+			},
+		}, true
+	}
+	var encoded string
+	if v.Source.Base64 != "" {
+		encoded = v.Source.Base64
+	} else {
+		bytes, err := imageBytes(agent.ImageSource{Data: v.Source.Data})
+		if err != nil {
+			log.Printf("anthropic: failed to get document bytes: %v (skipping block)", err)
+			return anthropicsdk.DocumentBlockParam{}, false
+		}
+		encoded = base64.StdEncoding.EncodeToString(bytes)
+	}
+	return anthropicsdk.DocumentBlockParam{
+		Source: anthropicsdk.DocumentBlockParamSourceUnion{
+			OfBase64: &anthropicsdk.Base64PDFSourceParam{Data: encoded},
+		},
+	}, true
+}
+
+// toAnthropicCacheableBlock translates a CacheableBlock into a
+// ContentBlockParamUnion with CacheControl set on the underlying block.
+// For unknown inner types the inner block is translated without cache_control.
+func toAnthropicCacheableBlock(b agent.CacheableBlock, role agent.Role) anthropicsdk.ContentBlockParamUnion {
+	cc := anthropicsdk.NewCacheControlEphemeralParam()
+	switch inner := b.Inner.(type) {
+	case agent.TextBlock:
+		return anthropicsdk.ContentBlockParamUnion{
+			OfText: &anthropicsdk.TextBlockParam{
+				Text:         inner.Text,
+				CacheControl: cc,
+			},
+		}
+	case agent.ToolResultBlock:
+		trb := buildAnthropicToolResultParam(inner)
+		trb.CacheControl = cc
+		return anthropicsdk.ContentBlockParamUnion{OfToolResult: &trb}
+	case agent.ImageBlock:
+		if role == agent.RoleAssistant {
+			log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")
+			// Fall back to a no-op text block so the caller can still append
+			// a result; the outer loop will handle skipping.
+			return toAnthropicContentBlock(b.Inner, role)
+		}
+		img, ok := buildAnthropicImageParam(inner)
+		if !ok {
+			return toAnthropicContentBlock(b.Inner, role)
+		}
+		img.CacheControl = cc
+		return anthropicsdk.ContentBlockParamUnion{OfImage: &img}
+	case agent.DocumentBlock:
+		if role == agent.RoleAssistant {
+			log.Printf("anthropic: DocumentBlock in assistant-role message is not supported and will be skipped")
+			return toAnthropicContentBlock(b.Inner, role)
+		}
+		doc, ok := buildAnthropicDocParam(inner)
+		if !ok {
+			return toAnthropicContentBlock(b.Inner, role)
+		}
+		doc.CacheControl = cc
+		return anthropicsdk.ContentBlockParamUnion{OfDocument: &doc}
+	default:
+		// Unknown inner type — fall back to translating the inner block directly
+		// without cache_control.
+		return toAnthropicContentBlock(b.Inner, role)
+	}
+}
+
+// toAnthropicContentBlock translates a single ContentBlock. Returns a zero
+// ContentBlockParamUnion for block types that are not translatable (e.g.
+// ImageBlock or DocumentBlock in assistant role); callers are responsible for
+// filtering those out.
+func toAnthropicContentBlock(b agent.ContentBlock, role agent.Role) anthropicsdk.ContentBlockParamUnion {
+	switch v := b.(type) {
+	case agent.TextBlock:
+		return anthropicsdk.NewTextBlock(v.Text)
+	case agent.ToolUseBlock:
+		var input any = map[string]any{}
+		if len(v.Input) > 0 {
+			if err := json.Unmarshal(v.Input, &input); err != nil {
+				input = map[string]any{}
+			}
+		}
+		return anthropicsdk.NewToolUseBlock(v.ToolUseID, input, v.Name)
+	case agent.ToolResultBlock:
+		trb := buildAnthropicToolResultParam(v)
+		return anthropicsdk.ContentBlockParamUnion{OfToolResult: &trb}
+	case agent.ImageBlock:
+		img, _ := buildAnthropicImageParam(v)
+		return anthropicsdk.ContentBlockParamUnion{OfImage: &img}
+	case agent.DocumentBlock:
+		doc, _ := buildAnthropicDocParam(v)
+		return anthropicsdk.ContentBlockParamUnion{OfDocument: &doc}
+	default:
+		return anthropicsdk.ContentBlockParamUnion{}
+	}
+}
+
 func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []anthropicsdk.ContentBlockParamUnion {
 	out := make([]anthropicsdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {
@@ -366,105 +571,30 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []an
 			}
 			out = append(out, anthropicsdk.NewToolUseBlock(v.ToolUseID, input, v.Name))
 		case agent.ToolResultBlock:
-			if len(v.Images) == 0 {
-				out = append(out, anthropicsdk.NewToolResultBlock(v.ToolUseID, v.Content, v.IsError))
-			} else {
-				content := []anthropicsdk.ToolResultBlockParamContentUnion{
-					{OfText: &anthropicsdk.TextBlockParam{Text: v.Content}},
-				}
-				for _, img := range v.Images {
-					if img.Source.URL != "" {
-						content = append(content, anthropicsdk.ToolResultBlockParamContentUnion{
-							OfImage: &anthropicsdk.ImageBlockParam{
-								Source: anthropicsdk.ImageBlockParamSourceUnion{
-									OfURL: &anthropicsdk.URLImageSourceParam{URL: img.Source.URL},
-								},
-							},
-						})
-					} else {
-						var encoded string
-						if img.Source.Base64 != "" {
-							encoded = img.Source.Base64
-						} else if len(img.Source.Data) > 0 {
-							encoded = base64.StdEncoding.EncodeToString(img.Source.Data)
-						}
-						content = append(content, anthropicsdk.ToolResultBlockParamContentUnion{
-							OfImage: &anthropicsdk.ImageBlockParam{
-								Source: anthropicsdk.ImageBlockParamSourceUnion{
-									OfBase64: &anthropicsdk.Base64ImageSourceParam{
-										MediaType: anthropicsdk.Base64ImageSourceMediaType(img.Source.MIMEType),
-										Data:      encoded,
-									},
-								},
-							},
-						})
-					}
-				}
-				toolBlock := anthropicsdk.ToolResultBlockParam{
-					ToolUseID: v.ToolUseID,
-					Content:   content,
-					IsError:   anthropicsdk.Bool(v.IsError),
-				}
-				out = append(out, anthropicsdk.ContentBlockParamUnion{OfToolResult: &toolBlock})
-			}
+			trb := buildAnthropicToolResultParam(v)
+			out = append(out, anthropicsdk.ContentBlockParamUnion{OfToolResult: &trb})
 		case agent.ImageBlock:
 			if role == agent.RoleAssistant {
 				log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")
 				continue
 			}
-			if v.Source.URL != "" {
-				// URL source: pass directly to the provider.
-				out = append(out, anthropicsdk.ContentBlockParamUnion{
-					OfImage: &anthropicsdk.ImageBlockParam{
-						Source: anthropicsdk.ImageBlockParamSourceUnion{
-							OfURL: &anthropicsdk.URLImageSourceParam{
-								URL: v.Source.URL,
-							},
-						},
-					},
-				})
-			} else {
-				var encoded string
-				if v.Source.Base64 != "" {
-					encoded = v.Source.Base64
-				} else {
-					bytes, err := imageBytes(v.Source)
-					if err != nil {
-						log.Printf("anthropic: failed to get image bytes: %v (skipping block)", err)
-						continue
-					}
-					encoded = base64.StdEncoding.EncodeToString(bytes)
-				}
-				out = append(out, anthropicsdk.NewImageBlockBase64(
-					string(v.Source.MIMEType),
-					encoded,
-				))
+			img, ok := buildAnthropicImageParam(v)
+			if !ok {
+				continue
 			}
+			out = append(out, anthropicsdk.ContentBlockParamUnion{OfImage: &img})
 		case agent.DocumentBlock:
 			if role == agent.RoleAssistant {
 				log.Printf("anthropic: DocumentBlock in assistant-role message is not supported and will be skipped")
 				continue
 			}
-			if v.Source.URL != "" {
-				out = append(out, anthropicsdk.NewDocumentBlock(anthropicsdk.URLPDFSourceParam{
-					URL: v.Source.URL,
-				}))
-			} else {
-				var encoded string
-				if v.Source.Base64 != "" {
-					encoded = v.Source.Base64
-				} else {
-					bytes, err := imageBytes(agent.ImageSource{Data: v.Source.Data})
-					if err != nil {
-						log.Printf("anthropic: failed to get document bytes: %v (skipping block)", err)
-						continue
-					}
-					encoded = base64.StdEncoding.EncodeToString(bytes)
-				}
-				out = append(out, anthropicsdk.NewDocumentBlock(anthropicsdk.Base64PDFSourceParam{
-					Data: encoded,
-				}))
+			doc, ok := buildAnthropicDocParam(v)
+			if !ok {
+				continue
 			}
+			out = append(out, anthropicsdk.ContentBlockParamUnion{OfDocument: &doc})
+		case agent.CacheableBlock:
+			out = append(out, toAnthropicCacheableBlock(v, role))
 		}
 	}
 	return out

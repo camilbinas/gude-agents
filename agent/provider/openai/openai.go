@@ -23,6 +23,7 @@ type OpenAIProvider struct {
 	model          string
 	maxTokens      int64
 	thinkingEffort pvdr.ThinkingEffort // mapped to OpenAI's reasoning_effort; empty = disabled
+	cachingEnabled bool
 }
 
 // Name returns a human-readable identifier for this provider instance.
@@ -36,6 +37,7 @@ type options struct {
 	baseURL        string
 	maxTokens      int64
 	thinkingEffort pvdr.ThinkingEffort
+	cachingEnabled bool
 }
 
 // WithAPIKey sets the OpenAI API key. Defaults to OPENAI_API_KEY env var.
@@ -58,6 +60,13 @@ func WithMaxTokens(n int64) Option {
 // ThinkingMinimal, ThinkingLow, ThinkingMedium, and ThinkingHigh.
 func WithThinking(effort pvdr.ThinkingEffort) Option {
 	return func(o *options) { o.thinkingEffort = effort }
+}
+
+// WithCaching stores a flag signaling that caching is desired.
+// OpenAI manages caching automatically; this option enables surfacing of
+// cached_tokens from PromptTokensDetails into CacheReadTokens.
+func WithCaching() Option {
+	return func(o *options) { o.cachingEnabled = true }
 }
 
 // Must is a helper that wraps a (*OpenAIProvider, error) call and panics on error.
@@ -93,6 +102,7 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 		model:          model,
 		maxTokens:      o.maxTokens,
 		thinkingEffort: o.thinkingEffort,
+		cachingEnabled: o.cachingEnabled,
 	}, nil
 }
 
@@ -117,6 +127,7 @@ func (p *OpenAIProvider) Converse(ctx context.Context, params agent.ConversePara
 	resp := parseCompletion(completion)
 	resp.Usage.InputTokens = int(completion.Usage.PromptTokens)
 	resp.Usage.OutputTokens = int(completion.Usage.CompletionTokens)
+	resp.Usage.CacheReadTokens = int(completion.Usage.PromptTokensDetails.CachedTokens)
 	return resp, nil
 }
 
@@ -150,6 +161,7 @@ func (p *OpenAIProvider) ConverseStream(ctx context.Context, params agent.Conver
 		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 			resp.Usage.InputTokens = int(chunk.Usage.PromptTokens)
 			resp.Usage.OutputTokens = int(chunk.Usage.CompletionTokens)
+			resp.Usage.CacheReadTokens = int(chunk.Usage.PromptTokensDetails.CachedTokens)
 		}
 
 		for _, choice := range chunk.Choices {
@@ -353,6 +365,9 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 					Filename: openaisdk.String(name),
 				}),
 			}))
+		case agent.CacheableBlock:
+			// OpenAI caches automatically; just translate the inner block.
+			out = append(out, toOpenAIUserMessages([]agent.ContentBlock{v.Inner})...)
 		}
 	}
 	return out
@@ -383,6 +398,15 @@ func toOpenAIAssistantMessage(blocks []agent.ContentBlock) openaisdk.ChatComplet
 		case agent.DocumentBlock:
 			// DocumentBlock in assistant-role messages is silently skipped.
 			_ = v
+		case agent.CacheableBlock:
+			// OpenAI caches automatically; translate the inner block directly.
+			inner := toOpenAIAssistantMessage([]agent.ContentBlock{v.Inner})
+			if inner.OfAssistant != nil {
+				if inner.OfAssistant.Content.OfString.Valid() {
+					text += inner.OfAssistant.Content.OfString.Value
+				}
+				toolCalls = append(toolCalls, inner.OfAssistant.ToolCalls...)
+			}
 		}
 	}
 

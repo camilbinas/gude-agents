@@ -328,6 +328,8 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 
 		cumulative.InputTokens += resp.Usage.InputTokens
 		cumulative.OutputTokens += resp.Usage.OutputTokens
+		cumulative.CacheReadTokens += resp.Usage.CacheReadTokens
+		cumulative.CacheWriteTokens += resp.Usage.CacheWriteTokens
 
 		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
 			iterF.finish(0, false)

@@ -406,6 +406,8 @@ func extractUsageFromResult[S any](ops stateOps[S], result *S, usage *agent.Toke
 		if u := carrier.getPendingUsage(); u.InputTokens > 0 || u.OutputTokens > 0 {
 			usage.InputTokens += u.InputTokens
 			usage.OutputTokens += u.OutputTokens
+			usage.CacheReadTokens += u.CacheReadTokens
+			usage.CacheWriteTokens += u.CacheWriteTokens
 			carrier.clearPendingUsage()
 		}
 		return
@@ -416,6 +418,8 @@ func extractUsageFromResult[S any](ops stateOps[S], result *S, usage *agent.Toke
 		if u, exists := (*m)["__usage__"].(agent.TokenUsage); exists {
 			usage.InputTokens += u.InputTokens
 			usage.OutputTokens += u.OutputTokens
+			usage.CacheReadTokens += u.CacheReadTokens
+			usage.CacheWriteTokens += u.CacheWriteTokens
 			delete(*m, "__usage__")
 		}
 	}

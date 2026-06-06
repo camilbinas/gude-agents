@@ -203,6 +203,14 @@ func (h *cloudwatchHook) OnProviderCallStart(modelID string) func(err error, usa
 				modelDim, dim("Direction", "input")))
 			h.append(counterDatum("AgentProviderTokensTotal", float64(usage.OutputTokens),
 				modelDim, dim("Direction", "output")))
+			if usage.CacheReadTokens > 0 {
+				h.append(counterDatum("AgentProviderTokensTotal", float64(usage.CacheReadTokens),
+					modelDim, dim("Direction", "cache_read")))
+			}
+			if usage.CacheWriteTokens > 0 {
+				h.append(counterDatum("AgentProviderTokensTotal", float64(usage.CacheWriteTokens),
+					modelDim, dim("Direction", "cache_write")))
+			}
 		}
 	}
 }

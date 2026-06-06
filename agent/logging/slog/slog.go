@@ -49,6 +49,12 @@ func (h *slogHook) OnInvokeEnd(err error, usage agent.TokenUsage, duration time.
 		slog.Int("input_tokens", usage.InputTokens),
 		slog.Int("output_tokens", usage.OutputTokens),
 	}
+	if usage.CacheReadTokens > 0 {
+		attrs = append(attrs, slog.Int("cache_read_tokens", usage.CacheReadTokens))
+	}
+	if usage.CacheWriteTokens > 0 {
+		attrs = append(attrs, slog.Int("cache_write_tokens", usage.CacheWriteTokens))
+	}
 	if err != nil {
 		level = slog.LevelError
 		attrs = append(attrs, slog.String("error", err.Error()))
@@ -84,6 +90,12 @@ func (h *slogHook) OnProviderCallEnd(err error, usage agent.TokenUsage, toolCall
 		slog.Int("input_tokens", usage.InputTokens),
 		slog.Int("output_tokens", usage.OutputTokens),
 		slog.Int("tool_call_count", toolCallCount),
+	}
+	if usage.CacheReadTokens > 0 {
+		attrs = append(attrs, slog.Int("cache_read_tokens", usage.CacheReadTokens))
+	}
+	if usage.CacheWriteTokens > 0 {
+		attrs = append(attrs, slog.Int("cache_write_tokens", usage.CacheWriteTokens))
 	}
 	if err != nil {
 		level = slog.LevelError
@@ -218,6 +230,12 @@ func (h *slogHook) OnGraphRunEnd(err error, iterations int, usage agent.TokenUsa
 		slog.Int("input_tokens", usage.InputTokens),
 		slog.Int("output_tokens", usage.OutputTokens),
 		slog.Float64("duration_ms", float64(duration.Milliseconds())),
+	}
+	if usage.CacheReadTokens > 0 {
+		attrs = append(attrs, slog.Int("cache_read_tokens", usage.CacheReadTokens))
+	}
+	if usage.CacheWriteTokens > 0 {
+		attrs = append(attrs, slog.Int("cache_write_tokens", usage.CacheWriteTokens))
 	}
 	if err != nil {
 		level = slog.LevelError

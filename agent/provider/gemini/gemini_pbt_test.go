@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -458,5 +459,225 @@ func TestProperty_GeminiThinkingTextStorage(t *testing.T) {
 		if got != want {
 			t.Fatalf("thinking = %q, want %q", got, want)
 		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Property: CacheableBlock preserves inner block semantics for Gemini (pass-through)
+// **Validates: Requirements 1.4, 8.3**
+// ---------------------------------------------------------------------------
+
+// genGeminiTextBlock generates a random TextBlock for Gemini PBT.
+func genGeminiTextBlock() *rapid.Generator[agent.TextBlock] {
+	return rapid.Custom(func(t *rapid.T) agent.TextBlock {
+		text := rapid.StringOf(rapid.RuneFrom([]rune("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"))).
+			Draw(t, "text")
+		return agent.TextBlock{Text: text}
+	})
+}
+
+// genGeminiToolUseBlock generates a random ToolUseBlock.
+func genGeminiToolUseBlock() *rapid.Generator[agent.ToolUseBlock] {
+	return rapid.Custom(func(t *rapid.T) agent.ToolUseBlock {
+		name := rapid.StringMatching(`[a-z_][a-z0-9_]{0,20}`).Draw(t, "toolName")
+		numArgs := rapid.IntRange(0, 3).Draw(t, "numArgs")
+		argsMap := map[string]any{}
+		for i := 0; i < numArgs; i++ {
+			key := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "argKey")
+			val := rapid.StringMatching(`[a-zA-Z0-9]{0,20}`).Draw(t, "argVal")
+			argsMap[key] = val
+		}
+		inputJSON, _ := json.Marshal(argsMap)
+		return agent.ToolUseBlock{
+			ToolUseID: "tu-1",
+			Name:      name,
+			Input:     json.RawMessage(inputJSON),
+		}
+	})
+}
+
+// genGeminiToolResultBlock generates a random ToolResultBlock (text-only, no images).
+func genGeminiToolResultBlock() *rapid.Generator[agent.ToolResultBlock] {
+	return rapid.Custom(func(t *rapid.T) agent.ToolResultBlock {
+		toolUseID := rapid.StringMatching(`tu_[a-zA-Z0-9]{4,12}`).Draw(t, "toolUseID")
+		content := rapid.StringOf(rapid.RuneFrom([]rune("abcdefghijklmnopqrstuvwxyz"))).Draw(t, "content")
+		return agent.ToolResultBlock{
+			ToolUseID: toolUseID,
+			Content:   content,
+		}
+	})
+}
+
+// genGeminiImageBlock generates a fixed-data ImageBlock with base64 encoding.
+func genGeminiImageBlock() *rapid.Generator[agent.ImageBlock] {
+	return rapid.Custom(func(t *rapid.T) agent.ImageBlock {
+		_ = rapid.Bool().Draw(t, "imageVariant")
+		// 1x1 transparent PNG.
+		pngData := []byte{
+			0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+			0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+			0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+			0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+			0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
+			0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+			0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+			0x42, 0x60, 0x82,
+		}
+		encoded := base64.StdEncoding.EncodeToString(pngData)
+		return agent.ImageBlock{
+			Source: agent.ImageSource{
+				Base64:   encoded,
+				MIMEType: "image/png",
+			},
+		}
+	})
+}
+
+// genGeminiDocumentBlock generates a fixed-data DocumentBlock with base64 encoding.
+func genGeminiDocumentBlock() *rapid.Generator[agent.DocumentBlock] {
+	return rapid.Custom(func(t *rapid.T) agent.DocumentBlock {
+		_ = rapid.Bool().Draw(t, "docVariant")
+		pdfData := []byte("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\n%%EOF")
+		encoded := base64.StdEncoding.EncodeToString(pdfData)
+		return agent.DocumentBlock{
+			Source: agent.DocumentSource{
+				Base64:   encoded,
+				MIMEType: "application/pdf",
+			},
+		}
+	})
+}
+
+// partsToJSON marshals a slice of *genai.Part to a JSON string for structural comparison.
+func partsToJSON(t *rapid.T, parts []*genai.Part) string {
+	t.Helper()
+	b, err := json.Marshal(parts)
+	if err != nil {
+		t.Fatalf("failed to marshal parts to JSON: %v", err)
+	}
+	return string(b)
+}
+
+// TestProperty_GeminiCacheableBlockUnwrapEquivalence verifies Property 1:
+// translating CacheableBlock{Inner: b} through toGeminiParts produces output
+// identical to translating b directly. Gemini is a pass-through provider that
+// does not support explicit cache breakpoints — it simply unwraps Inner.
+//
+// **Validates: Requirements 1.4, 8.3**
+func TestProperty_GeminiCacheableBlockUnwrapEquivalence(t *testing.T) {
+	t.Run("TextBlock", func(t *testing.T) {
+		rapid.Check(t, func(t *rapid.T) {
+			inner := genGeminiTextBlock().Draw(t, "inner")
+
+			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			if err != nil {
+				t.Fatalf("toGeminiParts(direct) error: %v", err)
+			}
+			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
+			if err != nil {
+				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
+			}
+
+			if len(direct) != len(wrapped) {
+				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
+			}
+			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
+				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
+					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			}
+		})
+	})
+
+	t.Run("ToolUseBlock", func(t *testing.T) {
+		rapid.Check(t, func(t *rapid.T) {
+			inner := genGeminiToolUseBlock().Draw(t, "inner")
+
+			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			if err != nil {
+				t.Fatalf("toGeminiParts(direct) error: %v", err)
+			}
+			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
+			if err != nil {
+				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
+			}
+
+			if len(direct) != len(wrapped) {
+				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
+			}
+			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
+				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
+					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			}
+		})
+	})
+
+	t.Run("ToolResultBlock", func(t *testing.T) {
+		rapid.Check(t, func(t *rapid.T) {
+			inner := genGeminiToolResultBlock().Draw(t, "inner")
+
+			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			if err != nil {
+				t.Fatalf("toGeminiParts(direct) error: %v", err)
+			}
+			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
+			if err != nil {
+				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
+			}
+
+			if len(direct) != len(wrapped) {
+				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
+			}
+			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
+				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
+					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			}
+		})
+	})
+
+	t.Run("ImageBlock", func(t *testing.T) {
+		rapid.Check(t, func(t *rapid.T) {
+			inner := genGeminiImageBlock().Draw(t, "inner")
+
+			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			if err != nil {
+				t.Fatalf("toGeminiParts(direct) error: %v", err)
+			}
+			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
+			if err != nil {
+				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
+			}
+
+			if len(direct) != len(wrapped) {
+				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
+			}
+			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
+				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
+					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			}
+		})
+	})
+
+	t.Run("DocumentBlock", func(t *testing.T) {
+		rapid.Check(t, func(t *rapid.T) {
+			inner := genGeminiDocumentBlock().Draw(t, "inner")
+
+			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			if err != nil {
+				t.Fatalf("toGeminiParts(direct) error: %v", err)
+			}
+			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
+			if err != nil {
+				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
+			}
+
+			if len(direct) != len(wrapped) {
+				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
+			}
+			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
+				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
+					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			}
+		})
 	})
 }

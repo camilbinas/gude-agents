@@ -140,6 +140,12 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 				attribute.Int(h.scheme.Key(RoleAgentTokenInput), usage.InputTokens),
 				attribute.Int(h.scheme.Key(RoleAgentTokenOutput), usage.OutputTokens),
 			)
+			if usage.CacheReadTokens > 0 {
+				span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentTokenCacheRead), usage.CacheReadTokens))
+			}
+			if usage.CacheWriteTokens > 0 {
+				span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentTokenCacheWrite), usage.CacheWriteTokens))
+			}
 			if h.captureContent && response != "" {
 				span.SetAttributes(attribute.String(h.scheme.Key(RoleGenAICompletion), response))
 			}
@@ -193,6 +199,12 @@ func (h *otelHook) OnProviderCallStart(ctx context.Context, params agent.Provide
 				attribute.Int(h.scheme.Key(RoleProviderOutputTokens), usage.OutputTokens),
 				attribute.Int(h.scheme.Key(RoleProviderToolCalls), toolCallCount),
 			)
+			if usage.CacheReadTokens > 0 {
+				span.SetAttributes(attribute.Int(h.scheme.Key(RoleProviderCacheReadTokens), usage.CacheReadTokens))
+			}
+			if usage.CacheWriteTokens > 0 {
+				span.SetAttributes(attribute.Int(h.scheme.Key(RoleProviderCacheWriteTokens), usage.CacheWriteTokens))
+			}
 			if h.captureContent && responseText != "" {
 				span.SetAttributes(attribute.String(h.scheme.Key(RoleGenAIProviderResponse), responseText))
 			}

@@ -4,6 +4,35 @@ A quick orientation for returning users. Each entry covers one recently added fe
 
 ---
 
+## Prompt Caching
+
+All four providers now support prompt caching via two opt-in mechanisms:
+
+**`WithCaching()` at provider construction** automatically attaches a cache breakpoint to the system prompt. The first call writes it to cache; subsequent calls with the same system prompt are served from cache. For Claude on Bedrock, the minimum is 1,024 tokens (Sonnet 4.6) or 4,096 tokens (other Claude 4/4.5 models).
+
+```go
+provider := bedrock.Must(bedrock.Standard(bedrock.WithCaching()))
+a, _ := agent.Default(provider, prompt.Text(largeSystemPrompt), nil)
+```
+
+**`agent.CacheableBlock`** wraps any `ContentBlock` to mark a position in the message content as a cache breakpoint. Use `a.CallProvider()` to build `ConverseParams` directly when you need fine-grained control:
+
+```go
+params := agent.ConverseParams{
+    Messages: []agent.Message{{
+        Role: agent.RoleUser,
+        Content: []agent.ContentBlock{
+            agent.CacheableBlock{Inner: agent.TextBlock{Text: largeRefDoc}},
+            agent.TextBlock{Text: "question here"},
+        },
+    }},
+}
+resp, err := a.CallProvider(ctx, params, nil)
+fmt.Printf("cache_write=%d cache_read=%d\n", resp.Usage.CacheWriteTokens, resp.Usage.CacheReadTokens)
+```
+
+Cache token counts are surfaced through two new `TokenUsage` fields (`CacheReadTokens`, `CacheWriteTokens`) and are propagated through the agent loop, event stream, graph engine, and all observability hooks (metrics, tracing, logging). On OpenAI and Gemini, `WithCaching()` surfaces the provider's automatic cache token counts without sending any explicit markers. See `examples/prompt-caching/`.
+
 ## Widget Blocks
 
 Tool handlers can now attach structured data directly to assistant messages using `c.EmitWidget(...)`. The payload is carried out-of-band — the LLM never sees it, but the event stream delivers it as an `EventWidget` event so your UI can render charts, tables, or any custom component alongside the assistant's text. See [Widget Blocks](widgets.md).

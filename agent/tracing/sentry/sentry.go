@@ -252,6 +252,12 @@ func CaptureAgentError(ctx context.Context, err error, userMessage string, usage
 		scope.SetExtra("token_usage.input", usage.InputTokens)
 		scope.SetExtra("token_usage.output", usage.OutputTokens)
 		scope.SetExtra("token_usage.total", usage.Total())
+		if usage.CacheReadTokens > 0 {
+			scope.SetExtra("token_usage.cache_read", usage.CacheReadTokens)
+		}
+		if usage.CacheWriteTokens > 0 {
+			scope.SetExtra("token_usage.cache_write", usage.CacheWriteTokens)
+		}
 
 		if len(opts) > 0 && opts[0].ModelID != "" {
 			scope.SetTag("agent.model_id", opts[0].ModelID)

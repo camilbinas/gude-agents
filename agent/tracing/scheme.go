@@ -13,18 +13,20 @@ type AttrRole string
 // default attribute key (see AttributeScheme.Key for fallback semantics).
 const (
 	// Agent-level
-	RoleAgentName           AttrRole = AttrRole(AttrAgentName)
-	RoleAgentConversationID AttrRole = AttrRole(AttrAgentConversationID)
-	RoleAgentMaxIterations  AttrRole = AttrRole(AttrAgentMaxIterations)
-	RoleAgentModelID        AttrRole = AttrRole(AttrAgentModelID)
-	RoleAgentTokenInput     AttrRole = AttrRole(AttrAgentTokenUsageInput)
-	RoleAgentTokenOutput    AttrRole = AttrRole(AttrAgentTokenUsageOutput)
-	RoleAgentTokenTotal     AttrRole = "agent.token_usage.total"
-	RoleAgentError          AttrRole = "agent.error"
-	RoleAgentImageCount     AttrRole = AttrRole(AttrAgentImageCount)
-	RoleAgentDocumentCount  AttrRole = AttrRole(AttrAgentDocumentCount)
-	RoleAgentUserMsgLength  AttrRole = "agent.user_message_length"
-	RoleGenAISystem         AttrRole = AttrRole(AttrGenAISystem)
+	RoleAgentName            AttrRole = AttrRole(AttrAgentName)
+	RoleAgentConversationID  AttrRole = AttrRole(AttrAgentConversationID)
+	RoleAgentMaxIterations   AttrRole = AttrRole(AttrAgentMaxIterations)
+	RoleAgentModelID         AttrRole = AttrRole(AttrAgentModelID)
+	RoleAgentTokenInput      AttrRole = AttrRole(AttrAgentTokenUsageInput)
+	RoleAgentTokenOutput     AttrRole = AttrRole(AttrAgentTokenUsageOutput)
+	RoleAgentTokenCacheRead  AttrRole = AttrRole(AttrAgentTokenUsageCacheRead)
+	RoleAgentTokenCacheWrite AttrRole = AttrRole(AttrAgentTokenUsageCacheWrite)
+	RoleAgentTokenTotal      AttrRole = "agent.token_usage.total"
+	RoleAgentError           AttrRole = "agent.error"
+	RoleAgentImageCount      AttrRole = AttrRole(AttrAgentImageCount)
+	RoleAgentDocumentCount   AttrRole = AttrRole(AttrAgentDocumentCount)
+	RoleAgentUserMsgLength   AttrRole = "agent.user_message_length"
+	RoleGenAISystem          AttrRole = AttrRole(AttrGenAISystem)
 
 	// Iteration
 	RoleIterationNumber    AttrRole = AttrRole(AttrAgentIterationNumber)
@@ -32,11 +34,13 @@ const (
 	RoleIterationFinal     AttrRole = AttrRole(AttrAgentIterationFinal)
 
 	// Provider
-	RoleProviderModelID      AttrRole = AttrRole(AttrProviderModelID)
-	RoleProviderInputTokens  AttrRole = AttrRole(AttrProviderInputTokens)
-	RoleProviderOutputTokens AttrRole = AttrRole(AttrProviderOutputTokens)
-	RoleProviderToolCalls    AttrRole = AttrRole(AttrProviderToolCalls)
-	RoleProviderMessageCount AttrRole = AttrRole(AttrProviderMessageCount)
+	RoleProviderModelID          AttrRole = AttrRole(AttrProviderModelID)
+	RoleProviderInputTokens      AttrRole = AttrRole(AttrProviderInputTokens)
+	RoleProviderOutputTokens     AttrRole = AttrRole(AttrProviderOutputTokens)
+	RoleProviderCacheReadTokens  AttrRole = AttrRole(AttrProviderCacheReadTokens)
+	RoleProviderCacheWriteTokens AttrRole = AttrRole(AttrProviderCacheWriteTokens)
+	RoleProviderToolCalls        AttrRole = AttrRole(AttrProviderToolCalls)
+	RoleProviderMessageCount     AttrRole = AttrRole(AttrProviderMessageCount)
 
 	// Tool
 	RoleToolName         AttrRole = AttrRole(AttrToolName)

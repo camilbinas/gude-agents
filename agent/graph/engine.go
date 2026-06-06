@@ -255,6 +255,8 @@ func (e *runExec[S]) extractUsage(result *S) {
 		if u := carrier.getPendingUsage(); u.InputTokens > 0 || u.OutputTokens > 0 {
 			e.usage.InputTokens += u.InputTokens
 			e.usage.OutputTokens += u.OutputTokens
+			e.usage.CacheReadTokens += u.CacheReadTokens
+			e.usage.CacheWriteTokens += u.CacheWriteTokens
 			carrier.clearPendingUsage()
 		}
 		return
@@ -265,6 +267,8 @@ func (e *runExec[S]) extractUsage(result *S) {
 		if u, exists := (*m)["__usage__"].(agent.TokenUsage); exists {
 			e.usage.InputTokens += u.InputTokens
 			e.usage.OutputTokens += u.OutputTokens
+			e.usage.CacheReadTokens += u.CacheReadTokens
+			e.usage.CacheWriteTokens += u.CacheWriteTokens
 			delete(*m, "__usage__")
 		}
 	}
