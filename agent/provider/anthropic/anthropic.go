@@ -70,10 +70,10 @@ func WithThinkingBudget(tokens int64) Option {
 	return func(o *options) { o.thinkingBudget = tokens }
 }
 
-// WithCaching enables prompt caching. When set and ConverseParams.System is
+// WithSystemPromptCaching enables prompt caching. When set and ConverseParams.System is
 // non-empty, cache_control is attached to the last system TextBlockParam.
-// CacheableBlock markers in messages are also translated to cache_control.
-func WithCaching() Option {
+// DocumentBlocks in messages also get cache_control attached automatically.
+func WithSystemPromptCaching() Option {
 	return func(o *options) { o.cachingEnabled = true }
 }
 
@@ -257,14 +257,16 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 	if p.maxTokens != nil {
 		maxTokens = *p.maxTokens
 	}
+	cachingEnabled := params.CachingEnabled || p.cachingEnabled
+	msgs := toAnthropicMessages(params.Messages, cachingEnabled)
 	input := anthropicsdk.MessageNewParams{
 		Model:     p.model,
 		MaxTokens: int64(maxTokens),
-		Messages:  toAnthropicMessages(params.Messages),
+		Messages:  msgs,
 	}
 	if params.System != "" {
 		blocks := []anthropicsdk.TextBlockParam{{Text: params.System}}
-		if p.cachingEnabled {
+		if cachingEnabled {
 			blocks[len(blocks)-1].CacheControl = anthropicsdk.NewCacheControlEphemeralParam()
 		}
 		input.System = blocks
@@ -333,12 +335,12 @@ func parseMessage(msg *anthropicsdk.Message) *agent.ProviderResponse {
 	return resp
 }
 
-func toAnthropicMessages(msgs []agent.Message) []anthropicsdk.MessageParam {
+func toAnthropicMessages(msgs []agent.Message, cachingEnabled bool) []anthropicsdk.MessageParam {
 	out := make([]anthropicsdk.MessageParam, len(msgs))
 	for i, m := range msgs {
 		out[i] = anthropicsdk.MessageParam{
 			Role:    toAnthropicRole(m.Role),
-			Content: toAnthropicContentBlocks(m.Content, m.Role),
+			Content: toAnthropicContentBlocks(m.Content, m.Role, cachingEnabled),
 		}
 	}
 	return out
@@ -478,85 +480,9 @@ func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockPa
 	}, true
 }
 
-// toAnthropicCacheableBlock translates a CacheableBlock into a
-// ContentBlockParamUnion with CacheControl set on the underlying block.
-// For unknown inner types the inner block is translated without cache_control.
-func toAnthropicCacheableBlock(b agent.CacheableBlock, role agent.Role) anthropicsdk.ContentBlockParamUnion {
-	cc := anthropicsdk.NewCacheControlEphemeralParam()
-	switch inner := b.Inner.(type) {
-	case agent.TextBlock:
-		return anthropicsdk.ContentBlockParamUnion{
-			OfText: &anthropicsdk.TextBlockParam{
-				Text:         inner.Text,
-				CacheControl: cc,
-			},
-		}
-	case agent.ToolResultBlock:
-		trb := buildAnthropicToolResultParam(inner)
-		trb.CacheControl = cc
-		return anthropicsdk.ContentBlockParamUnion{OfToolResult: &trb}
-	case agent.ImageBlock:
-		if role == agent.RoleAssistant {
-			log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")
-			// Fall back to a no-op text block so the caller can still append
-			// a result; the outer loop will handle skipping.
-			return toAnthropicContentBlock(b.Inner, role)
-		}
-		img, ok := buildAnthropicImageParam(inner)
-		if !ok {
-			return toAnthropicContentBlock(b.Inner, role)
-		}
-		img.CacheControl = cc
-		return anthropicsdk.ContentBlockParamUnion{OfImage: &img}
-	case agent.DocumentBlock:
-		if role == agent.RoleAssistant {
-			log.Printf("anthropic: DocumentBlock in assistant-role message is not supported and will be skipped")
-			return toAnthropicContentBlock(b.Inner, role)
-		}
-		doc, ok := buildAnthropicDocParam(inner)
-		if !ok {
-			return toAnthropicContentBlock(b.Inner, role)
-		}
-		doc.CacheControl = cc
-		return anthropicsdk.ContentBlockParamUnion{OfDocument: &doc}
-	default:
-		// Unknown inner type — fall back to translating the inner block directly
-		// without cache_control.
-		return toAnthropicContentBlock(b.Inner, role)
-	}
-}
-
-// toAnthropicContentBlock translates a single ContentBlock. Returns a zero
-// ContentBlockParamUnion for block types that are not translatable (e.g.
-// ImageBlock or DocumentBlock in assistant role); callers are responsible for
-// filtering those out.
-func toAnthropicContentBlock(b agent.ContentBlock, role agent.Role) anthropicsdk.ContentBlockParamUnion {
-	switch v := b.(type) {
-	case agent.TextBlock:
-		return anthropicsdk.NewTextBlock(v.Text)
-	case agent.ToolUseBlock:
-		var input any = map[string]any{}
-		if len(v.Input) > 0 {
-			if err := json.Unmarshal(v.Input, &input); err != nil {
-				input = map[string]any{}
-			}
-		}
-		return anthropicsdk.NewToolUseBlock(v.ToolUseID, input, v.Name)
-	case agent.ToolResultBlock:
-		trb := buildAnthropicToolResultParam(v)
-		return anthropicsdk.ContentBlockParamUnion{OfToolResult: &trb}
-	case agent.ImageBlock:
-		img, _ := buildAnthropicImageParam(v)
-		return anthropicsdk.ContentBlockParamUnion{OfImage: &img}
-	case agent.DocumentBlock:
-		doc, _ := buildAnthropicDocParam(v)
-		return anthropicsdk.ContentBlockParamUnion{OfDocument: &doc}
-	default:
-		return anthropicsdk.ContentBlockParamUnion{}
-	}
-}
-
-func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []anthropicsdk.ContentBlockParamUnion {
+// toAnthropicContentBlocks translates a slice of ContentBlocks to Anthropic SDK params.
+// When cachingEnabled, cache_control is attached to every DocumentBlock.
+func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cachingEnabled bool) []anthropicsdk.ContentBlockParamUnion {
 	out := make([]anthropicsdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -592,9 +518,11 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role) []an
 			if !ok {
 				continue
 			}
+			// When caching is enabled, attach cache_control to every DocumentBlock.
+			if cachingEnabled {
+				doc.CacheControl = anthropicsdk.NewCacheControlEphemeralParam()
+			}
 			out = append(out, anthropicsdk.ContentBlockParamUnion{OfDocument: &doc})
-		case agent.CacheableBlock:
-			out = append(out, toAnthropicCacheableBlock(v, role))
 		}
 	}
 	return out

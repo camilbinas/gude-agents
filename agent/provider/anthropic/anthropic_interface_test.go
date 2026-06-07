@@ -3,6 +3,7 @@ package anthropic
 import (
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/camilbinas/gude-agents/agent"
 )
 
@@ -16,7 +17,6 @@ func TestToAnthropicContentBlock_AllKnownTypes_DoesNotPanic(t *testing.T) {
 		agent.TextBlock{Text: "hello"},
 		agent.ToolUseBlock{ToolUseID: "id1", Name: "my_tool"},
 		agent.ToolResultBlock{ToolUseID: "id1", Content: "result"},
-		agent.CacheableBlock{Inner: agent.TextBlock{Text: "cached"}},
 	}
 
 	for _, b := range blocks {
@@ -47,43 +47,56 @@ func TestToAnthropicContentBlocks_MixedTypes_DoesNotPanic(t *testing.T) {
 	blocks := []agent.ContentBlock{
 		agent.TextBlock{Text: "before"},
 		agent.ToolResultBlock{ToolUseID: "tc1", Content: "result", IsError: false},
-		agent.CacheableBlock{Inner: agent.TextBlock{Text: "cached text"}},
 		agent.TextBlock{Text: "after"},
 	}
 
-	result := toAnthropicContentBlocks(blocks, agent.RoleUser)
+	// Test without caching.
+	result := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
 	if len(result) == 0 {
 		t.Error("expected non-empty translated result")
 	}
 }
 
-// TestToAnthropicCacheableBlock_AllInnerTypes_DoesNotPanic verifies that
-// translating a CacheableBlock with each known inner type does not panic, and
-// that the CacheControl field is set (i.e., the cache breakpoint is attached).
+// TestToAnthropicContentBlocks_DocumentBlock_CacheControl verifies that when
+// cachingEnabled is true, DocumentBlocks get cache_control set, and when
+// cachingEnabled is false, they do not.
 //
-// Requirements: 1.1, 8.4
-func TestToAnthropicCacheableBlock_AllInnerTypes_DoesNotPanic(t *testing.T) {
-	innerBlocks := []struct {
-		name  string
-		inner agent.ContentBlock
-	}{
-		{"TextBlock", agent.TextBlock{Text: "cached text"}},
-		{"ToolResultBlock", agent.ToolResultBlock{ToolUseID: "id1", Content: "result"}},
-		// CacheableBlock wrapping another CacheableBlock (nested) — falls back to toAnthropicContentBlock
-		{"NestedCacheableBlock", agent.CacheableBlock{Inner: agent.TextBlock{Text: "nested"}}},
+// Requirements: 3.1, 3.2
+func TestToAnthropicContentBlocks_DocumentBlock_CacheControl(t *testing.T) {
+	doc := agent.DocumentBlock{
+		Source: agent.DocumentSource{
+			Base64:   "JVBE", // minimal base64
+			MIMEType: "application/pdf",
+			Name:     "test.pdf",
+		},
 	}
+	blocks := []agent.ContentBlock{doc}
 
-	for _, tc := range innerBlocks {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("toAnthropicCacheableBlock panicked with inner %s: %v", tc.name, r)
-				}
-			}()
-			cacheable := agent.CacheableBlock{Inner: tc.inner}
-			result := toAnthropicCacheableBlock(cacheable, agent.RoleUser)
-			_ = result
-		})
-	}
+	t.Run("caching disabled - no cache_control", func(t *testing.T) {
+		result := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+		if len(result) == 0 {
+			t.Fatal("expected non-empty result")
+		}
+		if result[0].OfDocument == nil {
+			t.Fatal("expected OfDocument to be set")
+		}
+		// cache_control should NOT be set when caching is disabled.
+		if !param.IsOmitted(result[0].OfDocument.CacheControl) {
+			t.Error("expected CacheControl to be absent when caching is disabled")
+		}
+	})
+
+	t.Run("caching enabled - cache_control set", func(t *testing.T) {
+		result := toAnthropicContentBlocks(blocks, agent.RoleUser, true)
+		if len(result) == 0 {
+			t.Fatal("expected non-empty result")
+		}
+		if result[0].OfDocument == nil {
+			t.Fatal("expected OfDocument to be set")
+		}
+		// When caching is enabled, CacheControl should be set (non-omitted).
+		if param.IsOmitted(result[0].OfDocument.CacheControl) {
+			t.Error("expected CacheControl to be set on DocumentBlock when caching is enabled")
+		}
+	})
 }

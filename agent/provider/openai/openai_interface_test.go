@@ -20,7 +20,6 @@ func TestToOpenAIUserMessages_MixedTypes_DoesNotPanic(t *testing.T) {
 	blocks := []agent.ContentBlock{
 		agent.TextBlock{Text: "before"},
 		agent.ToolResultBlock{ToolUseID: "tc1", Content: "result"},
-		agent.CacheableBlock{Inner: agent.TextBlock{Text: "cached text"}},
 		agent.TextBlock{Text: "after"},
 	}
 
@@ -44,36 +43,10 @@ func TestToOpenAIAssistantMessage_MixedTypes_DoesNotPanic(t *testing.T) {
 
 	blocks := []agent.ContentBlock{
 		agent.TextBlock{Text: "hello"},
-		agent.CacheableBlock{Inner: agent.TextBlock{Text: "cached reply"}},
 	}
 
 	result := toOpenAIAssistantMessage(blocks)
 	if result.OfAssistant == nil {
 		t.Error("expected OfAssistant to be non-nil")
-	}
-}
-
-// TestToOpenAIUserMessages_CacheableBlock_UnwrapsInner_DoesNotPanic verifies
-// that CacheableBlock is transparently unwrapped to its inner block without
-// panicking, and that the result is identical to translating the inner block
-// directly.
-//
-// Requirements: 1.1, 8.4
-func TestToOpenAIUserMessages_CacheableBlock_UnwrapsInner_DoesNotPanic(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("toOpenAIUserMessages panicked on CacheableBlock: %v", r)
-		}
-	}()
-
-	inner := agent.TextBlock{Text: "some text"}
-	cacheable := agent.CacheableBlock{Inner: inner}
-
-	directMsgs := toOpenAIUserMessages([]agent.ContentBlock{inner})
-	wrappedMsgs := toOpenAIUserMessages([]agent.ContentBlock{cacheable})
-
-	if len(directMsgs) != len(wrappedMsgs) {
-		t.Errorf("CacheableBlock unwrap produced different message count: direct=%d, wrapped=%d",
-			len(directMsgs), len(wrappedMsgs))
 	}
 }

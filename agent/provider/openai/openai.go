@@ -62,10 +62,9 @@ func WithThinking(effort pvdr.ThinkingEffort) Option {
 	return func(o *options) { o.thinkingEffort = effort }
 }
 
-// WithCaching stores a flag signaling that caching is desired.
-// OpenAI manages caching automatically; this option enables surfacing of
-// cached_tokens from PromptTokensDetails into CacheReadTokens.
-func WithCaching() Option {
+// WithSystemPromptCaching stores a flag for caching. OpenAI manages caching
+// automatically; this option enables surfacing of cached_tokens into CacheReadTokens.
+func WithSystemPromptCaching() Option {
 	return func(o *options) { o.cachingEnabled = true }
 }
 
@@ -365,9 +364,6 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 					Filename: openaisdk.String(name),
 				}),
 			}))
-		case agent.CacheableBlock:
-			// OpenAI caches automatically; just translate the inner block.
-			out = append(out, toOpenAIUserMessages([]agent.ContentBlock{v.Inner})...)
 		}
 	}
 	return out
@@ -398,15 +394,6 @@ func toOpenAIAssistantMessage(blocks []agent.ContentBlock) openaisdk.ChatComplet
 		case agent.DocumentBlock:
 			// DocumentBlock in assistant-role messages is silently skipped.
 			_ = v
-		case agent.CacheableBlock:
-			// OpenAI caches automatically; translate the inner block directly.
-			inner := toOpenAIAssistantMessage([]agent.ContentBlock{v.Inner})
-			if inner.OfAssistant != nil {
-				if inner.OfAssistant.Content.OfString.Valid() {
-					text += inner.OfAssistant.Content.OfString.Value
-				}
-				toolCalls = append(toolCalls, inner.OfAssistant.ToolCalls...)
-			}
 		}
 	}
 

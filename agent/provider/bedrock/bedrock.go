@@ -123,9 +123,9 @@ func withThinkingStyle(s thinkingStyle) Option {
 	return func(o *options) { o.thinkingStyle = s }
 }
 
-// WithCaching enables prompt caching for Claude models on Bedrock.
+// WithSystemPromptCaching enables prompt caching for Claude models on Bedrock.
 // Non-Claude models silently ignore this option.
-func WithCaching() Option {
+func WithSystemPromptCaching() Option {
 	return func(o *options) { o.cachingEnabled = true }
 }
 
@@ -219,7 +219,8 @@ func (p *BedrockProvider) Name() string { return "bedrock" }
 // Converse sends messages to Bedrock and returns a complete response.
 func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
-	msgs, err := toBedrockMessages(params.Messages, p.model)
+	cachingEnabled := params.CachingEnabled || p.cachingEnabled
+	msgs, err := toBedrockMessages(params.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -229,7 +230,7 @@ func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConversePar
 		InferenceConfig: infCfg,
 	}
 	if params.System != "" {
-		if p.cachingEnabled && isClaudeModel(p.model) {
+		if (params.CachingEnabled || p.cachingEnabled) && isClaudeModel(p.model) {
 			input.System = []types.SystemContentBlock{
 				&types.SystemContentBlockMemberText{Value: params.System},
 				&types.SystemContentBlockMemberCachePoint{
@@ -324,7 +325,8 @@ func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResp
 // returned in the ProviderResponse.
 func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
-	msgs, err := toBedrockMessages(params.Messages, p.model)
+	cachingEnabled := params.CachingEnabled || p.cachingEnabled
+	msgs, err := toBedrockMessages(params.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -334,7 +336,7 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 		InferenceConfig: infCfg,
 	}
 	if params.System != "" {
-		if p.cachingEnabled && isClaudeModel(p.model) {
+		if (params.CachingEnabled || p.cachingEnabled) && isClaudeModel(p.model) {
 			input.System = []types.SystemContentBlock{
 				&types.SystemContentBlockMemberText{Value: params.System},
 				&types.SystemContentBlockMemberCachePoint{
@@ -575,10 +577,13 @@ func isClaudeModel(modelID string) bool {
 }
 
 // toBedrockMessages converts framework Messages to Bedrock SDK Messages.
-func toBedrockMessages(msgs []agent.Message, modelID string) ([]types.Message, error) {
+// When cachingEnabled is true and the model is a Claude model, a CachePoint
+// is injected after every DocumentBlock in user messages.
+func toBedrockMessages(msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
+	injectCachePoints := cachingEnabled && isClaudeModel(modelID)
 	out := make([]types.Message, len(msgs))
 	for i, m := range msgs {
-		blocks, err := toBedrockContentBlocks(m.Content, modelID)
+		blocks, err := toBedrockContentBlocks(m.Content, modelID, injectCachePoints)
 		if err != nil {
 			return nil, err
 		}
@@ -599,7 +604,7 @@ func toBedrockRole(r agent.Role) types.ConversationRole {
 	}
 }
 
-func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string) ([]types.ContentBlock, error) {
+func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectCachePoints bool) ([]types.ContentBlock, error) {
 	out := make([]types.ContentBlock, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -686,37 +691,16 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string) ([]type
 					},
 				},
 			})
-
-		case agent.CacheableBlock:
-			inner, err := toBedrockCacheableBlock(v, modelID)
-			if err != nil {
-				return nil, err
+			// When caching is enabled on Claude models, inject a CachePoint
+			// immediately after each DocumentBlock.
+			if injectCachePoints {
+				out = append(out, &types.ContentBlockMemberCachePoint{
+					Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
+				})
 			}
-			out = append(out, inner...)
 		}
 	}
 	return out, nil
-}
-
-// toBedrockCacheableBlock translates a CacheableBlock to Bedrock ContentBlocks.
-// For Claude models, it translates the inner block normally and appends a
-// ContentBlockMemberCachePoint sentinel to mark the cache breakpoint.
-// For non-Claude models, it unwraps and translates the inner block without
-// any cache marker.
-func toBedrockCacheableBlock(b agent.CacheableBlock, modelID string) ([]types.ContentBlock, error) {
-	if !isClaudeModel(modelID) {
-		// Non-Claude: unwrap and translate the inner block normally.
-		return toBedrockContentBlocks([]agent.ContentBlock{b.Inner}, modelID)
-	}
-	// Claude: translate the inner block, then append a CachePoint sentinel.
-	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{b.Inner}, modelID)
-	if err != nil {
-		return nil, err
-	}
-	blocks = append(blocks, &types.ContentBlockMemberCachePoint{
-		Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
-	})
-	return blocks, nil
 }
 
 // imageBytes returns the raw bytes from an ImageSource.

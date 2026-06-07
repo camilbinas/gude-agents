@@ -126,7 +126,7 @@ func (a *Agent) ResumeWithApproval(c *Context, ar *ApprovalRequest, decision too
 	}
 
 	h := a.hooks(c)
-	usage, _, err := a.runLoop(c, convID, messages, 0, a.instructionsFor(c), mergedInferenceCfg, cb, &h, nil)
+	usage, _, err := a.runLoop(c, convID, messages, 0, a.instructionsFor(c), mergedInferenceCfg, cb, &h, nil, a.cachingEnabled)
 
 	c.setUsage(usage)
 

@@ -74,10 +74,9 @@ func WithThinkingBudget(tokens int64) Option {
 	return func(o *options) { o.thinkingBudget = tokens }
 }
 
-// WithCaching stores a flag signaling that caching is desired.
-// Gemini manages caching automatically; this option enables surfacing of
-// CachedContentTokenCount from UsageMetadata into CacheReadTokens.
-func WithCaching() Option {
+// WithSystemPromptCaching stores a flag for caching. Gemini manages caching
+// automatically; this option enables surfacing of CachedContentTokenCount into CacheReadTokens.
+func WithSystemPromptCaching() Option {
 	return func(o *options) { o.cachingEnabled = true }
 }
 
@@ -424,14 +423,6 @@ func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 				}
 				parts = append(parts, genai.NewPartFromBytes(bytes, mimeType))
 			}
-		case agent.CacheableBlock:
-			// Gemini does not support explicit cache breakpoints.
-			// Unwrap and translate the inner block as a plain part.
-			innerParts, err := toGeminiParts([]agent.ContentBlock{v.Inner})
-			if err != nil {
-				return nil, err
-			}
-			parts = append(parts, innerParts...)
 		}
 	}
 	return parts, nil

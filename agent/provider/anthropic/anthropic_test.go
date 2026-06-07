@@ -465,7 +465,7 @@ func TestToAnthropicContentBlocks_ImageBlock_RawBytes(t *testing.T) {
 		},
 	}
 
-	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser)
+	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser, false)
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(result))
@@ -497,7 +497,7 @@ func TestToAnthropicContentBlocks_ImageBlock_PreEncodedBase64(t *testing.T) {
 		},
 	}
 
-	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser)
+	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser, false)
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(result))
@@ -529,7 +529,7 @@ func TestToAnthropicContentBlocks_ImageBlock_MIMETypeMapping(t *testing.T) {
 				},
 			}
 
-			result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser)
+			result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser, false)
 
 			if len(result) != 1 {
 				t.Fatalf("expected 1 block, got %d", len(result))
@@ -558,7 +558,7 @@ func TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped(t *testing.T) 
 		},
 	}
 
-	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleAssistant)
+	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleAssistant, false)
 
 	if len(result) != 0 {
 		t.Errorf("expected 0 blocks for assistant-role ImageBlock, got %d", len(result))

@@ -41,8 +41,6 @@ func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) 
 
 	usage, err := a.invokeStreamInner(c, userMessage, convID, cb, &h)
 	invoke.finish(err, usage)
-
-	// Store cumulative usage on the Context for caller access.
 	c.setUsage(usage)
 
 	if a.auditHook != nil {
@@ -227,7 +225,9 @@ func (a *Agent) invokeCommon(c *Context, userMessage string, convID string, cb S
 		h.onDocumentsAttached(len(documents))
 	}
 
-	// Build the first user message with documents, images, and text.
+	cachingEnabledForCall := a.cachingEnabled
+
+	// Build the current user message: regular docs + images + text.
 	var firstContent []ContentBlock
 	for _, doc := range documents {
 		firstContent = append(firstContent, doc)
@@ -238,7 +238,7 @@ func (a *Agent) invokeCommon(c *Context, userMessage string, convID string, cb S
 	firstContent = append(firstContent, TextBlock{Text: msg})
 	messages = append(messages, Message{Role: RoleUser, Content: firstContent})
 
-	usage, text, err := a.runLoop(c, convID, messages, ragOffset, a.instructionsFor(c), mergedCfg, cb, h, nil)
+	usage, text, err := a.runLoop(c, convID, messages, ragOffset, a.instructionsFor(c), mergedCfg, cb, h, nil, cachingEnabledForCall)
 	return usage, text, err
 }
 
@@ -252,7 +252,7 @@ type runLoopConfig struct {
 }
 
 // runLoop is the core agent iteration loop shared by InvokeStream, Resume, and RunLoop.
-func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback, h *hooks, cfg *runLoopConfig) (TokenUsage, string, error) {
+func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset int, systemPrompt string, inferenceConfig *InferenceConfig, cb StreamCallback, h *hooks, cfg *runLoopConfig, cachingEnabled bool) (TokenUsage, string, error) {
 	var cumulative TokenUsage
 	modelID := a.modelID()
 
@@ -309,6 +309,7 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 			ToolConfig:       currentToolSpecs,
 			ThinkingCallback: thinkingCB,
 			InferenceConfig:  inferenceConfig,
+			CachingEnabled:   cachingEnabled,
 		}, streamCB)
 
 		if err != nil {
@@ -800,14 +801,11 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 }
 
 // saveConversation persists conversation history if configured.
-// It attaches cumulative token usage to the context so conversation strategies
-// can use actual provider-reported counts for compaction decisions.
 func (a *Agent) saveConversation(ctx context.Context, convID string, messages []Message, cumulative TokenUsage, h *hooks) error {
 	if a.conversation == nil {
 		return nil
 	}
 	saveCtx := WithTokenUsage(ctx, cumulative)
-	// Wrap saveCtx back into a *Context for the hook.
 	var saveC *Context
 	if c := FromContext(ctx); c != nil {
 		saveC = c.withContext(saveCtx)
@@ -852,7 +850,6 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params
 			cancel()
 		}
 		if err == nil {
-			// Record actual token usage on success
 			if a.rateLimiter != nil {
 				a.rateLimiter.Record(convID, resp.Usage)
 			}

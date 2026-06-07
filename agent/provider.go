@@ -46,20 +46,10 @@ type ToolResultBlock struct {
 	Images    []ImageBlock // optional images returned by the tool
 }
 
-// CacheableBlock wraps another ContentBlock and signals that this position
-// in the message content list is a desired cache breakpoint.
-// Providers that support explicit breakpoints (Anthropic, Bedrock/Claude) will
-// attach cache_control to the underlying block. Providers that do not support
-// breakpoints (OpenAI, Gemini) will unwrap Inner and treat it as a plain block.
-type CacheableBlock struct {
-	Inner ContentBlock
-}
-
 // Each block type implements the sealed ContentBlock interface.
 func (TextBlock) contentBlock()       {}
 func (ToolUseBlock) contentBlock()    {}
 func (ToolResultBlock) contentBlock() {}
-func (CacheableBlock) contentBlock()  {}
 
 // TokenUsage records token consumption for a single Provider call.
 type TokenUsage struct {
@@ -94,6 +84,7 @@ type ConverseParams struct {
 	ToolChoice       *tool.Choice     // nil = provider default (auto)
 	ThinkingCallback ThinkingCallback // optional; called with thinking chunks during streaming
 	InferenceConfig  *InferenceConfig // nil = use provider defaults
+	CachingEnabled   bool             // when true, providers attach cache breakpoints automatically
 }
 
 // ProviderResponse is the result of an LLM call.
@@ -134,6 +125,3 @@ type Invoker interface {
 
 // compile-time check: *Agent implements Invoker.
 var _ Invoker = (*Agent)(nil)
-
-// compile-time check: CacheableBlock implements ContentBlock.
-var _ ContentBlock = CacheableBlock{}

@@ -57,6 +57,9 @@ type Agent struct {
 	retryMax        int           // 0 = no retry
 	retryBaseDelay  time.Duration
 
+	// Caching
+	cachingEnabled bool
+
 	// Observability
 	tracingHook         TracingHook // nil = no tracing
 	metricsHook         MetricsHook // nil = no metrics

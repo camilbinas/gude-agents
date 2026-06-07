@@ -16,11 +16,8 @@ import (
 
 // TestProperty_IsClaudeModelCorrectness verifies that for any model ID string,
 // isClaudeModel(id) returns true if and only if strings.Contains(id, "anthropic.").
-// This covers bare "anthropic." prefixes as well as cross-region routing variants
-// such as "us.anthropic.", "eu.anthropic.", and "global.anthropic.".
 func TestProperty_IsClaudeModelCorrectness(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Generate a random model ID string — any printable ASCII.
 		modelID := rapid.StringMatching(`[a-zA-Z0-9.\-_:/]{0,80}`).Draw(t, "modelID")
 
 		got := isClaudeModel(modelID)
@@ -33,12 +30,9 @@ func TestProperty_IsClaudeModelCorrectness(t *testing.T) {
 }
 
 // TestProperty_IsClaudeModelWithAnthropicSubstring verifies that any string
-// containing "anthropic." is always detected as a Claude model, regardless of
-// surrounding characters (cross-region prefixes, version suffixes, etc.).
+// containing "anthropic." is always detected as a Claude model.
 func TestProperty_IsClaudeModelWithAnthropicSubstring(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Build an ID that always contains "anthropic." by sandwiching it between
-		// random prefix and suffix strings.
 		prefix := rapid.StringMatching(`[a-zA-Z0-9.\-_:/]{0,20}`).Draw(t, "prefix")
 		suffix := rapid.StringMatching(`[a-zA-Z0-9.\-_:/]{0,40}`).Draw(t, "suffix")
 		modelID := prefix + "anthropic." + suffix
@@ -53,12 +47,8 @@ func TestProperty_IsClaudeModelWithAnthropicSubstring(t *testing.T) {
 // that does not contain "anthropic." is never detected as a Claude model.
 func TestProperty_IsClaudeModelWithoutAnthropicSubstring(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Generate a string, then ensure "anthropic." is not present by skipping
-		// if the generated string happens to contain it.
 		modelID := rapid.StringMatching(`[a-zA-Z0-9\-_:/]{0,80}`).Draw(t, "modelID")
 
-		// The character class above intentionally excludes '.' so "anthropic."
-		// can never appear, but we guard anyway for robustness.
 		if strings.Contains(modelID, "anthropic.") {
 			t.Skip()
 		}
@@ -74,13 +64,12 @@ func TestProperty_IsClaudeModelWithoutAnthropicSubstring(t *testing.T) {
 // **Validates: Requirements 2.7, 4.2**
 
 // nonClaudeModelIDGen generates model IDs that do NOT contain "anthropic."
-// by using a character set that excludes '.' entirely.
 func nonClaudeModelIDGen() *rapid.Generator[string] {
 	return rapid.StringMatching(`[a-zA-Z0-9\-_:/]{1,60}`)
 }
 
-// hasCachePointBlock recursively checks whether a []types.ContentBlock slice
-// contains any *types.ContentBlockMemberCachePoint.
+// hasCachePointBlock checks whether a []types.ContentBlock slice contains any
+// *types.ContentBlockMemberCachePoint.
 func hasCachePointBlock(blocks []types.ContentBlock) bool {
 	for _, b := range blocks {
 		if _, ok := b.(*types.ContentBlockMemberCachePoint); ok {
@@ -101,24 +90,72 @@ func hasSystemCachePointBlock(sysBlocks []types.SystemContentBlock) bool {
 	return false
 }
 
-// TestProperty_NonClaudeBedrockPayloadHasNoCachePoint verifies that for any
-// non-"anthropic." model ID, calling toBedrockContentBlocks with a CacheableBlock
-// produces no *ContentBlockMemberCachePoint in the result.
-func TestProperty_NonClaudeBedrockPayloadHasNoCachePoint(t *testing.T) {
+// TestProperty_DocumentBlockInjectsCachePointForClaude verifies that when
+// injectCachePoints=true (Claude model + caching enabled), a CachePoint block
+// is injected after every DocumentBlock.
+func TestProperty_DocumentBlockInjectsCachePointForClaude(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		modelID := "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+
+		pdfData := []byte("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\n%%EOF")
+		doc := agent.DocumentBlock{
+			Source: agent.DocumentSource{
+				Data:     pdfData,
+				MIMEType: "application/pdf",
+				Name:     "test.pdf",
+			},
+		}
+
+		numDocs := rapid.IntRange(1, 3).Draw(t, "numDocs")
+		blocks := make([]agent.ContentBlock, numDocs)
+		for i := range numDocs {
+			blocks[i] = doc
+		}
+
+		// With injectCachePoints=true, each DocumentBlock should be followed by a CachePoint.
+		result, err := toBedrockContentBlocks(blocks, modelID, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Expect 2 blocks per document: DocumentBlock + CachePoint.
+		expectedCount := numDocs * 2
+		if len(result) != expectedCount {
+			t.Fatalf("expected %d blocks (doc+cachepoint per doc), got %d", expectedCount, len(result))
+		}
+
+		// Every odd-indexed block should be a CachePoint.
+		for i := 1; i < len(result); i += 2 {
+			if _, ok := result[i].(*types.ContentBlockMemberCachePoint); !ok {
+				t.Fatalf("expected CachePoint at index %d, got %T", i, result[i])
+			}
+		}
+	})
+}
+
+// TestProperty_DocumentBlockNoCachePointForNonClaude verifies that for non-Claude
+// models, no CachePoint is injected even when injectCachePoints would be true
+// (but the caller never sets it for non-Claude models).
+func TestProperty_DocumentBlockNoCachePointForNonClaude(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		modelID := nonClaudeModelIDGen().Draw(t, "nonClaudeModelID")
-
-		// Double-check that the generated ID is genuinely non-Claude.
 		if isClaudeModel(modelID) {
 			t.Skip()
 		}
 
-		// Test with a CacheableBlock wrapping a TextBlock.
+		pdfData := []byte("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\n%%EOF")
 		blocks := []agent.ContentBlock{
-			agent.CacheableBlock{Inner: agent.TextBlock{Text: "cached text"}},
+			agent.DocumentBlock{
+				Source: agent.DocumentSource{
+					Data:     pdfData,
+					MIMEType: "application/pdf",
+					Name:     "test.pdf",
+				},
+			},
 		}
 
-		result, err := toBedrockContentBlocks(blocks, modelID)
+		// injectCachePoints=false for non-Claude: no CachePoint should appear.
+		result, err := toBedrockContentBlocks(blocks, modelID, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -129,38 +166,9 @@ func TestProperty_NonClaudeBedrockPayloadHasNoCachePoint(t *testing.T) {
 	})
 }
 
-// TestProperty_NonClaudeBedrockPayloadHasNoCachePoint_ToolResultBlock verifies
-// that CacheableBlock wrapping a ToolResultBlock also produces no cache marker
-// for non-Claude models.
-func TestProperty_NonClaudeBedrockPayloadHasNoCachePoint_ToolResultBlock(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		modelID := nonClaudeModelIDGen().Draw(t, "nonClaudeModelID")
-		if isClaudeModel(modelID) {
-			t.Skip()
-		}
-
-		blocks := []agent.ContentBlock{
-			agent.CacheableBlock{Inner: agent.ToolResultBlock{
-				ToolUseID: "tu-1",
-				Content:   "some result",
-			}},
-		}
-
-		result, err := toBedrockContentBlocks(blocks, modelID)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if hasCachePointBlock(result) {
-			t.Fatalf("non-Claude model %q: got CachePoint block from ToolResultBlock, want none", modelID)
-		}
-	})
-}
-
 // TestProperty_NonClaudeSystemPromptHasNoCachePoint verifies that with
 // cachingEnabled=true but a non-Claude model ID, the system prompt construction
-// logic (mirrored from Converse/ConverseStream) does NOT inject a
-// SystemContentBlockMemberCachePoint.
+// logic does NOT inject a SystemContentBlockMemberCachePoint.
 func TestProperty_NonClaudeSystemPromptHasNoCachePoint(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		modelID := nonClaudeModelIDGen().Draw(t, "nonClaudeModelID")
@@ -170,13 +178,11 @@ func TestProperty_NonClaudeSystemPromptHasNoCachePoint(t *testing.T) {
 
 		systemText := rapid.StringMatching(`[a-zA-Z0-9 .,!?]{1,200}`).Draw(t, "systemText")
 
-		// Build a provider with cachingEnabled=true and a non-Claude model.
 		p := &BedrockProvider{
 			model:          modelID,
 			cachingEnabled: true,
 		}
 
-		// Mirror the system-prompt construction logic from Converse/ConverseStream.
 		var sysBlocks []types.SystemContentBlock
 		if systemText != "" {
 			if p.cachingEnabled && isClaudeModel(p.model) {
@@ -197,42 +203,6 @@ func TestProperty_NonClaudeSystemPromptHasNoCachePoint(t *testing.T) {
 			t.Fatalf(
 				"non-Claude model %q with cachingEnabled=true: got SystemCachePoint block in system prompt, want none",
 				modelID,
-			)
-		}
-	})
-}
-
-// TestProperty_NonClaudeBedrockPayloadHasNoCachePoint_MixedContent verifies
-// that a mix of CacheableBlock and plain blocks for any non-Claude model ID
-// contains no CachePoint markers anywhere in the result.
-func TestProperty_NonClaudeBedrockPayloadHasNoCachePoint_MixedContent(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		modelID := nonClaudeModelIDGen().Draw(t, "nonClaudeModelID")
-		if isClaudeModel(modelID) {
-			t.Skip()
-		}
-
-		// Build a mixed list: some plain TextBlocks, some CacheableBlocks.
-		numPlain := rapid.IntRange(0, 3).Draw(t, "numPlain")
-		numCacheable := rapid.IntRange(1, 3).Draw(t, "numCacheable")
-
-		var blocks []agent.ContentBlock
-		for i := 0; i < numPlain; i++ {
-			blocks = append(blocks, agent.TextBlock{Text: "plain"})
-		}
-		for i := 0; i < numCacheable; i++ {
-			blocks = append(blocks, agent.CacheableBlock{Inner: agent.TextBlock{Text: "cacheable"}})
-		}
-
-		result, err := toBedrockContentBlocks(blocks, modelID)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if hasCachePointBlock(result) {
-			t.Fatalf(
-				"non-Claude model %q: found CachePoint block with %d plain + %d cacheable inputs, want none",
-				modelID, numPlain, numCacheable,
 			)
 		}
 	})
@@ -277,13 +247,13 @@ func TestProperty_BedrockCacheUsageFieldsPreserved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Property 7: No CacheableBlock → identical payload
+// Property 7: No DocumentBlock → identical payload
 // **Validates: Requirements 8.2, 8.3**
 // ---------------------------------------------------------------------------
 
-// genNonCacheableBedrockBlock generates a random TextBlock or ToolResultBlock —
-// no CacheableBlock, no images that would require external data to decode.
-func genNonCacheableBedrockBlock(t *rapid.T, name string) agent.ContentBlock {
+// genNonDocumentBedrockBlock generates a random TextBlock or ToolResultBlock —
+// no DocumentBlock (which would be affected by injectCachePoints).
+func genNonDocumentBedrockBlock(t *rapid.T, name string) agent.ContentBlock {
 	kind := rapid.IntRange(0, 1).Draw(t, name+"_kind")
 	switch kind {
 	case 0:
@@ -299,20 +269,16 @@ func genNonCacheableBedrockBlock(t *rapid.T, name string) agent.ContentBlock {
 	}
 }
 
-// TestProperty_NoCacheableBlock_IdenticalBedrockPayload verifies Property 7
-// for the Bedrock provider: when message content contains no CacheableBlock
-// values, toBedrockContentBlocks produces identical output regardless of
-// whether the model ID is a Claude model or not — because CacheableBlock
-// handling is the only code path where model ID matters.
-func TestProperty_NoCacheableBlock_IdenticalBedrockPayload(t *testing.T) {
+// TestProperty_NoDocumentBlock_IdenticalBedrockPayload verifies that when
+// message content contains no DocumentBlock values, toBedrockContentBlocks
+// produces identical output regardless of whether injectCachePoints is true or
+// false — because caching only affects DocumentBlocks.
+func TestProperty_NoDocumentBlock_IdenticalBedrockPayload(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Generate a model ID that is definitely a Claude model.
 		claudeModelSuffix := rapid.StringMatching(`[a-zA-Z0-9\-_:/]{0,40}`).Draw(t, "claudeSuffix")
 		claudeModelID := "us.anthropic." + claudeModelSuffix
 
-		// Generate a model ID that is definitely NOT a Claude model (no "anthropic.").
 		nonClaudeModelID := rapid.StringMatching(`[a-zA-Z0-9\-_:/]{1,40}`).Draw(t, "nonClaudeModelID")
-		// Ensure it doesn't accidentally contain "anthropic."
 		if strings.Contains(nonClaudeModelID, "anthropic.") {
 			t.Skip()
 		}
@@ -320,80 +286,44 @@ func TestProperty_NoCacheableBlock_IdenticalBedrockPayload(t *testing.T) {
 			nonClaudeModelID = "amazon.titan-text-lite-v1"
 		}
 
-		// Generate 0–5 content blocks free of CacheableBlock.
 		count := rapid.IntRange(0, 5).Draw(t, "count")
 		blocks := make([]agent.ContentBlock, count)
 		for i := range count {
-			blocks[i] = genNonCacheableBedrockBlock(t, fmt.Sprintf("block%d", i))
+			blocks[i] = genNonDocumentBedrockBlock(t, fmt.Sprintf("block%d", i))
 		}
 
-		// Translate for Claude model.
-		claudeBlocks, err := toBedrockContentBlocks(blocks, claudeModelID)
+		// Translate for Claude model without caching.
+		claudeBlocks, err := toBedrockContentBlocks(blocks, claudeModelID, false)
 		if err != nil {
-			t.Fatalf("toBedrockContentBlocks(claude) error: %v", err)
+			t.Fatalf("toBedrockContentBlocks(claude,false) error: %v", err)
+		}
+
+		// Translate for Claude model with caching — should be identical since no DocumentBlocks.
+		claudeBlocksWithCaching, err := toBedrockContentBlocks(blocks, claudeModelID, true)
+		if err != nil {
+			t.Fatalf("toBedrockContentBlocks(claude,true) error: %v", err)
 		}
 
 		// Translate for non-Claude model.
-		nonClaudeBlocks, err := toBedrockContentBlocks(blocks, nonClaudeModelID)
+		nonClaudeBlocks, err := toBedrockContentBlocks(blocks, nonClaudeModelID, false)
 		if err != nil {
 			t.Fatalf("toBedrockContentBlocks(non-claude) error: %v", err)
 		}
 
-		// Block counts must match.
+		// All three should be the same length.
+		if len(claudeBlocks) != len(claudeBlocksWithCaching) {
+			t.Fatalf("claude without/with caching block count mismatch: %d vs %d",
+				len(claudeBlocks), len(claudeBlocksWithCaching))
+		}
 		if len(claudeBlocks) != len(nonClaudeBlocks) {
 			t.Fatalf("block count mismatch: claude=%d non-claude=%d", len(claudeBlocks), len(nonClaudeBlocks))
 		}
 
-		// Each block must be the same type.
 		for i := range claudeBlocks {
 			claudeType := fmt.Sprintf("%T", claudeBlocks[i])
 			nonClaudeType := fmt.Sprintf("%T", nonClaudeBlocks[i])
 			if claudeType != nonClaudeType {
 				t.Fatalf("block[%d] type mismatch: claude=%s non-claude=%s", i, claudeType, nonClaudeType)
-			}
-		}
-	})
-}
-
-// TestProperty_NoCacheableBlock_BedrockWithCachingFlag verifies that
-// toBedrockContentBlocks is identical whether or not a BedrockProvider
-// has cachingEnabled=true, as long as no CacheableBlock is present in
-// the message content (caching flag affects system prompt building, not
-// message block translation).
-func TestProperty_NoCacheableBlock_BedrockWithCachingFlag(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		// Use a Claude model ID so the difference would be observable if any.
-		modelID := "us.anthropic.claude-3-5-haiku-20241022-v1:0"
-
-		// Generate 0–5 content blocks free of CacheableBlock.
-		count := rapid.IntRange(0, 5).Draw(t, "count")
-		blocks := make([]agent.ContentBlock, count)
-		for i := range count {
-			blocks[i] = genNonCacheableBedrockBlock(t, fmt.Sprintf("block%d", i))
-		}
-
-		// toBedrockContentBlocks does not take a cachingEnabled flag directly —
-		// cachingEnabled only affects system prompt construction in Converse/
-		// ConverseStream. Calling it twice with the same inputs should always
-		// produce identical results.
-		blocksA, err := toBedrockContentBlocks(blocks, modelID)
-		if err != nil {
-			t.Fatalf("first call error: %v", err)
-		}
-		blocksB, err := toBedrockContentBlocks(blocks, modelID)
-		if err != nil {
-			t.Fatalf("second call error: %v", err)
-		}
-
-		if len(blocksA) != len(blocksB) {
-			t.Fatalf("block count mismatch: %d vs %d", len(blocksA), len(blocksB))
-		}
-
-		for i := range blocksA {
-			typeA := fmt.Sprintf("%T", blocksA[i])
-			typeB := fmt.Sprintf("%T", blocksB[i])
-			if typeA != typeB {
-				t.Fatalf("block[%d] type mismatch: %s vs %s", i, typeA, typeB)
 			}
 		}
 	})

@@ -66,8 +66,8 @@ func TestProperty_SystemBlockCacheControlOnLastElementOnly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Property 5: Anthropic CacheableBlock translation preserves content
-// **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
+// Property 5: Anthropic DocumentBlock auto-caching
+// **Validates: Requirements 3.1, 3.2**
 // ---------------------------------------------------------------------------
 
 // genTextBlock generates a random TextBlock.
@@ -93,17 +93,11 @@ func genToolResultBlock() *rapid.Generator[agent.ToolResultBlock] {
 	})
 }
 
-// genImageBlock generates a fixed-data ImageBlock. Image data is not randomised
-// because rapid requires generators to consume data from the bitstream; the
-// meaningful variation here is tested through the other block type generators.
-// We use a draw call to keep rapid's bookkeeping happy while keeping the image
-// payload deterministic so base64 decoding always succeeds.
+// genImageBlock generates a fixed-data ImageBlock.
 func genImageBlock() *rapid.Generator[agent.ImageBlock] {
 	return rapid.Custom(func(t *rapid.T) agent.ImageBlock {
-		// Draw a bool just so rapid sees this generator consume data.
 		_ = rapid.Bool().Draw(t, "imageVariant")
 
-		// 1x1 transparent PNG – smallest valid PNG we can embed.
 		pngData := []byte{
 			0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
 			0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
@@ -125,11 +119,9 @@ func genImageBlock() *rapid.Generator[agent.ImageBlock] {
 	})
 }
 
-// genDocumentBlock generates a fixed-data DocumentBlock. Like genImageBlock,
-// the document payload is deterministic; we draw a bool so rapid sees data.
+// genDocumentBlock generates a fixed-data DocumentBlock.
 func genDocumentBlock() *rapid.Generator[agent.DocumentBlock] {
 	return rapid.Custom(func(t *rapid.T) agent.DocumentBlock {
-		// Draw a bool so rapid sees this generator consume data from the bitstream.
 		_ = rapid.Bool().Draw(t, "docVariant")
 
 		pdfData := []byte("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\n%%EOF")
@@ -142,137 +134,47 @@ func genDocumentBlock() *rapid.Generator[agent.DocumentBlock] {
 	})
 }
 
-// TestProperty_AnthropicCacheableBlockPreservesContent verifies Property 5:
-// for any supported inner block type, toAnthropicCacheableBlock produces a
-// result that:
-//  1. Has CacheControl set (non-zero, not omitted) on the underlying block param.
-//  2. Preserves the inner content fields to match the non-cacheable translation.
-func TestProperty_AnthropicCacheableBlockPreservesContent(t *testing.T) {
-	// Sub-test for TextBlock.
-	t.Run("TextBlock", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			inner := genTextBlock().Draw(t, "inner")
+// TestProperty_DocumentBlockGetsCacheControlWhenCachingEnabled verifies that
+// when cachingEnabled=true, every DocumentBlock in user messages gets
+// cache_control set. When cachingEnabled=false, it is not set.
+func TestProperty_DocumentBlockGetsCacheControlWhenCachingEnabled(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		inner := genDocumentBlock().Draw(t, "inner")
+		blocks := []agent.ContentBlock{inner}
 
-			cacheable := agent.CacheableBlock{Inner: inner}
-			result := toAnthropicCacheableBlock(cacheable, agent.RoleUser)
-			plain := toAnthropicContentBlock(inner, agent.RoleUser)
+		// With caching disabled — no cache_control.
+		withoutCaching := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+		if len(withoutCaching) == 0 {
+			t.Fatal("expected non-empty result without caching")
+		}
+		if withoutCaching[0].OfDocument == nil {
+			t.Fatal("expected OfDocument for DocumentBlock")
+		}
+		if !param.IsOmitted(withoutCaching[0].OfDocument.CacheControl) {
+			t.Fatal("expected CacheControl to be absent when caching is disabled")
+		}
 
-			// Must use the OfText union arm.
-			if result.OfText == nil {
-				t.Fatal("expected OfText to be set for TextBlock CacheableBlock")
-			}
-			// CacheControl must be set (NewCacheControlEphemeralParam sets Type="ephemeral", non-zero).
-			if param.IsOmitted(result.OfText.CacheControl) {
-				t.Fatal("expected CacheControl to be set on CacheableBlock TextBlockParam, but it was omitted")
-			}
-			// Content (Text field) must be preserved.
-			if plain.OfText == nil {
-				t.Fatal("expected OfText to be set for plain TextBlock")
-			}
-			if result.OfText.Text != plain.OfText.Text {
-				t.Fatalf("text content mismatch: cacheable=%q plain=%q", result.OfText.Text, plain.OfText.Text)
-			}
-		})
-	})
-
-	// Sub-test for ToolResultBlock.
-	t.Run("ToolResultBlock", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			inner := genToolResultBlock().Draw(t, "inner")
-
-			cacheable := agent.CacheableBlock{Inner: inner}
-			result := toAnthropicCacheableBlock(cacheable, agent.RoleUser)
-			plain := toAnthropicContentBlock(inner, agent.RoleUser)
-
-			// Must use the OfToolResult union arm.
-			if result.OfToolResult == nil {
-				t.Fatal("expected OfToolResult to be set for ToolResultBlock CacheableBlock")
-			}
-			// CacheControl must be set.
-			if param.IsOmitted(result.OfToolResult.CacheControl) {
-				t.Fatal("expected CacheControl to be set on CacheableBlock ToolResultBlockParam, but it was omitted")
-			}
-			// ToolUseID must be preserved.
-			if plain.OfToolResult == nil {
-				t.Fatal("expected OfToolResult to be set for plain ToolResultBlock")
-			}
-			if result.OfToolResult.ToolUseID != plain.OfToolResult.ToolUseID {
-				t.Fatalf("ToolUseID mismatch: cacheable=%q plain=%q",
-					result.OfToolResult.ToolUseID, plain.OfToolResult.ToolUseID)
-			}
-		})
-	})
-
-	// Sub-test for ImageBlock.
-	t.Run("ImageBlock", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			inner := genImageBlock().Draw(t, "inner")
-
-			cacheable := agent.CacheableBlock{Inner: inner}
-			result := toAnthropicCacheableBlock(cacheable, agent.RoleUser)
-			plain := toAnthropicContentBlock(inner, agent.RoleUser)
-
-			// Must use the OfImage union arm.
-			if result.OfImage == nil {
-				t.Fatal("expected OfImage to be set for ImageBlock CacheableBlock")
-			}
-			// CacheControl must be set.
-			if param.IsOmitted(result.OfImage.CacheControl) {
-				t.Fatal("expected CacheControl to be set on CacheableBlock ImageBlockParam, but it was omitted")
-			}
-			// Source must be preserved.
-			if plain.OfImage == nil {
-				t.Fatal("expected OfImage to be set for plain ImageBlock")
-			}
-			// Both should have OfBase64 set (since genImageBlock uses base64 source).
-			if result.OfImage.Source.OfBase64 == nil || plain.OfImage.Source.OfBase64 == nil {
-				t.Fatal("expected OfBase64 source on both cacheable and plain ImageBlock")
-			}
-			if result.OfImage.Source.OfBase64.Data != plain.OfImage.Source.OfBase64.Data {
-				t.Fatal("image source data mismatch between cacheable and plain")
-			}
-		})
-	})
-
-	// Sub-test for DocumentBlock.
-	t.Run("DocumentBlock", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			inner := genDocumentBlock().Draw(t, "inner")
-
-			cacheable := agent.CacheableBlock{Inner: inner}
-			result := toAnthropicCacheableBlock(cacheable, agent.RoleUser)
-			plain := toAnthropicContentBlock(inner, agent.RoleUser)
-
-			// Must use the OfDocument union arm.
-			if result.OfDocument == nil {
-				t.Fatal("expected OfDocument to be set for DocumentBlock CacheableBlock")
-			}
-			// CacheControl must be set.
-			if param.IsOmitted(result.OfDocument.CacheControl) {
-				t.Fatal("expected CacheControl to be set on CacheableBlock DocumentBlockParam, but it was omitted")
-			}
-			// Source must be preserved.
-			if plain.OfDocument == nil {
-				t.Fatal("expected OfDocument to be set for plain DocumentBlock")
-			}
-			// Both should have OfBase64 set.
-			if result.OfDocument.Source.OfBase64 == nil || plain.OfDocument.Source.OfBase64 == nil {
-				t.Fatal("expected OfBase64 source on both cacheable and plain DocumentBlock")
-			}
-			if result.OfDocument.Source.OfBase64.Data != plain.OfDocument.Source.OfBase64.Data {
-				t.Fatal("document source data mismatch between cacheable and plain")
-			}
-		})
+		// With caching enabled — cache_control must be set.
+		withCaching := toAnthropicContentBlocks(blocks, agent.RoleUser, true)
+		if len(withCaching) == 0 {
+			t.Fatal("expected non-empty result with caching")
+		}
+		if withCaching[0].OfDocument == nil {
+			t.Fatal("expected OfDocument for DocumentBlock")
+		}
+		if param.IsOmitted(withCaching[0].OfDocument.CacheControl) {
+			t.Fatal("expected CacheControl to be set on DocumentBlock when caching is enabled")
+		}
 	})
 }
 
 // ---------------------------------------------------------------------------
-// Property 7: No CacheableBlock → identical payload
+// Property 7: No DocumentBlock → identical payload regardless of caching flag
 // **Validates: Requirements 8.2, 8.3**
 // ---------------------------------------------------------------------------
 
 // genNonCacheableContentBlock generates a random TextBlock or ToolResultBlock —
-// no CacheableBlock, no binary-heavy data that would complicate comparison.
+// no DocumentBlock (which would be affected by cachingEnabled).
 func genNonCacheableContentBlock() *rapid.Generator[agent.ContentBlock] {
 	return rapid.Custom(func(t *rapid.T) agent.ContentBlock {
 		kind := rapid.IntRange(0, 1).Draw(t, "kind")
@@ -285,18 +187,15 @@ func genNonCacheableContentBlock() *rapid.Generator[agent.ContentBlock] {
 	})
 }
 
-// TestProperty_NoCacheableBlock_IdenticalAnthropicPayload verifies Property 7
-// for the Anthropic provider: when message content contains no CacheableBlock
-// values, the output of toAnthropicContentBlocks is identical regardless of
-// whether cachingEnabled is true or false (cachingEnabled only affects the
-// system prompt, not message blocks).
-func TestProperty_NoCacheableBlock_IdenticalAnthropicPayload(t *testing.T) {
+// TestProperty_NoDocumentBlock_IdenticalAnthropicPayload verifies that when
+// message content contains no DocumentBlock values, the output of
+// toAnthropicContentBlocks is identical regardless of cachingEnabled.
+func TestProperty_NoDocumentBlock_IdenticalAnthropicPayload(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a random role.
 		role := rapid.SampledFrom([]agent.Role{agent.RoleUser, agent.RoleAssistant}).Draw(t, "role")
 
-		// Generate a list of content blocks free of CacheableBlock.
-		// Use ToolResultBlock only in user role to avoid unsupported assistant role filtering.
+		// Generate a list of content blocks free of DocumentBlock.
 		var blocks []agent.ContentBlock
 		count := rapid.IntRange(0, 5).Draw(t, "count")
 		for range count {
@@ -304,24 +203,22 @@ func TestProperty_NoCacheableBlock_IdenticalAnthropicPayload(t *testing.T) {
 			if role == agent.RoleUser {
 				b = genNonCacheableContentBlock().Draw(t, "block")
 			} else {
-				// Only TextBlock is valid in assistant role without skipping.
 				b = genTextBlock().Draw(t, "block")
 			}
 			blocks = append(blocks, b)
 		}
 
 		// Translate with cachingEnabled=false (baseline).
-		withoutCaching := toAnthropicContentBlocks(blocks, role)
+		withoutCaching := toAnthropicContentBlocks(blocks, role, false)
 		// Translate with cachingEnabled=true — must produce the same result
-		// because cachingEnabled only injects cache_control on the system prompt,
-		// not on message content blocks.
-		withCaching := toAnthropicContentBlocks(blocks, role)
+		// because cachingEnabled only affects DocumentBlocks and system prompt.
+		withCaching := toAnthropicContentBlocks(blocks, role, true)
 
 		if len(withoutCaching) != len(withCaching) {
 			t.Fatalf("block count mismatch: without=%d with=%d", len(withoutCaching), len(withCaching))
 		}
 
-		// Marshal both to JSON and compare — this captures all field differences.
+		// Marshal both to JSON and compare.
 		withoutJSON, err := json.Marshal(withoutCaching)
 		if err != nil {
 			t.Fatalf("failed to marshal withoutCaching: %v", err)
@@ -332,19 +229,17 @@ func TestProperty_NoCacheableBlock_IdenticalAnthropicPayload(t *testing.T) {
 		}
 
 		if string(withoutJSON) != string(withJSON) {
-			t.Fatalf("payloads differ when no CacheableBlock is present:\nwithout: %s\nwith:    %s",
+			t.Fatalf("payloads differ when no DocumentBlock is present:\nwithout: %s\nwith:    %s",
 				withoutJSON, withJSON)
 		}
 	})
 }
 
-// TestProperty_NoCacheableBlock_IdenticalAnthropicSystemPrompt verifies that
+// TestProperty_NoDocumentBlock_IdenticalAnthropicSystemPrompt verifies that
 // when the system prompt is empty, buildParams produces identical System blocks
-// regardless of cachingEnabled — an empty system should never inject
-// cache_control.
-func TestProperty_NoCacheableBlock_IdenticalAnthropicSystemPrompt(t *testing.T) {
+// regardless of cachingEnabled.
+func TestProperty_NoDocumentBlock_IdenticalAnthropicSystemPrompt(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		// Generate random text blocks for messages — no CacheableBlock.
 		text := rapid.StringOf(rapid.RuneFrom([]rune("abcdefghijklmnopqrstuvwxyz "))).Draw(t, "text")
 		params := agent.ConverseParams{
 			Messages: []agent.Message{
@@ -365,7 +260,7 @@ func TestProperty_NoCacheableBlock_IdenticalAnthropicSystemPrompt(t *testing.T) 
 				len(resultWithout.System), len(resultWith.System))
 		}
 
-		// Message content should also be identical since no CacheableBlock is present.
+		// Message content should also be identical since no DocumentBlock is present.
 		withoutMsgJSON, err := json.Marshal(resultWithout.Messages)
 		if err != nil {
 			t.Fatalf("failed to marshal messages without caching: %v", err)
@@ -376,7 +271,7 @@ func TestProperty_NoCacheableBlock_IdenticalAnthropicSystemPrompt(t *testing.T) 
 		}
 
 		if string(withoutMsgJSON) != string(withMsgJSON) {
-			t.Fatalf("message payloads differ when no CacheableBlock is present:\nwithout: %s\nwith:    %s",
+			t.Fatalf("message payloads differ when no DocumentBlock is present:\nwithout: %s\nwith:    %s",
 				withoutMsgJSON, withMsgJSON)
 		}
 	})

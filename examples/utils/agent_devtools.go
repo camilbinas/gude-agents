@@ -264,6 +264,9 @@ func (dt *AgentDevTools) runTurn(ctx context.Context, conn *websocket.Conn, user
 			if docs := user.Documents(); len(docs) > 0 {
 				aCtx = aCtx.WithDocuments(docs)
 			}
+			if docs := user.CachedDocuments(); len(docs) > 0 {
+				aCtx = aCtx.WithCachedDocuments(docs)
+			}
 			if id := user.Identifier(); id != "" {
 				aCtx = aCtx.WithIdentifier(id)
 			}
@@ -386,10 +389,12 @@ func (dt *AgentDevTools) dispatchEvent(conn *websocket.Conn, ev agent.AgentEvent
 
 	case agent.EventInvokeEnd:
 		dt.send(conn, map[string]any{
-			"type":          "invoke_end",
-			"error":         errString(ev.Err),
-			"input_tokens":  ev.Usage.InputTokens,
-			"output_tokens": ev.Usage.OutputTokens,
+			"type":               "invoke_end",
+			"error":              errString(ev.Err),
+			"input_tokens":       ev.Usage.InputTokens,
+			"output_tokens":      ev.Usage.OutputTokens,
+			"cache_read_tokens":  ev.Usage.CacheReadTokens,
+			"cache_write_tokens": ev.Usage.CacheWriteTokens,
 		})
 
 	case agent.EventCustom:

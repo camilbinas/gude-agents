@@ -3,6 +3,7 @@ package bedrock
 import (
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/camilbinas/gude-agents/agent"
 )
 
@@ -20,12 +21,11 @@ func TestToBedrockContentBlocks_MixedTypes_DoesNotPanic(t *testing.T) {
 	blocks := []agent.ContentBlock{
 		agent.TextBlock{Text: "before"},
 		agent.ToolResultBlock{ToolUseID: "tc1", Content: "result"},
-		agent.CacheableBlock{Inner: agent.TextBlock{Text: "cached text"}},
 		agent.TextBlock{Text: "after"},
 	}
 
-	// Use a non-Claude model to keep the test simple.
-	result, err := toBedrockContentBlocks(blocks, "amazon.titan-text-express-v1")
+	// Use a non-Claude model with caching disabled.
+	result, err := toBedrockContentBlocks(blocks, "amazon.titan-text-express-v1", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -34,47 +34,68 @@ func TestToBedrockContentBlocks_MixedTypes_DoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestToBedrockCacheableBlock_DoesNotPanic_NonClaude verifies that translating
-// a CacheableBlock on a non-Claude model does not panic and simply unwraps
-// the inner block.
+// TestToBedrockContentBlocks_DocumentBlock_AutoCachePoint_Claude verifies that
+// when injectCachePoints=true (Claude model + caching enabled), a CachePoint
+// block is injected after the DocumentBlock.
 //
-// Requirements: 1.1, 8.4
-func TestToBedrockCacheableBlock_DoesNotPanic_NonClaude(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("toBedrockCacheableBlock panicked on non-Claude model: %v", r)
-		}
-	}()
+// Requirements: 4.1, 4.2
+func TestToBedrockContentBlocks_DocumentBlock_AutoCachePoint_Claude(t *testing.T) {
+	pdfData := []byte("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\n%%EOF")
+	blocks := []agent.ContentBlock{
+		agent.DocumentBlock{
+			Source: agent.DocumentSource{
+				Data:     pdfData,
+				MIMEType: "application/pdf",
+				Name:     "test.pdf",
+			},
+		},
+		agent.TextBlock{Text: "question"},
+	}
 
-	cacheable := agent.CacheableBlock{Inner: agent.TextBlock{Text: "hello"}}
-	result, err := toBedrockCacheableBlock(cacheable, "amazon.titan-text-express-v1")
+	// With injectCachePoints=true (Claude model, caching enabled).
+	result, err := toBedrockContentBlocks(blocks, "anthropic.claude-3-5-haiku-20241022-v1:0", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result) == 0 {
-		t.Error("expected non-empty result for non-Claude CacheableBlock")
+
+	// Expect: DocumentBlock, CachePoint, TextBlock = 3 blocks.
+	if len(result) != 3 {
+		t.Fatalf("expected 3 blocks (doc, cachepoint, text), got %d", len(result))
+	}
+	if _, ok := result[1].(*types.ContentBlockMemberCachePoint); !ok {
+		t.Errorf("expected CachePoint at index 1, got %T", result[1])
 	}
 }
 
-// TestToBedrockCacheableBlock_DoesNotPanic_Claude verifies that translating a
-// CacheableBlock on a Claude model does not panic and appends a CachePoint
-// block after the inner block.
+// TestToBedrockContentBlocks_DocumentBlock_NoCachePoint_NoCaching verifies that
+// when injectCachePoints=false, no CachePoint is injected.
 //
-// Requirements: 1.1, 8.4
-func TestToBedrockCacheableBlock_DoesNotPanic_Claude(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("toBedrockCacheableBlock panicked on Claude model: %v", r)
-		}
-	}()
+// Requirements: 4.1, 4.2
+func TestToBedrockContentBlocks_DocumentBlock_NoCachePoint_NoCaching(t *testing.T) {
+	pdfData := []byte("%PDF-1.0\n1 0 obj<</Type/Catalog>>endobj\n%%EOF")
+	blocks := []agent.ContentBlock{
+		agent.DocumentBlock{
+			Source: agent.DocumentSource{
+				Data:     pdfData,
+				MIMEType: "application/pdf",
+				Name:     "test.pdf",
+			},
+		},
+		agent.TextBlock{Text: "question"},
+	}
 
-	cacheable := agent.CacheableBlock{Inner: agent.TextBlock{Text: "hello"}}
-	result, err := toBedrockCacheableBlock(cacheable, "anthropic.claude-3-5-haiku-20241022-v1:0")
+	result, err := toBedrockContentBlocks(blocks, "anthropic.claude-3-5-haiku-20241022-v1:0", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should have the inner text block plus a CachePoint sentinel.
-	if len(result) < 2 {
-		t.Errorf("expected at least 2 blocks (inner + CachePoint), got %d", len(result))
+
+	// Expect: DocumentBlock, TextBlock = 2 blocks (no CachePoint).
+	if len(result) != 2 {
+		t.Fatalf("expected 2 blocks (doc, text), got %d", len(result))
+	}
+	for i, b := range result {
+		if _, ok := b.(*types.ContentBlockMemberCachePoint); ok {
+			t.Errorf("unexpected CachePoint at index %d", i)
+		}
 	}
 }

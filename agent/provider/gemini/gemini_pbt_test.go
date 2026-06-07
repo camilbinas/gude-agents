@@ -463,7 +463,7 @@ func TestProperty_GeminiThinkingTextStorage(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Property: CacheableBlock preserves inner block semantics for Gemini (pass-through)
+// Property: All content block types translate without panicking for Gemini
 // **Validates: Requirements 1.4, 8.3**
 // ---------------------------------------------------------------------------
 
@@ -559,32 +559,20 @@ func partsToJSON(t *rapid.T, parts []*genai.Part) string {
 	return string(b)
 }
 
-// TestProperty_GeminiCacheableBlockUnwrapEquivalence verifies Property 1:
-// translating CacheableBlock{Inner: b} through toGeminiParts produces output
-// identical to translating b directly. Gemini is a pass-through provider that
-// does not support explicit cache breakpoints — it simply unwraps Inner.
+// TestProperty_GeminiAllBlockTypesDontPanic verifies that translating each known
+// content block type through toGeminiParts does not panic and produces non-empty output.
 //
 // **Validates: Requirements 1.4, 8.3**
-func TestProperty_GeminiCacheableBlockUnwrapEquivalence(t *testing.T) {
+func TestProperty_GeminiAllBlockTypesDontPanic(t *testing.T) {
 	t.Run("TextBlock", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			inner := genGeminiTextBlock().Draw(t, "inner")
-
-			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			parts, err := toGeminiParts([]agent.ContentBlock{inner})
 			if err != nil {
-				t.Fatalf("toGeminiParts(direct) error: %v", err)
+				t.Fatalf("toGeminiParts(TextBlock) error: %v", err)
 			}
-			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
-			if err != nil {
-				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
-			}
-
-			if len(direct) != len(wrapped) {
-				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
-			}
-			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
-				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
-					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			if len(parts) == 0 {
+				t.Fatal("expected non-empty parts for TextBlock")
 			}
 		})
 	})
@@ -592,22 +580,12 @@ func TestProperty_GeminiCacheableBlockUnwrapEquivalence(t *testing.T) {
 	t.Run("ToolUseBlock", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			inner := genGeminiToolUseBlock().Draw(t, "inner")
-
-			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			parts, err := toGeminiParts([]agent.ContentBlock{inner})
 			if err != nil {
-				t.Fatalf("toGeminiParts(direct) error: %v", err)
+				t.Fatalf("toGeminiParts(ToolUseBlock) error: %v", err)
 			}
-			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
-			if err != nil {
-				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
-			}
-
-			if len(direct) != len(wrapped) {
-				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
-			}
-			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
-				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
-					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			if len(parts) == 0 {
+				t.Fatal("expected non-empty parts for ToolUseBlock")
 			}
 		})
 	})
@@ -615,22 +593,12 @@ func TestProperty_GeminiCacheableBlockUnwrapEquivalence(t *testing.T) {
 	t.Run("ToolResultBlock", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			inner := genGeminiToolResultBlock().Draw(t, "inner")
-
-			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			parts, err := toGeminiParts([]agent.ContentBlock{inner})
 			if err != nil {
-				t.Fatalf("toGeminiParts(direct) error: %v", err)
+				t.Fatalf("toGeminiParts(ToolResultBlock) error: %v", err)
 			}
-			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
-			if err != nil {
-				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
-			}
-
-			if len(direct) != len(wrapped) {
-				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
-			}
-			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
-				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
-					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			if len(parts) == 0 {
+				t.Fatal("expected non-empty parts for ToolResultBlock")
 			}
 		})
 	})
@@ -638,22 +606,12 @@ func TestProperty_GeminiCacheableBlockUnwrapEquivalence(t *testing.T) {
 	t.Run("ImageBlock", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			inner := genGeminiImageBlock().Draw(t, "inner")
-
-			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			parts, err := toGeminiParts([]agent.ContentBlock{inner})
 			if err != nil {
-				t.Fatalf("toGeminiParts(direct) error: %v", err)
+				t.Fatalf("toGeminiParts(ImageBlock) error: %v", err)
 			}
-			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
-			if err != nil {
-				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
-			}
-
-			if len(direct) != len(wrapped) {
-				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
-			}
-			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
-				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
-					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			if len(parts) == 0 {
+				t.Fatal("expected non-empty parts for ImageBlock")
 			}
 		})
 	})
@@ -661,22 +619,12 @@ func TestProperty_GeminiCacheableBlockUnwrapEquivalence(t *testing.T) {
 	t.Run("DocumentBlock", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			inner := genGeminiDocumentBlock().Draw(t, "inner")
-
-			direct, err := toGeminiParts([]agent.ContentBlock{inner})
+			parts, err := toGeminiParts([]agent.ContentBlock{inner})
 			if err != nil {
-				t.Fatalf("toGeminiParts(direct) error: %v", err)
+				t.Fatalf("toGeminiParts(DocumentBlock) error: %v", err)
 			}
-			wrapped, err := toGeminiParts([]agent.ContentBlock{agent.CacheableBlock{Inner: inner}})
-			if err != nil {
-				t.Fatalf("toGeminiParts(wrapped) error: %v", err)
-			}
-
-			if len(direct) != len(wrapped) {
-				t.Fatalf("part count mismatch: direct=%d wrapped=%d", len(direct), len(wrapped))
-			}
-			if partsToJSON(t, direct) != partsToJSON(t, wrapped) {
-				t.Fatalf("parts differ:\n  direct:  %s\n  wrapped: %s",
-					partsToJSON(t, direct), partsToJSON(t, wrapped))
+			if len(parts) == 0 {
+				t.Fatal("expected non-empty parts for DocumentBlock")
 			}
 		})
 	})

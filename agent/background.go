@@ -251,7 +251,7 @@ func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
 	cb := func(string) {} // streaming chunks are accumulated, not streamed (Req 11.1)
 	usage, finalText, err := a.runLoop(
 		ctx, d.conversationID, history, 0,
-		a.Instructions(), mergedCfg, cb, &h, nil,
+		a.Instructions(), mergedCfg, cb, &h, nil, a.cachingEnabled,
 	)
 	finishInvoke.finish(err, usage)
 

@@ -70,7 +70,7 @@ func (a *Agent) RunLoop(c *Context, params LoopParams) (TokenUsage, string, erro
 	}
 
 	h := a.hooks(c)
-	usage, finalText, err := a.runLoop(c, convID, params.Messages, 0, systemPrompt, inferenceConfig, params.StreamCallback, &h, cfg)
+	usage, finalText, err := a.runLoop(c, convID, params.Messages, 0, systemPrompt, inferenceConfig, params.StreamCallback, &h, cfg, a.cachingEnabled)
 
 	// Store cumulative usage on the Context for caller access.
 	c.setUsage(usage)

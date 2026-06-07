@@ -102,8 +102,8 @@ type TokenSummary struct {
 	preserveRecent int
 	timeout        time.Duration
 
-	mediaSummaryFunc        MediaSummaryFunc // nil = disabled
-	mediaSummaryConcurrency int              // max parallel media summary calls (default: 3)
+	mediaSummaryFunc        MediaSummaryFunc
+	mediaSummaryConcurrency int
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -204,7 +204,7 @@ func (s *TokenSummary) Save(ctx context.Context, conversationID string, msgs []a
 }
 
 // runSummarize performs background summarization for a conversation.
-func (s *TokenSummary) runSummarize(conversationID string, msgs []agent.Message, inputTokens int) {
+func (s *TokenSummary) runSummarize(conversationID string, _ []agent.Message, inputTokens int) {
 	defer s.wg.Done()
 	ctx := s.ctx
 	if s.timeout > 0 {
@@ -285,7 +285,8 @@ func (s *TokenSummary) runSummarize(conversationID string, msgs []agent.Message,
 
 	// Build new message list: summary pair + preserved tail.
 	newMsgs := make([]agent.Message, 0, 2+len(tail))
-	newMsgs = append(newMsgs, summaryPair[0], summaryPair[1])
+	summaryUserMsg := summaryPair[0]
+	newMsgs = append(newMsgs, summaryUserMsg, summaryPair[1])
 	newMsgs = append(newMsgs, tail...)
 
 	if err := s.inner.Save(ctx, conversationID, newMsgs); err != nil {

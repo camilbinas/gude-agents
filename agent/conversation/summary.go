@@ -121,8 +121,8 @@ type Summary struct {
 	preserveRecent int           // number of recent messages to always keep out of summarization
 	timeout        time.Duration // per-summarization timeout; 0 = no timeout
 
-	mediaSummaryFunc        MediaSummaryFunc // nil = disabled (current behavior: drop non-text)
-	mediaSummaryConcurrency int              // max parallel media summary calls (default: 3)
+	mediaSummaryFunc        MediaSummaryFunc
+	mediaSummaryConcurrency int
 
 	ctx    context.Context // cancelled by Close to stop in-flight summarization
 	cancel context.CancelFunc
@@ -416,7 +416,8 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 
 	// Build the new message list: summary pair + preserved tail.
 	newMsgs := make([]agent.Message, 0, 2+len(tail))
-	newMsgs = append(newMsgs, summaryPair[0], summaryPair[1])
+	summaryUserMsg := summaryPair[0]
+	newMsgs = append(newMsgs, summaryUserMsg, summaryPair[1])
 	newMsgs = append(newMsgs, tail...)
 
 	// Save the summarized conversation. The mutex is not held during I/O —

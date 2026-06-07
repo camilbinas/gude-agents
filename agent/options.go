@@ -304,3 +304,14 @@ func WithHandoffStore(s HandoffStore) Option {
 		return nil
 	}
 }
+
+// WithCaching enables all supported prompt caching. It sets CachingEnabled on
+// each provider call (causing providers to automatically inject cache markers
+// on DocumentBlocks and system prompts) and enables summary caching on any
+// summary conversation strategy attached to the agent.
+func WithCaching() Option {
+	return func(a *Agent) error {
+		a.cachingEnabled = true
+		return nil
+	}
+}
