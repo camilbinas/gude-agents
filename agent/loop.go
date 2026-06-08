@@ -289,6 +289,14 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 		// Call provider.
 		currentToolSpecs, availableTools := a.filterTools(iterC)
 
+		// When no tools are available but history contains tool_use/tool_result
+		// blocks (from a previous session that had tools), strip them to avoid
+		// provider validation errors (Bedrock requires toolConfig when tool
+		// blocks are present in messages).
+		if len(currentToolSpecs) == 0 {
+			converseMessages = stripToolBlocks(converseMessages)
+		}
+
 		// Forward thinking chunks to EventHook.OnThinking when configured.
 		var thinkingCB ThinkingCallback
 		if h.event != nil {
@@ -798,6 +806,31 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 	}
 
 	return results, widgetsByCall
+}
+
+// stripToolBlocks returns a new []Message slice with ToolUseBlock and
+// ToolResultBlock entries removed. Messages whose Content becomes empty
+// after stripping are omitted. Used when conversation history contains tool
+// interactions but the current invocation has no tools configured.
+func stripToolBlocks(msgs []Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		filtered := make([]ContentBlock, 0, len(m.Content))
+		for _, b := range m.Content {
+			switch b.(type) {
+			case ToolUseBlock, ToolResultBlock:
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		mc := m
+		mc.Content = filtered
+		out = append(out, mc)
+	}
+	return out
 }
 
 // saveConversation persists conversation history if configured.
