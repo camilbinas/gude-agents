@@ -167,6 +167,21 @@ jobs:
             done
           fi
 
+      - name: Run go mod tidy in submodules
+        if: steps.bump.outputs.skip == 'false'
+        env:
+          GOPRIVATE: 'github.com/camilbinas/*'
+        run: |
+          SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||')
+          for sub in $SUBMODULES; do
+            if [ -f "$sub/go.mod" ]; then
+              echo "  go mod tidy in $sub"
+              (cd "$sub" && go mod tidy)
+            fi
+          done
+          # Root module
+          go mod tidy
+
       - name: Commit, tag, and push atomically
         if: steps.bump.outputs.skip == 'false'
         env:

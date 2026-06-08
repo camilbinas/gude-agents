@@ -1,5 +1,5 @@
 github.com/anthropics/anthropic-sdk-go v1.33.0 h1:YlRqiI+PjULBA8NoeeJmkXtFzTmjZZA7oFvpZ4FU7eU=
-github.com/camilbinas/gude-agents v0.22.0 h1:m0r/+swM27PtDWIsnz4ZzuMQK8IHObx8dAj19L9KKD0=
+github.com/camilbinas/gude-agents v0.79.1 h1:vMnBvasAbTx1O9XQg0nUHHxIzC1Rw0N27ewx1hCgEaw=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=

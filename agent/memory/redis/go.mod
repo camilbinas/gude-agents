@@ -6,7 +6,6 @@ require (
 	github.com/camilbinas/gude-agents v0.79.1
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
-	pgregory.net/rapid v1.2.0
 )
 
 require (
