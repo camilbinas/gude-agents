@@ -152,7 +152,7 @@ func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, e
 		if !cfg.allow(t.Name) {
 			continue
 		}
-		wrapped, err := c.wrapTool(t)
+		wrapped, err := c.wrapTool(t, cfg.prefix)
 		if err != nil {
 			return nil, fmt.Errorf("mcp wrap tool %q: %w", t.Name, err)
 		}
@@ -167,6 +167,7 @@ type ToolsOption func(*toolsConfig) error
 type toolsConfig struct {
 	include map[string]struct{}
 	exclude map[string]struct{}
+	prefix  string
 }
 
 func (c *toolsConfig) allow(name string) bool {
@@ -179,6 +180,19 @@ func (c *toolsConfig) allow(name string) bool {
 		return !ok
 	}
 	return true
+}
+
+// WithToolPrefix prepends prefix to every tool name returned by Tools().
+// Use this when connecting to multiple MCP servers that have overlapping
+// tool names — e.g. two servers both expose a "search" tool:
+//
+//	webTools, _ := webClient.Tools(ctx, mcp.WithToolPrefix("web_"))
+//	dbTools,  _ := dbClient.Tools(ctx,  mcp.WithToolPrefix("db_"))
+func WithToolPrefix(prefix string) ToolsOption {
+	return func(c *toolsConfig) error {
+		c.prefix = prefix
+		return nil
+	}
 }
 
 // IncludeTools restricts Tools() to only the named tools.
@@ -210,38 +224,38 @@ func ExcludeTools(names ...string) ToolsOption {
 }
 
 // wrapTool converts a single MCP tool definition into a gude-agents tool.Tool.
-func (c *Client) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
-	// Convert InputSchema (any) to map[string]any via JSON round-trip.
-	// From the client side, the SDK deserializes this as map[string]any.
+// prefix is prepended to the exposed tool name; the original name is used for CallTool.
+func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error) {
 	schema, err := toSchemaMap(mcpTool.InputSchema)
 	if err != nil {
 		return tool.Tool{}, fmt.Errorf("convert schema: %w", err)
 	}
 
-	name := mcpTool.Name
+	mcpName := mcpTool.Name // original name for CallTool
+	exposedName := prefix + mcpName
 	description := mcpTool.Description
 
-	return tool.NewRaw(name, description, schema,
+	return tool.NewRaw(exposedName, description, schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var args map[string]any
 			if len(input) > 0 {
 				if err := json.Unmarshal(input, &args); err != nil {
-					return "", fmt.Errorf("mcp tool %s: unmarshal input: %w", name, err)
+					return "", fmt.Errorf("mcp tool %s: unmarshal input: %w", mcpName, err)
 				}
 			}
 
 			res, err := c.session.CallTool(ctx, &sdkmcp.CallToolParams{
-				Name:      name,
+				Name:      mcpName,
 				Arguments: args,
 			})
 			if err != nil {
-				return "", fmt.Errorf("mcp tool %s: %w", name, err)
+				return "", fmt.Errorf("mcp tool %s: %w", mcpName, err)
 			}
 
 			text := extractText(res.Content)
 
 			if res.IsError {
-				return text, fmt.Errorf("mcp tool %s returned error: %s", name, text)
+				return text, fmt.Errorf("mcp tool %s returned error: %s", mcpName, text)
 			}
 
 			return text, nil
