@@ -35,6 +35,7 @@ use (
 	./agent/rag/openai
 	./agent/rag/postgres
 	./agent/rag/redis
+	./agent/ratelimit/redis
 	./agent/tool/webfetch/markdown
 	./agent/tracing
 	./agent/tracing/sentry

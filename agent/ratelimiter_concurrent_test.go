@@ -17,8 +17,8 @@ func TestConcurrentAcquire(t *testing.T) {
 	const numGoroutines = 50
 	const acquiresPerGoroutine = 100
 
-	// High RPM limit so all acquires succeed; TPM=0 (unlimited)
-	rl, err := NewRateLimiter(numGoroutines*acquiresPerGoroutine+1, 0, WithSlidingWindow(), WithFailFast())
+	// High RPM limit so all acquires succeed
+	rl, err := NewRateLimiter(RPM(numGoroutines*acquiresPerGoroutine+1), WithSlidingWindow(), WithFailFast())
 	if err != nil {
 		t.Fatalf("NewRateLimiter failed: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestConcurrentAcquire(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < acquiresPerGoroutine; j++ {
-				if err := rl.Acquire(ctx, ""); err != nil {
+				if _, err := rl.Acquire(ctx, ""); err != nil {
 					t.Errorf("Acquire() returned unexpected error: %v", err)
 					return
 				}
@@ -73,8 +73,8 @@ func TestConcurrentRecord(t *testing.T) {
 	const recordsPerGoroutine = 100
 	const tokensPerRecord = 10 // 5 input + 5 output
 
-	// RPM=1 (just needs to be > 0), TPM high enough to not trigger limits
-	rl, err := NewRateLimiter(1, numGoroutines*recordsPerGoroutine*tokensPerRecord+1, WithSlidingWindow(), WithFailFast())
+	// TPM high enough to not trigger limits
+	rl, err := NewRateLimiter(RPM(1), TPM(numGoroutines*recordsPerGoroutine*tokensPerRecord+1), WithSlidingWindow(), WithFailFast())
 	if err != nil {
 		t.Fatalf("NewRateLimiter failed: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestConcurrentAcquireAndRecord(t *testing.T) {
 	const opsPerGoroutine = 100
 
 	// High limits so nothing gets rate-limited
-	rl, err := NewRateLimiter(100000, 100000, WithSlidingWindow(), WithFailFast())
+	rl, err := NewRateLimiter(RPM(100000), TPM(100000), WithSlidingWindow(), WithFailFast())
 	if err != nil {
 		t.Fatalf("NewRateLimiter failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestConcurrentAcquireAndRecord(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < opsPerGoroutine; j++ {
-					if err := rl.Acquire(ctx, ""); err != nil {
+					if _, err := rl.Acquire(ctx, ""); err != nil {
 						t.Errorf("Acquire() returned unexpected error: %v", err)
 						return
 					}
@@ -207,7 +207,7 @@ func TestSharedLimiterAcrossAgents(t *testing.T) {
 	totalExpectedRPM := numAgents * callsPerAgent
 	totalExpectedTPM := numAgents * callsPerAgent * tokensPerCall
 
-	rl, err := NewRateLimiter(totalExpectedRPM+1, totalExpectedTPM+1, WithSlidingWindow(), WithFailFast())
+	rl, err := NewRateLimiter(RPM(totalExpectedRPM+1), TPM(totalExpectedTPM+1), WithSlidingWindow(), WithFailFast())
 	if err != nil {
 		t.Fatalf("NewRateLimiter failed: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSharedLimiterAcrossAgents(t *testing.T) {
 			defer wg.Done()
 			for call := 0; call < callsPerAgent; call++ {
 				// Acquire (pre-call)
-				if err := rl.Acquire(ctx, ""); err != nil {
+				if _, err := rl.Acquire(ctx, ""); err != nil {
 					t.Errorf("Agent Acquire() returned unexpected error: %v", err)
 					return
 				}
@@ -277,7 +277,7 @@ func TestConcurrentAcquire_FixedWindow(t *testing.T) {
 	const numGoroutines = 50
 	const acquiresPerGoroutine = 100
 
-	rl, err := NewRateLimiter(numGoroutines*acquiresPerGoroutine+1, 0, WithFixedWindow(), WithFailFast())
+	rl, err := NewRateLimiter(RPM(numGoroutines*acquiresPerGoroutine+1), WithFixedWindow(), WithFailFast())
 	if err != nil {
 		t.Fatalf("NewRateLimiter failed: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestConcurrentAcquire_FixedWindow(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < acquiresPerGoroutine; j++ {
-				if err := rl.Acquire(ctx, ""); err != nil {
+				if _, err := rl.Acquire(ctx, ""); err != nil {
 					t.Errorf("Acquire() returned unexpected error: %v", err)
 					return
 				}
@@ -332,7 +332,7 @@ func TestConcurrentRecord_FixedWindow(t *testing.T) {
 	const recordsPerGoroutine = 100
 	const tokensPerRecord = 10
 
-	rl, err := NewRateLimiter(1, numGoroutines*recordsPerGoroutine*tokensPerRecord+1, WithFixedWindow(), WithFailFast())
+	rl, err := NewRateLimiter(RPM(1), TPM(numGoroutines*recordsPerGoroutine*tokensPerRecord+1), WithFixedWindow(), WithFailFast())
 	if err != nil {
 		t.Fatalf("NewRateLimiter failed: %v", err)
 	}

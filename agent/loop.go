@@ -865,11 +865,17 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params
 	var lastErr error
 
 	for attempt := range maxAttempts {
-		// Rate limit acquisition (before each attempt, including retries)
+		// Rate limit acquisition (before each attempt, including retries).
+		// The returned release frees the per-key concurrency slot (if
+		// MaxConcurrent is configured). It must run for every successful
+		// Acquire, even when the provider call fails, to avoid leaking slots.
+		var release ReleaseFunc
 		if a.rateLimiter != nil {
-			if err := a.rateLimiter.Acquire(ctx, convID); err != nil {
+			r, err := a.rateLimiter.Acquire(ctx, convID)
+			if err != nil {
 				return nil, err
 			}
+			release = r
 		}
 
 		callCtx := ctx
@@ -884,9 +890,19 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params
 		}
 		if err == nil {
 			if a.rateLimiter != nil {
-				a.rateLimiter.Record(convID, resp.Usage)
+				recErr := a.rateLimiter.Record(convID, resp.Usage)
+				release()
+				if recErr != nil {
+					return nil, recErr
+				}
 			}
 			return resp, nil
+		}
+
+		// Provider call failed — release the concurrency slot before retrying
+		// or returning so it is not leaked.
+		if release != nil {
+			release()
 		}
 
 		lastErr = err

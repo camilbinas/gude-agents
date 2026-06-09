@@ -91,25 +91,57 @@ See [RAG Pipeline](rag.md) for details.
 
 ### Rate Limiting
 
-`WithRateLimiter(rl)` attaches a `*RateLimiter` that enforces RPM and TPM limits on provider calls. Each conversation ID gets its own independent budget; calls without a conversation ID share a single default bucket. A single `*RateLimiter` instance can be shared across multiple agents.
+`WithRateLimiter(rl)` attaches a `*RateLimiter` that enforces request and token limits on provider calls. Each conversation ID gets its own independent budget; calls without a conversation ID share a single default bucket. A single `*RateLimiter` instance can be shared across multiple agents.
 
 ```go
-rl, _ := agent.NewRateLimiter(60, 100000)
+// Basic: 60 requests/min, 100k tokens/min
+rl, _ := agent.NewRateLimiter(agent.RPM(60), agent.TPM(100000))
+
+// Configurable windows: 10 requests per 30 seconds, 5000 tokens per 30 seconds
+rl, _ := agent.NewRateLimiter(
+    agent.RequestRateLimit(10, 30),
+    agent.TokenRateLimit(5000, 30),
+)
+
+// With concurrency limiting and global limits
+rl, _ := agent.NewRateLimiter(
+    agent.RPM(100),
+    agent.WithGlobalRPM(500),
+    agent.MaxConcurrent(5),
+    agent.WithBlock(),
+)
 
 a, _ := agent.New(provider, instructions, tools, agent.WithRateLimiter(rl))
-// Shared budget when no conversation ID is set.
-// Per-conversation budget when WithConversationID is used.
-// Call rl.Purge(convID) when a conversation ends to free resources.
 ```
 
 | RateLimiterOption | Default | Description |
 |---|---|---|
-| `WithSlidingWindow()` | ✓ | Tracks consumption over a continuously advancing 60-second window |
-| `WithFixedWindow()` | — | Resets counters at fixed 60-second intervals |
+| `WithSlidingWindow()` | ✓ | Tracks consumption over a continuously advancing window |
+| `WithFixedWindow()` | — | Resets counters at fixed intervals |
 | `WithFailFast()` | ✓ | Returns `ErrRateLimitExceeded` immediately when a limit is exceeded |
 | `WithBlock()` | — | Waits until capacity is available (respects context cancellation) |
+| `RequestRateLimit(count, windowSeconds)` | — | Limit requests within a custom time window per key |
+| `TokenRateLimit(count, windowSeconds)` | — | Limit tokens within a custom time window per key |
+| `RPM(count)` | — | Alias for `RequestRateLimit(count, 60)` |
+| `TPM(count)` | — | Alias for `TokenRateLimit(count, 60)` |
+| `MaxConcurrent(n)` | — | Limit concurrent in-flight calls per key |
+| `WithGlobalRequestLimit(count, windowSeconds)` | — | Shared request limit across all keys |
+| `WithGlobalTokenLimit(count, windowSeconds)` | — | Shared token limit across all keys |
+| `WithGlobalRPM(count)` | — | Alias for `WithGlobalRequestLimit(count, 60)` |
+| `WithGlobalTPM(count)` | — | Alias for `WithGlobalTokenLimit(count, 60)` |
+| `WithStore(store)` | in-memory | Pluggable `RateLimitStore` backend for distributed limiting |
 
 `ErrRateLimitExceeded` short-circuits retries — if the limiter rejects a call during a retry attempt, the error propagates immediately.
+
+For distributed deployments, use the Redis store (`agent/ratelimit/redis`):
+
+```go
+import redistore "github.com/camilbinas/gude-agents/agent/ratelimit/redis"
+
+client := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
+store := redistore.NewStore(client, redistore.WithPrefix("myapp"))
+rl, _ := agent.NewRateLimiter(agent.RPM(100), agent.WithStore(store))
+```
 
 See `examples/rate-limiting/`.
 
