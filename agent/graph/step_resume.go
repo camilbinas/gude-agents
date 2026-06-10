@@ -315,17 +315,23 @@ func (g *Graph[S]) RewindTo(ctx context.Context, threadID string, version int) e
 
 // executeOneNode executes a single node, saves a checkpoint, and returns a StepResult.
 func (g *Graph[S]) executeOneNode(ctx context.Context, state S, completed map[string]bool, iterations int, usage agent.TokenUsage, nodeName string, threadID string) (StepResult[S], error) {
-	// Execute the node function.
+	// Execute the node function. Seed a usage collector so the node (and any
+	// agent it invokes) can report token usage via graph.AddUsage.
 	fn := g.nodes[nodeName]
 	stateCopy := g.ops.copy(state)
 
-	result, err := fn(ctx, stateCopy)
+	nodeCtx, collector := withUsageCollector(withCurrentNode(ctx, nodeName))
+	result, err := fn(nodeCtx, stateCopy)
 	if err != nil {
 		return StepResult[S]{}, err
 	}
 
-	// Extract usage from result.
-	extractUsageFromResult[S](g.ops, &result, &usage)
+	// Accumulate usage reported by the node.
+	u := collector.total()
+	usage.InputTokens += u.InputTokens
+	usage.OutputTokens += u.OutputTokens
+	usage.CacheReadTokens += u.CacheReadTokens
+	usage.CacheWriteTokens += u.CacheWriteTokens
 
 	// Merge result into state.
 	workingState := g.ops.copy(state)
@@ -397,30 +403,5 @@ func (g *Graph[S]) executeOneNode(ctx context.Context, state S, completed map[st
 	}, nil
 }
 
-// extractUsageFromResult extracts token usage from a node result.
-// For struct types implementing usageCarrier, it uses the interface.
-// For map types, it checks the __usage__ key.
-func extractUsageFromResult[S any](ops stateOps[S], result *S, usage *agent.TokenUsage) {
-	// Try usageCarrier interface first (for struct types embedding GraphState).
-	if carrier, ok := any(result).(usageCarrier); ok {
-		if u := carrier.getPendingUsage(); u.InputTokens > 0 || u.OutputTokens > 0 {
-			usage.InputTokens += u.InputTokens
-			usage.OutputTokens += u.OutputTokens
-			usage.CacheReadTokens += u.CacheReadTokens
-			usage.CacheWriteTokens += u.CacheWriteTokens
-			carrier.clearPendingUsage()
-		}
-		return
-	}
-
-	// For map types, check the __usage__ key directly.
-	if m, ok := any(result).(*map[string]any); ok {
-		if u, exists := (*m)["__usage__"].(agent.TokenUsage); exists {
-			usage.InputTokens += u.InputTokens
-			usage.OutputTokens += u.OutputTokens
-			usage.CacheReadTokens += u.CacheReadTokens
-			usage.CacheWriteTokens += u.CacheWriteTokens
-			delete(*m, "__usage__")
-		}
-	}
-}
+// (extractUsageFromResult was removed — usage is now accumulated via the
+// per-node usageCollector seeded into the context. See usage.go.)

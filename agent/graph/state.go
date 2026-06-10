@@ -204,29 +204,8 @@ func jsonFieldIndex[S any](key string) (int, bool) {
 	return idx, found
 }
 
-// GraphState is an optional base struct that typed graph states can embed to get
-// automatic token usage accumulation. Nodes call AddUsage(c.Usage()) to
-// accumulate token counts into the graph's result.
-type GraphState struct {
-	pendingUsage agent.TokenUsage `json:"-"`
-}
-
-// AddUsage accumulates token usage from an agent call into the graph's counter.
-func (g *GraphState) AddUsage(u agent.TokenUsage) {
-	g.pendingUsage.InputTokens += u.InputTokens
-	g.pendingUsage.OutputTokens += u.OutputTokens
-	g.pendingUsage.CacheReadTokens += u.CacheReadTokens
-	g.pendingUsage.CacheWriteTokens += u.CacheWriteTokens
-}
-
-// usageCarrier is the interface used internally to extract pending usage from a state.
-type usageCarrier interface {
-	getPendingUsage() agent.TokenUsage
-	clearPendingUsage()
-}
-
-func (g *GraphState) getPendingUsage() agent.TokenUsage { return g.pendingUsage }
-func (g *GraphState) clearPendingUsage()                { g.pendingUsage = agent.TokenUsage{} }
+// usageCarrier was removed in favor of context-based usage reporting.
+// Nodes now report token usage via graph.AddUsage(ctx, usage). See usage.go.
 
 // --- bridge helpers ---
 

@@ -246,33 +246,8 @@ func (e *runExec[S]) execute(ctx context.Context) error {
 	return nil
 }
 
-// extractUsage extracts token usage from the node result.
-// For struct types implementing usageCarrier (via GraphState embedding), it uses
-// the interface methods. For map types, it checks the __usage__ key directly.
-func (e *runExec[S]) extractUsage(result *S) {
-	// Try usageCarrier interface first (for struct types embedding GraphState).
-	if carrier, ok := any(result).(usageCarrier); ok {
-		if u := carrier.getPendingUsage(); u.InputTokens > 0 || u.OutputTokens > 0 {
-			e.usage.InputTokens += u.InputTokens
-			e.usage.OutputTokens += u.OutputTokens
-			e.usage.CacheReadTokens += u.CacheReadTokens
-			e.usage.CacheWriteTokens += u.CacheWriteTokens
-			carrier.clearPendingUsage()
-		}
-		return
-	}
-
-	// For map types, check the __usage__ key directly.
-	if m, ok := any(result).(*map[string]any); ok {
-		if u, exists := (*m)["__usage__"].(agent.TokenUsage); exists {
-			e.usage.InputTokens += u.InputTokens
-			e.usage.OutputTokens += u.OutputTokens
-			e.usage.CacheReadTokens += u.CacheReadTokens
-			e.usage.CacheWriteTokens += u.CacheWriteTokens
-			delete(*m, "__usage__")
-		}
-	}
-}
+// (extractUsage was removed — usage is now accumulated via the per-node
+// usageCollector seeded into the context. See usage.go and executeNode.)
 
 // saveCheckpoint serializes state via ops.toMap and persists a checkpoint
 // via the configured checkpointer. Returns the saved checkpoint (with version
@@ -482,9 +457,12 @@ func (e *runExec[S]) executeNode(ctx context.Context, nodeName string) (S, error
 
 	// 5. Call the node function with the copied state. Attach the node name
 	//    to the context so graph.EmitEvent can attribute custom events to
-	//    the correct node without the caller passing it explicitly.
+	//    the correct node without the caller passing it explicitly. Seed a
+	//    fresh usage collector so the node (and any agent it invokes) can
+	//    report token usage via graph.AddUsage.
 	fn := e.nodes[nodeName]
-	result, err := fn(withCurrentNode(nodeCtx, nodeName), stateCopy)
+	nodeCtx, collector := withUsageCollector(withCurrentNode(nodeCtx, nodeName))
+	result, err := fn(nodeCtx, stateCopy)
 
 	// 6. Call hook finish functions.
 	if finishNode != nil {
@@ -513,9 +491,13 @@ func (e *runExec[S]) executeNode(ctx context.Context, nodeName string) (S, error
 		return zero, err
 	}
 
-	// 7. Extract usage from agent context if applicable.
+	// 7. Accumulate usage reported by the node via graph.AddUsage.
 	e.mu.Lock()
-	e.extractUsage(&result)
+	u := collector.total()
+	e.usage.InputTokens += u.InputTokens
+	e.usage.OutputTokens += u.OutputTokens
+	e.usage.CacheReadTokens += u.CacheReadTokens
+	e.usage.CacheWriteTokens += u.CacheWriteTokens
 	e.mu.Unlock()
 
 	// 8. Return the result state.

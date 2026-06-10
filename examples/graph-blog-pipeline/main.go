@@ -27,7 +27,6 @@ import (
 
 // BlogState is the typed state that flows through every node.
 type BlogState struct {
-	graph.GraphState
 	Topic        string `json:"topic"`
 	Outline      string `json:"outline"`
 	Post         string `json:"post"`
@@ -172,7 +171,7 @@ func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointe
 			return s, err
 		}
 		s.Outline = text
-		s.AddUsage(usage)
+		graph.AddUsage(ctx, usage)
 		return s, nil
 	}, graph.In(), graph.Out("outline_out"))
 
@@ -183,7 +182,7 @@ func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointe
 			return s, err
 		}
 		s.Post = text
-		s.AddUsage(usage)
+		graph.AddUsage(ctx, usage)
 		return s, nil
 	}, graph.In("outline_out"), graph.Out("draft_out"))
 
@@ -198,7 +197,7 @@ func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointe
 		}
 		s.Score = review.Score
 		s.Feedback = review.Feedback
-		s.AddUsage(c.Usage())
+		graph.AddUsage(ctx, c.Usage())
 		return s, nil
 	}, graph.In("draft_out"), graph.Out("review_out"))
 
@@ -220,7 +219,7 @@ func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointe
 			return s, err
 		}
 		s.Post = text
-		s.AddUsage(usage)
+		graph.AddUsage(ctx, usage)
 		return s, nil
 	}, graph.In("gate_revise"), graph.Out("revise_out"))
 
@@ -234,7 +233,7 @@ func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointe
 			return s, err
 		}
 		s.SEO = text
-		s.AddUsage(usage)
+		graph.AddUsage(ctx, usage)
 		return s, nil
 	}, graph.In("finalize_out"), graph.Out("seo_out"))
 
@@ -244,7 +243,7 @@ func buildBlogGraph(a *blogAgents, dt *utils.DevTools, cp graph.GraphCheckpointe
 			return s, err
 		}
 		s.Social = text
-		s.AddUsage(usage)
+		graph.AddUsage(ctx, usage)
 		return s, nil
 	}, graph.In("finalize_out"), graph.Out("social_out"))
 

@@ -258,7 +258,6 @@ func TestIntegration_Graph_AgentNode(t *testing.T) {
 func TestIntegration_Graph_TypedState(t *testing.T) {
 	t.Parallel()
 	type PipelineState struct {
-		graph.GraphState
 		Input  string `json:"input"`
 		Upper  string `json:"upper"`
 		Length int    `json:"length"`

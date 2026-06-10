@@ -160,6 +160,23 @@ type Result[S any] struct {
 
 `Usage` accumulates token usage from any agent nodes in the graph. `State` contains the final state after all nodes have run.
 
+Agent-backed nodes (`Agent`, `AgentNode`, `RegisterAgent`) report their token usage automatically. A manual node that calls an agent or provider directly should report usage with the package-level `graph.AddUsage`:
+
+```go
+g.Node("research", func(ctx context.Context, s State) (State, error) {
+    c := agent.NewContext(ctx)
+    facts, err := researcher.Invoke(c, s.Topic)
+    if err != nil {
+        return s, err
+    }
+    s.Research = facts
+    graph.AddUsage(ctx, c.Usage()) // contributes to Result.Usage
+    return s, nil
+}, graph.In(), graph.Out("research"))
+```
+
+`AddUsage(ctx, usage)` works for every state type — `map[string]any` and custom structs alike — because it threads usage through the node's context rather than the state value. It is safe to call multiple times and from multiple goroutines within a node.
+
 ## Options
 
 ```go

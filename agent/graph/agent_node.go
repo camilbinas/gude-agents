@@ -32,7 +32,7 @@ func AgentNode(a agent.Invoker, inputKey, outputKey string) NodeFunc[State] {
 		}
 		out := CopyState(state)
 		out[outputKey] = result
-		out["__usage__"] = c.Usage()
+		AddUsage(ctx, c.Usage())
 		return out, nil
 	}
 }
@@ -323,6 +323,7 @@ func buildAgentNodeFunc[S any](g *Graph[S], name string, a *agent.Agent, accesso
 		}
 
 		accessor.SetOutput(&state, result)
+		AddUsage(ctx, c.Usage())
 		return state, nil
 	}
 }

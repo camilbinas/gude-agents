@@ -3,8 +3,9 @@
 // Graph[S] uses generics so nodes work directly with a concrete state struct
 // — no map[string]any, no type assertions.
 //
-// Embedding graph.GraphState enables automatic token usage accumulation via
-// s.AddUsage(usage) — no manual token fields needed on the state struct.
+// Token usage is accumulated via the package-level graph.AddUsage(ctx, usage)
+// function — it threads usage through the node's context, so the state struct
+// needs no embedded type or manual token fields.
 //
 // For typed state, readiness is determined by non-zero struct field values.
 // We use two bool fields (NeedsRefine / Accepted) as conditional route keys —
@@ -34,9 +35,8 @@ import (
 )
 
 // State flows through every node as a plain struct.
-// Embedding graph.GraphState enables automatic token tracking via AddUsage.
+// Token tracking is handled by graph.AddUsage(ctx, usage) — no embedded type needed.
 type State struct {
-	graph.GraphState
 	Topic       string `json:"topic"`
 	Research    string `json:"research"`
 	Summary     string `json:"summary"`
@@ -112,7 +112,7 @@ func main() {
 			return s, err
 		}
 		s.Research = facts
-		s.AddUsage(c.Usage())
+		graph.AddUsage(ctx, c.Usage())
 		return s, nil
 	}, graph.In(), graph.Out("research")); err != nil {
 		log.Fatal(err)
@@ -125,7 +125,7 @@ func main() {
 			return s, err
 		}
 		s.Summary = summary
-		s.AddUsage(c.Usage())
+		graph.AddUsage(ctx, c.Usage())
 		return s, nil
 	}, graph.In("research"), graph.Out("summary")); err != nil {
 		log.Fatal(err)
@@ -147,7 +147,7 @@ func main() {
 		} else {
 			s.Accepted = true
 		}
-		s.AddUsage(c.Usage())
+		graph.AddUsage(ctx, c.Usage())
 		return s, nil
 	}, graph.In("summary"), graph.Out("needs_refine", "accepted")); err != nil {
 		log.Fatal(err)
@@ -162,7 +162,7 @@ func main() {
 			return s, err
 		}
 		s.Refined = refined
-		s.AddUsage(c.Usage())
+		graph.AddUsage(ctx, c.Usage())
 		return s, nil
 	}, graph.In("needs_refine"), graph.Out("refined")); err != nil {
 		log.Fatal(err)
