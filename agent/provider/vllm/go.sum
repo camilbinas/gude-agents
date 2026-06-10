@@ -1,6 +1,9 @@
-github.com/camilbinas/gude-agents v0.79.1 h1:vMnBvasAbTx1O9XQg0nUHHxIzC1Rw0N27ewx1hCgEaw=
-github.com/camilbinas/gude-agents/agent/provider/openai v0.79.1 h1:j90vweOrj3M6TgThBrTiyUR01d9GQnYk16S+SA1l5lA=
-github.com/camilbinas/gude-agents/agent/rag/openai v0.79.1 h1:VUeIaWjAR6LmRuIfIT9LhDiCJ5/rEf8llj9mZuOxVbM=
+github.com/camilbinas/gude-agents v0.80.0 h1:u/dG7AkBvB0YS/POOimJ0oBMHurSMRBsyVnY/ff6rPs=
+github.com/camilbinas/gude-agents v0.80.0/go.mod h1:nMkycovKE+SZ2QbRkxph6VeXmp6UHOkpmOUhAeIVoy0=
+github.com/camilbinas/gude-agents/agent/provider/openai v0.80.0 h1:EWfC2K0FgSh6Ez3TdyvxJV/aMORPCEhPKYEjp0BskNI=
+github.com/camilbinas/gude-agents/agent/provider/openai v0.80.0/go.mod h1:7b+Kel6936Oe0sCZp7ABKI5Dv6ToZI2I4SI4dDeKqW4=
+github.com/camilbinas/gude-agents/agent/rag/openai v0.80.0 h1:9NcaCYXJTec2LpDhrmqyzsKd5z6RWsofyAPSVd+u3mQ=
+github.com/camilbinas/gude-agents/agent/rag/openai v0.80.0/go.mod h1:E0ummiaiuCFH+6CMSTCGBavlHKSKvxjDz6eUmxNU89E=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/openai/openai-go/v3 v3.31.0 h1:3KxL3H+gw6vBkBW6dmcwhbFqP4kyMgmaWTsuRheyF8w=
@@ -8,6 +11,7 @@ github.com/openai/openai-go/v3 v3.31.0/go.mod h1:cdufnVK14cWcT9qA1rRtrXx4FTRsgbD
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
 github.com/tidwall/gjson v1.18.0 h1:FIDeeyB800efLX89e5a8Y0BNH+LOngJyGrIWxG2FKQY=
 github.com/tidwall/gjson v1.18.0/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
