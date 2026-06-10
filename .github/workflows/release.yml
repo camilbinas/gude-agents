@@ -167,21 +167,6 @@ jobs:
             done
           fi
 
-      - name: Run go mod tidy in submodules
-        if: steps.bump.outputs.skip == 'false'
-        env:
-          GOPRIVATE: 'github.com/camilbinas/*'
-        run: |
-          SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||')
-          for sub in $SUBMODULES; do
-            if [ -f "$sub/go.mod" ]; then
-              echo "  go mod tidy in $sub"
-              (cd "$sub" && go mod tidy)
-            fi
-          done
-          # Root module
-          go mod tidy
-
       - name: Commit, tag, and push atomically
         if: steps.bump.outputs.skip == 'false'
         env:
@@ -211,6 +196,41 @@ jobs:
           # Push commit and all tags together.
           git push origin master
           git push origin --tags
+
+      # Post-release: now that the new version tag exists on the remote, run
+      # go mod tidy in every submodule so each go.sum records the new parent
+      # version's hashes. This runs AFTER tags are pushed so the version
+      # resolves correctly (the tag chicken-and-egg is why tidy cannot run
+      # during the atomic bump step). Changes are committed in a follow-up
+      # commit; a failure here does not invalidate the release that already
+      # shipped.
+      - name: Sync submodule go.sum (post-tag tidy)
+        if: steps.bump.outputs.skip == 'false'
+        env:
+          GOPRIVATE: 'github.com/camilbinas/*'
+          GOFLAGS: '-mod=mod'
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          # Ensure the freshly pushed tags are resolvable from the module proxy
+          # path (direct VCS) before tidying.
+          export GOPROXY=direct
+
+          SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||')
+          for sub in $SUBMODULES; do
+            if [ -f "$sub/go.mod" ]; then
+              echo "  go mod tidy in $sub"
+              (cd "$sub" && GOWORK=off go mod tidy) || echo "  WARN: tidy failed in $sub (non-fatal)"
+            fi
+          done
+          GOWORK=off go mod tidy || echo "  WARN: root tidy failed (non-fatal)"
+
+          if ! git diff --quiet; then
+            git add -A .
+            git commit -m "chore: sync go.sum after ${NEW_VERSION} release"
+            git push origin master
+          else
+            echo "go.sum already in sync — nothing to commit."
+          fi
 
       - name: Create GitHub Release
         if: steps.bump.outputs.skip == 'false'
