@@ -9,9 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.26.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.39.0
 	github.com/aws/smithy-go v1.25.1
-	github.com/camilbinas/gude-agents v0.79.1
-	github.com/camilbinas/gude-agents/agent/a2a v0.79.1
-	github.com/camilbinas/gude-agents/agent/tracing v0.79.1
+	github.com/camilbinas/gude-agents v0.80.0
+	github.com/camilbinas/gude-agents/agent/a2a v0.80.0
+	github.com/camilbinas/gude-agents/agent/tracing v0.80.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.35.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.43.0
