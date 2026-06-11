@@ -17,8 +17,8 @@ func (m *mockEstimator) EstimateTokens(_ context.Context, _ ConverseParams) (int
 }
 
 func TestPreFlightCheck_NoEstimatorConfigured_ReturnsNil(t *testing.T) {
-	// A RateLimiter without a TokenEstimator should skip the pre-flight check entirely.
-	rl, err := NewRateLimiter(TPM(1000))
+	// A RateLimiter with pre-flight explicitly disabled should skip the check entirely.
+	rl, err := NewRateLimiter(TPM(1000), WithoutPreFlight())
 	if err != nil {
 		t.Fatalf("NewRateLimiter: %v", err)
 	}
@@ -27,7 +27,27 @@ func TestPreFlightCheck_NoEstimatorConfigured_ReturnsNil(t *testing.T) {
 	params := ConverseParams{System: "hello world"}
 
 	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
-		t.Fatalf("expected nil when no estimator configured, got: %v", err)
+		t.Fatalf("expected nil when pre-flight disabled, got: %v", err)
+	}
+}
+
+func TestPreFlightCheck_DefaultCharEstimatorWhenTPMConfigured(t *testing.T) {
+	// When TPM is configured without an explicit estimator, CharEstimator is the default.
+	rl, err := NewRateLimiter(TPM(1000))
+	if err != nil {
+		t.Fatalf("NewRateLimiter: %v", err)
+	}
+
+	if rl.tokenEstimator == nil {
+		t.Fatal("expected tokenEstimator to default to CharEstimator when TPM is configured")
+	}
+
+	// "hello" is 5 chars → ceil(5/4) = 2 tokens, well within 1000 TPM.
+	ctx := context.Background()
+	params := ConverseParams{System: "hello"}
+
+	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
+		t.Fatalf("expected nil for small input within budget, got: %v", err)
 	}
 }
 

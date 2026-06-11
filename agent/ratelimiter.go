@@ -396,7 +396,8 @@ type RateLimiter struct {
 	store RateLimitStore // nil = use in-memory (default)
 
 	// Token estimation for pre-flight checks.
-	tokenEstimator TokenEstimator // nil = no pre-flight check
+	tokenEstimator    TokenEstimator // nil = no pre-flight check
+	preFlightDisabled bool           // true = explicitly disabled by WithoutPreFlight
 }
 
 // RateLimiterOption configures the RateLimiter.
@@ -518,6 +519,17 @@ func WithTokenEstimator(estimator TokenEstimator) RateLimiterOption {
 	}
 }
 
+// WithoutPreFlight disables the automatic pre-flight token budget check.
+// By default, when a TPM limit is configured, the RateLimiter uses CharEstimator
+// to reject requests that would obviously exceed the remaining budget. Use this
+// option to disable that behavior and rely solely on post-hoc token accounting.
+func WithoutPreFlight() RateLimiterOption {
+	return func(rl *RateLimiter) {
+		rl.preFlightDisabled = true
+		rl.tokenEstimator = nil
+	}
+}
+
 // NewRateLimiter creates a RateLimiter configured entirely via functional options.
 // At least one rate limit option (RPM, TPM, RequestRateLimit, TokenRateLimit,
 // WithGlobalRequestLimit, WithGlobalTokenLimit, MaxConcurrent) must be provided.
@@ -576,6 +588,14 @@ func NewRateLimiter(opts ...RateLimiterOption) (*RateLimiter, error) {
 	}
 	if rl.maxConcurrentSet && rl.maxConcurrent <= 0 {
 		return nil, fmt.Errorf("MaxConcurrent must be > 0, got %d", rl.maxConcurrent)
+	}
+
+	// Default: enable pre-flight token estimation when a TPM limit is configured
+	// and no explicit estimator was set. This prevents obviously-over-budget calls
+	// from consuming API quota. Use WithoutPreFlight() to opt out.
+	hasTPM := rl.tpmLimit > 0 || (rl.tokenRateLimit != nil && rl.tokenRateLimit.Count > 0)
+	if hasTPM && rl.tokenEstimator == nil && !rl.preFlightDisabled {
+		rl.tokenEstimator = CharEstimator{}
 	}
 
 	// Determine whether at least one limit is configured.
