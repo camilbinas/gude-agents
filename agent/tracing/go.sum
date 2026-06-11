@@ -1,5 +1,5 @@
-github.com/camilbinas/gude-agents v0.80.1 h1:sqGa97cFDoh+7YRQB7ms2ATsBnuqHOSjlTz8K9hlDsU=
-github.com/camilbinas/gude-agents v0.80.1/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
+github.com/camilbinas/gude-agents v0.81.0 h1:COzIrx2Kc7WoZZNDgcG6ZOXsSM278R/nL9u4SuR2/xg=
+github.com/camilbinas/gude-agents v0.81.0/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

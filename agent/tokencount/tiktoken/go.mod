@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/camilbinas/gude-agents v0.81.0
 	github.com/pkoukk/tiktoken-go v0.1.7
+	pgregory.net/rapid v1.2.0
 )
 
 require (

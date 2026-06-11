@@ -36,6 +36,8 @@ require (
 	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.81.0 // indirect
 	github.com/camilbinas/gude-agents/agent/rag/gemini v0.81.0 // indirect
 	github.com/camilbinas/gude-agents/agent/rag/openai v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.81.0 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
@@ -43,6 +45,7 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
+	github.com/pkoukk/tiktoken-go v0.1.7 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
