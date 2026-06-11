@@ -8,7 +8,7 @@ import (
 )
 
 // TestToAnthropicContentBlock_AllKnownTypes_DoesNotPanic verifies that
-// toAnthropicContentBlock handles all known ContentBlock types without panicking.
+// toAnthropicContentBlocks handles all known ContentBlock types without panicking.
 // This confirms the switch statement covers the full type set.
 //
 // Requirements: 1.1, 8.4
@@ -20,14 +20,13 @@ func TestToAnthropicContentBlock_AllKnownTypes_DoesNotPanic(t *testing.T) {
 	}
 
 	for _, b := range blocks {
-		b := b
 		t.Run("", func(t *testing.T) {
 			defer func() {
 				if r := recover(); r != nil {
-					t.Errorf("toAnthropicContentBlock panicked: %v", r)
+					t.Errorf("toAnthropicContentBlocks panicked: %v", r)
 				}
 			}()
-			result := toAnthropicContentBlock(b, agent.RoleUser)
+			result := toAnthropicContentBlocks([]agent.ContentBlock{b}, agent.RoleUser, false)
 			_ = result
 		})
 	}

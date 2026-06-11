@@ -861,6 +861,15 @@ func (a *Agent) saveConversation(ctx context.Context, convID string, messages []
 
 // callProviderWithRetry calls ConverseStream with optional timeout and retry.
 func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	// Pre-flight token budget check — performed once before the retry loop.
+	// If the estimated input tokens exceed remaining TPM capacity, return
+	// immediately without retrying.
+	if a.rateLimiter != nil {
+		if err := a.rateLimiter.PreFlightCheck(ctx, convID, params); err != nil {
+			return nil, err
+		}
+	}
+
 	maxAttempts := 1 + a.retryMax
 	var lastErr error
 

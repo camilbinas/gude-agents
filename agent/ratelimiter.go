@@ -394,6 +394,9 @@ type RateLimiter struct {
 
 	// Pluggable store.
 	store RateLimitStore // nil = use in-memory (default)
+
+	// Token estimation for pre-flight checks.
+	tokenEstimator TokenEstimator // nil = no pre-flight check
 }
 
 // RateLimiterOption configures the RateLimiter.
@@ -500,6 +503,18 @@ func WithGlobalTPM(count int) RateLimiterOption {
 func WithStore(store RateLimitStore) RateLimiterOption {
 	return func(rl *RateLimiter) {
 		rl.store = store
+	}
+}
+
+// WithTokenEstimator configures a TokenEstimator for pre-flight token budget
+// checks. If estimator is nil, CharEstimator{} is used as the default.
+func WithTokenEstimator(estimator TokenEstimator) RateLimiterOption {
+	return func(rl *RateLimiter) {
+		if estimator == nil {
+			rl.tokenEstimator = CharEstimator{}
+		} else {
+			rl.tokenEstimator = estimator
+		}
 	}
 }
 
@@ -989,4 +1004,61 @@ func (rl *RateLimiter) Len() int {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	return len(rl.buckets)
+}
+
+// PreFlightCheck estimates token usage for the given params and checks whether
+// the estimated input tokens fit within the remaining TPM budget for key.
+// Returns ErrRateLimitExceeded if the estimate exceeds remaining capacity.
+// Returns nil (allows the call) if no TokenEstimator is configured, or if the
+// estimator returns an error (fail-open).
+func (rl *RateLimiter) PreFlightCheck(ctx context.Context, key string, params ConverseParams) error {
+	if rl.tokenEstimator == nil {
+		return nil
+	}
+
+	estimate, err := rl.tokenEstimator.EstimateTokens(ctx, params)
+	if err != nil {
+		// Fail-open: allow the call when estimation fails.
+		return nil
+	}
+
+	// Determine the effective TPM limit and window.
+	tpmLimit := rl.tpmLimit
+	tokenWindow := 60 * time.Second
+	if rl.tokenRateLimit != nil {
+		tpmLimit = rl.tokenRateLimit.Count
+		tokenWindow = time.Duration(rl.tokenRateLimit.WindowSeconds) * time.Second
+	}
+
+	// No token limit configured — nothing to check.
+	if tpmLimit <= 0 {
+		return nil
+	}
+
+	// Get current token usage for this key.
+	var currentUsage int
+	if rl.store != nil {
+		currentUsage, err = rl.store.GetTokenCount(ctx, key, tokenWindow)
+		if err != nil {
+			// Fail-open on store errors.
+			return nil
+		}
+	} else {
+		b := rl.bucket(key)
+		b.mu.Lock()
+		switch b.windowStrategy {
+		case SlidingWindow:
+			currentUsage = b.slidingTPMCount()
+		case FixedWindow:
+			currentUsage = b.fixedTPMCountVal()
+		}
+		b.mu.Unlock()
+	}
+
+	remaining := tpmLimit - currentUsage
+	if estimate > remaining {
+		return ErrRateLimitExceeded
+	}
+
+	return nil
 }

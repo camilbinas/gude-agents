@@ -36,6 +36,7 @@ use (
 	./agent/rag/postgres
 	./agent/rag/redis
 	./agent/ratelimit/redis
+	./agent/tokencount/tiktoken
 	./agent/tool/webfetch/markdown
 	./agent/tracing
 	./agent/tracing/sentry
