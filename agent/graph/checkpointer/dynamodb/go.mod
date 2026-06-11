@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1
-	github.com/camilbinas/gude-agents v0.80.1
+	github.com/camilbinas/gude-agents v0.81.0
 )
 
 require (
