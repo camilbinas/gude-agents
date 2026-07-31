@@ -1,7 +1,7 @@
 github.com/anthropics/anthropic-sdk-go v1.33.0 h1:YlRqiI+PjULBA8NoeeJmkXtFzTmjZZA7oFvpZ4FU7eU=
 github.com/anthropics/anthropic-sdk-go v1.33.0/go.mod h1:dSIO7kSrOI7MA4fE6RRVaw8tyWP7HNQU5/H/KS4cax8=
-github.com/camilbinas/gude-agents v0.81.0 h1:COzIrx2Kc7WoZZNDgcG6ZOXsSM278R/nL9u4SuR2/xg=
-github.com/camilbinas/gude-agents v0.81.0/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
+github.com/camilbinas/gude-agents v0.82.0 h1:vyCo8rE4encRyNWuXS4wVKV4Fdk3yKmbiq/EWbupMb8=
+github.com/camilbinas/gude-agents v0.82.0/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=

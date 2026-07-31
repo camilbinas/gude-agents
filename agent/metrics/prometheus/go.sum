@@ -1,7 +1,7 @@
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
-github.com/camilbinas/gude-agents v0.81.0 h1:COzIrx2Kc7WoZZNDgcG6ZOXsSM278R/nL9u4SuR2/xg=
-github.com/camilbinas/gude-agents v0.81.0/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
+github.com/camilbinas/gude-agents v0.82.0 h1:vyCo8rE4encRyNWuXS4wVKV4Fdk3yKmbiq/EWbupMb8=
+github.com/camilbinas/gude-agents v0.82.0/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
