@@ -128,6 +128,12 @@ Bedrock uses [cross-region inference profiles](https://docs.aws.amazon.com/bedro
 | `GlobalClaudeOpus4_5()` | `global.anthropic.claude-opus-4-5-20251101-v1:0` |
 | `GlobalClaudeOpus4_6()` | `global.anthropic.claude-opus-4-6-v1` |
 | `GlobalClaudeOpus4_7()` | `global.anthropic.claude-opus-4-7` |
+| `GlobalClaudeOpus4_8()` | `global.anthropic.claude-opus-4-8` |
+| `GlobalClaudeSonnet5()` | `global.anthropic.claude-sonnet-5` |
+| `GlobalClaudeOpus5()` | `global.anthropic.claude-opus-5` |
+| `GlobalClaudeFable5()` | `global.anthropic.claude-fable-5` |
+
+Claude Fable 5 needs the account's data retention mode set to `provider_data_share` via the Data Retention API before it can be invoked. It also ships blocking classifiers for dual-use cybersecurity and biology content; blocked requests return success with a `refusal` stop reason rather than an error.
 
 ### Anthropic Claude (US)
 
@@ -139,6 +145,10 @@ Bedrock uses [cross-region inference profiles](https://docs.aws.amazon.com/bedro
 | `US_ClaudeOpus4_5()` | `us.anthropic.claude-opus-4-5-20251101-v1:0` |
 | `US_ClaudeOpus4_6()` | `us.anthropic.claude-opus-4-6-v1` |
 | `US_ClaudeOpus4_7()` | `us.anthropic.claude-opus-4-7` |
+| `US_ClaudeOpus4_8()` | `us.anthropic.claude-opus-4-8` |
+| `US_ClaudeSonnet5()` | `us.anthropic.claude-sonnet-5` |
+| `US_ClaudeOpus5()` | `us.anthropic.claude-opus-5` |
+| `US_ClaudeFable5()` | `us.anthropic.claude-fable-5` |
 
 ### Anthropic Claude (EU)
 
@@ -150,6 +160,11 @@ Bedrock uses [cross-region inference profiles](https://docs.aws.amazon.com/bedro
 | `EU_ClaudeOpus4_5()` | `eu.anthropic.claude-opus-4-5-20251101-v1:0` |
 | `EU_ClaudeOpus4_6()` | `eu.anthropic.claude-opus-4-6-v1` |
 | `EU_ClaudeOpus4_7()` | `eu.anthropic.claude-opus-4-7` |
+| `EU_ClaudeOpus4_8()` | `eu.anthropic.claude-opus-4-8` |
+| `EU_ClaudeSonnet5()` | `eu.anthropic.claude-sonnet-5` |
+| `EU_ClaudeOpus5()` | `eu.anthropic.claude-opus-5` |
+
+Claude Fable 5 has no EU geo route. Use `GlobalClaudeFable5()` or `US_ClaudeFable5()`.
 
 ### Amazon Nova (Global)
 
@@ -187,6 +202,30 @@ Bedrock uses [cross-region inference profiles](https://docs.aws.amazon.com/bedro
 | `Qwen3_235B()` | `qwen.qwen3-235b-a22b-2507-v1:0` |
 | `Qwen3_32B()` | `qwen.qwen3-32b-v1:0` |
 | `Qwen3Coder30B()` | `qwen.qwen3-coder-30b-a3b-v1:0` |
+| `Qwen3CoderNext()` | `qwen.qwen3-coder-next` |
+| `Qwen3Next80B()` | `qwen.qwen3-next-80b-a3b` |
+
+### DeepSeek (on-demand)
+
+| Function | Model ID |
+|---|---|
+| `DeepSeekV3_2()` | `deepseek.v3.2` |
+
+### Moonshot AI (on-demand)
+
+| Function | Model ID |
+|---|---|
+| `KimiK2_5()` | `moonshotai.kimi-k2.5` |
+| `KimiK2Thinking()` | `moonshot.kimi-k2-thinking` |
+
+The prefix differs between these two (`moonshotai.` vs `moonshot.`). That matches the AWS model cards.
+
+### Mistral AI (on-demand)
+
+| Function | Model ID |
+|---|---|
+| `MistralLarge3()` | `mistral.mistral-large-3-675b-instruct` |
+| `Devstral2_123B()` | `mistral.devstral-2-123b` |
 
 ### MiniMax (on-demand)
 
@@ -211,11 +250,29 @@ Bedrock uses [cross-region inference profiles](https://docs.aws.amazon.com/bedro
 | `NemotronNano3_35B()` | `nvidia.nemotron-nano-3-30b` |
 | `NemotronSuper3_120B()` | `nvidia.nemotron-super-3-120b` |
 
-### Other
+### Z.AI (on-demand)
 
 | Function | Model ID |
 |---|---|
 | `GLM4_7Flash()` | `zai.glm-4.7-flash` |
+| `GLM4_7()` | `zai.glm-4.7` |
+| `GLM5()` | `zai.glm-5` |
+
+### Regional availability
+
+On-demand models are offered in different sets per region. When a model ID is valid but not offered in the region you are calling, Bedrock returns `ValidationException: The provided model identifier is invalid.` — the same message it uses for a genuinely malformed ID. If you hit that error, check the region before assuming the ID is wrong:
+
+```
+aws bedrock list-foundation-models --region eu-central-1 --query 'modelSummaries[].modelId'
+```
+
+As of 2026-07-30, `eu-central-1` serves only `mistral.devstral-2-123b`, `zai.glm-4.7-flash` and the older Qwen 3 models from the on-demand list above. DeepSeek V3.2, Kimi, GLM 4.7 / GLM 5, Mistral Large 3, Qwen3 Coder Next and Qwen3 Next are `us-east-1` only.
+
+### Not available through this provider
+
+OpenAI GPT-5.5, OpenAI GPT-5.4 and xAI Grok 4.3 are in the Bedrock catalog but are reachable only via the `bedrock-mantle` endpoint — their model cards list no `bedrock-runtime` model ID. This provider speaks Converse/ConverseStream on `bedrock-runtime`, so there are no constructors for them. Use the direct `openai` provider, or a Bedrock Mantle client, instead.
+
+Amazon Nova Premier is omitted because it is marked Legacy with an EOL of 2026-09-14.
 
 > **Embedder functions** (`TitanEmbedV2`, `CohereEmbedEnglishV3`, `CohereEmbedMultilingualV3`, `CohereEmbedV4`) have moved to `github.com/camilbinas/gude-agents/agent/rag/bedrock`. See [RAG Pipeline](../rag.md) for usage.
 
@@ -228,11 +285,13 @@ Bedrock uses [cross-region inference profiles](https://docs.aws.amazon.com/bedro
 | Function | Maps to | Description |
 |---|---|---|
 | `Cheapest()` | `GlobalClaudeHaiku4_5()` | Fastest, lowest cost |
-| `Standard()` | `GlobalClaudeSonnet4_6()` | Best accuracy/speed/cost balance |
-| `Smartest()` | `GlobalClaudeOpus4_7()` | Best reasoning capability |
+| `Standard()` | `GlobalClaudeSonnet5()` | Best accuracy/speed/cost balance |
+| `Smartest()` | `GlobalClaudeOpus5()` | Best reasoning capability |
+
+Claude Opus 5 requires an AWS Marketplace subscription on the calling account. Without it, `Smartest()` fails with `AccessDeniedException` referencing `aws-marketplace:Subscribe`.
 
 ```go
-provider, err := bedrock.Standard() // Claude Sonnet 4.6 (global)
+provider, err := bedrock.Standard() // Claude Sonnet 5 (global)
 ```
 
 ## Code Example

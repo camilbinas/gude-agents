@@ -14,6 +14,9 @@ func GlobalClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 func GlobalClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func GlobalClaudeSonnet5(opts ...Option) (*BedrockProvider, error) {
+	return New("global.anthropic.claude-sonnet-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
 func GlobalClaudeOpus4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-opus-4-5-20251101-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
@@ -22,6 +25,15 @@ func GlobalClaudeOpus4_6(opts ...Option) (*BedrockProvider, error) {
 }
 func GlobalClaudeOpus4_7(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-opus-4-7", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func GlobalClaudeOpus4_8(opts ...Option) (*BedrockProvider, error) {
+	return New("global.anthropic.claude-opus-4-8", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func GlobalClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
+	return New("global.anthropic.claude-opus-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func GlobalClaudeFable5(opts ...Option) (*BedrockProvider, error) {
+	return New("global.anthropic.claude-fable-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 
 // Amazon Nova models (Global cross-region inference).
@@ -39,6 +51,9 @@ func US_ClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 func US_ClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func US_ClaudeSonnet5(opts ...Option) (*BedrockProvider, error) {
+	return New("us.anthropic.claude-sonnet-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
 func US_ClaudeOpus4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-opus-4-5-20251101-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
@@ -47,6 +62,15 @@ func US_ClaudeOpus4_6(opts ...Option) (*BedrockProvider, error) {
 }
 func US_ClaudeOpus4_7(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-opus-4-7", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func US_ClaudeOpus4_8(opts ...Option) (*BedrockProvider, error) {
+	return New("us.anthropic.claude-opus-4-8", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func US_ClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
+	return New("us.anthropic.claude-opus-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func US_ClaudeFable5(opts ...Option) (*BedrockProvider, error) {
+	return New("us.anthropic.claude-fable-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 
 // Anthropic Claude models (US cross-region inference).
@@ -78,6 +102,9 @@ func EU_ClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 func EU_ClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func EU_ClaudeSonnet5(opts ...Option) (*BedrockProvider, error) {
+	return New("eu.anthropic.claude-sonnet-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
 func EU_ClaudeOpus4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-4-5-20251101-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
@@ -87,6 +114,14 @@ func EU_ClaudeOpus4_6(opts ...Option) (*BedrockProvider, error) {
 func EU_ClaudeOpus4_7(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-4-7", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func EU_ClaudeOpus4_8(opts ...Option) (*BedrockProvider, error) {
+	return New("eu.anthropic.claude-opus-4-8", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func EU_ClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
+	return New("eu.anthropic.claude-opus-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+
+// Fable 5 has no EU geo route.
 
 // Amazon Nova models (on-demand).
 func NovaMicro(opts ...Option) (*BedrockProvider, error) {
@@ -108,6 +143,35 @@ func Qwen3_32B(opts ...Option) (*BedrockProvider, error) {
 }
 func Qwen3Coder30B(opts ...Option) (*BedrockProvider, error) {
 	return New("qwen.qwen3-coder-30b-a3b-v1:0", opts...)
+}
+func Qwen3CoderNext(opts ...Option) (*BedrockProvider, error) {
+	return New("qwen.qwen3-coder-next", opts...)
+}
+func Qwen3Next80B(opts ...Option) (*BedrockProvider, error) {
+	return New("qwen.qwen3-next-80b-a3b", opts...)
+}
+
+// DeepSeek models (on-demand).
+func DeepSeekV3_2(opts ...Option) (*BedrockProvider, error) {
+	return New("deepseek.v3.2", opts...)
+}
+
+// Moonshot AI models (on-demand).
+func KimiK2_5(opts ...Option) (*BedrockProvider, error) {
+	return New("moonshotai.kimi-k2.5", opts...)
+}
+
+// "moonshot." not "moonshotai." — differs from Kimi K2.5 upstream, not a typo.
+func KimiK2Thinking(opts ...Option) (*BedrockProvider, error) {
+	return New("moonshot.kimi-k2-thinking", opts...)
+}
+
+// Mistral AI models (on-demand).
+func MistralLarge3(opts ...Option) (*BedrockProvider, error) {
+	return New("mistral.mistral-large-3-675b-instruct", opts...)
+}
+func Devstral2_123B(opts ...Option) (*BedrockProvider, error) {
+	return New("mistral.devstral-2-123b", opts...)
 }
 
 // MiniMax models (on-demand).
@@ -140,9 +204,15 @@ func NemotronSuper3_120B(opts ...Option) (*BedrockProvider, error) {
 	return New("nvidia.nemotron-super-3-120b", opts...)
 }
 
-// Other models (on-demand).
+// Z.AI models (on-demand).
 func GLM4_7Flash(opts ...Option) (*BedrockProvider, error) {
 	return New("zai.glm-4.7-flash", opts...)
+}
+func GLM4_7(opts ...Option) (*BedrockProvider, error) {
+	return New("zai.glm-4.7", opts...)
+}
+func GLM5(opts ...Option) (*BedrockProvider, error) {
+	return New("zai.glm-5", opts...)
 }
 
 // MustEmbedder is a helper that wraps a (*rag.Embedder, error) call and panics on error.
@@ -188,8 +258,8 @@ func Cheapest(opts ...Option) (*BedrockProvider, error) {
 	return GlobalClaudeHaiku4_5(opts...)
 }
 func Standard(opts ...Option) (*BedrockProvider, error) {
-	return GlobalClaudeSonnet4_6(opts...)
+	return GlobalClaudeSonnet5(opts...)
 }
 func Smartest(opts ...Option) (*BedrockProvider, error) {
-	return GlobalClaudeOpus4_7(opts...)
+	return GlobalClaudeOpus5(opts...)
 }

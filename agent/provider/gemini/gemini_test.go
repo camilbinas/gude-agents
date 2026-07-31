@@ -141,7 +141,11 @@ func TestModelConstructors(t *testing.T) {
 		{"Gemini25Flash", Gemini25Flash, "gemini-2.5-flash"},
 		{"Gemini25FlashLite", Gemini25FlashLite, "gemini-2.5-flash-lite"},
 		{"Gemini3Flash", Gemini3Flash, "gemini-3-flash-preview"},
+		{"Gemini31FlashLite", Gemini31FlashLite, "gemini-3.1-flash-lite"},
 		{"Gemini31Pro", Gemini31Pro, "gemini-3.1-pro-preview"},
+		{"Gemini35Flash", Gemini35Flash, "gemini-3.5-flash"},
+		{"Gemini35FlashLite", Gemini35FlashLite, "gemini-3.5-flash-lite"},
+		{"Gemini36Flash", Gemini36Flash, "gemini-3.6-flash"},
 	}
 
 	for _, tt := range tests {
@@ -165,9 +169,9 @@ func TestTierAliases(t *testing.T) {
 		ctor      func(...Option) (*GeminiProvider, error)
 		wantModel string
 	}{
-		{"Cheapest", Cheapest, "gemini-2.5-flash-lite"},
-		{"Standard", Standard, "gemini-2.5-flash"},
-		{"Smartest", Smartest, "gemini-2.5-pro"},
+		{"Cheapest", Cheapest, "gemini-3.5-flash-lite"},
+		{"Standard", Standard, "gemini-3.6-flash"},
+		{"Smartest", Smartest, "gemini-3.1-pro-preview"},
 	}
 
 	for _, tt := range tests {

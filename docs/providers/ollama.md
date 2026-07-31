@@ -52,12 +52,14 @@ Wraps a call to `New` and panics on error. Useful for examples and scripts.
 
 | Function | Model | Description |
 |---|---|---|
-| `Cheapest()` | `qwen2.5:3b` | Fast, small, decent tool calling |
-| `Standard()` | `qwen2.5:7b` | Best tool calling at 7B |
-| `Smartest()` | `qwen2.5:32b` | Best quality with tool support |
+| `Cheapest()` | `qwen3.5:2b` | Fast, small, decent tool calling |
+| `Standard()` | `qwen3.5:9b` | Balanced tool calling |
+| `Smartest()` | `qwen3.6:27b` | Best quality with tool support |
+
+These moved from Qwen 2.5 to Qwen 3.5/3.6. Pull the tag before first use — an unpulled tag fails at call time, it is not downloaded automatically.
 
 ```go
-provider, err := ollama.Standard() // qwen2.5:7b
+provider, err := ollama.Standard() // qwen3.5:9b
 ```
 
 ## Code Example
@@ -99,12 +101,21 @@ func main() {
 
 ## Tool Calling Support
 
-Tool calling support varies by model. These models handle it reliably:
+Tool calling support varies by model. Current generation:
 
-- `qwen2.5` — best tool calling support among open models
+- `qwen3.6` (`Qwen36`) — strongest agentic and coding performance in the Qwen line
+- `qwen3.5` (`Qwen35`) — multimodal, broad size range
+- `qwen3-coder` (`Qwen3Coder`) — long-context coding and agentic tasks
+- `gpt-oss` (`GPTOSS`, `GPTOSS_20B`, `GPTOSS_120B`) — open-weight OpenAI models
+
+Previous generation, still available:
+
+- `qwen2.5` — reliable tool calling
 - `llama3.2` — good tool calling, fast on small instances
 - `mistral-nemo` — solid tool calling
 - `mistral` — basic tool calling
+
+`gemma4` (`Gemma4`) is exposed but tool calling has been reported broken on some Ollama releases, where the parser drops tool calls while streaming. Verify against your runtime version before using it for agent workloads.
 
 Older or smaller models may ignore tool specs or hallucinate the format. Test with a simple single-tool agent first.
 

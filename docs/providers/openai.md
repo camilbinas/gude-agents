@@ -68,6 +68,20 @@ See [Extended Thinking](../providers.md#extended-thinking) for details.
 | `GPT5()` | `gpt-5` |
 | `GPT5Mini()` | `gpt-5-mini` |
 | `GPT5Nano()` | `gpt-5-nano` |
+| `GPT5_4()` | `gpt-5.4` |
+| `GPT5_4Mini()` | `gpt-5.4-mini` |
+| `GPT5_4Nano()` | `gpt-5.4-nano` |
+| `GPT5_5()` | `gpt-5.5` |
+| `GPT5_6()` | `gpt-5.6` (routes to Sol) |
+| `GPT5_6Sol()` | `gpt-5.6-sol` |
+| `GPT5_6Terra()` | `gpt-5.6-terra` |
+| `GPT5_6Luna()` | `gpt-5.6-luna` |
+
+In the GPT-5.6 family, Sol, Terra and Luna are durable capability tiers that replace the older unsuffixed/mini/nano naming: Sol is the flagship, Terra balances cost and intelligence, Luna is the cheapest.
+
+The `gpt-4o`, `gpt-4.1`, `gpt-5` and o-series constructors above are retained for compatibility but no longer appear in OpenAI's current pricing table.
+
+**Not available through this provider:** `gpt-5.5-pro`, `gpt-5.4-pro` and `gpt-5.3-codex` are served only by the Responses API. This provider uses Chat Completions, where those models return HTTP 404. There are deliberately no constructors for them.
 
 **Reasoning Models**
 
@@ -81,16 +95,16 @@ See [Extended Thinking](../providers.md#extended-thinking) for details.
 
 ## Tier Aliases
 
-All three map to the GPT-5 family:
+All three map to the GPT-5.6 family:
 
 | Function | Model | Description |
 |---|---|---|
-| `Cheapest()` | GPT-5 Nano | Fastest, lowest cost |
-| `Standard()` | GPT-5 Mini | Balanced |
-| `Smartest()` | GPT-5 | Flagship, most capable |
+| `Cheapest()` | GPT-5.6 Luna | Fastest, lowest cost |
+| `Standard()` | GPT-5.6 Terra | Balanced |
+| `Smartest()` | GPT-5.6 Sol | Flagship, most capable |
 
 ```go
-provider, err := openai.Standard() // GPT-5 Mini
+provider, err := openai.Standard() // GPT-5.6 Terra
 ```
 
 ## Code Example

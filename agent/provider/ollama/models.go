@@ -19,7 +19,20 @@ func Gemma3_4B(opts ...Option) (*OllamaProvider, error) { return New("gemma3:4b"
 
 func Phi4(opts ...Option) (*OllamaProvider, error) { return New("phi4", opts...) }
 
-// Tier aliases — map to Qwen 2.5 models for consistent tool calling across tiers.
-func Cheapest(opts ...Option) (*OllamaProvider, error) { return New("qwen2.5:3b", opts...) }
-func Standard(opts ...Option) (*OllamaProvider, error) { return New("qwen2.5:7b", opts...) }
-func Smartest(opts ...Option) (*OllamaProvider, error) { return New("qwen2.5:32b", opts...) }
+func Qwen36(opts ...Option) (*OllamaProvider, error)     { return New("qwen3.6", opts...) }
+func Qwen35(opts ...Option) (*OllamaProvider, error)     { return New("qwen3.5", opts...) }
+func Qwen3Coder(opts ...Option) (*OllamaProvider, error) { return New("qwen3-coder", opts...) }
+
+// Tool calling is broken on some Ollama releases — the parser drops tool calls
+// while streaming.
+func Gemma4(opts ...Option) (*OllamaProvider, error) { return New("gemma4", opts...) }
+
+func GPTOSS(opts ...Option) (*OllamaProvider, error)      { return New("gpt-oss", opts...) }
+func GPTOSS_20B(opts ...Option) (*OllamaProvider, error)  { return New("gpt-oss:20b", opts...) }
+func GPTOSS_120B(opts ...Option) (*OllamaProvider, error) { return New("gpt-oss:120b", opts...) }
+
+// Tier aliases — map to Qwen 3.5/3.6 for consistent tool calling across tiers.
+// Pull the tag first; Ollama has nothing cached for these on a fresh install.
+func Cheapest(opts ...Option) (*OllamaProvider, error) { return New("qwen3.5:2b", opts...) }
+func Standard(opts ...Option) (*OllamaProvider, error) { return New("qwen3.5:9b", opts...) }
+func Smartest(opts ...Option) (*OllamaProvider, error) { return New("qwen3.6:27b", opts...) }

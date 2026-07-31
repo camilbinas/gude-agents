@@ -11,11 +11,21 @@ func Gemini25FlashLite(opts ...Option) (*GeminiProvider, error) {
 func Gemini3Flash(opts ...Option) (*GeminiProvider, error) {
 	return New("gemini-3-flash-preview", opts...)
 }
+
 func Gemini31FlashLite(opts ...Option) (*GeminiProvider, error) {
-	return New("gemini-3.1-flash-lite-preview", opts...)
+	return New("gemini-3.1-flash-lite", opts...)
 }
 func Gemini31Pro(opts ...Option) (*GeminiProvider, error) {
 	return New("gemini-3.1-pro-preview", opts...)
+}
+func Gemini35Flash(opts ...Option) (*GeminiProvider, error) {
+	return New("gemini-3.5-flash", opts...)
+}
+func Gemini35FlashLite(opts ...Option) (*GeminiProvider, error) {
+	return New("gemini-3.5-flash-lite", opts...)
+}
+func Gemini36Flash(opts ...Option) (*GeminiProvider, error) {
+	return New("gemini-3.6-flash", opts...)
 }
 
 // Gemini embedding models.
@@ -29,6 +39,8 @@ func GeminiEmbedding002(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 }
 
 // Tier aliases — provider-agnostic shortcuts for common use cases.
-func Cheapest(opts ...Option) (*GeminiProvider, error) { return New("gemini-2.5-flash-lite", opts...) }
-func Standard(opts ...Option) (*GeminiProvider, error) { return New("gemini-2.5-flash", opts...) }
-func Smartest(opts ...Option) (*GeminiProvider, error) { return New("gemini-2.5-pro", opts...) }
+// Smartest is a preview ID because Gemini 3.5 Pro has not shipped and 3.1 Pro is
+// the newest Pro-tier model.
+func Cheapest(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.5-flash-lite", opts...) }
+func Standard(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.6-flash", opts...) }
+func Smartest(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.1-pro-preview", opts...) }

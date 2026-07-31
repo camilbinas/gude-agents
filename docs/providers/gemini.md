@@ -29,15 +29,20 @@ Creates a provider for any Gemini model by ID. Reads the API key from `GEMINI_AP
 | `Gemini25FlashLite()` | `gemini-2.5-flash-lite` |
 | `Gemini3Flash()` | `gemini-3-flash-preview` |
 | `Gemini31Pro()` | `gemini-3.1-pro-preview` |
-| `Gemini31FlashLite()` | `gemini-3.1-flash-lite-preview` |
+| `Gemini31FlashLite()` | `gemini-3.1-flash-lite` |
+| `Gemini35Flash()` | `gemini-3.5-flash` |
+| `Gemini35FlashLite()` | `gemini-3.5-flash-lite` |
+| `Gemini36Flash()` | `gemini-3.6-flash` |
 
 ## Tier Aliases
 
 | Alias | Model |
 |-------|-------|
-| `Cheapest()` | `gemini-2.5-flash-lite` |
-| `Standard()` | `gemini-2.5-flash` |
-| `Smartest()` | `gemini-2.5-pro` |
+| `Cheapest()` | `gemini-3.5-flash-lite` |
+| `Standard()` | `gemini-3.6-flash` |
+| `Smartest()` | `gemini-3.1-pro-preview` |
+
+`Smartest()` resolves to a preview ID. Gemini 3.5 Pro has not shipped, so 3.1 Pro Preview is the newest Pro-tier model. Preview models are supported for production but carry tighter rate limits and a 2-week deprecation notice. Pin `Gemini36Flash()` instead if you need a GA model.
 
 > **Embedder functions** (`GeminiEmbedding001`, `GeminiEmbedding002`) are in `github.com/camilbinas/gude-agents/agent/rag/gemini`. See [RAG Pipeline](../rag.md) for usage.
 

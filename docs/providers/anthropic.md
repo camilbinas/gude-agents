@@ -61,6 +61,12 @@ The API key comes from the environment. All convenience functions accept `...Opt
 | `ClaudeOpus4_5()` | `claude-opus-4-5` |
 | `ClaudeOpus4_6()` | `claude-opus-4-6` |
 | `ClaudeOpus4_7()` | `claude-opus-4-7` |
+| `ClaudeOpus4_8()` | `claude-opus-4-8` |
+| `ClaudeSonnet5()` | `claude-sonnet-5` |
+| `ClaudeOpus5()` | `claude-opus-5` |
+| `ClaudeFable5()` | `claude-fable-5` |
+
+`ClaudeFable5` is the Mythos-class flagship. It ships blocking classifiers for dual-use cybersecurity and biology content, and refusal rates are materially higher than on other Claude models. A blocked request returns a normal success response with a `refusal` stop reason rather than an error, so treat refusal as an expected response path.
 
 ```go
 anthropic.ClaudeSonnet4_6(anthropic.WithAPIKey("..."), anthropic.WithMaxTokens(8000))
@@ -71,11 +77,15 @@ anthropic.ClaudeSonnet4_6(anthropic.WithAPIKey("..."), anthropic.WithMaxTokens(8
 | Function | Model | Description |
 |---|---|---|
 | `Cheapest()` | Claude Haiku 4.5 | Fastest model with near-frontier intelligence |
-| `Standard()` | Claude Sonnet 4.6 | Best combination of speed and intelligence |
-| `Smartest()` | Claude Opus 4.7 | Most intelligent model for agents and coding |
+| `Standard()` | Claude Sonnet 5 | Best combination of speed and intelligence |
+| `Smartest()` | Claude Opus 5 | Most intelligent model for agents and coding |
+
+`Smartest()` is Opus 5, not Fable 5. Fable 5 is nominally more capable but refuses a materially higher share of requests, which makes it a poor default — select it explicitly with `ClaudeFable5()` if you want it.
+
+`Cheapest()` needs an explicit `WithMaxTokens` of 64000 or less. The provider's default output budget is 128000, which exceeds Claude Haiku 4.5's cap and is rejected by the API.
 
 ```go
-provider, err := anthropic.Standard() // Claude Sonnet 4.6
+provider, err := anthropic.Standard() // Claude Sonnet 5
 ```
 
 ## Code Example
