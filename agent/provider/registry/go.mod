@@ -3,12 +3,12 @@ module github.com/camilbinas/gude-agents/agent/provider/registry
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.81.0
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.81.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.81.0
-	github.com/camilbinas/gude-agents/agent/provider/gemini v0.81.0
-	github.com/camilbinas/gude-agents/agent/provider/ollama v0.81.0
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.81.0
+	github.com/camilbinas/gude-agents v0.82.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.82.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.82.0
+	github.com/camilbinas/gude-agents/agent/provider/gemini v0.82.0
+	github.com/camilbinas/gude-agents/agent/provider/ollama v0.82.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.82.0
 )
 
 require (
@@ -33,10 +33,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/gemini v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.82.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/gemini v0.82.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.82.0 // indirect
+	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.82.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
