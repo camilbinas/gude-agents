@@ -264,9 +264,6 @@ func (dt *AgentDevTools) runTurn(ctx context.Context, conn *websocket.Conn, user
 			if docs := user.Documents(); len(docs) > 0 {
 				aCtx = aCtx.WithDocuments(docs)
 			}
-			if docs := user.CachedDocuments(); len(docs) > 0 {
-				aCtx = aCtx.WithCachedDocuments(docs)
-			}
 			if id := user.Identifier(); id != "" {
 				aCtx = aCtx.WithIdentifier(id)
 			}
