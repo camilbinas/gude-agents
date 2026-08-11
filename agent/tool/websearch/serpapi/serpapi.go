@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -140,20 +139,14 @@ func search(ctx context.Context, client *http.Client, apiKey, query, engine stri
 		strconv.Itoa(maxResults),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	resp, err := doGet(ctx, client, u)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("search request: %w", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("SerpAPI returned %d: %s", resp.StatusCode, string(respBody))
+		return "", apiError(resp, "Google Search")
 	}
 
 	var result struct {

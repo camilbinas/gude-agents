@@ -45,6 +45,9 @@ func main() {
 		},
 		[]tool.Tool{
 			serpapi.New(os.Getenv("SERPAPI_API_KEY")),
+			serpapi.NewNews(os.Getenv("SERPAPI_API_KEY")),
+			serpapi.NewScholar(os.Getenv("SERPAPI_API_KEY")),
+			serpapi.NewFinance(os.Getenv("SERPAPI_API_KEY")),
 			webfetch.New(),
 		},
 		auto.WithLogging(),
@@ -55,7 +58,10 @@ func main() {
 	}
 
 	fmt.Println("Web search agent ready (SerpAPI). Type 'quit' to exit.")
-	fmt.Println("Try: What are the latest Go releases?")
+	fmt.Println("Tools: web_search, news_search, scholar_search, finance_search, web_fetch")
+	fmt.Println("Try: What is the current NVIDIA stock price?")
+	fmt.Println("Try: Latest news about AI regulation")
+	fmt.Println("Try: Find papers about longevity")
 	fmt.Println()
 
 	utils.Chat(agent.Background(), a)
