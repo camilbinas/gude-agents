@@ -63,6 +63,10 @@ const (
 	// Graph
 	RoleGraphIterations AttrRole = AttrRole(AttrGraphIterations)
 
+	// Operation name — emitted per span to classify it for evaluation systems.
+	// Default is empty (disabled). Set via scheme to enable.
+	RoleOperationName AttrRole = ""
+
 	// Content capture (opt-in via WithContentCapture)
 	RoleGenAIPrompt           AttrRole = AttrRole(AttrGenAIPrompt)
 	RoleGenAISystemPrompt     AttrRole = AttrRole(AttrGenAISystemPrompt)
