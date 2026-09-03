@@ -53,6 +53,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 ## Components
 
 - [Conversation System](conversation.md) — Strategies (Window, Token, Filter, Summary) and composable middleware
+- [Checkpointing](checkpoint.md) — Durable versioned state with history and point-in-time recovery for handoffs and your own resumable work
 - [Long-Term Memory](memory.md) — Long-term knowledge storage with Remember/Recall tools
 - [Redis Providers](redis.md) — Redis-backed conversation store and vector store
 - [Tool System](tools.md) — Typed tools, schema generation, and tool choice

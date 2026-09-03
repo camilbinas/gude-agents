@@ -4,6 +4,12 @@ A quick orientation for returning users. Each entry covers one recently added fe
 
 ---
 
+## Graph Workflows Removed
+
+The `agent/graph` workflow engine and its graph-specific logging, metrics, tracing, DevTools, examples, and checkpoint adapters have been removed. Applications that still depend on that API should remain on v0.81.0 while choosing another orchestration approach; there is no source-compatible replacement in this release.
+
+Checkpoint storage remains available as the standalone [`agent/checkpoint`](checkpoint.md) module. It provides versioned state, history, point-in-time loading, durable backends, and persistent handoff storage, but it does not execute or resume graph workflows and is not compatible with the former `graph.GraphCheckpointer` types.
+
 ## Prompt Caching
 
 All four providers now support prompt caching via two opt-in mechanisms:

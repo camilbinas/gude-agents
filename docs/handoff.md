@@ -64,6 +64,24 @@ Continues the agent loop from the saved conversation state, appending the human'
 
 Convenience wrapper that collects streamed output into a string.
 
+## Durable Handoffs
+
+By default a pending handoff lives only in memory, so it is lost if the process exits before the human replies. `WithHandoffStore` persists it. Any [checkpoint](checkpoint.md) backend can supply one:
+
+```go
+import (
+    "github.com/camilbinas/gude-agents/agent/checkpoint/handoffstore"
+    cppg "github.com/camilbinas/gude-agents/agent/checkpoint/postgres"
+)
+
+store, _ := cppg.New(pool)
+a, err := agent.New(prov, instructions, tools,
+    agent.WithHandoffStore(handoffstore.New(store)),
+)
+```
+
+Conversation messages are encoded with full type-discriminated `ContentBlock` envelopes, so a handoff saved in one process restores correctly in another. Repeated saves append versions rather than overwriting, so the checkpointer's `History` doubles as an audit trail of what was asked and when.
+
 ## Compatibility
 
 | Agent Type | Handoff Support |

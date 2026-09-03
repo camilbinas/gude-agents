@@ -3,6 +3,10 @@ go 1.25.0
 use (
 	.
 	./agent/a2a
+	./agent/checkpoint
+	./agent/checkpoint/dynamodb
+	./agent/checkpoint/postgres
+	./agent/checkpoint/redis
 	./agent/agentcore
 	./agent/conversation/dynamodb
 	./agent/conversation/postgres
