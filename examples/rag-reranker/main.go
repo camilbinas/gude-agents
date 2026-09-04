@@ -94,7 +94,7 @@ func main() {
 	}
 
 	// 7. Full agent run with the reranked retriever.
-	fmt.Println("━━━ Agent answers (with reranker)\n")
+	fmt.Print("━━━ Agent answers (with reranker)\n\n")
 
 	provider := bedrock.Must(bedrock.Standard())
 
