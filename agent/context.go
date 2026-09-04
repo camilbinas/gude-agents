@@ -26,9 +26,7 @@ type Context struct {
 	loggingHook     LoggingHook
 
 	// systemPromptOverride, when non-empty, replaces the agent's configured
-	// instructions for this invocation only. Set by callers that need
-	// per-request prompt selection (e.g. AgentCore A/B testing where the
-	// gateway routes each session to a different configuration bundle).
+	// instructions for this invocation only.
 	systemPromptOverride string
 }
 

@@ -183,8 +183,6 @@ func (a *Agent) instructionsFor(c *Context) string {
 
 // SetInstructions atomically updates the agent's system prompt. Subsequent
 // invocations use the new value; in-flight invocations continue with the
-// value they read at start. Intended for hot-reload scenarios such as
-// AgentCore configuration bundle updates. Safe for concurrent use.
 func (a *Agent) SetInstructions(s string) {
 	a.instructions.Store(&s)
 }
@@ -259,9 +257,8 @@ func (a *Agent) RegisterTool(t tool.Tool) error {
 // HasConversation reports whether the agent has a conversation store configured.
 func (a *Agent) HasConversation() bool { return a.conversation != nil }
 
-// SetConversation sets the agent's conversation store. This is intended for use
-// by runtime adapters (e.g. agentcore) that need to wire a conversation store
-// after construction. It operates as a shared conversation (no default ID).
+// SetConversation sets the agent's conversation store after construction. It
+// operates as a shared conversation (no default ID).
 func (a *Agent) SetConversation(c Conversation) {
 	a.conversation = c
 }

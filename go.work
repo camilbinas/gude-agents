@@ -7,7 +7,6 @@ use (
 	./agent/checkpoint/dynamodb
 	./agent/checkpoint/postgres
 	./agent/checkpoint/redis
-	./agent/agentcore
 	./agent/conversation/dynamodb
 	./agent/conversation/postgres
 	./agent/conversation/redis

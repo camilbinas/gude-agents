@@ -28,7 +28,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Recent Additions
 
-- [What's New](whats-new.md) — Widget blocks, RBAC & identity, tool approval, A2A protocol, AgentCore integration, and the eval framework
+- [What's New](whats-new.md) — Widget blocks, RBAC & identity, tool approval, A2A protocol, and the eval framework
 
 ## Getting Started
 
@@ -78,5 +78,4 @@ Each provider and driver is a separate module — you only pull the dependencies
 - [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern
 - [MCP Integration](mcp.md) — Connect to MCP servers and use their tools
 - [Agent Context](invocation-context.md) — Per-invocation state sharing
-- [AWS Bedrock AgentCore](agentcore.md) — AgentCore-backed conversation store, browser tool, and code interpreter
 - [Agent-to-Agent (A2A) Protocol](a2a.md) — Remote agent clients, local agent hosting, and multi-server setup

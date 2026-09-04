@@ -337,5 +337,4 @@ See also `examples/a2a-client`, `examples/a2a-server`, and `examples/a2a-multise
 - [Multi-Agent Composition](multi-agent.md) — `AgentAsTool` and orchestrator patterns for in-process agents
 - [Tool System](tools.md) — how `tool.Tool` works; remote skills are indistinguishable from local tools
 - [MCP](mcp.md) — similar client pattern for the Model Context Protocol
-- [AgentCore](agentcore.md) — `WithA2A` / `WithA2AAddr` options to configure A2A on AgentCore runtimes
 - [Getting Started](getting-started.md) — installation and first agent

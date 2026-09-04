@@ -35,13 +35,16 @@ When tracing is not enabled, the agent creates no spans and allocates no tracing
 | Option | Default | Description |
 |--------|---------|-------------|
 | `WithContentCapture()` | disabled | Includes message content (prompts, responses, tool inputs/outputs, guardrail text) as span attributes. Disable in production if messages may contain PII. |
-| `WithScheme(scheme AttributeScheme)` | `DefaultScheme()` | Switches the attribute naming convention. The default scheme uses `agent.*` / `tool.*` / `provider.*` keys. Pass `AgentCoreScheme()` to emit OpenTelemetry GenAI semantic convention keys (`gen_ai.*`) compatible with AWS AgentCore Observability. |
+| `WithScheme(scheme AttributeScheme)` | `DefaultScheme()` | Switches the attribute naming convention. The default scheme uses `agent.*` / `tool.*` / `provider.*` keys. |
+
+Supply an `AttributeScheme` when exporting to a backend with custom attribute conventions:
 
 ```go
 a, err := agent.New(provider, instructions, tools,
     tracing.WithTracing(tp,
-        tracing.WithContentCapture(),
-        tracing.WithScheme(tracing.AgentCoreScheme()),
+        tracing.WithScheme(tracing.AttributeScheme{
+            tracing.RoleAgentName: "service.agent.name",
+        }),
     ),
 )
 ```
