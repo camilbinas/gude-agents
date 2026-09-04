@@ -564,3 +564,18 @@ func TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped(t *testing.T) 
 		t.Errorf("expected 0 blocks for assistant-role ImageBlock, got %d", len(result))
 	}
 }
+
+func TestBuildAnthropicDocParam_FileID(t *testing.T) {
+	doc, ok := buildAnthropicDocParam(agent.DocumentBlock{Source: agent.DocumentSource{
+		FileID: "file_abc123",
+	}})
+	if !ok {
+		t.Fatal("expected FileID document conversion to succeed")
+	}
+	if doc.Source.OfFile == nil {
+		t.Fatalf("expected FileID document source, got %#v", doc.Source)
+	}
+	if doc.Source.OfFile.FileID != "file_abc123" {
+		t.Errorf("FileID = %q, want %q", doc.Source.OfFile.FileID, "file_abc123")
+	}
+}

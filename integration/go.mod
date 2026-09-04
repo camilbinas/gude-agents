@@ -3,13 +3,13 @@ module github.com/camilbinas/gude-agents/integration
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.69.0
-	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.69.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.69.0
-	github.com/camilbinas/gude-agents/agent/provider/fallback v0.69.0
-	github.com/camilbinas/gude-agents/agent/provider/registry v0.69.0
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.69.0
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.69.0
+	github.com/camilbinas/gude-agents v0.81.0
+	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/fallback v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/registry v0.81.0
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.81.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.81.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 )
@@ -18,7 +18,7 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.33.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.65.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.7 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.16 // indirect
@@ -36,33 +36,38 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.69.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/gemini v0.69.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/ollama v0.69.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.69.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/gemini v0.69.0 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/gemini v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/ollama v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/gemini v0.81.0 // indirect
+	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.81.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
-	github.com/klauspost/compress v1.18.5 // indirect
+	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
+	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
+	github.com/pkoukk/tiktoken-go v0.1.7 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
+	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	go.opentelemetry.io/otel/metric v1.43.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
-	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect

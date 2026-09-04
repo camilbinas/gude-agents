@@ -22,11 +22,14 @@ type jsonContentBlock struct {
 	ImageURL      string `json:"image_url,omitempty"`       // publicly accessible image URL
 	ImageMIMEType string `json:"image_mime_type,omitempty"` // one of image/jpeg, image/png, image/gif, image/webp
 	// Document fields (populated when Type == "document").
-	DocData     []byte `json:"doc_data,omitempty"`      // raw document bytes
-	DocBase64   string `json:"doc_base64,omitempty"`    // pre-encoded base64 string
-	DocURL      string `json:"doc_url,omitempty"`       // publicly accessible document URL
-	DocMIMEType string `json:"doc_mime_type,omitempty"` // e.g. "application/pdf"
-	DocName     string `json:"doc_name,omitempty"`      // optional filename hint
+	DocData          []byte `json:"doc_data,omitempty"`            // raw document bytes
+	DocBase64        string `json:"doc_base64,omitempty"`          // pre-encoded base64 string
+	DocURL           string `json:"doc_url,omitempty"`             // publicly accessible document URL
+	DocFileID        string `json:"doc_file_id,omitempty"`         // provider-specific uploaded-file ID
+	DocS3URI         string `json:"doc_s3_uri,omitempty"`          // Bedrock S3 document location
+	DocS3BucketOwner string `json:"doc_s3_bucket_owner,omitempty"` // optional AWS account ID that owns the S3 bucket
+	DocMIMEType      string `json:"doc_mime_type,omitempty"`       // e.g. "application/pdf"
+	DocName          string `json:"doc_name,omitempty"`            // optional filename hint
 	// Tool result images (populated when Type == "tool_result" and images are present).
 	ToolResultImages []jsonToolResultImage `json:"tool_result_images,omitempty"`
 	// Widget fields (populated when Type == "widget").
@@ -113,12 +116,15 @@ func contentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 		}
 	case agent.DocumentBlock:
 		return jsonContentBlock{
-			Type:        "document",
-			DocData:     b.Source.Data,
-			DocBase64:   b.Source.Base64,
-			DocURL:      b.Source.URL,
-			DocMIMEType: b.Source.MIMEType,
-			DocName:     b.Source.Name,
+			Type:             "document",
+			DocData:          b.Source.Data,
+			DocBase64:        b.Source.Base64,
+			DocURL:           b.Source.URL,
+			DocFileID:        b.Source.FileID,
+			DocS3URI:         b.Source.S3URI,
+			DocS3BucketOwner: b.Source.S3BucketOwner,
+			DocMIMEType:      b.Source.MIMEType,
+			DocName:          b.Source.Name,
 		}
 	case agent.WidgetBlock:
 		return jsonContentBlock{
@@ -163,11 +169,14 @@ func jsonToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 	case "document":
 		return agent.DocumentBlock{
 			Source: agent.DocumentSource{
-				Data:     jcb.DocData,
-				Base64:   jcb.DocBase64,
-				URL:      jcb.DocURL,
-				MIMEType: jcb.DocMIMEType,
-				Name:     jcb.DocName,
+				Data:          jcb.DocData,
+				Base64:        jcb.DocBase64,
+				URL:           jcb.DocURL,
+				FileID:        jcb.DocFileID,
+				S3URI:         jcb.DocS3URI,
+				S3BucketOwner: jcb.DocS3BucketOwner,
+				MIMEType:      jcb.DocMIMEType,
+				Name:          jcb.DocName,
 			},
 		}
 	case "widget":

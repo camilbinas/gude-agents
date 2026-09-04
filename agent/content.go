@@ -78,15 +78,17 @@ type ImageBlock struct {
 
 func (ImageBlock) contentBlock() {}
 
-// DocumentSource holds document data as either raw bytes, a pre-encoded base64
-// string, or a URL pointing to a hosted document, plus the MIME type.
-// Set exactly one of Data, Base64, or URL.
+// DocumentSource holds document data or a provider-native document reference.
+// Set exactly one of Data, Base64, URL, FileID, or S3URI.
 type DocumentSource struct {
-	Data     []byte // raw document bytes; mutually exclusive with Base64 and URL
-	Base64   string // pre-encoded base64 string (RFC 4648); mutually exclusive with Data and URL
-	URL      string // publicly accessible document URL; mutually exclusive with Data and Base64
-	MIMEType string // e.g. "application/pdf", "text/plain", "text/html", "text/csv", "text/markdown"
-	Name     string // optional filename hint for the provider
+	Data          []byte // raw document bytes; mutually exclusive with all other sources
+	Base64        string // pre-encoded base64 string (RFC 4648); mutually exclusive with all other sources
+	URL           string // publicly accessible document URL; mutually exclusive with all other sources
+	FileID        string // provider-specific uploaded-file ID (currently Anthropic and OpenAI)
+	S3URI         string // Bedrock document location, in the form s3://bucket/key
+	S3BucketOwner string // optional AWS account ID that owns the S3 bucket
+	MIMEType      string // e.g. "application/pdf", "text/plain", "text/html", "text/csv", "text/markdown"
+	Name          string // optional filename hint for the provider
 }
 
 // validDocMIMETypes is the set of document MIME types accepted by providers.
@@ -104,7 +106,8 @@ var validDocMIMETypes = map[string]bool{
 
 // Validate returns nil if the DocumentSource is well-formed.
 // For Data/Base64 sources, MIMEType must be a supported document type.
-// For URL sources, MIMEType validation is skipped.
+// URL and FileID sources are resolved by the provider, so MIMEType validation is
+// skipped. S3URI must use the s3:// scheme and is resolved by Bedrock.
 func (s DocumentSource) Validate() error {
 	sources := 0
 	if len(s.Data) > 0 {
@@ -116,13 +119,25 @@ func (s DocumentSource) Validate() error {
 	if s.URL != "" {
 		sources++
 	}
+	if s.FileID != "" {
+		sources++
+	}
+	if s.S3URI != "" {
+		sources++
+	}
 	if sources == 0 {
-		return fmt.Errorf("document source: one of Data, Base64, or URL must be set")
+		return fmt.Errorf("document source: one of Data, Base64, URL, FileID, or S3URI must be set")
 	}
 	if sources > 1 {
-		return fmt.Errorf("document source: only one of Data, Base64, or URL may be set")
+		return fmt.Errorf("document source: only one of Data, Base64, URL, FileID, or S3URI may be set")
 	}
-	if s.URL != "" {
+	if s.S3URI != "" {
+		if !strings.HasPrefix(s.S3URI, "s3://") {
+			return fmt.Errorf("document source: S3URI must start with s3://")
+		}
+		return nil
+	}
+	if s.URL != "" || s.FileID != "" {
 		return nil
 	}
 	if !validDocMIMETypes[s.MIMEType] {

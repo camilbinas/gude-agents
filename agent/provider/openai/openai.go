@@ -118,6 +118,9 @@ func (p *OpenAIProvider) Client() *openaisdk.Client { return p.client }
 // ---------------------------------------------------------------------------
 
 func (p *OpenAIProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
+	if err := validateOpenAIDocumentSources(params.Messages); err != nil {
+		return nil, &agent.ProviderError{Cause: err}
+	}
 	input := p.buildParams(params)
 	completion, err := p.client.Chat.Completions.New(ctx, input)
 	if err != nil {
@@ -135,6 +138,9 @@ func (p *OpenAIProvider) Converse(ctx context.Context, params agent.ConversePara
 // ---------------------------------------------------------------------------
 
 func (p *OpenAIProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
+	if err := validateOpenAIDocumentSources(params.Messages); err != nil {
+		return nil, &agent.ProviderError{Cause: err}
+	}
 	input := p.buildParams(params)
 	input.StreamOptions = openaisdk.ChatCompletionStreamOptionsParam{
 		IncludeUsage: openaisdk.Bool(true),
@@ -284,6 +290,24 @@ func parseCompletion(completion *openaisdk.ChatCompletion) *agent.ProviderRespon
 	return resp
 }
 
+func validateOpenAIDocumentSources(msgs []agent.Message) error {
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			doc, ok := block.(agent.DocumentBlock)
+			if !ok {
+				continue
+			}
+			switch {
+			case doc.Source.URL != "":
+				return fmt.Errorf("OpenAI Chat Completions does not support document URL sources; use Data, Base64, or FileID")
+			case doc.Source.S3URI != "":
+				return fmt.Errorf("OpenAI Chat Completions does not support Bedrock S3 document sources; use Data, Base64, or FileID")
+			}
+		}
+	}
+	return nil
+}
+
 // toOpenAIMessages converts framework Messages to OpenAI ChatCompletionMessageParamUnion.
 // The system prompt is prepended as a system message.
 func toOpenAIMessages(msgs []agent.Message, system string) []openaisdk.ChatCompletionMessageParamUnion {
@@ -345,24 +369,30 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 				}),
 			}))
 		case agent.DocumentBlock:
-			var b64 string
-			if v.Source.Base64 != "" {
-				b64 = v.Source.Base64
-			} else if v.Source.URL != "" {
-				// OpenAI doesn't support document URLs directly; skip.
-				continue
-			} else {
-				b64 = base64.StdEncoding.EncodeToString(v.Source.Data)
-			}
 			name := v.Source.Name
 			if name == "" {
 				name = "document.pdf"
 			}
+			file := openaisdk.ChatCompletionContentPartFileFileParam{
+				Filename: openaisdk.String(name),
+			}
+			if v.Source.FileID != "" {
+				file.FileID = openaisdk.String(v.Source.FileID)
+			} else {
+				var b64 string
+				if v.Source.Base64 != "" {
+					b64 = v.Source.Base64
+				} else if v.Source.URL != "" {
+					// URL sources are rejected before request construction because Chat
+					// Completions supports file_data and file_id, but not file_url.
+					continue
+				} else {
+					b64 = base64.StdEncoding.EncodeToString(v.Source.Data)
+				}
+				file.FileData = openaisdk.String(fmt.Sprintf("data:%s;base64,%s", v.Source.MIMEType, b64))
+			}
 			out = append(out, openaisdk.UserMessage([]openaisdk.ChatCompletionContentPartUnionParam{
-				openaisdk.FileContentPart(openaisdk.ChatCompletionContentPartFileFileParam{
-					FileData: openaisdk.String(fmt.Sprintf("data:%s;base64,%s", v.Source.MIMEType, b64)),
-					Filename: openaisdk.String(name),
-				}),
+				openaisdk.FileContentPart(file),
 			}))
 		}
 	}

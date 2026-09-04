@@ -263,3 +263,64 @@ func TestMarshalUnmarshal_ImageBlock_Base64(t *testing.T) {
 		t.Errorf("MIMEType: expected %q, got %q", "image/png", img.Source.MIMEType)
 	}
 }
+
+func TestMarshalUnmarshal_DocumentBlock_ProviderReferences(t *testing.T) {
+	original := []agent.Message{
+		{
+			Role: agent.RoleUser,
+			Content: []agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
+				FileID: "file_abc123",
+				Name:   "uploaded-report.pdf",
+			}}},
+		},
+		{
+			Role: agent.RoleUser,
+			Content: []agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
+				S3URI:         "s3://example-bucket/reports/quarterly.pdf",
+				S3BucketOwner: "123456789012",
+				MIMEType:      "application/pdf",
+				Name:          "quarterly.pdf",
+			}}},
+		},
+	}
+
+	data, err := MarshalMessages(original)
+	if err != nil {
+		t.Fatalf("MarshalMessages: %v", err)
+	}
+	for _, field := range []string{"doc_file_id", "doc_s3_uri", "doc_s3_bucket_owner"} {
+		if !strings.Contains(string(data), `"`+field+`"`) {
+			t.Errorf("expected JSON to contain %q, got: %s", field, data)
+		}
+	}
+
+	got, err := UnmarshalMessages(data)
+	if err != nil {
+		t.Fatalf("UnmarshalMessages: %v", err)
+	}
+	if len(got) != len(original) {
+		t.Fatalf("expected %d messages, got %d", len(original), len(got))
+	}
+
+	fileDoc, ok := got[0].Content[0].(agent.DocumentBlock)
+	if !ok {
+		t.Fatalf("expected FileID content to be DocumentBlock, got %T", got[0].Content[0])
+	}
+	if fileDoc.Source.FileID != "file_abc123" || fileDoc.Source.Name != "uploaded-report.pdf" {
+		t.Errorf("FileID source = %#v, want preserved file ID and name", fileDoc.Source)
+	}
+	if len(fileDoc.Source.Data) != 0 || fileDoc.Source.Base64 != "" || fileDoc.Source.S3URI != "" {
+		t.Errorf("FileID source should not materialize another document source: %#v", fileDoc.Source)
+	}
+
+	s3Doc, ok := got[1].Content[0].(agent.DocumentBlock)
+	if !ok {
+		t.Fatalf("expected S3 content to be DocumentBlock, got %T", got[1].Content[0])
+	}
+	if s3Doc.Source.S3URI != "s3://example-bucket/reports/quarterly.pdf" || s3Doc.Source.S3BucketOwner != "123456789012" {
+		t.Errorf("S3 source = %#v, want preserved URI and owner", s3Doc.Source)
+	}
+	if s3Doc.Source.MIMEType != "application/pdf" || s3Doc.Source.Name != "quarterly.pdf" {
+		t.Errorf("S3 source metadata = %#v, want preserved MIME type and name", s3Doc.Source)
+	}
+}

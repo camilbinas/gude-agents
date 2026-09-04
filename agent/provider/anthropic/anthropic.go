@@ -455,6 +455,13 @@ func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam,
 // Returns (param, true) on success or (zero, false) if the document bytes
 // cannot be decoded. The caller may set CacheControl on the returned struct.
 func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockParam, bool) {
+	if v.Source.FileID != "" {
+		return anthropicsdk.DocumentBlockParam{
+			Source: anthropicsdk.DocumentBlockParamSourceUnion{
+				OfFile: &anthropicsdk.FileDocumentSourceParam{FileID: v.Source.FileID},
+			},
+		}, true
+	}
 	if v.Source.URL != "" {
 		return anthropicsdk.DocumentBlockParam{
 			Source: anthropicsdk.DocumentBlockParamSourceUnion{
