@@ -37,7 +37,7 @@ resp, err := a.CallProvider(ctx, params, nil)
 fmt.Printf("cache_write=%d cache_read=%d\n", resp.Usage.CacheWriteTokens, resp.Usage.CacheReadTokens)
 ```
 
-Cache token counts are surfaced through two new `TokenUsage` fields (`CacheReadTokens`, `CacheWriteTokens`) and are propagated through the agent loop, event stream, graph engine, and all observability hooks (metrics, tracing, logging). On OpenAI and Gemini, `WithCaching()` surfaces the provider's automatic cache token counts without sending any explicit markers. See `examples/prompt-caching/`.
+Cache token counts are surfaced through two new `TokenUsage` fields (`CacheReadTokens`, `CacheWriteTokens`) and are propagated through the agent loop, event stream, and all observability hooks (metrics, tracing, logging). On OpenAI and Gemini, `WithCaching()` surfaces the provider's automatic cache token counts without sending any explicit markers. See `examples/prompt-caching/`.
 
 ## Widget Blocks
 
@@ -53,7 +53,7 @@ Every invocation can now carry a `Principal` (ID, roles, attrs, and short-lived 
 
 ## Tool Approval
 
-Mark any tool with `tool.RequiresApproval()` and the agent pauses instead of executing it, emitting an `EventToolApprovalRequired` event with the full `ApprovalRequest`. Your code can then allow or deny via `ResumeWithApproval`, making human-in-the-loop gates a first-class construct rather than a workaround. Graphs integrate via `GraphToolApprovalError` and `g.ResumeWithApproval`. See [Tool Approval](tool-approval.md).
+Mark any tool with `tool.RequiresApproval()` and the agent pauses instead of executing it, emitting an `EventToolApprovalRequired` event with the full `ApprovalRequest`. Your code can then allow or deny via `ResumeWithApproval`, making human-in-the-loop gates a first-class construct rather than a workaround. See [Tool Approval](tool-approval.md).
 
 ## A2A Protocol
 

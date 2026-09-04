@@ -142,8 +142,7 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 }
 
 // ---------------------------------------------------------------------------
-// Accessor methods — used by subpackages (graph) that need read access
-// to agent internals without touching unexported fields.
+// Accessor methods for subpackages that need read access to agent internals.
 // ---------------------------------------------------------------------------
 
 // Name returns the agent's name, or empty if not set.
@@ -183,6 +182,7 @@ func (a *Agent) instructionsFor(c *Context) string {
 
 // SetInstructions atomically updates the agent's system prompt. Subsequent
 // invocations use the new value; in-flight invocations continue with the
+// value they read at start. Safe for concurrent use.
 func (a *Agent) SetInstructions(s string) {
 	a.instructions.Store(&s)
 }

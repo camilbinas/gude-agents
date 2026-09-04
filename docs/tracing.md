@@ -2,7 +2,7 @@
 
 The `agent/tracing` module adds OpenTelemetry distributed tracing to gude-agents. It lives in a separate Go module with its own `go.mod`, keeping the core `agent/` package free of OTEL dependencies. You opt in by importing the tracing submodule and passing `tracing.WithTracing(tp)` as an `agent.Option`.
 
-The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, graph workflows, and multi-agent composition.
+The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, and multi-agent composition.
 
 ## Enabling Tracing
 
@@ -137,7 +137,6 @@ All attribute key constants are exported from the `tracing` package for use in c
 | `AttrToolName` | `tool.name` | Name of the tool being executed |
 | `AttrMemoryConversationID` | `memory.conversation_id` | Conversation ID on memory load/save spans |
 | `AttrRetrieverDocumentCount` | `retriever.document_count` | Number of documents returned by the retriever |
-| `AttrGraphIterations` | `graph.iterations` | Total node executions in a graph run |
 | `AttrGenAITemperature` | `gen_ai.request.temperature` | Temperature parameter (when set via inference config) |
 | `AttrGenAITopP` | `gen_ai.request.top_p` | Top-p / nucleus sampling parameter (when set) |
 | `AttrGenAITopK` | `gen_ai.request.top_k` | Top-k parameter (when set) |
@@ -151,51 +150,6 @@ All attribute key constants are exported from the `tracing` package for use in c
 | `EventMaxIterationsExceeded` | `agent.max_iterations_exceeded` | Recorded on `agent.invoke` when the iteration limit is hit |
 
 All attribute keys follow the `<component>.<property>` dot-separated lowercase naming convention, consistent with OpenTelemetry semantic conventions.
-
-## Graph Tracing
-
-For graph workflows, use `WithGraphTracing` to instrument `Graph.Run` and each node execution:
-
-```go
-import (
-    "github.com/camilbinas/gude-agents/agent/graph"
-    "github.com/camilbinas/gude-agents/agent/tracing"
-)
-
-g, err := graph.New[graph.State](
-    tracing.WithGraphTracing(tp), // or nil for global provider
-)
-if err != nil {
-    log.Fatal(err)
-}
-g.Node("classify", classifyNode, graph.In("input"), graph.Out("category"))
-g.Node("respond", respondNode, graph.In("category"), graph.Out("output"))
-g.Start("classify")
-
-result, err := g.Run(ctx, graph.State{"input": userMessage})
-```
-
-Graph tracing produces a parallel span hierarchy:
-
-```
-graph.run
-├── graph.node.<node_name>         (per node, may be concurrent when multiple nodes become ready)
-│   └── agent.invoke               (if node wraps an agent)
-├── graph.checkpoint.save          (per checkpoint, with node and version attributes)
-├── graph.interrupt                (when an interrupt fires)
-├── graph.resume                   (when Resume is called)
-└── graph.rewind                   (when RewindTo is called)
-```
-
-- `graph.run` wraps the entire graph execution and records `graph.iterations` on completion.
-- Each node gets a `graph.node.<name>` child span.
-- When multiple nodes become ready simultaneously, their spans are concurrent siblings under `graph.run`.
-- If a node wraps an agent (via `g.Agent`), the agent's spans nest under the node span.
-- `graph.checkpoint.save` records `graph.checkpoint.node` and `graph.checkpoint.version`.
-- `graph.interrupt` records `graph.interrupt.node`, `graph.interrupt.type`, and `graph.interrupt.version`.
-- `graph.resume` and `graph.rewind` record `graph.thread_id` and the relevant version.
-
-See `examples/tracing-graph/`.
 
 ## Multi-Agent Trace Propagation
 

@@ -117,8 +117,7 @@ type ModelIdentifier interface {
 }
 
 // Invoker abstracts anything that can handle a user message and return a
-// text response. *Agent satisfies this interface.
-// Used by graph.AgentNode, graph.LLMRouter, and useful for testing.
+// text response. *Agent satisfies this interface and tests can provide fakes.
 type Invoker interface {
 	Invoke(c *Context, userMessage string) (string, error)
 }

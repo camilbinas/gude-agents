@@ -83,8 +83,7 @@ const (
 	EventToolApprovalRequired EventType = "tool_approval_required"
 
 	// EventCustom carries a user-defined event emitted from inside a tool
-	// handler, middleware, or graph node via Context.EmitEvent. The payload
-	// is opaque JSON; the receiver typically discriminates on CustomName.
+	// handler or middleware via Context.EmitEvent. The payload is opaque JSON; the receiver typically discriminates on CustomName.
 	// The runtime never emits this variant itself.
 	EventCustom EventType = "custom"
 )
