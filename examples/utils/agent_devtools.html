@@ -301,9 +301,8 @@
               break;
 
             case 'custom':
-              // User-defined event from a tool/middleware/node via
-              // Context.EmitEvent or graph.EmitEvent. Attach it to the
-              // current iteration if there is one, plus the timeline.
+              // User-defined event from a tool or middleware via
+              // Context.EmitEvent. Attach it to the current iteration if there is one, plus the timeline.
               updateCurrentTurn(t => {
                 if (t.iterations.length > 0) {
                   const it = { ...t.iterations[t.iterations.length - 1] };

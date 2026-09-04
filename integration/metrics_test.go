@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/metrics/prometheus"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 
@@ -122,66 +121,5 @@ func TestIntegration_Metrics_AgentInvocation(t *testing.T) {
 	// Verify agent_invoke_duration_seconds has observations.
 	if v := sumHistogramCount(familyMap, "agent_invoke_duration_seconds", t); v < 1 {
 		t.Errorf("agent_invoke_duration_seconds: expected >= 1 observation, got %d", v)
-	}
-}
-
-// TestIntegration_Metrics_GraphPipeline verifies that Prometheus graph metrics
-// are recorded during a simple graph execution.
-func TestIntegration_Metrics_GraphPipeline(t *testing.T) {
-	t.Parallel()
-	reg := prom.NewRegistry()
-
-	g, err := graph.New[graph.State](
-		prometheus.WithGraphMetrics(prometheus.WithRegisterer(reg)),
-	)
-	if err != nil {
-		t.Fatalf("failed to create graph: %v", err)
-	}
-
-	// step1: sets a value in state.
-	_, err = g.Node("step1", func(_ context.Context, state graph.State) (graph.State, error) {
-		state["value"] = 1
-		state["step1_out"] = true
-		return state, nil
-	}, graph.In(), graph.Out("step1_out"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// step2: increments the value.
-	_, err = g.Node("step2", func(_ context.Context, state graph.State) (graph.State, error) {
-		v, _ := state["value"].(int)
-		state["value"] = v + 1
-		state["step2_out"] = true
-		return state, nil
-	}, graph.In("step1_out"), graph.Out("step2_out"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	g.Start("step1")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	result, err := g.Run(ctx, graph.State{})
-	if err != nil {
-		t.Fatalf("graph.Run error: %v", err)
-	}
-
-	if v, ok := result.State["value"].(int); !ok || v != 2 {
-		t.Errorf("expected state[value]=2, got %v", result.State["value"])
-	}
-
-	familyMap := gatherFamilyMap(reg, t)
-
-	// Verify graph_run_total{status="success"} == 1.
-	if v := sumCounter(familyMap, "graph_run_total", t); v != 1 {
-		t.Errorf("graph_run_total: expected 1, got %v", v)
-	}
-
-	// Verify graph_node_total >= 2 (step1 + step2).
-	if v := sumCounter(familyMap, "graph_node_total", t); v < 2 {
-		t.Errorf("graph_node_total: expected >= 2, got %v", v)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 )
@@ -70,21 +69,6 @@ func TestWithLogging_InstallsHook(t *testing.T) {
 
 	if a.LoggingHook() == nil {
 		t.Fatal("expected LoggingHook to be set after WithLogging")
-	}
-}
-
-// TestWithGraphLogging_InstallsHook verifies WithGraphLogging sets GraphLoggingHook on graph.
-func TestWithGraphLogging_InstallsHook(t *testing.T) {
-	ch := &captureHandler{}
-	opt := WithGraphLogging(WithHandler(ch))
-
-	g, err := graph.New[graph.State](opt)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if g.GetGraphLoggingHook() == nil {
-		t.Fatal("expected GraphLoggingHook to be set after WithGraphLogging")
 	}
 }
 
@@ -156,12 +140,10 @@ func TestLogLevel_DebugForStarts(t *testing.T) {
 	h.OnToolStart("my-tool")
 	h.OnConversationStart("load", "conv-1")
 	h.OnRetrieverStart("query")
-	h.OnGraphRunStart()
-	h.OnNodeStart("node-a")
 
 	records := ch.getRecords()
-	if len(records) != 8 {
-		t.Fatalf("expected 8 records, got %d", len(records))
+	if len(records) != 6 {
+		t.Fatalf("expected 6 records, got %d", len(records))
 	}
 	for i, r := range records {
 		if r.Level != slog.LevelDebug {
@@ -183,12 +165,10 @@ func TestLogLevel_InfoForEnds(t *testing.T) {
 	h.OnToolEnd("my-tool", nil, dur)
 	h.OnConversationEnd("save", "conv-1", nil, 5, dur)
 	h.OnRetrieverEnd(nil, 3, dur)
-	h.OnGraphRunEnd(nil, 5, agent.TokenUsage{InputTokens: 100, OutputTokens: 50}, dur)
-	h.OnNodeEnd("node-a", nil, dur)
 
 	records := ch.getRecords()
-	if len(records) != 7 {
-		t.Fatalf("expected 7 records, got %d", len(records))
+	if len(records) != 5 {
+		t.Fatalf("expected 5 records, got %d", len(records))
 	}
 	for i, r := range records {
 		if r.Level != slog.LevelInfo {
@@ -211,13 +191,11 @@ func TestLogLevel_ErrorOnFailure(t *testing.T) {
 	h.OnToolEnd("my-tool", testErr, dur)
 	h.OnConversationEnd("load", "conv-1", testErr, 0, dur)
 	h.OnRetrieverEnd(testErr, 0, dur)
-	h.OnGraphRunEnd(testErr, 0, agent.TokenUsage{}, dur)
-	h.OnNodeEnd("node-a", testErr, dur)
 	h.OnGuardrailComplete("input", false, testErr)
 
 	records := ch.getRecords()
-	if len(records) != 8 {
-		t.Fatalf("expected 8 records, got %d", len(records))
+	if len(records) != 6 {
+		t.Fatalf("expected 6 records, got %d", len(records))
 	}
 	for i, r := range records {
 		if r.Level != slog.LevelError {

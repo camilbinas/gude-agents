@@ -1,5 +1,5 @@
 // Package debug provides a human-readable colored logging hook for local
-// development. It implements agent.LoggingHook and graph.GraphLoggingHook
+// development. It implements agent.LoggingHook
 // with a trace-style output designed to be readable
 // while an agent is running.
 //
@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/graph"
 )
 
 // ANSI codes.
@@ -59,7 +58,6 @@ func (h *debugHook) p(format string, args ...any) {
 
 // Compile-time interface checks.
 var _ agent.LoggingHook = (*debugHook)(nil)
-var _ graph.GraphLoggingHook = (*debugHook)(nil)
 
 // ---------------------------------------------------------------------------
 // LoggingHook — agent lifecycle
@@ -190,39 +188,6 @@ func (h *debugHook) OnStreamChunk(text string) {}
 func (h *debugHook) OnResponse(text string) {}
 
 // ---------------------------------------------------------------------------
-// GraphLoggingHook — graph lifecycle
-// ---------------------------------------------------------------------------
-
-func (h *debugHook) OnGraphRunStart() {
-	h.p("\n%s▸ graph run%s\n\n", bold+blue, reset)
-}
-
-func (h *debugHook) OnGraphRunEnd(err error, iterations int, usage agent.TokenUsage, duration time.Duration) {
-	if err != nil {
-		h.p("\n%s✗ graph run%s  %s  %s\n%s\n\n", bold+red, reset, fmtDur(duration), fmtErr(err), divider)
-		return
-	}
-	h.p("\n%s✓ graph run%s  %s  %s%d nodes  ↑%d ↓%d%s\n%s\n\n",
-		bold+green, reset,
-		fmtDur(duration),
-		dim, iterations, usage.InputTokens, usage.OutputTokens, reset,
-		divider,
-	)
-}
-
-func (h *debugHook) OnNodeStart(nodeName string) {
-	h.p("  %s⚙ node: %s%s", cyan, nodeName, reset)
-}
-
-func (h *debugHook) OnNodeEnd(nodeName string, err error, duration time.Duration) {
-	if err != nil {
-		h.p("  %s✗ %s  %s  %s%s\n", red, nodeName, fmtDur(duration), fmtErr(err), reset)
-		return
-	}
-	h.p("  %s✓ %s%s\n", green, fmtDur(duration), reset)
-}
-
-// ---------------------------------------------------------------------------
 // Option functions
 // ---------------------------------------------------------------------------
 
@@ -233,16 +198,6 @@ func WithLogging() agent.Option {
 		h := newDebugHook(os.Stdout)
 		h.agentName = a.Name()
 		a.SetLoggingHook(h)
-		return nil
-	}
-}
-
-// WithGraphLogging returns a graph.GraphOption that installs the colored
-// debug logging hook on a graph.
-func WithGraphLogging() graph.GraphOption {
-	return func(g graph.GraphConfigurator) error {
-		h := newDebugHook(os.Stdout)
-		g.SetGraphLoggingHook(h)
 		return nil
 	}
 }

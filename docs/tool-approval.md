@@ -69,7 +69,6 @@ ar, ok := agent.GetApprovalRequest(c)
 | `ToolUseID` | `string` | Provider-assigned unique ID for this tool call |
 | `ConversationID` | `string` | Conversation this call belongs to |
 | `Messages` | `[]agent.Message` | Full conversation snapshot at the point of pause |
-| `NodeName` | `string` | Set by the graph layer to scope approval to the correct node |
 
 ### 3. Collect the decision with `tool.Decision`
 
@@ -171,57 +170,6 @@ Persist the `ApprovalRequest.Messages` to your store (Redis, DynamoDB, Postgres)
 
 See `examples/approval-cli/` for a complete working example.
 
-## Graph Integration
-
-When running an agent inside a graph, tool approval surfaces as a typed error rather than as a sentinel.
-
-### `GraphToolApprovalError`
-
-`graph.GraphToolApprovalError` is returned by `Graph.Run` when an agent node calls a `RequiresApproval` tool:
-
-```go
-type GraphToolApprovalError struct {
-    Approval  *agent.ApprovalRequest
-    Interrupt InterruptResult
-}
-```
-
-`Interrupt.NodeName` identifies which node triggered the pause. `Interrupt.Checkpoint` holds the checkpoint version used for resumption — a checkpointer must be configured on the graph for `ResumeWithApproval` to work.
-
-```go
-result, err := g.Run(ctx, initialState, graph.WithThreadID("thread-1"))
-
-var ae *graph.GraphToolApprovalError
-if errors.As(err, &ae) {
-    fmt.Printf("approval required: tool=%s input=%s\n",
-        ae.Approval.ToolName, ae.Approval.ToolInput)
-    // collect decision...
-}
-```
-
-### `g.ResumeWithApproval`
-
-```go
-func (g *Graph[S]) ResumeWithApproval(
-    ctx context.Context,
-    ae *GraphToolApprovalError,
-    decision tool.Decision,
-    opts ...RunOption,
-) (Result[S], error)
-```
-
-Resumes graph execution from the checkpoint stored in `ae`. Returns `ErrNoCheckpointer` if no checkpointer was configured and `ErrThreadIDRequired` if the thread ID is missing from the checkpoint.
-
-```go
-result, err := g.ResumeWithApproval(ctx, ae, tool.Allow())
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Println(result.State["output"])
-```
-
-The graph replays from the saved checkpoint, runs the approved (or denied) tool result through the agent loop, and continues until the graph completes or another pause occurs.
-
 ## Code Example
 
 CLI approval flow with a destructive delete tool:
@@ -309,7 +257,6 @@ func main() {
 
 - [Handoffs](handoff.md) — LLM-initiated pauses that ask humans for input rather than gating tool execution
 - [Tools](tools.md) — tool constructors, `WithGuard`, `Decision`, and introspection methods
-- [Graph Workflows](graph.md) — `GraphToolApprovalError` and graph-layer resumption
 - [Invocation Context](invocation-context.md) — `WithConversationID` for multi-tenant HTTP flows
 - [RBAC & Identity](rbac.md) — `WithRoleEnforcement` and the full identity system
 - [Event Stream](agent-api.md#invokeeventstream) — `EventToolApprovalRequired` event emitted on the event stream channel

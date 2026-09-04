@@ -368,7 +368,6 @@ func TestProperty_AttributeNamingConvention(t *testing.T) {
 		AttrToolName,
 		AttrMemoryConversationID,
 		AttrRetrieverDocumentCount,
-		AttrGraphIterations,
 		AttrGenAITemperature,
 		AttrGenAITopP,
 		AttrGenAITopK,

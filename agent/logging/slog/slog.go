@@ -6,11 +6,10 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/graph"
 )
 
-// slogHook implements agent.LoggingHook and graph.GraphLoggingHook
-// using the standard library's log/slog package.
+// slogHook implements agent.LoggingHook using the standard library's log/slog
+// package.
 type slogHook struct {
 	logger    *slog.Logger
 	minLevel  slog.Level
@@ -19,7 +18,6 @@ type slogHook struct {
 
 // Compile-time interface checks.
 var _ agent.LoggingHook = (*slogHook)(nil)
-var _ graph.GraphLoggingHook = (*slogHook)(nil)
 
 // log emits a structured log entry if the level meets the minimum threshold.
 func (h *slogHook) log(level slog.Level, msg string, attrs ...slog.Attr) {
@@ -216,55 +214,7 @@ func (h *slogHook) OnResponse(text string) {
 }
 
 // ---------------------------------------------------------------------------
-// GraphLoggingHook — graph lifecycle
-// ---------------------------------------------------------------------------
-
-func (h *slogHook) OnGraphRunStart() {
-	h.log(slog.LevelDebug, "graph.run.start")
-}
-
-func (h *slogHook) OnGraphRunEnd(err error, iterations int, usage agent.TokenUsage, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.Int("iterations", iterations),
-		slog.Int("input_tokens", usage.InputTokens),
-		slog.Int("output_tokens", usage.OutputTokens),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-	}
-	if usage.CacheReadTokens > 0 {
-		attrs = append(attrs, slog.Int("cache_read_tokens", usage.CacheReadTokens))
-	}
-	if usage.CacheWriteTokens > 0 {
-		attrs = append(attrs, slog.Int("cache_write_tokens", usage.CacheWriteTokens))
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "graph.run.end", attrs...)
-}
-
-func (h *slogHook) OnNodeStart(nodeName string) {
-	h.log(slog.LevelDebug, "graph.node.start",
-		slog.String("node.name", nodeName),
-	)
-}
-
-func (h *slogHook) OnNodeEnd(nodeName string, err error, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.String("node.name", nodeName),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "graph.node.end", attrs...)
-}
-
-// ---------------------------------------------------------------------------
-// Option functions — wire the hook into agent and graph
+// Option functions — wire the hook into an agent
 // ---------------------------------------------------------------------------
 
 // newSlogHook creates a slogHook with defaults and applies the given options.
@@ -285,15 +235,6 @@ func WithLogging(opts ...Option) agent.Option {
 		h := newSlogHook(opts)
 		h.agentName = a.Name()
 		a.SetLoggingHook(h)
-		return nil
-	}
-}
-
-// WithGraphLogging returns a graph.GraphOption that installs the slog-based GraphLoggingHook.
-func WithGraphLogging(opts ...Option) graph.GraphOption {
-	return func(g graph.GraphConfigurator) error {
-		h := newSlogHook(opts)
-		g.SetGraphLoggingHook(h)
 		return nil
 	}
 }

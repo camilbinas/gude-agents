@@ -60,9 +60,6 @@ const (
 	RoleRetrieverQuery         AttrRole = AttrRole(AttrRetrieverQuery)
 	RoleRetrieverDocumentCount AttrRole = AttrRole(AttrRetrieverDocumentCount)
 
-	// Graph
-	RoleGraphIterations AttrRole = AttrRole(AttrGraphIterations)
-
 	// Content capture (opt-in via WithContentCapture)
 	RoleGenAIPrompt           AttrRole = AttrRole(AttrGenAIPrompt)
 	RoleGenAISystemPrompt     AttrRole = AttrRole(AttrGenAISystemPrompt)
@@ -153,9 +150,6 @@ func AgentCoreScheme() AttributeScheme {
 		// best-effort extensions for query and document count.
 		RoleRetrieverQuery:         "gen_ai.agent.retriever.query",
 		RoleRetrieverDocumentCount: "gen_ai.agent.retriever.document_count",
-
-		// Graph — best-effort extension.
-		RoleGraphIterations: "gen_ai.agent.graph.iterations",
 
 		// Content capture — official OTel input/output attributes.
 		RoleGenAIPrompt:           "gen_ai.input.messages",

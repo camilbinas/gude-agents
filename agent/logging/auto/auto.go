@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/graph"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
 )
@@ -27,15 +26,6 @@ func WithLogging() agent.Option {
 		return debug.WithLogging()
 	}
 	return agentslog.WithLogging()
-}
-
-// WithGraphLogging returns a graph.GraphOption that installs the appropriate
-// logging hook based on the ENV environment variable.
-func WithGraphLogging() graph.GraphOption {
-	if isDev() {
-		return debug.WithGraphLogging()
-	}
-	return agentslog.WithGraphLogging()
 }
 
 func isDev() bool {

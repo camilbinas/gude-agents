@@ -2,7 +2,7 @@
 
 The `agent/logging/slog` module adds structured logging to gude-agents using the standard library's `log/slog` package. It lives in a separate Go module with its own `go.mod`, keeping the core `agent/` package free of logging implementation dependencies. You opt in by importing the logging submodule and passing `slog.WithLogging()` as an `agent.Option`.
 
-The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, RAG retrieval, and graph workflows.
+The module instruments the full agent lifecycle: invocations, loop iterations, provider calls, tool executions, guardrails, conversation operations, and RAG retrieval.
 
 ## Enabling Logging
 
@@ -40,14 +40,11 @@ a, err := agent.New(provider, instructions, tools,
 | `development`, `dev`, or `local` (case-insensitive) | `debug.WithLogging()` |
 | anything else / unset | `slog.WithLogging()` |
 
-`auto.WithGraphLogging()` follows the same logic for graph workflows.
-
 ## Option Functions
 
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `WithLogging(opts...)` | `agent.Option` | Installs slog-based logging hook on an agent |
-| `WithGraphLogging(opts...)` | `graph.GraphOption` | Installs slog-based logging hook on a graph |
 | `WithHandler(h slog.Handler)` | `Option` | Sets a custom slog handler (default: `slog.Default()`) |
 | `WithMinLevel(level slog.Level)` | `Option` | Minimum log level (default: `slog.LevelDebug`) |
 
@@ -72,13 +69,6 @@ Each lifecycle point maps to a log level:
 | GuardrailComplete (blocked) | Warn | Error |
 | MaxIterationsExceeded | Warn | — |
 
-For graph hooks:
-
-| Lifecycle Point | Default Level | With Error |
-|---|---|---|
-| GraphRunStart, NodeStart | Debug | — |
-| GraphRunEnd, NodeEnd | Info | Error |
-
 ## Structured Attributes
 
 Each log entry includes relevant key-value attributes:
@@ -91,10 +81,9 @@ Each log entry includes relevant key-value attributes:
 | `max_iterations` | InvokeStart | Configured max iterations |
 | `iteration` | IterationStart | 1-based iteration number |
 | `tool.name` | ToolStart, ToolEnd, ToolLog | Tool being executed |
-| `node.name` | NodeStart, NodeEnd | Graph node name |
 | `duration_ms` | All end events | Operation duration in milliseconds |
 | `error` | End events with error | Error message |
-| `input_tokens` / `output_tokens` | InvokeEnd, ProviderCallEnd, GraphRunEnd | Token usage |
+| `input_tokens` / `output_tokens` | InvokeEnd, ProviderCallEnd | Token usage |
 | `tool_call_count` | ProviderCallEnd | Number of tool calls in provider response |
 | `doc_count` | RetrieverEnd | Number of retrieved documents |
 | `image_count` | ImagesAttached | Number of images attached via `WithImages` |
@@ -127,21 +116,6 @@ func myTool(ctx context.Context, input MyInput) (string, error) {
 The logging hook receives stream chunks and final responses automatically. When a `LoggingHook` is configured, `OnStreamChunk` is called for each final-answer chunk during `InvokeStream`, and `OnResponse` is called with the complete text after a non-streaming `Invoke`. The user's `StreamCallback` is still called if provided — the hook is additive.
 
 The debug logger prints stream chunks to stdout. The slog logger only logs `OnResponse` (chunks are too noisy for structured logs).
-
-## Graph Logging
-
-```go
-import (
-    "github.com/camilbinas/gude-agents/agent/graph"
-    agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
-)
-
-g, err := graph.New[graph.State](
-    agentslog.WithGraphLogging(),
-)
-```
-
-Graph logging emits entries for `graph.run.start`, `graph.run.end`, `graph.node.start`, and `graph.node.end`.
 
 ## Coexistence with Tracing, Metrics, and Event Hook
 
