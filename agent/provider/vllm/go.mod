@@ -2,12 +2,12 @@ module github.com/camilbinas/gude-agents/agent/provider/vllm
 
 go 1.25.0
 
-require github.com/camilbinas/gude-agents/agent/provider/openai v0.81.0
+require github.com/camilbinas/gude-agents/agent/provider/openai v0.82.0
 
 require (
-	github.com/camilbinas/gude-agents v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.81.0 // indirect
+	github.com/camilbinas/gude-agents v0.82.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v0.82.0 // indirect
+	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.82.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
