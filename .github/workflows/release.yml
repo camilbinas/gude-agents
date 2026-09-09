@@ -16,6 +16,13 @@ name: Release
 on:
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate a calculated release without committing, tagging, or publishing it.
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -30,9 +37,9 @@ env:
 
 jobs:
   release:
-    # A release commit is produced by this workflow. GITHUB_TOKEN pushes do not
-    # normally start a new run, but this also prevents a loop if a PAT is used.
-    if: "!startsWith(github.event.head_commit.message, 'chore: release ')"
+    # Release commits do not trigger another push release. Manual runs remain
+    # available so operators can validate a release with dry_run enabled.
+    if: "github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore: release ')"
     runs-on: ubuntu-latest
 
     steps:
@@ -280,8 +287,17 @@ jobs:
             exit 1
           fi
 
+      # A manual dry run exercises the same discovery, verification, and
+      # metadata-rewrite path as a publish, but deliberately leaves no commit,
+      # tags, or GitHub Release behind.
+      - name: Report dry run
+        if: steps.version.outputs.skip == 'false' && github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: echo "Dry run completed for ${NEW_VERSION}; no release was published."
+
       - name: Commit, tag, and push atomically
-        if: steps.version.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
         env:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: |
@@ -308,7 +324,7 @@ jobs:
           git push --atomic origin "${refs[@]}"
 
       - name: Create GitHub release
-        if: steps.version.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
