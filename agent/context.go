@@ -11,7 +11,8 @@ import (
 type Context struct {
 	context.Context
 
-	mu              sync.RWMutex
+	// mu is shared by Context views that share the invocation-scoped maps.
+	mu              *sync.RWMutex
 	data            map[any]any
 	usage           TokenUsage
 	conversationID  string
@@ -38,6 +39,7 @@ func NewContext(parent context.Context) *Context {
 	}
 	return &Context{
 		Context: parent,
+		mu:      &sync.RWMutex{},
 		data:    make(map[any]any),
 	}
 }
@@ -362,6 +364,7 @@ func (c *Context) Clone() *Context {
 	c.mu.RUnlock()
 	clone := &Context{
 		Context:              c.Context,
+		mu:                   &sync.RWMutex{},
 		data:                 make(map[any]any),
 		conversationID:       c.conversationID,
 		images:               c.images,
@@ -390,6 +393,7 @@ func (c *Context) setUsage(u TokenUsage) {
 func (c *Context) withContext(ctx context.Context) *Context {
 	return &Context{
 		Context:              ctx,
+		mu:                   c.mu,
 		data:                 c.data,
 		usage:                c.usage,
 		conversationID:       c.conversationID,
