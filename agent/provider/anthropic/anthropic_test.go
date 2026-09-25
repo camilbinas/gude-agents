@@ -564,3 +564,89 @@ func TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped(t *testing.T) 
 		t.Errorf("expected 0 blocks for assistant-role ImageBlock, got %d", len(result))
 	}
 }
+
+func TestBuildAnthropicDocParam_FileID(t *testing.T) {
+	doc, ok := buildAnthropicDocParam(agent.DocumentBlock{Source: agent.DocumentSource{
+		FileID: "file_abc123",
+	}})
+	if !ok {
+		t.Fatal("expected FileID document conversion to succeed")
+	}
+	if doc.Source.OfFile == nil {
+		t.Fatalf("expected FileID document source, got %#v", doc.Source)
+	}
+	if doc.Source.OfFile.FileID != "file_abc123" {
+		t.Errorf("FileID = %q, want %q", doc.Source.OfFile.FileID, "file_abc123")
+	}
+}
+
+func TestClaudeHaiku45DefaultMaxTokens(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func(...Option) (*AnthropicProvider, error)
+		want    int64
+	}{
+		{
+			name:    "Haiku 4.5 constructor",
+			factory: ClaudeHaiku4_5,
+			want:    claudeHaiku45DefaultMaxTokens,
+		},
+		{
+			name:    "Cheapest constructor",
+			factory: Cheapest,
+			want:    claudeHaiku45DefaultMaxTokens,
+		},
+		{
+			name: "generic constructor retains generic default",
+			factory: func(opts ...Option) (*AnthropicProvider, error) {
+				return New("claude-haiku-4-5", opts...)
+			},
+			want: 128000,
+		},
+		{
+			name:    "other model constructor retains generic default",
+			factory: ClaudeSonnet5,
+			want:    128000,
+		},
+	}
+
+	params := agent.ConverseParams{
+		Messages: []agent.Message{{
+			Role:    agent.RoleUser,
+			Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := tt.factory()
+			if err != nil {
+				t.Fatalf("new provider: %v", err)
+			}
+			if got := p.buildParams(params).MaxTokens; got != tt.want {
+				t.Errorf("MaxTokens = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeHaiku45MaxTokenOverrides(t *testing.T) {
+	p, err := ClaudeHaiku4_5(WithMaxTokens(2048))
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	params := agent.ConverseParams{
+		Messages: []agent.Message{{
+			Role:    agent.RoleUser,
+			Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}},
+		}},
+	}
+	if got := p.buildParams(params).MaxTokens; got != 2048 {
+		t.Errorf("provider option MaxTokens = %d, want 2048", got)
+	}
+
+	perCallLimit := 1024
+	params.InferenceConfig = &agent.InferenceConfig{MaxTokens: &perCallLimit}
+	if got := p.buildParams(params).MaxTokens; got != int64(perCallLimit) {
+		t.Errorf("per-call MaxTokens = %d, want %d", got, perCallLimit)
+	}
+}

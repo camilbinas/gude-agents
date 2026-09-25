@@ -4,6 +4,12 @@ A quick orientation for returning users. Each entry covers one recently added fe
 
 ---
 
+## Graph Workflows Removed
+
+The `agent/graph` workflow engine and its graph-specific logging, metrics, tracing, DevTools, examples, and checkpoint adapters have been removed. Applications that still depend on that API should remain on v0.81.0 while choosing another orchestration approach; there is no source-compatible replacement in this release.
+
+Checkpoint storage remains available as the standalone [`agent/checkpoint`](checkpoint.md) module. It provides versioned state, history, point-in-time loading, durable backends, and persistent handoff storage, but it does not execute or resume graph workflows and is not compatible with the former `graph.GraphCheckpointer` types.
+
 ## Prompt Caching
 
 All four providers now support prompt caching via two opt-in mechanisms:
@@ -31,7 +37,7 @@ resp, err := a.CallProvider(ctx, params, nil)
 fmt.Printf("cache_write=%d cache_read=%d\n", resp.Usage.CacheWriteTokens, resp.Usage.CacheReadTokens)
 ```
 
-Cache token counts are surfaced through two new `TokenUsage` fields (`CacheReadTokens`, `CacheWriteTokens`) and are propagated through the agent loop, event stream, graph engine, and all observability hooks (metrics, tracing, logging). On OpenAI and Gemini, `WithCaching()` surfaces the provider's automatic cache token counts without sending any explicit markers. See `examples/prompt-caching/`.
+Cache token counts are surfaced through two new `TokenUsage` fields (`CacheReadTokens`, `CacheWriteTokens`) and are propagated through the agent loop, event stream, and all observability hooks (metrics, tracing, logging). On OpenAI and Gemini, `WithCaching()` surfaces the provider's automatic cache token counts without sending any explicit markers. See `examples/prompt-caching/`.
 
 ## Widget Blocks
 
@@ -47,15 +53,11 @@ Every invocation can now carry a `Principal` (ID, roles, attrs, and short-lived 
 
 ## Tool Approval
 
-Mark any tool with `tool.RequiresApproval()` and the agent pauses instead of executing it, emitting an `EventToolApprovalRequired` event with the full `ApprovalRequest`. Your code can then allow or deny via `ResumeWithApproval`, making human-in-the-loop gates a first-class construct rather than a workaround. Graphs integrate via `GraphToolApprovalError` and `g.ResumeWithApproval`. See [Tool Approval](tool-approval.md).
+Mark any tool with `tool.RequiresApproval()` and the agent pauses instead of executing it, emitting an `EventToolApprovalRequired` event with the full `ApprovalRequest`. Your code can then allow or deny via `ResumeWithApproval`, making human-in-the-loop gates a first-class construct rather than a workaround. See [Tool Approval](tool-approval.md).
 
 ## A2A Protocol
 
 The new `agent/a2a` module implements the Agent-to-Agent protocol on both sides of the wire. `a2a.NewClient` discovers a remote agent's tools and surfaces them locally; `a2a.NewExecutor` exposes a local agent as an A2A-compliant HTTP server; `a2a.NewMultiServer` hosts a fleet of agents behind a single endpoint. See [A2A Protocol](a2a.md).
-
-## AgentCore Integration
-
-The new `agent/agentcore` module wires `gude-agents` into AWS Bedrock AgentCore. `agentcore.NewConversation` provides an AgentCore-backed conversation store; `NewBrowserTool` and `NewCodeInterpreterTool` wrap the managed browser and sandbox runtimes as drop-in `tool.Tool` values; `WithA2A`/`WithA2AAddr` connect agents to the AgentCore A2A endpoint. See [AWS Bedrock AgentCore](agentcore.md).
 
 ## Evaluation Framework
 

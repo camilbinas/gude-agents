@@ -11,7 +11,8 @@ import (
 type Context struct {
 	context.Context
 
-	mu              sync.RWMutex
+	// mu is shared by Context views that share the invocation-scoped maps.
+	mu              *sync.RWMutex
 	data            map[any]any
 	usage           TokenUsage
 	conversationID  string
@@ -26,9 +27,7 @@ type Context struct {
 	loggingHook     LoggingHook
 
 	// systemPromptOverride, when non-empty, replaces the agent's configured
-	// instructions for this invocation only. Set by callers that need
-	// per-request prompt selection (e.g. AgentCore A/B testing where the
-	// gateway routes each session to a different configuration bundle).
+	// instructions for this invocation only.
 	systemPromptOverride string
 }
 
@@ -40,6 +39,7 @@ func NewContext(parent context.Context) *Context {
 	}
 	return &Context{
 		Context: parent,
+		mu:      &sync.RWMutex{},
 		data:    make(map[any]any),
 	}
 }
@@ -134,9 +134,9 @@ func (c *Context) WithEventHook(h EventHook) *Context {
 // EmitEvent emits a user-defined event onto the active InvokeEventStream
 // channel (if any). When no event stream is active — i.e. the context has
 // no EventHook, or the hook does not implement CustomEventEmitter — the
-// call is a no-op. Use it from inside tool handlers, middleware, or graph
-// node functions to surface domain progress (e.g. "rag.retrieved",
-// "score.computed") to UIs without inventing parallel channels.
+// call is a no-op. Use it from inside tool handlers or middleware to surface
+// domain progress (e.g. "rag.retrieved", "score.computed") to UIs without
+// inventing parallel channels.
 //
 // name should be a short, dot-namespaced tag chosen by the emitter.
 // payload is JSON-marshalled; pass any value json.Marshal can handle.
@@ -308,9 +308,8 @@ func GetTyped[T any](c *Context, key any) (T, bool) {
 	return t, ok
 }
 
-// EmitWidget emits a WidgetBlock from inside a tool handler, middleware, or
-// graph node. It validates the block, appends it to the per-call widget
-// accumulator (thread-safe), and delivers an EventWidget event to the active
+// EmitWidget emits a WidgetBlock from inside a tool handler or middleware.
+// It validates the block, appends it to the per-call widget accumulator (thread-safe), and delivers an EventWidget event to the active
 // InvokeEventStream channel (if any).
 //
 // Returns a non-nil error if block.Type is empty; in that case no event is
@@ -365,6 +364,7 @@ func (c *Context) Clone() *Context {
 	c.mu.RUnlock()
 	clone := &Context{
 		Context:              c.Context,
+		mu:                   &sync.RWMutex{},
 		data:                 make(map[any]any),
 		conversationID:       c.conversationID,
 		images:               c.images,
@@ -393,6 +393,7 @@ func (c *Context) setUsage(u TokenUsage) {
 func (c *Context) withContext(ctx context.Context) *Context {
 	return &Context{
 		Context:              ctx,
+		mu:                   c.mu,
 		data:                 c.data,
 		usage:                c.usage,
 		conversationID:       c.conversationID,

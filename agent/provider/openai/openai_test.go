@@ -816,3 +816,69 @@ func TestToOpenAIAssistantMessage_ImageBlock_Skipped(t *testing.T) {
 		t.Errorf("expected 0 tool calls, got %d", len(msg.OfAssistant.ToolCalls))
 	}
 }
+
+func TestToOpenAIUserMessages_DocumentFileID(t *testing.T) {
+	messages := toOpenAIUserMessages([]agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
+		FileID: "file_abc123",
+		Name:   "report.pdf",
+	}}})
+	if len(messages) != 1 || messages[0].OfUser == nil {
+		t.Fatalf("expected one user message, got %#v", messages)
+	}
+
+	parts := messages[0].OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 1 || parts[0].OfFile == nil {
+		t.Fatalf("expected one file content part, got %#v", parts)
+	}
+	file := parts[0].OfFile.File
+	if file.FileID.Value != "file_abc123" {
+		t.Errorf("FileID = %q, want %q", file.FileID.Value, "file_abc123")
+	}
+	if file.Filename.Value != "report.pdf" {
+		t.Errorf("Filename = %q, want %q", file.Filename.Value, "report.pdf")
+	}
+	if file.FileData.Value != "" {
+		t.Errorf("FileData = %q, want empty when using a FileID", file.FileData.Value)
+	}
+}
+
+func TestValidateOpenAIDocumentSources(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  agent.DocumentSource
+		wantErr string
+	}{
+		{
+			name:   "FileID is supported",
+			source: agent.DocumentSource{FileID: "file_abc123"},
+		},
+		{
+			name:    "URL is rejected",
+			source:  agent.DocumentSource{URL: "https://example.com/report.pdf"},
+			wantErr: "OpenAI Chat Completions does not support document URL sources; use Data, Base64, or FileID",
+		},
+		{
+			name:    "S3 URI is rejected",
+			source:  agent.DocumentSource{S3URI: "s3://example-bucket/report.pdf"},
+			wantErr: "OpenAI Chat Completions does not support Bedrock S3 document sources; use Data, Base64, or FileID",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateOpenAIDocumentSources([]agent.Message{{
+				Role:    agent.RoleUser,
+				Content: []agent.ContentBlock{agent.DocumentBlock{Source: tt.source}},
+			}})
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateOpenAIDocumentSources returned unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("validateOpenAIDocumentSources error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

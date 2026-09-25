@@ -677,18 +677,29 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectC
 			})
 
 		case agent.DocumentBlock:
-			bytes, err := documentBytes(v.Source)
-			if err != nil {
-				return nil, fmt.Errorf("DocumentBlock: %w", err)
+			var source types.DocumentSource
+			if v.Source.S3URI != "" {
+				s3Location := types.S3Location{Uri: aws.String(v.Source.S3URI)}
+				if v.Source.S3BucketOwner != "" {
+					s3Location.BucketOwner = aws.String(v.Source.S3BucketOwner)
+				}
+				source = &types.DocumentSourceMemberS3Location{Value: s3Location}
+			} else {
+				if v.Source.FileID != "" {
+					return nil, fmt.Errorf("DocumentBlock: Bedrock does not support provider file IDs")
+				}
+				bytes, err := documentBytes(v.Source)
+				if err != nil {
+					return nil, fmt.Errorf("DocumentBlock: %w", err)
+				}
+				source = &types.DocumentSourceMemberBytes{Value: bytes}
 			}
 			name := sanitizeDocName(v.Source.Name)
 			out = append(out, &types.ContentBlockMemberDocument{
 				Value: types.DocumentBlock{
 					Name:   aws.String(name),
 					Format: toBedrockDocFormat(v.Source.MIMEType),
-					Source: &types.DocumentSourceMemberBytes{
-						Value: bytes,
-					},
+					Source: source,
 				},
 			})
 			// When caching is enabled on Claude models, inject a CachePoint

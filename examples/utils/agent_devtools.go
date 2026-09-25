@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os/exec"
+	"runtime"
 	"sync"
 	"time"
 
@@ -21,11 +23,9 @@ var agentDevtoolsFS embed.FS
 //
 // The DevTools serve a small web UI where users can chat with an agent and
 // watch every iteration, model call, tool call, and streamed chunk in
-// real-time. It mirrors the existing graph DevTools, but instead of a
-// node graph it visualises the agent loop iterations and per-call details.
+// real-time.
 type AgentDevToolsConfig struct {
-	// Port is the HTTP port to bind. Defaults to 4041 (one above the graph
-	// devtools default 4040 so the two can coexist).
+	// Port is the HTTP port to bind. Defaults to 4041.
 	Port int
 
 	// Agent is the agent under inspection. Required.
@@ -264,9 +264,6 @@ func (dt *AgentDevTools) runTurn(ctx context.Context, conn *websocket.Conn, user
 			if docs := user.Documents(); len(docs) > 0 {
 				aCtx = aCtx.WithDocuments(docs)
 			}
-			if docs := user.CachedDocuments(); len(docs) > 0 {
-				aCtx = aCtx.WithCachedDocuments(docs)
-			}
 			if id := user.Identifier(); id != "" {
 				aCtx = aCtx.WithIdentifier(id)
 			}
@@ -415,4 +412,30 @@ func (dt *AgentDevTools) send(conn *websocket.Conn, msg any) {
 		conn.Close()
 		delete(dt.clients, conn)
 	}
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(_ *http.Request) bool { return true },
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return
+	}
+	_ = cmd.Start()
 }

@@ -28,7 +28,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 
 ## Recent Additions
 
-- [What's New](whats-new.md) — Widget blocks, RBAC & identity, tool approval, A2A protocol, AgentCore integration, and the eval framework
+- [What's New](whats-new.md) — Widget blocks, RBAC & identity, tool approval, A2A protocol, and the eval framework
 
 ## Getting Started
 
@@ -53,6 +53,7 @@ Each provider and driver is a separate module — you only pull the dependencies
 ## Components
 
 - [Conversation System](conversation.md) — Strategies (Window, Token, Filter, Summary) and composable middleware
+- [Checkpointing](checkpoint.md) — Durable versioned state with history and point-in-time recovery for handoffs and your own resumable work
 - [Long-Term Memory](memory.md) — Long-term knowledge storage with Remember/Recall tools
 - [Redis Providers](redis.md) — Redis-backed conversation store and vector store
 - [Tool System](tools.md) — Typed tools, schema generation, and tool choice
@@ -70,12 +71,10 @@ Each provider and driver is a separate module — you only pull the dependencies
 - [Prometheus Metrics](metrics.md) — Counters and histograms for agent lifecycle events
 - [OTEL Metrics](metrics-otel.md) — OpenTelemetry metrics exporter for OTLP-compatible backends
 - [CloudWatch Metrics](metrics-cloudwatch.md) — AWS CloudWatch metrics exporter with buffered flush
-- [Graph Workflows](graph.md) — DAG-based state machines with data-flow scheduling, conditional routing, and typed state
 - [HTTP & Multi-Tenant Environments](http.md) — `WithSharedConversation`, `WithConversationID`, and serving multiple users
 - [Multi-Agent HTTP Server with Fiber v3](fiber-multi-agent.md) — Streaming multi-agent server with per-user conversations
 - [Handoffs](handoff.md) — Pausing agents for human input and resuming
 - [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern
 - [MCP Integration](mcp.md) — Connect to MCP servers and use their tools
 - [Agent Context](invocation-context.md) — Per-invocation state sharing
-- [AWS Bedrock AgentCore](agentcore.md) — AgentCore-backed conversation store, browser tool, and code interpreter
 - [Agent-to-Agent (A2A) Protocol](a2a.md) — Remote agent clients, local agent hosting, and multi-server setup

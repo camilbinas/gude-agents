@@ -1,243 +1,334 @@
-# Automated release workflow for the gude-agents multi-module Go repository.
+# Lockstep release workflow for the multi-module gude-agents repository.
 #
-# Trigger: push to master with conventional commit messages.
-# Behavior:
-#   1. Cleans up any stale bump commit/tags from previous failed runs.
-#   2. Parses commits since the last root tag to determine the version bump.
-#   3. Verifies the code builds and tests pass (using go.work).
-#   4. Updates every submodule's go.mod to require the new root version.
-#   5. Commits the go.mod changes, creates all tags, and pushes atomically.
-#   6. Creates a GitHub Release with auto-generated notes.
+# Goal: use go.work to validate all local modules together, then publish every
+# published module at one shared version with its intra-repository requirements
+# updated to that same version. Examples and integration remain local-only.
 #
 # Conventional commit prefixes:
-#   feat:     → minor bump   (0.3.0 → 0.4.0)
-#   fix:      → patch bump   (0.3.0 → 0.3.1)
-#   refactor: → patch bump   (0.3.0 → 0.3.1)
-#   feat!: or BREAKING CHANGE → major bump (0.3.0 → 1.0.0)
-
+#   feat:                    -> minor bump (0.3.0 -> 0.4.0)
+#   fix:, refactor:, perf:   -> patch bump (0.3.0 -> 0.3.1)
+#   feat! or BREAKING CHANGE -> major bump (0.3.0 -> 1.0.0)
+#
+# The breaking-change signals are supported for future use, but current pre-v1
+# development does not emit them.
 name: Release
 
 on:
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate a calculated release without committing, tagging, or publishing it.
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ROOT_MODULE: github.com/camilbinas/gude-agents
+  UNPUBLISHED_MODULES: '^(examples|integration)$'
+
 jobs:
   release:
+    # Release commits do not trigger another push release. Manual runs remain
+    # available so operators can validate a release with dry_run enabled.
+    if: "github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore: release ')"
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      # Clean up any stale bump commit pushed by a previous failed run.
-      # A stale bump commit has the message "chore: bump module versions to vX.Y.Z"
-      # but no corresponding tag yet. We revert it so the version calculation
-      # starts from a clean state.
-      - name: Clean up stale bump commit
+      # go.work is the local-development overlay: it makes every workspace
+      # module resolve to this checkout, independent of the versions recorded
+      # in go.mod. The tag/manifest logic below deliberately uses tracked
+      # go.mod files instead, since those are the independently published units.
+      - name: Discover workspace and published modules
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
 
-          LAST_MSG=$(git log -1 --pretty=format:"%s")
-          if echo "$LAST_MSG" | grep -qE '^chore: bump module versions to v'; then
-            BUMP_VERSION=$(echo "$LAST_MSG" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
-            # Check if the tag for this version exists — if not, it's a stale bump.
-            if ! git tag --list "$BUMP_VERSION" | grep -q "$BUMP_VERSION"; then
-              echo "Reverting stale bump commit for $BUMP_VERSION"
-              git revert --no-edit HEAD
-              git push origin master
-            fi
+          git ls-files -- 'go.mod' '**/go.mod' \
+            | while read -r go_mod; do dirname "$go_mod"; done \
+            | sort -u > "$RUNNER_TEMP/all-modules.txt"
+
+          grep -vxE "$UNPUBLISHED_MODULES" "$RUNNER_TEMP/all-modules.txt" \
+            > "$RUNNER_TEMP/published-modules.txt"
+
+          go work edit -json \
+            | jq -r '.Use[]?.DiskPath' \
+            | sed -e 's|^\./||' -e 's|/$||' \
+            | sort -u > "$RUNNER_TEMP/workspace-modules.txt"
+
+          missing=$(comm -23 "$RUNNER_TEMP/all-modules.txt" "$RUNNER_TEMP/workspace-modules.txt")
+          if [ -n "$missing" ]; then
+            echo "::error::Tracked modules missing from go.work:"
+            printf '%s\n' "$missing"
+            exit 1
           fi
 
-      - name: Determine version bump
-        id: bump
+          while read -r module_dir; do
+            (cd "$module_dir" && go mod edit -json | jq -r '.Module.Path')
+          done < "$RUNNER_TEMP/published-modules.txt" \
+            | sort -u > "$RUNNER_TEMP/published-module-paths.txt"
+
+          echo "Workspace modules: $(wc -l < "$RUNNER_TEMP/all-modules.txt")"
+          echo "Published modules: $(wc -l < "$RUNNER_TEMP/published-modules.txt")"
+
+      # Conventional commits determine the shared release version. feat! and
+      # BREAKING CHANGE are supported for future major releases, even though
+      # current pre-v1 development does not emit those markers.
+      - name: Determine shared version
+        id: version
         run: |
-          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="v0.0.0"
+          set -euo pipefail
+
+          latest_tag=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -1 || true)
+          if [ -z "$latest_tag" ]; then
+            latest_tag=v0.0.0
+            commit_range=HEAD
+          else
+            commit_range="${latest_tag}..HEAD"
           fi
-          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
-          VERSION="${LATEST_TAG#v}"
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          PATCH=$(echo "$VERSION" | cut -d. -f3)
+          bump=none
+          while IFS= read -r -d '' message; do
+            [ -n "${message//[[:space:]]/}" ] || continue
+            subject=${message%%$'\n'*}
 
-          BUMP="none"
-          COMMITS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%s" -- . 2>/dev/null || git log --pretty=format:"%s" -- .)
+            if printf '%s' "$subject" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
+              || printf '%s\n' "$message" | grep -qE '^BREAKING[ -]CHANGE:'; then
+              bump=major
+              break
+            elif printf '%s' "$subject" | grep -qE '^feat(\([^)]*\))?:'; then
+              bump=minor
+            elif [ "$bump" = none ] && printf '%s' "$subject" | grep -qE '^(fix|refactor|perf)(\([^)]*\))?:'; then
+              bump=patch
+            fi
+          done < <(git log -z --format=%B "$commit_range"; printf '\0')
 
-          while IFS= read -r msg; do
-            if echo "$msg" | grep -qE '^[a-z]+(\(.+\))?!:' || echo "$msg" | grep -q 'BREAKING CHANGE'; then
-              BUMP="major"; break
-            fi
-            if echo "$msg" | grep -qE '^feat(\(.+\))?:'; then
-              [ "$BUMP" != "major" ] && BUMP="minor"
-            fi
-            if echo "$msg" | grep -qE '^fix(\(.+\))?:'; then
-              [ "$BUMP" = "none" ] && BUMP="patch"
-            fi
-            if echo "$msg" | grep -qE '^refactor(\(.+\))?:'; then
-              [ "$BUMP" = "none" ] && BUMP="patch"
-            fi
-          done <<< "$COMMITS"
-
-          if [ "$BUMP" = "none" ]; then
-            echo "No conventional commits — skipping release."
+          if [ "$bump" = none ]; then
+            echo "No releasable conventional commits since $latest_tag."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
+          version=${latest_tag#v}
+          major=${version%%.*}
+          rest=${version#*.}
+          minor=${rest%%.*}
+          patch=${rest#*.}
+
+          case "$bump" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
           esac
 
-          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          new_version="v${major}.${minor}.${patch}"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "Bump: $BUMP — $LATEST_TAG → $NEW_VERSION"
+          echo "Releasing $new_version from $latest_tag ($bump)."
 
-      # Build and test BEFORE touching go.mod or creating any tags.
-      # Uses go.work so local modules resolve without published tags.
-      #
-      # GOPRIVATE marks our own module path as private so Go does not
-      # consult sum.golang.org or proxy.golang.org to verify in-tree
-      # versions. Without it, Go tries to verify each submodule's go.mod
-      # requirement (e.g. github.com/camilbinas/gude-agents v0.68.0)
-      # against the sum DB, which fails on the release commit that first
-      # introduces the new version because the sum DB hasn't ingested it
-      # yet. External dependencies (AWS SDK, rapid, etc.) still go through
-      # the public proxy and sum DB normally.
-      #
-      # GOTOOLCHAIN=local prevents Go from auto-downloading a different
-      # toolchain if a transitive dep declares a newer go directive than
-      # the one setup-go installed — surface that as a hard error.
-      - name: Verify build and tests
-        if: steps.bump.outputs.skip == 'false'
+      # A version is immutable. A partial historical release is never repaired
+      # automatically: any occupied root or module tag blocks this run.
+      - name: Check target tags are unused
+        if: steps.version.outputs.skip == 'false'
         env:
-          GOPRIVATE: 'github.com/camilbinas/*'
-          GOTOOLCHAIN: 'local'
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: |
-          GOWORK=$(pwd)/go.work go build ./agent/...
-          GOWORK=$(pwd)/go.work go vet ./agent/...
-          GOWORK=$(pwd)/go.work go test ./agent/... ./agent/graph/... ./agent/logging/slog/...
+          set -euo pipefail
 
-      # Everything below only runs if build+tests pass.
-      # go.mod bump, tags, and push are done atomically so a failure
-      # in any step doesn't leave the repo in a half-released state.
-
-      - name: Update submodule go.mod files
-        if: steps.bump.outputs.skip == 'false'
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
-          ROOT_MODULE="github.com/camilbinas/gude-agents"
-          SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
-
-          # Update root module references in all submodule go.mod files.
-          for sub in $SUBMODULES; do
-            GOMOD="$sub/go.mod"
-            if [ -f "$GOMOD" ]; then
-              # Update root module reference.
-              sed -i "s|${ROOT_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${ROOT_MODULE} ${NEW_VERSION}|g" "$GOMOD"
-              # Update cross-submodule references
-              for dep in $SUBMODULES; do
-                DEP_MODULE="${ROOT_MODULE}/${dep}"
-                sed -i "s|${DEP_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${DEP_MODULE} ${NEW_VERSION}|g" "$GOMOD"
-              done
-              echo "  Updated $GOMOD"
+          while read -r module_dir; do
+            if [ "$module_dir" = . ]; then
+              echo "$NEW_VERSION"
+            else
+              echo "${module_dir}/${NEW_VERSION}"
             fi
-          done
+          done < "$RUNNER_TEMP/published-modules.txt" > "$RUNNER_TEMP/tags.txt"
 
-          if [ -f "examples/go.mod" ]; then
-            sed -i "s|${ROOT_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${ROOT_MODULE} ${NEW_VERSION}|g" examples/go.mod
-            for sub in $SUBMODULES; do
-              SUB_MODULE="${ROOT_MODULE}/${sub}"
-              sed -i "s|${SUB_MODULE} v[0-9]*\.[0-9]*\.[0-9]*|${SUB_MODULE} ${NEW_VERSION}|g" examples/go.mod
-            done
+          clashes=()
+          while read -r tag; do
+            if git show-ref --verify --quiet "refs/tags/$tag" \
+              || git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" >/dev/null 2>&1; then
+              clashes+=("$tag")
+            fi
+          done < "$RUNNER_TEMP/tags.txt"
+
+          if [ "${#clashes[@]}" -gt 0 ]; then
+            echo "::error::Refusing to publish an occupied or partial version:"
+            printf '  %s\n' "${clashes[@]}"
+            exit 1
           fi
 
-      - name: Commit, tag, and push atomically
-        if: steps.bump.outputs.skip == 'false'
+      # Validate local source using the workspace before release metadata is
+      # changed. Unpublished examples/integration are compiled and vetted, but
+      # their test binaries are not executed in the release job.
+      - name: Verify workspace modules
+        if: steps.version.outputs.skip == 'false'
         env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+          GOTOOLCHAIN: local
         run: |
+          set -euo pipefail
+          workspace="$PWD/go.work"
+          failed=()
+
+          while read -r module_dir; do
+            echo "::group::verify $module_dir"
+            ok=true
+            (cd "$module_dir" && GOWORK="$workspace" go build ./...) || ok=false
+            (cd "$module_dir" && GOWORK="$workspace" go vet ./...) || ok=false
+
+            case "$module_dir" in
+              examples|integration)
+                (cd "$module_dir" && GOWORK="$workspace" go test -run '^$' ./...) || ok=false
+                ;;
+              *)
+                (cd "$module_dir" && GOWORK="$workspace" go test ./...) || ok=false
+                ;;
+            esac
+
+            echo "::endgroup::"
+            if [ "$ok" != true ]; then
+              failed+=("$module_dir")
+            fi
+          done < "$RUNNER_TEMP/all-modules.txt"
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::Module verification failed: ${failed[*]}"
+            exit 1
+          fi
+
+      # Only existing edges between published modules are rewritten. The root
+      # module is in published-modules.txt, so its logging-module requirements
+      # are updated too. Internal local replace directives are removed because
+      # consumers ignore replacements declared by dependency modules.
+      - name: Rewrite and verify internal module requirements
+        if: steps.version.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+
+          while read -r module_dir; do
+            mapfile -t requirements < <(
+              (cd "$module_dir" && go mod edit -json | jq -r '.Require[]?.Path')
+            )
+            mapfile -t replacements < <(
+              (cd "$module_dir" && go mod edit -json \
+                | jq -r '.Replace[]? | [.Old.Path, (.Old.Version // "")] | @tsv')
+            )
+
+            args=()
+            while read -r internal_path; do
+              if printf '%s\n' "${requirements[@]}" | grep -qxF "$internal_path"; then
+                args+=("-require=${internal_path}@${NEW_VERSION}")
+              fi
+            done < "$RUNNER_TEMP/published-module-paths.txt"
+
+            for replacement in "${replacements[@]}"; do
+              old_path=${replacement%%$'\t'*}
+              old_version=${replacement#*$'\t'}
+              if grep -qxF "$old_path" "$RUNNER_TEMP/published-module-paths.txt"; then
+                key=$old_path
+                if [ -n "$old_version" ]; then key="${key}@${old_version}"; fi
+                args+=("-dropreplace=${key}")
+              fi
+            done
+
+            if [ "${#args[@]}" -gt 0 ]; then
+              (cd "$module_dir" && go mod edit "${args[@]}")
+            fi
+          done < "$RUNNER_TEMP/published-modules.txt"
+
+          errors=()
+          while read -r module_dir; do
+            module_json=$(cd "$module_dir" && go mod edit -json)
+
+            while read -r internal_path; do
+              required_version=$(jq -r --arg path "$internal_path" \
+                '.Require[]? | select(.Path == $path) | .Version' <<< "$module_json")
+              if [ -n "$required_version" ] && [ "$required_version" != "$NEW_VERSION" ]; then
+                errors+=("$module_dir requires $internal_path@$required_version, expected $NEW_VERSION")
+              fi
+            done < "$RUNNER_TEMP/published-module-paths.txt"
+
+            retained_replace=$(jq -r --arg root "$ROOT_MODULE" \
+              '.Replace[]?.Old.Path | select(. == $root or startswith($root + "/"))' <<< "$module_json")
+            if [ -n "$retained_replace" ]; then
+              errors+=("$module_dir retains internal replace(s): $retained_replace")
+            fi
+          done < "$RUNNER_TEMP/published-modules.txt"
+
+          if [ "${#errors[@]}" -gt 0 ]; then
+            echo "::error::Release metadata invariant failed:"
+            printf '  %s\n' "${errors[@]}"
+            exit 1
+          fi
+
+          unexpected=$(git diff --name-only | grep -vE '(^|/)go\.mod$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Version rewrite changed files other than go.mod:"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+
+      # A manual dry run exercises the same discovery, verification, and
+      # metadata-rewrite path as a publish, but deliberately leaves no commit,
+      # tags, or GitHub Release behind.
+      - name: Report dry run
+        if: steps.version.outputs.skip == 'false' && github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: echo "Dry run completed for ${NEW_VERSION}; no release was published."
+
+      - name: Commit, tag, and push atomically
+        if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add -A .
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: bump module versions to ${NEW_VERSION}"
-          fi
-
-          # Delete stale local tags from previous failed runs.
-          git tag -d "$NEW_VERSION" 2>/dev/null || true
-
-          # Root tag.
-          git tag "$NEW_VERSION"
-
-          # Submodule tags.
-          SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||' | grep -v -E '^(examples|integration)$')
-          for sub in $SUBMODULES; do
-            git tag -d "${sub}/${NEW_VERSION}" 2>/dev/null || true
-            git tag "${sub}/${NEW_VERSION}"
-          done
-
-          # Push commit and all tags together.
-          git push origin master
-          git push origin --tags
-
-      # Post-release: now that the new version tag exists on the remote, run
-      # go mod tidy in every submodule so each go.sum records the new parent
-      # version's hashes. This runs AFTER tags are pushed so the version
-      # resolves correctly (the tag chicken-and-egg is why tidy cannot run
-      # during the atomic bump step). Changes are committed in a follow-up
-      # commit; a failure here does not invalidate the release that already
-      # shipped.
-      - name: Sync submodule go.sum (post-tag tidy)
-        if: steps.bump.outputs.skip == 'false'
-        env:
-          GOPRIVATE: 'github.com/camilbinas/*'
-          GOFLAGS: '-mod=mod'
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
-          # Ensure the freshly pushed tags are resolvable from the module proxy
-          # path (direct VCS) before tidying.
-          export GOPROXY=direct
-
-          SUBMODULES=$(grep -E '^\s+\./' go.work | sed 's/^[[:space:]]*//' | sed 's|^./||')
-          for sub in $SUBMODULES; do
-            if [ -f "$sub/go.mod" ]; then
-              echo "  go mod tidy in $sub"
-              (cd "$sub" && GOWORK=off go mod tidy) || echo "  WARN: tidy failed in $sub (non-fatal)"
+          while read -r module_dir; do
+            if [ "$module_dir" = . ]; then
+              git add go.mod
+            else
+              git add "$module_dir/go.mod"
             fi
-          done
-          GOWORK=off go mod tidy || echo "  WARN: root tidy failed (non-fatal)"
+          done < "$RUNNER_TEMP/published-modules.txt"
 
-          if ! git diff --quiet; then
-            git add -A .
-            git commit -m "chore: sync go.sum after ${NEW_VERSION} release"
-            git push origin master
-          else
-            echo "go.sum already in sync — nothing to commit."
-          fi
+          git diff --cached --quiet || git commit -m "chore: release ${NEW_VERSION}"
 
-      - name: Create GitHub Release
-        if: steps.bump.outputs.skip == 'false'
+          refs=(HEAD:master)
+          while read -r tag; do
+            git tag "$tag"
+            refs+=("refs/tags/${tag}:refs/tags/${tag}")
+          done < "$RUNNER_TEMP/tags.txt"
+
+          git push --atomic origin "${refs[@]}"
+
+      - name: Create GitHub release
+        if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-          LATEST_TAG: ${{ steps.bump.outputs.latest_tag }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          LATEST_TAG: ${{ steps.version.outputs.latest_tag }}
         run: |
           gh release create "$NEW_VERSION" \
             --title "$NEW_VERSION" \

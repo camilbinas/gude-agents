@@ -5,7 +5,7 @@
 //
 //	exp := utils.NewTreeExporter()
 //	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
-//	// ... run agent/graph ...
+//	// ... run an agent ...
 //	exp.Flush() // renders all collected traces as trees
 package utils
 
@@ -51,7 +51,7 @@ func (e *TreeExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlyS
 }
 
 // Flush renders all collected traces as trees to stderr and clears the buffer.
-// Call this after an agent invocation or graph run completes.
+// Call this after an agent invocation completes.
 func (e *TreeExporter) Flush() {
 	e.mu.Lock()
 	traces := e.traces
@@ -206,8 +206,6 @@ func formatAttrs(s sdktrace.ReadOnlySpan) string {
 			parts = append(parts, fmt.Sprintf("conv=%s", a.Value.AsString()))
 		case "retriever.document_count":
 			parts = append(parts, fmt.Sprintf("docs=%d", a.Value.AsInt64()))
-		case "graph.iterations":
-			parts = append(parts, fmt.Sprintf("steps=%d", a.Value.AsInt64()))
 		}
 	}
 	return strings.Join(parts, " ")

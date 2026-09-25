@@ -843,3 +843,47 @@ func TestInvoke_DifferentOverridesPerCall(t *testing.T) {
 		t.Errorf("captured = %v, want [variant-A variant-B]", p.captured)
 	}
 }
+
+func TestSetConversationSupportsRegisteredBackgroundTools(t *testing.T) {
+	handlerDone := make(chan struct{})
+	sp := newScriptedProvider(
+		&ProviderResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}},
+		&ProviderResponse{Text: "initial response"},
+		&ProviderResponse{Text: "background response"},
+	)
+
+	a, err := New(sp, prompt.Text("sys"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetConversation(newTestMemoryStore())
+
+	backgroundTool := tool.NewBackgroundRaw(
+		"background",
+		"Runs in the background",
+		"Background work started.",
+		nil,
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			close(handlerDone)
+			return "finished", nil
+		},
+	)
+	if err := a.RegisterTool(backgroundTool); err != nil {
+		t.Fatalf("RegisterTool returned an error after SetConversation: %v", err)
+	}
+
+	result, err := a.Invoke(Background().WithConversationID("conv-1"), "start background work")
+	if err != nil {
+		t.Fatalf("Invoke returned an error: %v", err)
+	}
+	if result != "initial response" {
+		t.Fatalf("expected initial response, got %q", result)
+	}
+
+	a.Close()
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("background handler did not run")
+	}
+}

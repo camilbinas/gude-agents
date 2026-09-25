@@ -36,9 +36,8 @@ go get github.com/camilbinas/gude-agents/agent/rag/postgres         # PostgreSQL
 # Optional: MCP tool integration
 go get github.com/camilbinas/gude-agents/agent/mcp
 
-# Optional: AgentCore and A2A
-go get github.com/camilbinas/gude-agents/agent/agentcore  # AWS Bedrock AgentCore integration
-go get github.com/camilbinas/gude-agents/agent/a2a        # Agent-to-Agent (A2A) protocol
+# Optional: Agent-to-Agent (A2A) protocol
+go get github.com/camilbinas/gude-agents/agent/a2a
 ```
 
 Each module only pulls the dependencies it needs — using Bedrock won't download the OpenAI or Gemini SDKs.

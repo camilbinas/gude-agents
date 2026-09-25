@@ -1,2 +1,4 @@
+github.com/camilbinas/gude-agents/agent/logging/debug v0.81.0/go.mod h1:G6eHg6Hl/V5hegQryWb01CYNH/kUE+afffDQNfcAKVQ=
+github.com/camilbinas/gude-agents/agent/logging/slog v0.81.0/go.mod h1:ilPOsfez6ziFx8SpOpu9IubyIV19py99J4/OJNknuoQ=
 pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=
 pgregory.net/rapid v1.2.0/go.mod h1:PY5XlDGj0+V1FCq0o192FdRhpKHGTRIWBgqjDBTrq04=

@@ -64,7 +64,7 @@ type lifecycleEvent struct {
 // genLifecycleEvent generates a random lifecycle event with random parameters.
 func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 	prefix := fmt.Sprintf("evt_%d", idx)
-	eventType := rapid.IntRange(0, 15).Draw(t, prefix+"_type")
+	eventType := rapid.IntRange(0, 12).Draw(t, prefix+"_type")
 
 	switch eventType {
 	case 0: // InvokeStart
@@ -215,58 +215,13 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			fire:          func(h *slogHook) { h.OnRetrieverEnd(err, docCount, dur) },
 			err:           err,
 		}
-	case 12: // MaxIterationsExceeded
+	default: // MaxIterationsExceeded
 		limit := rapid.IntRange(1, 100).Draw(t, prefix+"_limit")
 		return lifecycleEvent{
 			name:          "max_iterations_exceeded",
 			category:      "warn",
 			expectedLevel: slog.LevelWarn,
 			fire:          func(h *slogHook) { h.OnMaxIterationsExceeded(limit) },
-		}
-	case 13: // GraphRunStart
-		return lifecycleEvent{
-			name:          "graph.run.start",
-			category:      "start",
-			expectedLevel: slog.LevelDebug,
-			fire:          func(h *slogHook) { h.OnGraphRunStart() },
-		}
-	case 14: // GraphRunEnd
-		err := genError(t, prefix)
-		iterations := rapid.IntRange(0, 100).Draw(t, prefix+"_iterations")
-		dur := genDuration(t, prefix+"_dur")
-		lvl := slog.LevelInfo
-		if err != nil {
-			lvl = slog.LevelError
-		}
-		return lifecycleEvent{
-			name:          "graph.run.end",
-			category:      "end",
-			expectedLevel: lvl,
-			fire:          func(h *slogHook) { h.OnGraphRunEnd(err, iterations, agent.TokenUsage{}, dur) },
-			err:           err,
-		}
-	case 15: // NodeStart
-		nodeName := genString(t, prefix+"_node")
-		return lifecycleEvent{
-			name:          "graph.node.start",
-			category:      "start",
-			expectedLevel: slog.LevelDebug,
-			fire:          func(h *slogHook) { h.OnNodeStart(nodeName) },
-		}
-	default: // NodeEnd
-		nodeName := genString(t, prefix+"_node")
-		err := genError(t, prefix)
-		dur := genDuration(t, prefix+"_dur")
-		lvl := slog.LevelInfo
-		if err != nil {
-			lvl = slog.LevelError
-		}
-		return lifecycleEvent{
-			name:          "graph.node.end",
-			category:      "end",
-			expectedLevel: lvl,
-			fire:          func(h *slogHook) { h.OnNodeEnd(nodeName, err, dur) },
-			err:           err,
 		}
 	}
 }

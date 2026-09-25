@@ -35,3 +35,50 @@ func TestProperty_WidgetBlockValidateRejectsEmptyType(t *testing.T) {
 		}
 	})
 }
+
+func TestDocumentSourceValidateProviderReferences(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  DocumentSource
+		wantErr string
+	}{
+		{
+			name:   "provider file ID",
+			source: DocumentSource{FileID: "file_abc123"},
+		},
+		{
+			name:   "Bedrock S3 URI with bucket owner",
+			source: DocumentSource{S3URI: "s3://example-bucket/reports/quarterly.pdf", S3BucketOwner: "123456789012"},
+		},
+		{
+			name:    "missing source",
+			source:  DocumentSource{S3BucketOwner: "123456789012"},
+			wantErr: "document source: one of Data, Base64, URL, FileID, or S3URI must be set",
+		},
+		{
+			name:    "multiple provider sources",
+			source:  DocumentSource{FileID: "file_abc123", S3URI: "s3://example-bucket/report.pdf"},
+			wantErr: "document source: only one of Data, Base64, URL, FileID, or S3URI may be set",
+		},
+		{
+			name:    "invalid S3 scheme",
+			source:  DocumentSource{S3URI: "https://example-bucket.s3.amazonaws.com/report.pdf"},
+			wantErr: "document source: S3URI must start with s3://",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.source.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() returned unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

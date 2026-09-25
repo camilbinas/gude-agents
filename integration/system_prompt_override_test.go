@@ -14,10 +14,6 @@ import (
 // Context.WithSystemPromptOverride takes precedence over the agent's
 // configured instructions for a single invocation, and that subsequent
 // invocations on the same agent return to the configured instructions.
-//
-// The override mechanism is the foundation for AgentCore A/B testing,
-// where each request can route to a different system prompt without
-// rebuilding the agent.
 func TestIntegration_SystemPromptOverride(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)

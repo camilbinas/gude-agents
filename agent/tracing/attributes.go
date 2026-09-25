@@ -32,7 +32,6 @@ const (
 	AttrRetrieverDocumentCount    = "retriever.document_count"
 	AttrAgentImageCount           = "agent.image_count"
 	AttrAgentDocumentCount        = "agent.document_count"
-	AttrGraphIterations           = "graph.iterations"
 )
 
 // Content capture attributes (opt-in via WithContentCapture).

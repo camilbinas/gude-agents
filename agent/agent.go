@@ -71,7 +71,9 @@ type Agent struct {
 	handoffStore HandoffStore // nil = caller manages HandoffRequest persistence
 
 	// Background tools
-	backgroundRegistry *backgroundRegistry                       // nil until a Background_Tool is registered; manages dispatch, locks, and shutdown
+	// backgroundRegistry is created whenever a conversation store is configured.
+	// It manages background dispatch, per-conversation locks, and shutdown.
+	backgroundRegistry *backgroundRegistry
 	bgNotify           func(conversationID, agentMessage string) // Notify_Callback set via WithBackgroundNotify; wired onto the registry at construction
 }
 
@@ -142,8 +144,7 @@ func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool,
 }
 
 // ---------------------------------------------------------------------------
-// Accessor methods — used by subpackages (graph) that need read access
-// to agent internals without touching unexported fields.
+// Accessor methods for subpackages that need read access to agent internals.
 // ---------------------------------------------------------------------------
 
 // Name returns the agent's name, or empty if not set.
@@ -183,8 +184,7 @@ func (a *Agent) instructionsFor(c *Context) string {
 
 // SetInstructions atomically updates the agent's system prompt. Subsequent
 // invocations use the new value; in-flight invocations continue with the
-// value they read at start. Intended for hot-reload scenarios such as
-// AgentCore configuration bundle updates. Safe for concurrent use.
+// value they read at start. Safe for concurrent use.
 func (a *Agent) SetInstructions(s string) {
 	a.instructions.Store(&s)
 }
@@ -233,7 +233,9 @@ func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
 // RegisterTool adds a tool to the agent. Returns an error if a tool with the
 // same name is already registered or if Background_Tool prerequisites are not met.
 func (a *Agent) RegisterTool(t tool.Tool) error {
-	// Validate Background_Tool prerequisites before acquiring the lock or mutating state.
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
+
 	if t.IsBackground() {
 		if t.Ack() == "" {
 			return fmt.Errorf("tool %q: background tools require a non-empty ack string", t.Spec.Name)
@@ -244,10 +246,14 @@ func (a *Agent) RegisterTool(t tool.Tool) error {
 		if a.conversation == nil {
 			return fmt.Errorf("tool %q: background tools require a conversation store; use WithConversation or WithSharedConversation", t.Spec.Name)
 		}
+		// SetConversation may attach a store after New. Keep registration
+		// self-contained so a background tool can never reach dispatch with a
+		// nil registry.
+		if a.backgroundRegistry == nil {
+			a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
+		}
 	}
 
-	a.toolsMu.Lock()
-	defer a.toolsMu.Unlock()
 	if _, exists := a.tools[t.Spec.Name]; exists {
 		return fmt.Errorf("duplicate tool name: %q", t.Spec.Name)
 	}
@@ -259,11 +265,19 @@ func (a *Agent) RegisterTool(t tool.Tool) error {
 // HasConversation reports whether the agent has a conversation store configured.
 func (a *Agent) HasConversation() bool { return a.conversation != nil }
 
-// SetConversation sets the agent's conversation store. This is intended for use
-// by runtime adapters (e.g. agentcore) that need to wire a conversation store
-// after construction. It operates as a shared conversation (no default ID).
+// SetConversation sets the agent's conversation store after construction. It
+// operates as a shared conversation (no default ID) and prepares the registry
+// required for background tools and per-conversation serialization. Configure
+// the conversation before invoking the agent; runtime reconfiguration is not
+// safe to perform concurrently with invocations.
 func (a *Agent) SetConversation(c Conversation) {
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
+
 	a.conversation = c
+	if c != nil && a.backgroundRegistry == nil {
+		a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
+	}
 }
 
 // InferenceConfig returns the agent's inference config, or nil if none is set.

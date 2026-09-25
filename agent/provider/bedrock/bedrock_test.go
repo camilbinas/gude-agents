@@ -828,3 +828,47 @@ func TestToBedrockImageFormat_AllMIMETypes(t *testing.T) {
 		})
 	}
 }
+
+func TestToBedrockContentBlocks_DocumentS3Location(t *testing.T) {
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
+		S3URI:         "s3://example-bucket/reports/quarterly.pdf",
+		S3BucketOwner: "123456789012",
+		MIMEType:      "application/pdf",
+		Name:          "quarterly.pdf",
+	}}}, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	doc, ok := blocks[0].(*types.ContentBlockMemberDocument)
+	if !ok {
+		t.Fatalf("expected *ContentBlockMemberDocument, got %T", blocks[0])
+	}
+	if aws.ToString(doc.Value.Name) != "quarterly" {
+		t.Errorf("Name = %q, want %q", aws.ToString(doc.Value.Name), "quarterly")
+	}
+	if doc.Value.Format != types.DocumentFormatPdf {
+		t.Errorf("Format = %q, want %q", doc.Value.Format, types.DocumentFormatPdf)
+	}
+	s3, ok := doc.Value.Source.(*types.DocumentSourceMemberS3Location)
+	if !ok {
+		t.Fatalf("expected *DocumentSourceMemberS3Location, got %T", doc.Value.Source)
+	}
+	if aws.ToString(s3.Value.Uri) != "s3://example-bucket/reports/quarterly.pdf" {
+		t.Errorf("URI = %q, want %q", aws.ToString(s3.Value.Uri), "s3://example-bucket/reports/quarterly.pdf")
+	}
+	if aws.ToString(s3.Value.BucketOwner) != "123456789012" {
+		t.Errorf("BucketOwner = %q, want %q", aws.ToString(s3.Value.BucketOwner), "123456789012")
+	}
+}
+
+func TestToBedrockContentBlocks_DocumentFileIDRejected(t *testing.T) {
+	_, err := toBedrockContentBlocks([]agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
+		FileID: "file_abc123",
+	}}}, "", false)
+	if err == nil || err.Error() != "DocumentBlock: Bedrock does not support provider file IDs" {
+		t.Fatalf("error = %v, want provider file ID rejection", err)
+	}
+}

@@ -2,9 +2,7 @@ module github.com/camilbinas/gude-agents/agent/eval
 
 go 1.25.0
 
-replace github.com/camilbinas/gude-agents => ../../
-
 require (
-	github.com/camilbinas/gude-agents v0.82.0-00010101000000-000000000000
+	github.com/camilbinas/gude-agents v0.83.2
 	pgregory.net/rapid v1.2.0
 )

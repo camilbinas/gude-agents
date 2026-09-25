@@ -21,8 +21,6 @@ type ApprovalRequest struct {
 	ConversationID string
 	// Messages is the full conversation snapshot at the point of the pause.
 	Messages []Message
-	// NodeName is set by the graph layer to scope the approval to the correct node.
-	NodeName string
 }
 
 // GetApprovalRequest extracts the ApprovalRequest from a *Context.
