@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/tokencount/tiktoken
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.83.1
+	github.com/camilbinas/gude-agents v0.83.2
 	github.com/pkoukk/tiktoken-go v0.1.7
 	pgregory.net/rapid v1.2.0
 )
