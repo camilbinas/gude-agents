@@ -488,6 +488,63 @@ Requires `BRAVE_API_KEY` from [brave.com/search/api](https://brave.com/search/ap
 | `WithMaxCharsPerResult(n)` | Max chars per snippet | 300 |
 | `WithClient(c)` | Custom `*http.Client` | — |
 
+#### Serper
+
+```go
+import "github.com/camilbinas/gude-agents/agent/tool/websearch/serper"
+
+searchTool := serper.New(os.Getenv("SERPER_API_KEY"))
+```
+
+Requires `SERPER_API_KEY` from [serper.dev](https://serper.dev).
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithMaxResults(n)` | Max search results | 5 |
+| `WithTimeout(d)` | HTTP request timeout | 10s |
+| `WithMaxCharsPerResult(n)` | Max chars per snippet | 300 |
+| `WithClient(c)` | Custom `*http.Client` | — |
+
+#### SerpAPI
+
+SerpAPI supports 80+ search engines including Google, Google Scholar, Google News, Google Finance, and more.
+
+```go
+import "github.com/camilbinas/gude-agents/agent/tool/websearch/serpapi"
+
+// Web search (Google)
+searchTool := serpapi.New(os.Getenv("SERPAPI_API_KEY"))
+
+// Specialized engines
+newsTool    := serpapi.NewNews(os.Getenv("SERPAPI_API_KEY"))
+scholarTool := serpapi.NewScholar(os.Getenv("SERPAPI_API_KEY"))
+financeTool := serpapi.NewFinance(os.Getenv("SERPAPI_API_KEY"))
+
+// Generic escape hatch for any engine
+flightsTool := serpapi.NewEngine(apiKey, "google_flights", serpapi.EngineConfig{
+    ToolName:    "flights_search",
+    Description: "Search Google Flights for routes and prices.",
+})
+```
+
+Requires `SERPAPI_API_KEY` from [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key).
+
+| Constructor | Tool Name | Engine | Description |
+|-------------|-----------|--------|-------------|
+| `New` | `web_search` | `google` | General web search |
+| `NewNews` | `news_search` | `google_news` | Current news articles |
+| `NewScholar` | `scholar_search` | `google_scholar` | Academic papers with citations |
+| `NewFinance` | `finance_search` | `google_finance` | Stock prices and market data |
+| `NewEngine` | configurable | any | Generic escape hatch for all 80+ engines |
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithMaxResults(n)` | Max search results | 5 |
+| `WithTimeout(d)` | HTTP request timeout | 10s (20s for Scholar) |
+| `WithMaxCharsPerResult(n)` | Max chars per snippet | 300 |
+| `WithEngine(e)` | Search engine (for `New` only) | `"google"` |
+| `WithClient(c)` | Custom `*http.Client` | — |
+
 ## See Also
 
 - [Agent API Reference](agent-api.md) — `agent.New` constructor and how tools are passed to the agent
