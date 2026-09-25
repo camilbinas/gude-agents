@@ -250,9 +250,8 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 
 func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsdk.MessageNewParams {
 	// Anthropic's API requires max_tokens and validates it against each model's
-	// actual output limit. 128000 matches the current max for Claude Sonnet 4.6
-	// and Opus 4.8. For older models with lower limits (e.g. Claude 3 Haiku at
-	// 4096), use WithMaxTokens to set an appropriate value explicitly.
+	// actual output limit. The generic provider default is 128000; model
+	// constructors with lower limits configure their own defaults.
 	var maxTokens int64 = 128000
 	if p.maxTokens != nil {
 		maxTokens = *p.maxTokens
