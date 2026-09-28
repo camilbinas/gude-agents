@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 )
@@ -302,94 +301,6 @@ func NewBackgroundRaw(name, description, ack string, schema map[string]any, hand
 		Handler:      handler,
 		isBackground: true,
 		ack:          ack,
-	}
-	for _, opt := range opts {
-		opt(&t)
-	}
-	return t
-}
-
-// ErrorLogger is an optional callback for reporting errors from background
-// goroutines (e.g. async tools). Matches the Printf signature used by
-// log.Default() and the agent.Logger interface.
-type ErrorLogger func(format string, v ...any)
-
-// AsyncHandler is the function signature for typed async tools.
-// It receives the deserialized input but returns nothing — errors are reported
-// via the optional ErrorLogger, not sent back to the LLM.
-type AsyncHandler[T any] func(ctx context.Context, input T)
-
-// NewAsync creates a Tool whose handler runs in a background goroutine.
-// The LLM receives ack immediately without waiting for the handler to complete.
-// Use this for side effects that don't affect the conversation: CRM updates,
-// webhooks, audit logs, notifications, cache warming, etc.
-//
-// The background goroutine gets a detached context (context.Background) so it
-// isn't cancelled when the HTTP request or agent invocation finishes.
-//
-// If errLogger is nil, handler panics are logged to the default logger.
-func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger, opts ...func(*Tool)) Tool {
-	schema := GenerateSchema[T]()
-	t := Tool{
-		Spec: Spec{
-			Name:        name,
-			Description: description,
-			InputSchema: schema,
-		},
-		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var input T
-			if err := json.Unmarshal(raw, &input); err != nil {
-				return "", fmt.Errorf("unmarshal tool input: %w", err)
-			}
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						if errLogger != nil {
-							errLogger("async tool %q panicked: %v", name, r)
-						} else {
-							log.Printf("[gude-agents] async tool %q panicked: %v", name, r)
-						}
-					}
-				}()
-				handler(context.Background(), input)
-			}()
-			return ack, nil
-		},
-	}
-	for _, opt := range opts {
-		opt(&t)
-	}
-	return t
-}
-
-// NewAsyncRaw creates an async Tool with a raw JSON handler.
-// Like NewAsync but without automatic deserialization.
-// If schema is nil, it defaults to {"type": "object"}.
-func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger, opts ...func(*Tool)) Tool {
-	if schema == nil {
-		schema = map[string]any{"type": "object"}
-	}
-	t := Tool{
-		Spec: Spec{
-			Name:        name,
-			Description: description,
-			InputSchema: schema,
-		},
-		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						if errLogger != nil {
-							errLogger("async tool %q panicked: %v", name, r)
-						} else {
-							log.Printf("[gude-agents] async tool %q panicked: %v", name, r)
-						}
-					}
-				}()
-				handler(context.Background(), raw)
-			}()
-			return ack, nil
-		},
 	}
 	for _, opt := range opts {
 		opt(&t)

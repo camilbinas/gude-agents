@@ -80,8 +80,6 @@ github.com/camilbinas/gude-agents/agent/conversation/postgres v0.81.0 h1:oaaJX/Z
 github.com/camilbinas/gude-agents/agent/conversation/postgres v0.81.0/go.mod h1:z7Y8+3kNQOM4oKXM5bAC/NNVX5MDLOvbTof1HiPb9ZM=
 github.com/camilbinas/gude-agents/agent/conversation/redis v0.81.0 h1:GNRCLrwGtF4rs/qLDSMNgOXyOKnN0ntFrHPs/WnrAV0=
 github.com/camilbinas/gude-agents/agent/conversation/redis v0.81.0/go.mod h1:eklWjgxpMSUitS7HZndyLCHdRG/sYgYxLzV0yLNSLU8=
-github.com/camilbinas/gude-agents/agent/conversation/s3 v0.81.0 h1:QkjU6J4js4KDZMh5TzR+zWNZeuEzQqBZNtNLDD/9JB4=
-github.com/camilbinas/gude-agents/agent/conversation/s3 v0.81.0/go.mod h1:AoMvnK3M37KKEpUmpOvpuTPFYoxb9zvRo1f8uugtpfs=
 github.com/camilbinas/gude-agents/agent/eval v0.81.0 h1:15ZandUP9+m6oNj+kj55SZXVRRQqdZgS134VakvR9AQ=
 github.com/camilbinas/gude-agents/agent/eval v0.81.0/go.mod h1:q4TKBcxwV4mriBlAsA2aWOPh1tkrn917uN+jLpROrkI=
 github.com/camilbinas/gude-agents/agent/logging/debug v0.81.0 h1:Qex7I+him1czOul5+qbyhHICkOqleegEng632Nbo0Kw=

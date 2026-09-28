@@ -1,6 +1,6 @@
 # Conversation System
 
-The conversation system gives agents multi-turn conversation support. It handles loading previous messages before each LLM call and saving the updated conversation afterward. The `conversation` package ships with an in-memory store, six persistent drivers, and four composable strategies that control what gets sent to the model.
+The conversation system gives agents multi-turn conversation support. It handles loading previous messages before each LLM call and saving the updated conversation afterward. The `conversation` package ships with an in-memory store, five persistent drivers, and four composable strategies that control what gets sent to the model.
 
 ## Conversation Interface
 
@@ -307,39 +307,22 @@ For production use cases where conversation history must survive process restart
 
 ### Provider Comparison
 
-| Feature | In-Memory | Disk | SQLite | PostgreSQL | Redis | DynamoDB | S3 |
-|---|---|---|---|---|---|---|---|
-| **Package** | `agent/conversation` | `agent/conversation/disk` | `agent/conversation/sqlite` | `agent/conversation/postgres` | `agent/conversation/redis` | `agent/conversation/dynamodb` | `agent/conversation/s3` |
-| **Persistence** | No | File per conversation | Single database file | PostgreSQL server | Redis server | AWS DynamoDB table | S3-compatible bucket |
-| **External service** | None | None | None | PostgreSQL | Redis | DynamoDB | AWS S3 |
-| **TTL / auto-expiry** | — | — | — | — | ✓ | ✓ | Via lifecycle rules |
-| **Key prefix** | — | — | — | — | ✓ | ✓ | ✓ |
-| **Custom endpoint** | — | — | — | — | — | ✓ | ✓ |
-| **ACID transactions** | — | Atomic rename | ✓ (WAL mode) | ✓ (full) | — | ✓ (single-item) | — |
-| **Concurrent access** | `sync.RWMutex` | `sync.RWMutex` | SQLite WAL | MVCC | Redis single-thread | DynamoDB | S3 |
-| **Size limits** | Process memory | Filesystem | ~281 TB (SQLite max) | 1 GB per field | Redis `maxmemory` | 400 KB per item | 50 TB per object |
-| **Best for** | Tests, short-lived | CLI tools, dev | Local apps, single-node | Production, multi-node | Multi-process, caching | Serverless, AWS-native | AWS S3, archival |
+| Feature | In-Memory | Disk | SQLite | PostgreSQL | Redis | DynamoDB |
+|---|---|---|---|---|---|---|
+| **Package** | `agent/conversation` | `agent/conversation/disk` | `agent/conversation/sqlite` | `agent/conversation/postgres` | `agent/conversation/redis` | `agent/conversation/dynamodb` |
+| **Persistence** | No | File per conversation | Single database file | PostgreSQL server | Redis server | AWS DynamoDB table |
+| **External service** | None | None | None | PostgreSQL | Redis | DynamoDB |
+| **TTL / auto-expiry** | — | — | — | — | ✓ | ✓ |
+| **Key prefix** | — | — | — | — | ✓ | ✓ |
+| **Custom endpoint** | — | — | — | — | — | ✓ |
+| **ACID transactions** | — | Atomic rename | ✓ (WAL mode) | ✓ (full) | — | ✓ (single-item) |
+| **Concurrent access** | `sync.RWMutex` | `sync.RWMutex` | SQLite WAL | MVCC | Redis single-thread | DynamoDB |
+| **Size limits** | Process memory | Filesystem | ~281 TB (SQLite max) | 1 GB per field | Redis `maxmemory` | 400 KB per item |
+| **Best for** | Tests, short-lived | CLI tools, dev | Local apps, single-node | Production, multi-node | Multi-process, caching | Serverless, AWS-native |
 
 ### Redis — agent/conversation/redis
 
 Stores conversation history as JSON in Redis string keys with optional TTL and key prefix. See [Redis Providers](redis.md) for the full constructor, options, and code examples.
-
-### S3 — agent/conversation/s3
-
-Import: `github.com/camilbinas/gude-agents/agent/conversation/s3`
-
-Stores conversation history as JSON objects in Amazon S3. Uses the AWS SDK v2 for authentication and API calls.
-
-```go
-cfg, _ := awsconfig.LoadDefaultConfig(ctx)
-mem, err := s3memory.New(cfg, "my-bucket",
-    s3memory.WithKeyPrefix("conversations/"),
-)
-```
-
-Options: `WithKeyPrefix(prefix string)`, `WithEndpoint(url string)`, `WithPathStyle(enabled bool)`.
-
-No network calls are made at construction time — connectivity errors surface on the first `Save`/`Load` call.
 
 ### DynamoDB — agent/conversation/dynamodb
 

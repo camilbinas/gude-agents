@@ -311,7 +311,7 @@ func main() {
 
 ## See Also
 
-- [Conversation System](conversation.md) — in-memory store and composable strategies (Window, Filter, Summary), plus S3 and DynamoDB drivers
+- [Conversation System](conversation.md) — in-memory store and composable strategies (Window, Filter, Summary), plus DynamoDB drivers
 - [Long-Term Memory](memory.md) — long-term knowledge storage with Remember/Recall tools and Redis backend
 - [RAG Pipeline](rag.md) — embedders, retrievers, ingest pipeline, and integration patterns
 - [Agent API Reference](agent-api.md) — `WithConversation` and `WithRetriever` options

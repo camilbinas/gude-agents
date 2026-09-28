@@ -162,7 +162,7 @@ func (r *backgroundRegistry) runHandler(d backgroundDispatch) {
 
 // logBackgroundDispatch emits a logging entry for a Background_Dispatch.
 // If a LoggingHook is configured on the agent, it uses OnToolLog; otherwise it
-// falls back to the registry's logger (mirroring tool.NewAsync's fallback).
+// falls back to the registry's logger.
 func (r *backgroundRegistry) logBackgroundDispatch(d backgroundDispatch) {
 	msg := fmt.Sprintf("background dispatch: tool=%s conv=%s toolUseID=%s",
 		d.toolName, d.conversationID, d.toolUseID)
@@ -177,7 +177,7 @@ func (r *backgroundRegistry) logBackgroundDispatch(d backgroundDispatch) {
 
 // logBackgroundCompletion emits a logging entry for a Background_Handler completion.
 // If a LoggingHook is configured on the agent, it uses OnToolLog; otherwise it
-// falls back to the registry's logger (mirroring tool.NewAsync's fallback).
+// falls back to the registry's logger.
 func (r *backgroundRegistry) logBackgroundCompletion(d backgroundDispatch, err error, duration time.Duration) {
 	status := "success"
 	if err != nil {
@@ -268,7 +268,7 @@ func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
 // logBackgroundError emits a logging entry for a background error tagged with
 // the failure phase and the affected Conversation_ID. If a LoggingHook is
 // configured on the agent, it uses OnToolLog; otherwise it falls back to the
-// registry's logger (mirroring tool.NewAsync's fallback).
+// registry's logger.
 func (a *Agent) logBackgroundError(d backgroundDispatch, phase string, err error) {
 	msg := fmt.Sprintf("background error [%s]: conv=%s tool=%s err=%v",
 		phase, d.conversationID, d.toolName, err)

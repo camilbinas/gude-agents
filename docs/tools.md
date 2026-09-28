@@ -8,7 +8,6 @@ The tool system lets you define functions that the LLM can invoke during a conve
 | `tool.NewRaw` | Hand-crafted JSON Schema + `json.RawMessage` | Full schema control |
 | `tool.NewSimple` | None | Tools with no parameters (e.g. current time) |
 | `tool.NewString` | Single required string | Simple query tools |
-| `tool.NewAsync` | Same as `New[T]` | Fire-and-forget side effects |
 | `tool.NewBackground` | Same as `New[T]` | Long-running work with result re-injection |
 | `tool.NewRich` | Same as `New[T]` | Tools that return text + images |
 
@@ -110,45 +109,13 @@ searchTool := tool.NewString("search", "Search the knowledge base", "query", "Th
 )
 ```
 
-## tool.NewAsync — Async Side Effects (Fire-and-Forget)
-
-```go
-func NewAsync[T any](name, description, ack string, handler AsyncHandler[T], errLogger ErrorLogger) Tool
-```
-
-`NewAsync` creates a `Tool` whose handler runs in a background goroutine. The LLM receives the `ack` string immediately without waiting for the handler to complete — a fire-and-forget pattern. Use this for side effects that don't affect the conversation: CRM updates, webhooks, audit logs, notifications, cache warming, etc.
-
-The handler signature is `func(ctx context.Context, input T)` — no return value. The background goroutine gets a detached `context.Background()` so it isn't cancelled when the request finishes. Panics are recovered and reported via the optional `ErrorLogger`.
-
-```go
-type CRMUpdate struct {
-    ContactID string `json:"contact_id" description:"The CRM contact ID" required:"true"`
-    Note      string `json:"note"       description:"Note to add to the contact" required:"true"`
-}
-
-crmTool := tool.NewAsync("update_crm", "Add a note to a CRM contact",
-    "CRM update queued.",
-    func(ctx context.Context, in CRMUpdate) {
-        // This runs in the background — the LLM already got "CRM update queued."
-        crm.AddNote(ctx, in.ContactID, in.Note)
-    },
-    log.Printf, // or nil to silently drop errors
-)
-```
-
-`NewAsyncRaw` is the raw JSON variant:
-
-```go
-func NewAsyncRaw(name, description, ack string, schema map[string]any, handler func(ctx context.Context, input json.RawMessage), errLogger ErrorLogger) Tool
-```
-
 ## tool.NewBackground — Background Tools (Long-Running with Re-Entry)
 
 ```go
 func NewBackground[T any](name, description, ack string, handler BackgroundHandler[T]) Tool
 ```
 
-`NewBackground` creates a tool whose handler runs in a detached goroutine. The LLM receives the `ack` string immediately (like `NewAsync`), but when the handler completes, the result is automatically injected back into the conversation and a new LLM turn is triggered so the agent can react. The application receives the reactive response via `WithBackgroundNotify`.
+`NewBackground` creates a tool whose handler runs in a detached goroutine. The LLM receives the `ack` string immediately; when the handler completes, the result is automatically injected back into the conversation and a new LLM turn is triggered so the agent can react. The application receives the reactive response via `WithBackgroundNotify`.
 
 Requires a conversation store (`WithConversation` or `WithSharedConversation`). The handler runs on `context.Background()` — it survives request cancellation.
 
@@ -187,7 +154,7 @@ See `examples/background-deploy/`.
 
 ## Constructor Options
 
-All constructors (`New`, `NewRaw`, `NewSimple`, `NewString`, `NewAsync`, `NewBackground`, `NewRich`, and their `*Raw` variants) accept a variadic `opts ...func(*Tool)` parameter. Pass any combination of the following options:
+All constructors (`New`, `NewRaw`, `NewSimple`, `NewString`, `NewBackground`, `NewRich`, and their `*Raw` variants) accept a variadic `opts ...func(*Tool)` parameter. Pass any combination of the following options:
 
 | Option | Description |
 |--------|-------------|

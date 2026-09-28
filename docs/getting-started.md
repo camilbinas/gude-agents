@@ -22,7 +22,6 @@ go get github.com/camilbinas/gude-agents/agent/provider/gemini      # Google Gem
 # Optional: conversation drivers (in-memory and disk are included in the core)
 go get github.com/camilbinas/gude-agents/agent/conversation/redis         # Redis conversation
 go get github.com/camilbinas/gude-agents/agent/conversation/dynamodb      # DynamoDB conversation
-go get github.com/camilbinas/gude-agents/agent/conversation/s3            # S3 conversation
 go get github.com/camilbinas/gude-agents/agent/conversation/sqlite        # SQLite conversation
 go get github.com/camilbinas/gude-agents/agent/conversation/postgres      # PostgreSQL conversation
 

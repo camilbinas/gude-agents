@@ -4,15 +4,15 @@ This guide answers the most common "which one?" questions by comparing options s
 
 ## Which conversation store?
 
-| | In-Memory | Disk | SQLite | PostgreSQL | Redis | DynamoDB | S3 |
-|---|---|---|---|---|---|---|---|
-| **Package** | `agent/conversation` | `agent/conversation/disk` | `agent/conversation/sqlite` | `agent/conversation/postgres` | `agent/conversation/redis` | `agent/conversation/dynamodb` | `agent/conversation/s3` |
-| **Persistence** | Process lifetime | File per conversation | Single file | PostgreSQL server | Redis server | DynamoDB table | S3 bucket |
-| **External dependency** | None | None | None | PostgreSQL | Redis | AWS DynamoDB | AWS S3 |
-| **TTL / auto-expiry** | — | — | — | — | ✓ | ✓ | Via lifecycle rules |
-| **ACID** | — | Atomic rename | ✓ WAL | ✓ full | — | ✓ single-item | — |
-| **Size limit** | Process memory | Filesystem | ~281 TB | 1 GB / field | `maxmemory` | 400 KB / item | 50 TB / object |
-| **Use when** | Tests, short-lived | CLI tools, dev | Local apps, single-node | Production, multi-node | Multi-process, caching | Serverless, AWS-native | Archival, AWS-native |
+| | In-Memory | Disk | SQLite | PostgreSQL | Redis | DynamoDB |
+|---|---|---|---|---|---|---|
+| **Package** | `agent/conversation` | `agent/conversation/disk` | `agent/conversation/sqlite` | `agent/conversation/postgres` | `agent/conversation/redis` | `agent/conversation/dynamodb` |
+| **Persistence** | Process lifetime | File per conversation | Single file | PostgreSQL server | Redis server | DynamoDB table |
+| **External dependency** | None | None | None | PostgreSQL | Redis | AWS DynamoDB |
+| **TTL / auto-expiry** | — | — | — | — | ✓ | ✓ |
+| **ACID** | — | Atomic rename | ✓ WAL | ✓ full | — | ✓ single-item |
+| **Size limit** | Process memory | Filesystem | ~281 TB | 1 GB / field | `maxmemory` | 400 KB / item |
+| **Use when** | Tests, short-lived | CLI tools, dev | Local apps, single-node | Production, multi-node | Multi-process, caching | Serverless, AWS-native |
 
 DynamoDB's 400 KB item limit can bite on long-running conversations — pair it with `conversation.NewWindow` or `conversation.NewSummary` to keep items small.
 
