@@ -49,10 +49,19 @@ func WithContentCapture() TracingOption {
 	}
 }
 
+// WithScopeName overrides the OpenTelemetry instrumentation scope name.
+// Default: "github.com/camilbinas/gude-agents".
+func WithScopeName(name string) TracingOption {
+	return func(h *otelHook) {
+		h.scopeName = name
+	}
+}
+
 // otelHook implements agent.TracingHook using OpenTelemetry spans.
 type otelHook struct {
 	tracer         trace.Tracer
 	captureContent bool
+	scopeName      string
 	scheme         AttributeScheme
 }
 
@@ -77,8 +86,16 @@ func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 		if tp == nil {
 			tp = otel.GetTracerProvider()
 		}
-		tracer := tp.Tracer(instrumentationName)
-		a.SetTracingHook(newOtelHook(tracer, opts...))
+		h := &otelHook{}
+		for _, opt := range opts {
+			opt(h)
+		}
+		scopeName := instrumentationName
+		if h.scopeName != "" {
+			scopeName = h.scopeName
+		}
+		h.tracer = tp.Tracer(scopeName)
+		a.SetTracingHook(h)
 		return nil
 	}
 }
@@ -89,6 +106,9 @@ func (h *otelHook) OnInvokeStart(ctx context.Context, params agent.InvokeSpanPar
 		attribute.Int(h.scheme.Key(RoleAgentMaxIterations), params.MaxIterations),
 		attribute.String(h.scheme.Key(RoleGenAISystem), "gude-agents"),
 	)
+	if key := h.scheme.Key(RoleOperationName); key != "" {
+		span.SetAttributes(attribute.String(key, "invoke_agent"))
+	}
 	if params.ModelID != "" {
 		span.SetAttributes(attribute.String(h.scheme.Key(RoleAgentModelID), params.ModelID))
 	}
@@ -168,6 +188,9 @@ func (h *otelHook) OnIterationStart(ctx context.Context, iteration int) (context
 
 func (h *otelHook) OnProviderCallStart(ctx context.Context, params agent.ProviderCallParams) (context.Context, func(err error, usage agent.TokenUsage, toolCallCount int, responseText string)) {
 	ctx, span := h.tracer.Start(ctx, "agent.provider.call")
+	if key := h.scheme.Key(RoleOperationName); key != "" {
+		span.SetAttributes(attribute.String(key, "chat"))
+	}
 	if h.captureContent {
 		span.SetAttributes(attribute.Int(h.scheme.Key(RoleProviderMessageCount), params.MessageCount))
 	}
@@ -216,6 +239,9 @@ func (h *otelHook) OnProviderCallStart(ctx context.Context, params agent.Provide
 func (h *otelHook) OnToolStart(ctx context.Context, toolName string, input json.RawMessage) (context.Context, func(err error, output string)) {
 	ctx, span := h.tracer.Start(ctx, fmt.Sprintf("agent.tool.%s", toolName))
 	span.SetAttributes(attribute.String(h.scheme.Key(RoleToolName), toolName))
+	if key := h.scheme.Key(RoleOperationName); key != "" {
+		span.SetAttributes(attribute.String(key, "execute_tool"))
+	}
 	if h.captureContent && len(input) > 0 {
 		span.SetAttributes(attribute.String(h.scheme.Key(RoleToolInput), string(input)))
 	}
