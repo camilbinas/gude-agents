@@ -37,6 +37,14 @@ func InvokeStructured[T any](c *Context, a *Agent, userMessage string) (T, error
 func invokeStructuredInner[T any](c *Context, a *Agent, userMessage string, convID string, h *hooks, modelID string) (T, TokenUsage, error) {
 	var zero T
 
+	// Serialize the full Load → Save turn with normal invocations and
+	// background re-entry for the same conversation.
+	if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {
+		m := a.backgroundRegistry.lockFor(convID)
+		m.Lock()
+		defer m.Unlock()
+	}
+
 	// Input guardrails.
 	msg := userMessage
 	for _, g := range a.inputGuardrails {

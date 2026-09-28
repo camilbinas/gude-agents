@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -207,5 +209,49 @@ func TestNewUpdateTool(t *testing.T) {
 	}
 	if _, ok := props["id"]; !ok {
 		t.Error("expected 'id' in schema properties")
+	}
+}
+
+func TestStoreRecallConcurrentWithUpdate(t *testing.T) {
+	store, err := NewStore[testEntry](newMockEmbedder(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.Remember(ctx, "user-1", testEntry{ID: "entry-1", Content: "initial"}); err != nil {
+		t.Fatal(err)
+	}
+
+	const iterations = 1000
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			if err := store.Update(ctx, "user-1", "entry-1", testEntry{ID: "entry-1", Content: "updated"}); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			entries, err := store.Recall(ctx, "user-1", "query", 1)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if len(entries) != 1 || entries[0].ID != "entry-1" {
+				errs <- fmt.Errorf("unexpected recall result: %#v", entries)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
 }

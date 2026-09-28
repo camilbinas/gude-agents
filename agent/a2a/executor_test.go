@@ -385,90 +385,57 @@ func TestExecutor_InboundFilePart_DocumentMIME(t *testing.T) {
 	}
 }
 
-// TestExecutor_OutboundImageBlock_Base64_EmitsDataPart verifies that when the agent
-// context has an ImageBlock with Base64 data, the executor emits a DataPart artifact
-// event with the correct content and media type.
-// Validates: Requirements 2.1
-func TestExecutor_OutboundImageBlock_Base64_EmitsDataPart(t *testing.T) {
+// TestExecutor_InboundImage_IsNotEchoedAsArtifact verifies inbound image content
+// reaches the agent context but is not returned as an output artifact.
+func TestExecutor_InboundImage_IsNotEchoedAsArtifact(t *testing.T) {
 	provider := &contextCapturingProvider{response: "here is the image"}
 	a := newCapturingAgent(t, provider)
 	executor := NewExecutor(a, nil)
 
-	// Send a message with an image DataPart — the executor will attach it to the
-	// context via ConvertInbound, and after streaming it will emit it as an outbound
-	// artifact via ConvertOutboundImage.
-	imageData := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG header bytes
+	imageData := []byte{0xFF, 0xD8, 0xFF, 0xE0}
 	imgPart := a2a.NewRawPart(imageData)
 	imgPart.MediaType = "image/jpeg"
-
 	execCtx := &a2asrv.ExecutorContext{
-		Message:    a2a.NewMessage(a2a.MessageRoleUser, imgPart),
-		TaskID:     a2a.NewTaskID(),
-		StoredTask: nil,
+		Message: a2a.NewMessage(a2a.MessageRoleUser, imgPart),
+		TaskID:  a2a.NewTaskID(),
 	}
 
-	events := collectEvents(t, executor, execCtx)
-
-	// Find the artifact event that contains the multimodal part (not the text artifact).
-	// The executor emits: submitted, working, text artifact(s), multimodal artifact, completed.
-	var foundDataPart bool
-	for _, event := range events {
-		ae, ok := event.(*a2a.TaskArtifactUpdateEvent)
+	for _, event := range collectEvents(t, executor, execCtx) {
+		artifact, ok := event.(*a2a.TaskArtifactUpdateEvent)
 		if !ok {
 			continue
 		}
-		for _, part := range ae.Artifact.Parts {
+		for _, part := range artifact.Artifact.Parts {
 			if part.MediaType == "image/jpeg" && part.Raw() != nil {
-				foundDataPart = true
-				break
+				t.Error("inbound image was echoed as an output artifact")
 			}
 		}
 	}
-
-	if !foundDataPart {
-		t.Error("expected a DataPart artifact event with image/jpeg media type, but none was found")
-	}
 }
 
-// TestExecutor_OutboundDocumentBlock_URL_EmitsFilePart verifies that when the agent
-// context has a DocumentBlock with a URL, the executor emits a FilePart artifact
-// event with the correct URI and media type.
-// Validates: Requirements 2.4
-func TestExecutor_OutboundDocumentBlock_URL_EmitsFilePart(t *testing.T) {
+// TestExecutor_InboundDocument_IsNotEchoedAsArtifact verifies inbound document content
+// reaches the agent context but is not returned as an output artifact.
+func TestExecutor_InboundDocument_IsNotEchoedAsArtifact(t *testing.T) {
 	provider := &contextCapturingProvider{response: "here is the document"}
 	a := newCapturingAgent(t, provider)
 	executor := NewExecutor(a, nil)
 
-	// Send a message with a document FilePart — the executor will attach it to the
-	// context via ConvertInbound, and after streaming it will emit it as an outbound
-	// artifact via ConvertOutboundDocument.
 	docURL := "https://example.com/analysis.pdf"
 	docPart := a2a.NewFileURLPart(a2a.URL(docURL), "application/pdf")
-
 	execCtx := &a2asrv.ExecutorContext{
-		Message:    a2a.NewMessage(a2a.MessageRoleUser, docPart),
-		TaskID:     a2a.NewTaskID(),
-		StoredTask: nil,
+		Message: a2a.NewMessage(a2a.MessageRoleUser, docPart),
+		TaskID:  a2a.NewTaskID(),
 	}
 
-	events := collectEvents(t, executor, execCtx)
-
-	// Find the artifact event that contains the FilePart (URL-based part).
-	var foundFilePart bool
-	for _, event := range events {
-		ae, ok := event.(*a2a.TaskArtifactUpdateEvent)
+	for _, event := range collectEvents(t, executor, execCtx) {
+		artifact, ok := event.(*a2a.TaskArtifactUpdateEvent)
 		if !ok {
 			continue
 		}
-		for _, part := range ae.Artifact.Parts {
+		for _, part := range artifact.Artifact.Parts {
 			if part.MediaType == "application/pdf" && part.URL() == a2a.URL(docURL) {
-				foundFilePart = true
-				break
+				t.Error("inbound document was echoed as an output artifact")
 			}
 		}
-	}
-
-	if !foundFilePart {
-		t.Error("expected a FilePart artifact event with application/pdf media type and matching URL, but none was found")
 	}
 }

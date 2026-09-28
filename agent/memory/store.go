@@ -101,7 +101,7 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 	}
 
 	s.mu.RLock()
-	bucket := s.entries[identifier]
+	bucket := append([]memEntry[T](nil), s.entries[identifier]...)
 	s.mu.RUnlock()
 
 	if len(bucket) == 0 {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -284,5 +285,100 @@ func TestInvokeEventStream_DoesNotMutateCallerContext(t *testing.T) {
 	// Both invocations should have routed through the upstream hook.
 	if upstream.starts < 2 || upstream.ends < 2 {
 		t.Errorf("upstream hook starts=%d ends=%d, want >= 2/2", upstream.starts, upstream.ends)
+	}
+}
+
+func TestInvokeEventStream_AbandonedConsumerCancelsWithoutDeadlock(t *testing.T) {
+	p := streamingTextProvider("the quick brown fox jumps over the lazy dog and runs away into the night", 64)
+	a, err := New(p, prompt.Text("sys"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := a.InvokeEventStream(NewContext(ctx), "hi", WithEventStreamBuffer(1))
+
+	first, ok := <-events
+	if !ok || first.Type != EventInvokeStart {
+		t.Fatalf("first event = %#v, open=%t; want invoke start", first, ok)
+	}
+
+	cancel()
+	time.Sleep(25 * time.Millisecond)
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case _, ok := <-events:
+			if !ok {
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("stream did not close after its consumer abandoned the channel")
+		}
+	}
+}
+
+func TestInvokeEventStream_PublishesApprovalRequestToCallerContext(t *testing.T) {
+	provider := newScriptedProvider(
+		&ProviderResponse{ToolCalls: []tool.Call{{
+			ToolUseID: "approval-1",
+			Name:      "delete_order",
+			Input:     json.RawMessage(`{"order_id":"ORD-42"}`),
+		}}},
+		&ProviderResponse{Text: "Order deleted."},
+	)
+	a, err := New(provider, prompt.Text("helpful"), []tool.Tool{deleteOrderTool()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := Background()
+	for range a.InvokeEventStream(c, "delete order 42") {
+	}
+
+	request, ok := GetApprovalRequest(c)
+	if !ok {
+		t.Fatal("approval request was not published to the caller context")
+	}
+	result, err := a.ResumeWithApprovalInvoke(c, request, tool.Allow())
+	if err != nil {
+		t.Fatalf("resume with published approval request: %v", err)
+	}
+	if result != "Order deleted." {
+		t.Fatalf("resume result = %q, want %q", result, "Order deleted.")
+	}
+}
+
+func TestInvokeEventStream_PublishesHandoffRequestToCallerContext(t *testing.T) {
+	provider := newScriptedProvider(
+		&ProviderResponse{ToolCalls: []tool.Call{{
+			ToolUseID: "handoff-1",
+			Name:      "escalate",
+			Input:     json.RawMessage(`{"reason":"high value","question":"Approve refund?"}`),
+		}}},
+		&ProviderResponse{Text: "Refund approved."},
+	)
+	a, err := New(provider, prompt.Text("helpful"), []tool.Tool{NewHandoffTool("escalate", "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := Background()
+	for range a.InvokeEventStream(c, "refund please") {
+	}
+
+	request, ok := GetHandoffRequest(c)
+	if !ok {
+		t.Fatal("handoff request was not published to the caller context")
+	}
+	var result string
+	if err := a.Resume(c, request, "approved", func(chunk string) { result += chunk }); err != nil {
+		t.Fatalf("resume with published handoff request: %v", err)
+	}
+	if result != "Refund approved." {
+		t.Fatalf("resume result = %q, want %q", result, "Refund approved.")
 	}
 }

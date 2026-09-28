@@ -2,6 +2,7 @@ package bedrock
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -16,16 +17,18 @@ var _ agent.TokenEstimator = (*Estimator)(nil)
 // for exact server-side token counting. It reuses the existing AWS SDK client
 // from a BedrockProvider.
 type Estimator struct {
-	client *bedrockruntime.Client
-	model  string
+	client      *bedrockruntime.Client
+	fetchClient *http.Client
+	model       string
 }
 
 // NewEstimator creates a token estimator that uses the Bedrock CountTokens API.
 // It requires a BedrockProvider to obtain the underlying SDK client and model ID.
 func NewEstimator(provider *BedrockProvider) *Estimator {
 	return &Estimator{
-		client: provider.client,
-		model:  provider.model,
+		client:      provider.client,
+		fetchClient: provider.fetchClient,
+		model:       provider.model,
 	}
 }
 
@@ -33,7 +36,7 @@ func NewEstimator(provider *BedrockProvider) *Estimator {
 // parameters and returns the exact input token count reported by the service.
 // On any API error, it returns (0, err).
 func (e *Estimator) EstimateTokens(ctx context.Context, params agent.ConverseParams) (int, error) {
-	msgs, err := toBedrockMessages(params.Messages, e.model, false)
+	msgs, err := toBedrockMessagesWithFetcher(ctx, e.fetchClient, params.Messages, e.model, false)
 	if err != nil {
 		return 0, err
 	}

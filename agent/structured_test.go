@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -776,4 +778,112 @@ func TestProperty10_InvokeStructured_OutputGuardrailOrder(t *testing.T) {
 			rt.Fatalf("expected output chain %q, got %q", expected, capturedFinal)
 		}
 	})
+}
+
+type blockingStructuredProvider struct {
+	firstStarted  chan struct{}
+	allowFirst    chan struct{}
+	secondEntered chan struct{}
+	once          sync.Once
+	mu            sync.Mutex
+	calls         int
+	response      *ProviderResponse
+}
+
+func (p *blockingStructuredProvider) Name() string { return "blocking-structured" }
+
+func (p *blockingStructuredProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+
+	if call == 1 {
+		p.firstStarted <- struct{}{}
+		<-p.allowFirst
+	} else {
+		p.once.Do(func() { p.secondEntered <- struct{}{} })
+	}
+	return p.response, nil
+}
+
+func (p *blockingStructuredProvider) ConverseStream(ctx context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+	return p.Converse(ctx, params)
+}
+
+type lockedConversationMemory struct {
+	mu   sync.Mutex
+	data []Message
+}
+
+func (m *lockedConversationMemory) Load(_ context.Context, _ string) ([]Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Message(nil), m.data...), nil
+}
+func (m *lockedConversationMemory) Save(_ context.Context, _ string, messages []Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data = append([]Message(nil), messages...)
+	return nil
+}
+func (m *lockedConversationMemory) List(_ context.Context) ([]string, error) { return nil, nil }
+func (m *lockedConversationMemory) Delete(_ context.Context, _ string) error { return nil }
+
+func TestInvokeStructuredSerializesSameConversation(t *testing.T) {
+	responseJSON, err := json.Marshal(SimpleStruct{Name: "ok", Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &blockingStructuredProvider{
+		firstStarted:  make(chan struct{}, 1),
+		allowFirst:    make(chan struct{}),
+		secondEntered: make(chan struct{}, 1),
+		response:      &ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "structured", Name: structuredOutputToolName, Input: responseJSON}}},
+	}
+	memory := &lockedConversationMemory{}
+	a, err := New(provider, prompt.Text("sys"), nil, WithConversation(memory, "shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() { _, err := InvokeStructured[SimpleStruct](Background(), a, "first"); firstDone <- err }()
+	select {
+	case <-provider.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first structured call did not reach the provider")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() { _, err := InvokeStructured[SimpleStruct](Background(), a, "second"); secondDone <- err }()
+	select {
+	case <-provider.secondEntered:
+		t.Fatal("second same-conversation structured call reached the provider before the first turn completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(provider.allowFirst)
+	for _, done := range []<-chan error{firstDone, secondDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("InvokeStructured() error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("structured call did not complete")
+		}
+	}
+
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+	if got := len(memory.data); got != 4 {
+		t.Fatalf("saved message count = %d, want 4", got)
+	}
+	for i, want := range []string{"first", `{"name":"ok","count":1}`, "second", `{"name":"ok","count":1}`} {
+		block, ok := memory.data[i].Content[0].(TextBlock)
+		if !ok || block.Text != want {
+			t.Fatalf("saved message %d = %#v, want text %q", i, memory.data[i].Content, want)
+		}
+	}
 }

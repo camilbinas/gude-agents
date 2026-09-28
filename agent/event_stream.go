@@ -68,10 +68,8 @@ const (
 	// EventHandoffRequested is emitted by InvokeEventStream when the agent loop
 	// returns ErrHandoffRequested. Read HandoffReason and HandoffQuestion for the
 	// human-facing ask. The HandoffRequest itself (including the full message
-	// snapshot) is available via GetHandoffRequest on the cloned context that
-	// InvokeEventStream uses internally; callers that need cross-process
-	// durability should call GetHandoffRequest on their own *Context after
-	// receiving this event (or use WithHandoffStore for automatic persistence).
+	// snapshot) is available via GetHandoffRequest on the caller's *Context
+	// after receiving this event (or use WithHandoffStore for automatic persistence).
 	// This event is emitted before the terminal EventInvokeEnd.
 	EventHandoffRequested EventType = "handoff_requested"
 
@@ -177,10 +175,10 @@ func WithEventStreamBuffer(n int) EventStreamOption {
 // The channel is closed exactly once, after a single EventInvokeEnd event
 // carrying the final error (nil on success) and cumulative TokenUsage.
 //
-// Consumers must drain the channel to completion. If the consumer returns
-// early (e.g. its surrounding context is cancelled), the agent loop will
-// block on send once the buffer fills. To stop the agent in that case,
-// cancel the context backing the *Context passed in.
+// Consumers should drain the channel to completion. If a consumer abandons
+// the channel, cancel the context backing the *Context passed in; pending
+// delivery is then abandoned and the channel is closed without blocking the
+// agent loop.
 //
 // Use options like WithEventStreamBuffer to tune channel behavior.
 //
@@ -207,15 +205,23 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 	// at worst a "send on closed channel" panic on a second invocation.
 	streamC := c.Clone()
 	upstream := streamC.EventHook()
-	streamC.WithEventHook(&eventStreamHook{ch: ch, next: upstream})
+	emit := func(event AgentEvent) bool {
+		select {
+		case ch <- event:
+			return true
+		case <-streamC.Done():
+			return false
+		}
+	}
+	streamC.WithEventHook(&eventStreamHook{ch: ch, done: streamC.Done(), next: upstream})
 
 	// StreamCallback fans text chunks into the same channel.
 	streamCB := func(chunk string) {
-		ch <- AgentEvent{
+		emit(AgentEvent{
 			Type:      EventTextChunk,
 			Timestamp: time.Now(),
 			TextChunk: chunk,
-		}
+		})
 	}
 
 	go func() {
@@ -229,19 +235,19 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 			if r := recover(); r != nil {
 				panicErr = fmt.Errorf("agent: panic in InvokeEventStream: %v", r)
 			}
-			// NOTE: usage is not written back to the caller's *Context. The
-			// caller's context is shared with other invocations and writing
-			// to its usage field would race. Read Usage off the terminal
-			// EventInvokeEnd instead.
-			ch <- AgentEvent{
+			// A cancelled consumer may have abandoned the channel, in which case
+			// the terminal event is intentionally dropped so this goroutine exits.
+			emit(AgentEvent{
 				Type:      EventInvokeEnd,
 				Timestamp: time.Now(),
 				Err:       panicErr,
 				Usage:     streamC.Usage(),
-			}
+			})
 		}()
 
-		ch <- AgentEvent{Type: EventInvokeStart, Timestamp: time.Now()}
+		if !emit(AgentEvent{Type: EventInvokeStart, Timestamp: time.Now()}) {
+			return
+		}
 
 		err := a.InvokeStream(streamC, userMessage, streamCB)
 		if err != nil {
@@ -253,16 +259,18 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 					Timestamp: time.Now(),
 				}
 				if hr, ok := GetHandoffRequest(streamC); ok {
+					c.Set(handoffKey{}, hr)
 					ev.HandoffReason = hr.Reason
 					ev.HandoffQuestion = hr.Question
 				}
-				ch <- ev
+				emit(ev)
 			} else if errors.Is(err, ErrToolApprovalRequired) {
 				ev := AgentEvent{
 					Type:      EventToolApprovalRequired,
 					Timestamp: time.Now(),
 				}
 				if ar, ok := GetApprovalRequest(streamC); ok {
+					c.Set(approvalKey{}, ar)
 					ev.ApprovalToolName = ar.ToolName
 					if ar.ToolInput != nil {
 						inputCopy := make(json.RawMessage, len(ar.ToolInput))
@@ -270,7 +278,7 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 						ev.ApprovalToolInput = inputCopy
 					}
 				}
-				ch <- ev
+				emit(ev)
 			}
 		}
 	}()
@@ -283,58 +291,68 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 // keep working when InvokeEventStream is used.
 type eventStreamHook struct {
 	ch   chan<- AgentEvent
+	done <-chan struct{}
 	next EventHook // optional chain target, may be nil
 }
 
+func (h *eventStreamHook) emit(event AgentEvent) bool {
+	select {
+	case h.ch <- event:
+		return true
+	case <-h.done:
+		return false
+	}
+}
+
 func (h *eventStreamHook) OnIterationStart(c *Context, iteration int) {
-	h.ch <- AgentEvent{
+	h.emit(AgentEvent{
 		Type:      EventIterationStart,
 		Timestamp: time.Now(),
 		Iteration: iteration,
-	}
+	})
 	if h.next != nil {
 		h.next.OnIterationStart(c, iteration)
 	}
 }
 
 func (h *eventStreamHook) OnIterationEnd(c *Context, iteration int, toolCount int, isFinal bool, duration time.Duration) {
-	h.ch <- AgentEvent{
+	h.emit(AgentEvent{
 		Type:      EventIterationEnd,
 		Timestamp: time.Now(),
 		Iteration: iteration,
 		ToolCount: toolCount,
 		IsFinal:   isFinal,
 		Duration:  duration,
-	}
+	})
 	if h.next != nil {
 		h.next.OnIterationEnd(c, iteration, toolCount, isFinal, duration)
 	}
 }
 
 func (h *eventStreamHook) OnModelStart(c *Context) {
-	h.ch <- AgentEvent{Type: EventModelStart, Timestamp: time.Now()}
+	h.emit(AgentEvent{Type: EventModelStart, Timestamp: time.Now()})
 	if h.next != nil {
 		h.next.OnModelStart(c)
 	}
 }
 
 func (h *eventStreamHook) OnModelEnd(c *Context, stopReason string) {
-	h.ch <- AgentEvent{
+	h.emit(AgentEvent{
 		Type:       EventModelEnd,
 		Timestamp:  time.Now(),
 		StopReason: stopReason,
-	}
+	})
 	if h.next != nil {
 		h.next.OnModelEnd(c, stopReason)
 	}
 }
 
 func (h *eventStreamHook) OnThinking(c *Context, chunk string) {
-	h.ch <- AgentEvent{
+	h.emit(AgentEvent{
 		Type:          EventThinkingChunk,
 		Timestamp:     time.Now(),
 		ThinkingChunk: chunk,
-	}
+	})
 	if h.next != nil {
 		h.next.OnThinking(c, chunk)
 	}
@@ -356,7 +374,7 @@ func (h *eventStreamHook) OnToolCallStart(c *Context, toolName string, input jso
 	if p, ok := GetTyped[Principal](c, principalKey{}); ok {
 		ev.PrincipalID = p.ID
 	}
-	h.ch <- ev
+	h.emit(ev)
 	if h.next != nil {
 		h.next.OnToolCallStart(c, toolName, input)
 	}
@@ -371,18 +389,18 @@ func (h *eventStreamHook) OnToolCallEnd(c *Context, toolName string, output stri
 		Err:        err,
 		Duration:   duration,
 	}
-	h.ch <- ev
+	h.emit(ev)
 	if h.next != nil {
 		h.next.OnToolCallEnd(c, toolName, output, err, duration)
 	}
 }
 
 func (h *eventStreamHook) OnMaxIterationsExceeded(c *Context, limit int) {
-	h.ch <- AgentEvent{
+	h.emit(AgentEvent{
 		Type:           EventMaxIterations,
 		Timestamp:      time.Now(),
 		IterationLimit: limit,
-	}
+	})
 	if h.next != nil {
 		h.next.OnMaxIterationsExceeded(c, limit)
 	}
@@ -411,12 +429,12 @@ func (h *eventStreamHook) OnCustomEvent(c *Context, name string, payload json.Ra
 		payloadCopy = make(json.RawMessage, len(payload))
 		copy(payloadCopy, payload)
 	}
-	h.ch <- AgentEvent{
+	h.emit(AgentEvent{
 		Type:          EventCustom,
 		Timestamp:     time.Now(),
 		CustomName:    name,
 		CustomPayload: payloadCopy,
-	}
+	})
 	if next, ok := h.next.(CustomEventEmitter); ok {
 		next.OnCustomEvent(c, name, payload)
 	}

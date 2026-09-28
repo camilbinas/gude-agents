@@ -58,11 +58,12 @@ func parseSchema[T any](embeddingCol string) (*tableSchema, error) {
 		return nil, fmt.Errorf("postgres: T must be a struct, got %s", t.Kind())
 	}
 
-	// Check cache.
+	// The cache holds immutable, type-derived metadata only. Every caller gets
+	// an independent copy because embedding configuration is per store.
 	schemaCacheMu.RLock()
 	if cached, ok := schemaCache[t]; ok {
 		schemaCacheMu.RUnlock()
-		return cached, nil
+		return cloneSchema(cached, embeddingCol), nil
 	}
 	schemaCacheMu.RUnlock()
 
@@ -70,7 +71,6 @@ func parseSchema[T any](embeddingCol string) (*tableSchema, error) {
 		PKIndex:       -1,
 		IdentifierIdx: -1,
 		ContentIdx:    -1,
-		EmbeddingCol:  embeddingCol,
 	}
 
 	for i := 0; i < t.NumField(); i++ {
@@ -126,12 +126,24 @@ func parseSchema[T any](embeddingCol string) (*tableSchema, error) {
 		return nil, fmt.Errorf("postgres: struct %s has no field with db:\"...,content\" tag", t.Name())
 	}
 
-	// Cache it.
+	// Cache only the immutable, type-derived schema. Store-specific SQL
+	// sanitization and embedding-column configuration are applied to the clone.
 	schemaCacheMu.Lock()
-	schemaCache[t] = schema
+	if cached, ok := schemaCache[t]; ok {
+		schema = cached
+	} else {
+		schemaCache[t] = schema
+	}
 	schemaCacheMu.Unlock()
 
-	return schema, nil
+	return cloneSchema(schema, embeddingCol), nil
+}
+
+func cloneSchema(schema *tableSchema, embeddingCol string) *tableSchema {
+	clone := *schema
+	clone.Columns = append([]columnInfo(nil), schema.Columns...)
+	clone.EmbeddingCol = embeddingCol
+	return &clone
 }
 
 // columnNames returns all column names in order.

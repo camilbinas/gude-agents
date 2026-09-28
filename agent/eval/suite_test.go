@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 )
 
@@ -225,4 +226,72 @@ func TestSuite_NilCasesOrNilEvaluators_ReturnsError(t *testing.T) {
 			t.Fatal("expected error for empty evaluators, got nil")
 		}
 	})
+}
+
+type blockingEvaluator struct {
+	started chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (e *blockingEvaluator) Name() string { return "blocking" }
+func (e *blockingEvaluator) Evaluate(_ context.Context, _ EvalCase) (EvalResult, error) {
+	if e.calls.Add(1) == 1 {
+		close(e.started)
+		<-e.release
+	}
+	return EvalResult{EvaluatorName: e.Name(), Score: 1, Pass: true}, nil
+}
+
+func TestSuite_RunAlreadyCanceledDoesNotFabricateResults(t *testing.T) {
+	evaluator := &mockEvaluator{name: "mock", score: 1}
+	suite, err := NewEvalSuite([]EvalCase{{Query: "one"}, {Query: "two"}}, []Evaluator{evaluator})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report, err := suite.Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	for i, result := range report.Results {
+		if len(result.Results) != 0 {
+			t.Errorf("case %d has fabricated results: %#v", i, result.Results)
+		}
+		if result.Error != context.Canceled.Error() {
+			t.Errorf("case %d error = %q, want %q", i, result.Error, context.Canceled)
+		}
+	}
+}
+
+func TestSuite_RunCancellationSkipsQueuedParallelEvaluations(t *testing.T) {
+	evaluator := &blockingEvaluator{started: make(chan struct{}), release: make(chan struct{})}
+	suite, err := NewEvalSuite([]EvalCase{{Query: "first"}, {Query: "second"}}, []Evaluator{evaluator}, WithSuiteConcurrency(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type runResult struct {
+		report EvalReport
+		err    error
+	}
+	done := make(chan runResult, 1)
+	go func() { report, err := suite.Run(ctx); done <- runResult{report: report, err: err} }()
+
+	<-evaluator.started
+	cancel()
+	close(evaluator.release)
+	result := <-done
+	if !errors.Is(result.err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", result.err)
+	}
+	if calls := evaluator.calls.Load(); calls != 1 {
+		t.Fatalf("evaluator calls = %d, want only in-flight evaluation", calls)
+	}
+	if got := result.report.Results[1]; len(got.Results) != 0 || got.Error != context.Canceled.Error() {
+		t.Fatalf("queued case result = %#v, want cancellation without a fabricated result", got)
+	}
 }

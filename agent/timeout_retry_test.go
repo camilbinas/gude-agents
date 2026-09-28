@@ -283,3 +283,32 @@ func TestTimeoutAndRetry_Combined(t *testing.T) {
 		t.Errorf("expected 3 calls, got %d", c)
 	}
 }
+
+func TestWithRetry_DoesNotRetryAfterVisibleStreamOutput(t *testing.T) {
+	partialErr := errors.New("stream interrupted after partial output")
+	calls := 0
+	provider := &funcProvider{fn: func(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+		calls++
+		if calls == 1 {
+			cb("partial")
+			return nil, partialErr
+		}
+		return &ProviderResponse{Text: "replacement"}, nil
+	}}
+	a, err := New(provider, prompt.Text("sys"), nil, WithRetry(2, time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var chunks []string
+	err = a.InvokeStream(Background(), "hi", func(chunk string) { chunks = append(chunks, chunk) })
+	if !errors.Is(err, partialErr) {
+		t.Fatalf("InvokeStream error = %v, want partial stream error", err)
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1 after visible output", calls)
+	}
+	if len(chunks) != 1 || chunks[0] != "partial" {
+		t.Fatalf("visible chunks = %#v, want only partial", chunks)
+	}
+}

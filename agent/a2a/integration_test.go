@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -127,24 +126,6 @@ func sendAndParseTask(t *testing.T, serverURL string, msg *a2a.Message) taskResp
 	return task
 }
 
-// bridgedHandler wraps the MultiServer handler and also serves the agent card
-// at the path the Client expects (/.well-known/agent.json) in addition to the
-// SDK's path (/.well-known/agent-card.json).
-func bridgedHandler(ms *MultiServer, prefix string) http.Handler {
-	baseHandler := ms.Handler()
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Bridge: if the client requests {prefix}/.well-known/agent.json,
-		// rewrite to {prefix}/.well-known/agent-card.json.
-		clientCardPath := prefix + "/.well-known/agent.json"
-		serverCardPath := prefix + "/.well-known/agent-card.json"
-		if r.URL.Path == clientCardPath {
-			r.URL.Path = serverCardPath
-			r.RequestURI = serverCardPath
-		}
-		baseHandler.ServeHTTP(w, r)
-	})
-}
-
 // TestIntegration_DataPart_Image_EndToEnd tests the full flow:
 // A2A client sends DataPart with image → MultiServer routes to agent →
 // agent receives ImageBlock → response includes DataPart artifact.
@@ -170,8 +151,8 @@ func TestIntegration_DataPart_Image_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3. Start a test HTTP server with the bridged handler (serves card at both paths).
-	ts := httptest.NewServer(bridgedHandler(ms, "/agents/image"))
+	// Start a test HTTP server using the production agent-card discovery path.
+	ts := httptest.NewServer(ms.Handler())
 	defer ts.Close()
 
 	// 4. Use the A2A Client to connect to the test server and verify card discovery.
@@ -227,27 +208,13 @@ func TestIntegration_DataPart_Image_EndToEnd(t *testing.T) {
 		t.Errorf("task state = %q, want %q", task.Status.State, "TASK_STATE_COMPLETED")
 	}
 
-	// Verify the response includes a DataPart artifact with the image.
-	// The executor emits the image as a separate artifact after the text artifact.
-	var foundImageArtifact bool
+	// Verify the response does not echo the inbound image as an artifact.
 	for _, artifact := range task.Artifacts {
 		for _, part := range artifact.Parts {
 			if part.MediaType == "image/png" && part.Raw != "" {
-				foundImageArtifact = true
-				// Verify the raw content decodes to the original image data.
-				decoded, err := base64.StdEncoding.DecodeString(part.Raw)
-				if err != nil {
-					t.Errorf("failed to decode artifact raw data: %v", err)
-				} else if !bytes.Equal(decoded, imageData) {
-					t.Errorf("artifact image data mismatch: got %v, want %v", decoded, imageData)
-				}
-				break
+				t.Error("inbound image was echoed as an output artifact")
 			}
 		}
-	}
-
-	if !foundImageArtifact {
-		t.Error("expected a DataPart artifact with image/png in the response, but none was found")
 	}
 }
 
@@ -275,8 +242,8 @@ func TestIntegration_FilePart_Document_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3. Start a test HTTP server with the bridged handler.
-	ts := httptest.NewServer(bridgedHandler(ms, "/agents/docs"))
+	// 3. Start a test HTTP server using the production agent-card discovery path.
+	ts := httptest.NewServer(ms.Handler())
 	defer ts.Close()
 
 	// 4. Use the A2A Client to connect to the test server and verify card discovery.
@@ -320,18 +287,12 @@ func TestIntegration_FilePart_Document_EndToEnd(t *testing.T) {
 		t.Errorf("task state = %q, want %q", task.Status.State, "TASK_STATE_COMPLETED")
 	}
 
-	// Verify the response includes a FilePart artifact with the document URL.
-	var foundDocArtifact bool
+	// Verify the response does not echo the inbound document as an artifact.
 	for _, artifact := range task.Artifacts {
 		for _, part := range artifact.Parts {
-			if part.MediaType == "application/pdf" && strings.Contains(part.URL, docURL) {
-				foundDocArtifact = true
-				break
+			if part.MediaType == "application/pdf" && part.URL == docURL {
+				t.Error("inbound document was echoed as an output artifact")
 			}
 		}
-	}
-
-	if !foundDocArtifact {
-		t.Error("expected a FilePart artifact with application/pdf and matching URL in the response, but none was found")
 	}
 }

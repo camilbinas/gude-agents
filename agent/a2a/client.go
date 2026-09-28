@@ -17,8 +17,11 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// wellKnownAgentPath is the well-known path for agent card discovery.
-const wellKnownAgentPath = "/.well-known/agent.json"
+// wellKnownAgentCardPath is the current well-known path for agent card discovery.
+const wellKnownAgentCardPath = "/.well-known/agent-card.json"
+
+// wellKnownLegacyAgentPath is retained only for compatibility with older agents.
+const wellKnownLegacyAgentPath = "/.well-known/agent.json"
 
 // Client connects to a remote A2A agent and exposes its skills as tool.Tool values.
 // It mirrors the MCP client pattern: construct → Tools() → use → Close().
@@ -48,8 +51,9 @@ func WithClientHTTPClient(hc *http.Client) ClientOption {
 }
 
 // NewClient creates an A2A client by fetching the Agent Card from the remote agent.
-// It fetches {baseURL}/.well-known/agent.json, parses the card, and stores it
-// for later access. Returns an error if the card cannot be fetched or parsed.
+// It first fetches {baseURL}/.well-known/agent-card.json and falls back to the
+// legacy agent.json path only when the current path returns 404. It stores the
+// parsed card for later access and returns an error if discovery or parsing fails.
 func NewClient(ctx context.Context, baseURL string, opts ...ClientOption) (*Client, error) {
 	cfg := &clientConfig{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
@@ -58,34 +62,28 @@ func NewClient(ctx context.Context, baseURL string, opts ...ClientOption) (*Clie
 		opt(cfg)
 	}
 
-	// Build the well-known URL.
-	cardURL, err := url.JoinPath(baseURL, wellKnownAgentPath)
+	cardURL, err := url.JoinPath(baseURL, wellKnownAgentCardPath)
 	if err != nil {
 		return nil, fmt.Errorf("a2a client: invalid base URL: %w", err)
 	}
-
-	// Fetch the agent card.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
+	body, status, err := fetchAgentCard(ctx, cfg.httpClient, cardURL)
 	if err != nil {
-		return nil, fmt.Errorf("a2a client: creating request: %w", err)
+		return nil, err
+	}
+	if status == http.StatusNotFound {
+		legacyURL, err := url.JoinPath(baseURL, wellKnownLegacyAgentPath)
+		if err != nil {
+			return nil, fmt.Errorf("a2a client: invalid base URL: %w", err)
+		}
+		body, status, err = fetchAgentCard(ctx, cfg.httpClient, legacyURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("a2a client: agent card fetch returned HTTP %d", status)
 	}
 
-	resp, err := cfg.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("a2a client: fetching agent card: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("a2a client: agent card fetch returned HTTP %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("a2a client: reading agent card response: %w", err)
-	}
-
-	// Parse the agent card.
 	var card a2a.AgentCard
 	if err := json.Unmarshal(body, &card); err != nil {
 		return nil, fmt.Errorf("a2a client: parsing agent card: %w", err)
@@ -99,6 +97,26 @@ func NewClient(ctx context.Context, baseURL string, opts ...ClientOption) (*Clie
 	client.buildTools()
 
 	return client, nil
+}
+
+func fetchAgentCard(ctx context.Context, client *http.Client, cardURL string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("a2a client: creating request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("a2a client: fetching agent card: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("a2a client: reading agent card response: %w", err)
+	}
+	return body, resp.StatusCode, nil
 }
 
 // Card returns the discovered Agent Card.
@@ -241,11 +259,11 @@ func (c *Client) makeToolHandler(_ string) func(ctx context.Context, input json.
 			return "", fmt.Errorf("a2a client: marshal request: %w", err)
 		}
 
-		// Determine the endpoint URL. Use the first supported interface URL if available,
-		// otherwise fall back to baseURL.
-		endpoint := c.baseURL
-		if len(c.card.SupportedInterfaces) > 0 {
-			endpoint = c.card.SupportedInterfaces[0].URL
+		// Determine a JSON-RPC-compatible endpoint. Agent cards may advertise
+		// other transports first, and interface URLs may be relative to baseURL.
+		endpoint, err := c.jsonRPCEndpoint()
+		if err != nil {
+			return "", err
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
@@ -288,39 +306,7 @@ func (c *Client) makeToolHandler(_ string) func(ctx context.Context, input json.
 			return "", fmt.Errorf("a2a client: remote error: %s", rpcResp.Error.Message)
 		}
 
-		// The result can be a Task or a Message. Try Task first since that's
-		// the expected response for tasks/send.
-		var task a2a.Task
-		if err := json.Unmarshal(rpcResp.Result, &task); err != nil {
-			return "", fmt.Errorf("a2a client: parsing task result: %w", err)
-		}
-
-		// Check task status for failure.
-		if task.Status.State == a2a.TaskStateFailed {
-			failMsg := "task failed"
-			if task.Status.Message != nil {
-				// Extract text from the status message parts.
-				for _, part := range task.Status.Message.Parts {
-					if text := part.Text(); text != "" {
-						failMsg = text
-						break
-					}
-				}
-			}
-			return "", fmt.Errorf("a2a client: %s", failMsg)
-		}
-
-		// Extract TextPart content from artifacts.
-		var texts []string
-		for _, artifact := range task.Artifacts {
-			for _, part := range artifact.Parts {
-				if text := part.Text(); text != "" {
-					texts = append(texts, text)
-				}
-			}
-		}
-
-		return strings.Join(texts, ""), nil
+		return extractTextFromResult(rpcResp.Result)
 	}
 }
 
@@ -356,4 +342,95 @@ func ExcludeSkills(ids ...string) ToolsOption {
 		}
 		return nil
 	}
+}
+
+// jsonRPCEndpoint selects a JSON-RPC interface from the card. When no such
+// interface is advertised, retain the base URL behavior for older cards.
+func (c *Client) jsonRPCEndpoint() (string, error) {
+	for _, iface := range c.card.SupportedInterfaces {
+		if iface == nil || iface.ProtocolBinding != a2a.TransportProtocolJSONRPC {
+			continue
+		}
+		if strings.TrimSpace(iface.URL) == "" {
+			return "", fmt.Errorf("a2a client: JSON-RPC interface has an empty URL")
+		}
+		return resolveEndpointURL(c.baseURL, iface.URL)
+	}
+	return c.baseURL, nil
+}
+
+func resolveEndpointURL(baseURL, endpoint string) (string, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		if err == nil {
+			err = fmt.Errorf("base URL must be absolute")
+		}
+		return "", fmt.Errorf("a2a client: invalid base URL: %w", err)
+	}
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("a2a client: invalid JSON-RPC interface URL: %w", err)
+	}
+	if target.IsAbs() {
+		return target.String(), nil
+	}
+	if !strings.HasSuffix(base.Path, "/") {
+		base.Path += "/"
+	}
+	return base.ResolveReference(target).String(), nil
+}
+
+func extractTextFromResult(result json.RawMessage) (string, error) {
+	var shape struct {
+		Parts  json.RawMessage `json:"parts"`
+		Status json.RawMessage `json:"status"`
+	}
+	if err := json.Unmarshal(result, &shape); err != nil {
+		return "", fmt.Errorf("a2a client: parsing result: %w", err)
+	}
+
+	if len(shape.Parts) > 0 && len(shape.Status) == 0 {
+		var message a2a.Message
+		if err := json.Unmarshal(result, &message); err != nil {
+			return "", fmt.Errorf("a2a client: parsing message result: %w", err)
+		}
+		return extractTextFromMessage(&message), nil
+	}
+	if len(shape.Status) == 0 {
+		return "", fmt.Errorf("a2a client: result is neither a Task nor a Message")
+	}
+
+	var task a2a.Task
+	if err := json.Unmarshal(result, &task); err != nil {
+		return "", fmt.Errorf("a2a client: parsing task result: %w", err)
+	}
+	if task.Status.State == a2a.TaskStateFailed {
+		failMsg := "task failed"
+		if task.Status.Message != nil {
+			if text := extractTextFromMessage(task.Status.Message); text != "" {
+				failMsg = text
+			}
+		}
+		return "", fmt.Errorf("a2a client: %s", failMsg)
+	}
+
+	var texts []string
+	for _, artifact := range task.Artifacts {
+		for _, part := range artifact.Parts {
+			if text := part.Text(); text != "" {
+				texts = append(texts, text)
+			}
+		}
+	}
+	return strings.Join(texts, ""), nil
+}
+
+func extractTextFromMessage(message *a2a.Message) string {
+	var texts []string
+	for _, part := range message.Parts {
+		if text := part.Text(); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	return strings.Join(texts, "")
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -406,7 +407,9 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 					hr.ConversationID = convID
 					// Auto-persist to HandoffStore when configured.
 					if a.handoffStore != nil && convID != "" {
-						_ = a.handoffStore.SaveHandoff(c, convID, hr)
+						if err := a.handoffStore.SaveHandoff(c, convID, hr); err != nil {
+							return cumulative, "", fmt.Errorf("save handoff: %w", err)
+						}
 					}
 				}
 				if cfg == nil || !cfg.skipConversationSave {
@@ -442,12 +445,14 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 					// Propagate onto the outer context so callers can call GetApprovalRequest(c).
 					c.Set(approvalKey{}, ar)
 					if a.handoffStore != nil && convID != "" {
-						_ = a.handoffStore.SaveHandoff(c, approvalStoreKey(convID), &HandoffRequest{
+						if err := a.handoffStore.SaveHandoff(c, approvalStoreKey(convID), &HandoffRequest{
 							Reason:         "tool approval pending",
 							Question:       ar.ToolName,
 							ConversationID: convID,
 							Messages:       ar.Messages,
-						})
+						}); err != nil {
+							return cumulative, "", fmt.Errorf("save approval handoff: %w", err)
+						}
 					}
 				}
 				if cfg == nil || !cfg.skipConversationSave {
@@ -528,7 +533,15 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 			return
 		}
 
-		toolC, tf := h.onToolStart(c, tc.Name, tc.Input)
+		// Parallel tool calls must not share mutable Context scratch state.
+		// In particular, widget accumulators and guard-denial state are set per
+		// call below. Keep sequential calls on the original context so their
+		// existing shared Context.Set semantics remain unchanged.
+		callC := c
+		if a.parallelTools {
+			callC = c.Clone()
+		}
+		toolC, tf := h.onToolStart(callC, tc.Name, tc.Input)
 
 		// Execution-time role check — defense in depth against calls that
 		// bypassed filterTools (e.g. prompt injection, RunLoop with custom calls).
@@ -618,13 +631,13 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 		// RequiresApproval: pause before invoking — store an ApprovalRequest on the
 		// context and return the sentinel so runLoop can snapshot and surface it.
 		if t.NeedsApproval() {
-			if ctxAgent := FromContext(toolC); ctxAgent != nil {
-				ctxAgent.Set(approvalKey{}, &ApprovalRequest{
-					ToolName:  tc.Name,
-					ToolInput: tc.Input,
-					ToolUseID: tc.ToolUseID,
-				})
-			}
+			// Approval requests must be visible to runLoop on the outer invocation
+			// context. Parallel tool calls otherwise use cloned scratch contexts.
+			c.Set(approvalKey{}, &ApprovalRequest{
+				ToolName:  tc.Name,
+				ToolInput: tc.Input,
+				ToolUseID: tc.ToolUseID,
+			})
 			tf.finish(nil, approvalSentinel)
 			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: approvalSentinel}
 			return
@@ -635,6 +648,9 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 			start := time.Now()
 			richOut, err := t.RichHandler(toolC, tc.Input)
 			dur := time.Since(start)
+			if err == nil && richOut == nil {
+				err = fmt.Errorf("rich tool %q returned nil output", tc.Name)
+			}
 			if err != nil {
 				toolErr := &ToolError{ToolName: tc.Name, Cause: err}
 				tf.finish(err, "")
@@ -893,7 +909,25 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params
 			callCtx, cancel = context.WithTimeout(ctx, a.providerTimeout)
 		}
 
-		resp, err := a.provider.ConverseStream(callCtx, params, cb)
+		// Retrying after an attempt has emitted a visible chunk would expose a
+		// duplicated or divergent prefix. Retry only attempts that produced no
+		// text or thinking output.
+		var emitted atomic.Bool
+		attemptParams := params
+		attemptCB := func(chunk string) {
+			emitted.Store(true)
+			if cb != nil {
+				cb(chunk)
+			}
+		}
+		if thinkingCB := params.ThinkingCallback; thinkingCB != nil {
+			attemptParams.ThinkingCallback = func(chunk string) {
+				emitted.Store(true)
+				thinkingCB(chunk)
+			}
+		}
+
+		resp, err := a.provider.ConverseStream(callCtx, attemptParams, attemptCB)
 		if cancel != nil {
 			cancel()
 		}
@@ -916,6 +950,9 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, params
 
 		lastErr = err
 		if ctx.Err() != nil {
+			return nil, lastErr
+		}
+		if emitted.Load() {
 			return nil, lastErr
 		}
 		if attempt >= maxAttempts-1 {

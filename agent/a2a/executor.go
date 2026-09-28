@@ -130,28 +130,11 @@ func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			return
 		}
 
-		// 6. Emit multimodal artifacts from the agent context.
-		// After streaming completes, check for ImageBlock/DocumentBlock content
-		// and emit them as separate artifact events using outbound converters.
-		var multimodalParts []*a2a.Part
-		for _, img := range agentCtx.Images() {
-			if p := ConvertOutboundImage(img); p != nil {
-				multimodalParts = append(multimodalParts, p)
-			}
-		}
-		for _, doc := range agentCtx.Documents() {
-			if p := ConvertOutboundDocument(doc); p != nil {
-				multimodalParts = append(multimodalParts, p)
-			}
-		}
-		if len(multimodalParts) > 0 {
-			event := a2a.NewArtifactEvent(execCtx, multimodalParts...)
-			if !yield(event, nil) {
-				return
-			}
-		}
+		// Inbound media belongs only to the invocation context. Emitting it here
+		// would echo user-provided attachments as response artifacts. Genuine
+		// agent-generated media requires a dedicated response-output channel.
 
-		// 7. Emit completed status.
+		// 6. Emit completed status.
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
 	}
 }

@@ -10,10 +10,8 @@ import (
 	"pgregory.net/rapid"
 )
 
-
 // TestProperty7_ValidInputsNeverRejected verifies that a payload satisfying the schema
 // is never rejected by validateToolInput and the handler is always called.
-//
 func TestProperty7_ValidInputsNeverRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate 1–4 required field names.
@@ -62,7 +60,6 @@ func TestProperty7_ValidInputsNeverRejected(t *testing.T) {
 
 // TestProperty7_ValidEnumInputsNeverRejected verifies that enum-constrained fields
 // with valid values are never rejected.
-//
 func TestProperty7_ValidEnumInputsNeverRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate 2–4 enum values.
@@ -94,7 +91,6 @@ func TestProperty7_ValidEnumInputsNeverRejected(t *testing.T) {
 
 // TestProperty8_InvalidInputsAlwaysRejected verifies that a payload violating the schema
 // is always rejected and the handler is never called.
-//
 func TestProperty8_InvalidInputsAlwaysRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a required field name.
@@ -117,7 +113,6 @@ func TestProperty8_InvalidInputsAlwaysRejected(t *testing.T) {
 }
 
 // TestProperty8_InvalidEnumAlwaysRejected verifies that an out-of-enum value is always rejected.
-//
 func TestProperty8_InvalidEnumAlwaysRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Fixed enum so we can guarantee the payload value is outside it.
@@ -151,7 +146,6 @@ func TestProperty8_InvalidEnumAlwaysRejected(t *testing.T) {
 
 // TestProperty8_HandlerNotCalledOnInvalidInput verifies end-to-end that the handler
 // is never invoked when schema validation fails.
-//
 func TestProperty8_HandlerNotCalledOnInvalidInput(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		field := rapid.StringMatching(`[a-z][a-z0-9]{0,7}`).Draw(rt, "field")
@@ -188,4 +182,18 @@ func TestProperty8_HandlerNotCalledOnInvalidInput(t *testing.T) {
 			rt.Fatal("handler must not be called when schema validation fails")
 		}
 	})
+}
+
+func TestValidateToolInput_GeneratedStringRequiredFields(t *testing.T) {
+	schema := map[string]any{
+		"type":       "object",
+		"required":   []string{"reason", "question"},
+		"properties": map[string]any{"reason": map[string]any{"type": "string"}, "question": map[string]any{"type": "string"}},
+	}
+	if err := ValidateToolInput(schema, json.RawMessage(`{"reason":"need review"}`)); err == nil {
+		t.Fatal("expected missing generated []string required field to be rejected")
+	}
+	if err := ValidateToolInput(schema, json.RawMessage(`{"reason":"need review","question":"approve?"}`)); err != nil {
+		t.Fatalf("valid generated []string schema input rejected: %v", err)
+	}
 }

@@ -50,18 +50,26 @@ func validateValue(schema map[string]any, value any, path string) error {
 
 	obj, isObj := value.(map[string]any)
 
-	// Required fields (only meaningful for objects).
+	// Required fields (only meaningful for objects). Schemas created in Go may
+	// use []string, while JSON-decoded schemas use []any.
 	if isObj {
-		if required, ok := schema["required"].([]any); ok {
-			for _, r := range required {
-				field, _ := r.(string)
-				if _, present := obj[field]; !present {
-					fieldPath := field
-					if path != "" {
-						fieldPath = path + "." + field
-					}
-					return fmt.Errorf("missing required field %q", fieldPath)
+		var required []string
+		switch fields := schema["required"].(type) {
+		case []any:
+			for _, field := range fields {
+				name, _ := field.(string)
+				required = append(required, name)
+			}
+		case []string:
+			required = fields
+		}
+		for _, field := range required {
+			if _, present := obj[field]; !present {
+				fieldPath := field
+				if path != "" {
+					fieldPath = path + "." + field
 				}
+				return fmt.Errorf("missing required field %q", fieldPath)
 			}
 		}
 	}

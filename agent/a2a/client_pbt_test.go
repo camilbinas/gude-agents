@@ -59,7 +59,7 @@ func TestProperty_SkillToToolMappingCorrectness(t *testing.T) {
 		}
 
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/.well-known/agent.json" {
+			if r.URL.Path == "/.well-known/agent-card.json" {
 				w.Header().Set("Content-Type", "application/json")
 				w.Write(cardJSON)
 				return
@@ -202,7 +202,7 @@ func TestProperty_IncludeExcludeSkillFiltering(t *testing.T) {
 		}
 
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/.well-known/agent.json" {
+			if r.URL.Path == "/.well-known/agent-card.json" {
 				w.Header().Set("Content-Type", "application/json")
 				w.Write(cardJSON)
 				return

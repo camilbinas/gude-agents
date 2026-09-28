@@ -1,9 +1,16 @@
 package bedrock
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -22,6 +29,12 @@ import (
 
 // ptr returns a pointer to the given int32 value. Used in tests to set *int32 fields inline.
 func ptr(v int32) *int32 { return &v }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestToBedrockRole_User(t *testing.T) {
 	got := toBedrockRole(agent.RoleUser)
@@ -870,5 +883,118 @@ func TestToBedrockContentBlocks_DocumentFileIDRejected(t *testing.T) {
 	}}}, "", false)
 	if err == nil || err.Error() != "DocumentBlock: Bedrock does not support provider file IDs" {
 		t.Fatalf("error = %v, want provider file ID rejection", err)
+	}
+}
+
+func TestURLSourceFetchesUseConfiguredClient(t *testing.T) {
+	const imageBody = "image bytes"
+	const documentBody = "document bytes"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		switch r.URL.Path {
+		case "/image":
+			_, _ = w.Write([]byte(imageBody))
+		case "/document":
+			_, _ = w.Write([]byte(documentBody))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := newURLFetchClient(time.Second)
+	image, err := imageBytesWithFetcher(context.Background(), client, agent.ImageSource{URL: server.URL + "/image"})
+	if err != nil {
+		t.Fatalf("imageBytesWithFetcher() error = %v", err)
+	}
+	if string(image) != imageBody {
+		t.Errorf("imageBytesWithFetcher() = %q, want %q", image, imageBody)
+	}
+
+	document, err := documentBytesWithFetcher(context.Background(), client, agent.DocumentSource{URL: server.URL + "/document"})
+	if err != nil {
+		t.Fatalf("documentBytesWithFetcher() error = %v", err)
+	}
+	if string(document) != documentBody {
+		t.Errorf("documentBytesWithFetcher() = %q, want %q", document, documentBody)
+	}
+}
+
+func TestFetchURLBytesRejectsNon2xxResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	_, err := fetchURLBytes(context.Background(), server.Client(), server.URL, "image")
+	if err == nil || !strings.Contains(err.Error(), "status 503") {
+		t.Fatalf("fetchURLBytes() error = %v, want non-2xx status error", err)
+	}
+}
+
+func TestFetchURLBytesRejectsOversizedResponse(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader(strings.Repeat("x", int(defaultURLFetchMaxResponseBytes+1)))),
+			ContentLength: -1,
+		}, nil
+	})}
+
+	_, err := fetchURLBytes(context.Background(), client, "https://example.test/document", "document")
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("fetchURLBytes() error = %v, want size-limit error", err)
+	}
+}
+
+func TestFetchURLBytesHonorsContextCancellation(t *testing.T) {
+	requestStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := fetchURLBytes(ctx, newURLFetchClient(time.Second), server.URL, "image")
+		errCh <- err
+	}()
+
+	select {
+	case <-requestStarted:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("URL request did not start")
+	}
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("fetchURLBytes() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fetchURLBytes() did not return after context cancellation")
+	}
+}
+
+func TestNewURLFetchClientUsesFiniteConfigurableTimeout(t *testing.T) {
+	if got := newURLFetchClient(0).Timeout; got != defaultURLFetchTimeout {
+		t.Errorf("default timeout = %s, want %s", got, defaultURLFetchTimeout)
+	}
+	if got := newURLFetchClient(125 * time.Millisecond).Timeout; got != 125*time.Millisecond {
+		t.Errorf("configured timeout = %s, want 125ms", got)
+	}
+
+	o := &options{}
+	WithURLFetchTimeout(250 * time.Millisecond)(o)
+	if got := newURLFetchClient(o.urlFetchTimeout).Timeout; got != 250*time.Millisecond {
+		t.Errorf("option timeout = %s, want 250ms", got)
 	}
 }

@@ -167,3 +167,103 @@ func TestHandoffStore_NilStore(t *testing.T) {
 		t.Fatalf("expected ErrHandoffRequested without store, got %v", err)
 	}
 }
+
+type failingHandoffStore struct {
+	*testHandoffStore
+	saveErr   error
+	deleteErr error
+}
+
+func newFailingHandoffStore() *failingHandoffStore {
+	return &failingHandoffStore{testHandoffStore: newTestHandoffStore()}
+}
+
+func (s *failingHandoffStore) SaveHandoff(ctx context.Context, convID string, hr *HandoffRequest) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	return s.testHandoffStore.SaveHandoff(ctx, convID, hr)
+}
+
+func (s *failingHandoffStore) DeleteHandoff(ctx context.Context, convID string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return s.testHandoffStore.DeleteHandoff(ctx, convID)
+}
+
+func TestHandoffStore_SaveErrorsAreReturned(t *testing.T) {
+	t.Run("human handoff", func(t *testing.T) {
+		storeErr := errors.New("save failed")
+		store := newFailingHandoffStore()
+		store.saveErr = storeErr
+		provider := newScriptedProvider(&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "h-save", Name: "ask_human", Input: json.RawMessage(`{"reason":"r","question":"q"}`)}}})
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{NewHandoffTool("ask_human", "")}, WithHandoffStore(store), WithConversation(newTestMemoryStore(), "human-save"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.InvokeStream(Background(), "help", nil); !errors.Is(err, storeErr) {
+			t.Fatalf("expected save error, got %v", err)
+		}
+	})
+
+	t.Run("tool approval", func(t *testing.T) {
+		storeErr := errors.New("approval save failed")
+		store := newFailingHandoffStore()
+		store.saveErr = storeErr
+		provider := newScriptedProvider(&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "a-save", Name: "delete_order", Input: json.RawMessage(`{"order_id":"1"}`)}}})
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{deleteOrderTool()}, WithHandoffStore(store), WithConversation(newTestMemoryStore(), "approval-save"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.InvokeStream(Background(), "delete", nil); !errors.Is(err, storeErr) {
+			t.Fatalf("expected approval save error, got %v", err)
+		}
+	})
+}
+
+func TestHandoffStore_DeleteErrorsAreReturned(t *testing.T) {
+	t.Run("human handoff", func(t *testing.T) {
+		storeErr := errors.New("delete failed")
+		store := newFailingHandoffStore()
+		provider := newScriptedProvider(
+			&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "h-delete", Name: "ask_human", Input: json.RawMessage(`{"reason":"r","question":"q"}`)}}},
+			&ProviderResponse{Text: "done"},
+		)
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{NewHandoffTool("ask_human", "")}, WithHandoffStore(store), WithConversation(newTestMemoryStore(), "human-delete"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := Background()
+		if err := a.InvokeStream(c, "help", nil); !errors.Is(err, ErrHandoffRequested) {
+			t.Fatalf("expected handoff request, got %v", err)
+		}
+		store.deleteErr = storeErr
+		hr, _ := GetHandoffRequest(c)
+		if _, err := a.ResumeInvoke(c, hr, "yes"); !errors.Is(err, storeErr) {
+			t.Fatalf("expected delete error, got %v", err)
+		}
+	})
+
+	t.Run("tool approval", func(t *testing.T) {
+		storeErr := errors.New("approval delete failed")
+		store := newFailingHandoffStore()
+		provider := newScriptedProvider(
+			&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "a-delete", Name: "delete_order", Input: json.RawMessage(`{"order_id":"1"}`)}}},
+			&ProviderResponse{Text: "done"},
+		)
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{deleteOrderTool()}, WithHandoffStore(store), WithConversation(newTestMemoryStore(), "approval-delete"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := Background()
+		if err := a.InvokeStream(c, "delete", nil); !errors.Is(err, ErrToolApprovalRequired) {
+			t.Fatalf("expected approval request, got %v", err)
+		}
+		store.deleteErr = storeErr
+		ar, _ := GetApprovalRequest(c)
+		if _, err := a.ResumeWithApprovalInvoke(c, ar, tool.Allow()); !errors.Is(err, storeErr) {
+			t.Fatalf("expected approval delete error, got %v", err)
+		}
+	})
+}

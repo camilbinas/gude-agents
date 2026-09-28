@@ -151,7 +151,9 @@ func (a *Agent) Resume(c *Context, hr *HandoffRequest, humanResponse string, cb 
 
 	// On successful resume, remove the persisted HandoffRequest if a store is configured.
 	if err == nil && a.handoffStore != nil && convID != "" {
-		_ = a.handoffStore.DeleteHandoff(c, convID)
+		if err := a.handoffStore.DeleteHandoff(c, convID); err != nil {
+			return fmt.Errorf("delete handoff: %w", err)
+		}
 	}
 
 	return err

@@ -348,6 +348,55 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	}
 }
 
+func TestExecuteToolsWithMiddleware_ParallelToolsIsolateWidgetAccumulators(t *testing.T) {
+	calls := []tool.Call{
+		toolCall("widget-a", "a"),
+		toolCall("widget-b", "b"),
+	}
+
+	// Each handler waits until both calls have received their per-call widget
+	// accumulator. With a shared Context map, the second setup overwrites the
+	// first accumulator and both widgets end up associated with one tool call.
+	var barrier sync.WaitGroup
+	barrier.Add(len(calls))
+	makeTool := func(name string) tool.Tool {
+		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
+			func(ctx context.Context, _ json.RawMessage) (string, error) {
+				toolC := FromContext(ctx)
+				if toolC == nil {
+					return "", errors.New("tool context unavailable")
+				}
+				barrier.Done()
+				barrier.Wait()
+				if err := toolC.EmitWidget(WidgetBlock{Type: name + ".widget"}); err != nil {
+					return "", err
+				}
+				return name + " result", nil
+			})
+	}
+
+	tools := []tool.Tool{makeTool("a"), makeTool("b")}
+	a, err := New(mockProvider{}, prompt.Text("sys"), tools, WithParallelToolExecution())
+	if err != nil {
+		t.Fatal(err)
+	}
+	availableTools := map[string]tool.Tool{"a": tools[0], "b": tools[1]}
+	c := Background()
+	h := a.hooks(c)
+
+	results, widgetsByCall := a.executeToolsWithMiddleware(c, calls, availableTools, &h, nil, "")
+	for i, want := range []string{"a result", "b result"} {
+		if results[i].IsError || results[i].Content != want {
+			t.Errorf("result[%d] = %+v, want successful content %q", i, results[i], want)
+		}
+	}
+	for i, want := range []string{"a.widget", "b.widget"} {
+		if len(widgetsByCall[i]) != 1 || widgetsByCall[i][0].Type != want {
+			t.Errorf("widgetsByCall[%d] = %+v, want one %q widget", i, widgetsByCall[i], want)
+		}
+	}
+}
+
 func TestInvoke_ToolErrorReturnedAsResultText(t *testing.T) {
 	// Provider returns a tool call to "fail_tool", then final text.
 	// We verify the agent doesn't abort — it sends the error as a tool result.
@@ -620,6 +669,45 @@ func TestInvoke_ToolErrorWrapped(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected ToolResultBlock with content %q", expectedMsg)
+	}
+}
+
+func TestInvoke_RichToolNilOutputReturnsErrorResult(t *testing.T) {
+	emptyRichTool := tool.NewRichRaw("empty_rich", "returns no output", map[string]any{"type": "object"},
+		func(_ context.Context, _ json.RawMessage) (*tool.Output, error) {
+			return nil, nil
+		})
+	cp := newCapturingProvider(
+		&ProviderResponse{ToolCalls: []tool.Call{toolCall("empty-rich-1", "empty_rich")}},
+		&ProviderResponse{Text: "recovered"},
+	)
+	a, err := New(cp, prompt.Text("sys"), []tool.Tool{emptyRichTool})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.Invoke(Background(), "run empty rich tool")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "recovered" {
+		t.Errorf("result = %q, want %q", result, "recovered")
+	}
+	if len(cp.captured) < 2 {
+		t.Fatalf("expected at least 2 provider calls, got %d", len(cp.captured))
+	}
+
+	expected := (&ToolError{ToolName: "empty_rich", Cause: fmt.Errorf("rich tool %q returned nil output", "empty_rich")}).Error()
+	found := false
+	for _, msg := range cp.captured[1].Messages {
+		for _, block := range msg.Content {
+			if tr, ok := block.(ToolResultBlock); ok && tr.ToolUseID == "empty-rich-1" && tr.IsError && tr.Content == expected {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected IsError ToolResultBlock with content %q", expected)
 	}
 }
 

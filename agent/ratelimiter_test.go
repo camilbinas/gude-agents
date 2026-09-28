@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -611,5 +612,32 @@ func TestRateLimiter_MaxConcurrent_FailedCallsDoNotLeakSlots(t *testing.T) {
 	}
 	for _, r := range holders {
 		r()
+	}
+}
+
+func TestRateLimiter_AcquireAlreadyCanceledDoesNotConsumeCapacity(t *testing.T) {
+	rl, err := NewRateLimiter(RPM(1), MaxConcurrent(1), WithFailFast())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	release, err := rl.Acquire(cancelled, "customer-1")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire canceled context error = %v, want context.Canceled", err)
+	}
+	if release != nil {
+		t.Fatal("Acquire returned a release function for a canceled request")
+	}
+
+	release, err = rl.Acquire(context.Background(), "customer-1")
+	if err != nil {
+		t.Fatalf("live Acquire after canceled request failed: %v", err)
+	}
+	release()
+
+	if _, err := rl.Acquire(context.Background(), "customer-1"); !errors.Is(err, ErrRateLimitExceeded) {
+		t.Fatalf("second live Acquire error = %v, want exhausted RPM capacity", err)
 	}
 }

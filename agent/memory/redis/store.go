@@ -2,7 +2,9 @@ package redis
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -23,12 +25,23 @@ import (
 // Store is a Redis memory store that maps Go struct fields to Redis HASH
 // fields using `db` struct tags. Requires Redis Stack (RediSearch).
 type Store[T any] struct {
-	client    *goredis.Client
+	client    redisClient
 	indexName string
 	keyPrefix string
 	dim       int
 	embedder  agent.Embedder
 	schema    *redisSchema
+}
+
+// redisClient is the subset of go-redis used by Store. It keeps backend
+// behavior unit-testable without requiring a Redis service.
+type redisClient interface {
+	Ping(context.Context) *goredis.StatusCmd
+	HSet(context.Context, string, ...any) *goredis.IntCmd
+	HGet(context.Context, string, string) *goredis.StringCmd
+	Del(context.Context, ...string) *goredis.IntCmd
+	Do(context.Context, ...any) *goredis.Cmd
+	Close() error
 }
 
 // StoreOption configures a Store.
@@ -40,6 +53,24 @@ type storeConfig struct {
 	hnswM        int
 	hnswEF       int
 	dropExisting bool
+}
+
+func defaultStoreConfig[T any]() *storeConfig {
+	namespace := defaultNamespace[T]()
+	return &storeConfig{
+		indexName: "gude_typed_idx_" + namespace,
+		keyPrefix: "gude:typed:" + namespace + ":",
+		hnswM:     16,
+		hnswEF:    200,
+	}
+}
+
+// defaultNamespace derives a stable, Redis-safe namespace from T so distinct
+// types cannot share keys or an index unless callers explicitly configure one.
+func defaultNamespace[T any]() string {
+	var zero T
+	t := reflect.TypeOf(zero)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(t.PkgPath()+":"+t.String())))
 }
 
 // WithIndexName sets the RediSearch index name.
@@ -109,12 +140,7 @@ func NewStore[T any](opts Options, embedder agent.Embedder, dim int, sopts ...St
 		return nil, errors.New("redis: dim must be at least 1")
 	}
 
-	cfg := &storeConfig{
-		indexName: "gude_typed_idx",
-		keyPrefix: "gude:typed:",
-		hnswM:     16,
-		hnswEF:    200,
-	}
+	cfg := defaultStoreConfig[T]()
 	for _, o := range sopts {
 		o(cfg)
 	}
@@ -190,8 +216,9 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	fields := s.buildHashFields(value)
 	fields["embedding"] = float64sToFloat32Bytes(embedding)
 
-	// Generate key.
-	key := s.keyPrefix + s.extractPK(value)
+	// Namespace the physical key by identifier so equal primary keys from
+	// different identifiers cannot overwrite each other.
+	key := s.entryKey(identifier, s.extractPK(value))
 
 	if err := s.client.HSet(ctx, key, fields).Err(); err != nil {
 		return fmt.Errorf("redis: hset: %w", err)
@@ -282,11 +309,11 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 		return errors.New("redis: id must not be empty")
 	}
 
-	exists, err := s.client.Exists(ctx, id).Result()
+	owned, err := s.entryOwnedBy(ctx, identifier, id)
 	if err != nil {
-		return fmt.Errorf("redis: exists check: %w", err)
+		return err
 	}
-	if exists == 0 {
+	if !owned {
 		return fmt.Errorf("redis: entry %q not found", id)
 	}
 
@@ -312,6 +339,23 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 	return nil
 }
 
+func (s *Store[T]) entryOwnedBy(ctx context.Context, identifier, id string) (bool, error) {
+	identField := s.schema.Fields[s.schema.IdentifierIdx].HashField
+	storedIdentifier, err := s.client.HGet(ctx, id, identField).Result()
+	if errors.Is(err, goredis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("redis: ownership check: %w", err)
+	}
+	return storedIdentifier == identifier, nil
+}
+
+const (
+	forgetAllPageSize    = 1000
+	forgetAllDeleteBatch = 1000
+)
+
 // ForgetAll removes all stored entries for the given identifier.
 func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
 	if identifier == "" {
@@ -320,25 +364,44 @@ func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
 
 	identField := s.schema.Fields[s.schema.IdentifierIdx].HashField
 	query := fmt.Sprintf("@%s:{%s}", identField, escapeTag(identifier))
-
-	res, err := s.client.Do(ctx, "FT.SEARCH", s.indexName,
-		query,
-		"NOCONTENT",
-		"LIMIT", "0", "10000",
-	).Result()
+	keys, err := collectPagedKeys(forgetAllPageSize, func(offset, limit int) ([]string, error) {
+		res, err := s.client.Do(ctx, "FT.SEARCH", s.indexName,
+			query,
+			"NOCONTENT",
+			"LIMIT", strconv.Itoa(offset), strconv.Itoa(limit),
+		).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redis: forget all search: %w", err)
+		}
+		return extractTypedKeys(res), nil
+	})
 	if err != nil {
-		return fmt.Errorf("redis: forget all search: %w", err)
+		return err
 	}
 
-	keys := extractTypedKeys(res)
-	if len(keys) == 0 {
-		return nil
-	}
-
-	if err := s.client.Del(ctx, keys...).Err(); err != nil {
-		return fmt.Errorf("redis: forget all delete: %w", err)
+	for start := 0; start < len(keys); start += forgetAllDeleteBatch {
+		end := min(start+forgetAllDeleteBatch, len(keys))
+		if err := s.client.Del(ctx, keys[start:end]...).Err(); err != nil {
+			return fmt.Errorf("redis: forget all delete: %w", err)
+		}
 	}
 	return nil
+}
+
+// collectPagedKeys reads every page before deletion changes the search results.
+func collectPagedKeys(pageSize int, fetch func(offset, limit int) ([]string, error)) ([]string, error) {
+	var keys []string
+	for offset := 0; ; {
+		page, err := fetch(offset, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, page...)
+		if len(page) < pageSize {
+			return keys, nil
+		}
+		offset += len(page)
+	}
 }
 
 // Forget removes a single entry by its Redis key.
@@ -348,6 +411,13 @@ func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
 	}
 	if id == "" {
 		return errors.New("redis: id must not be empty")
+	}
+	owned, err := s.entryOwnedBy(ctx, identifier, id)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return fmt.Errorf("redis: entry %q not found", id)
 	}
 	if err := s.client.Del(ctx, id).Err(); err != nil {
 		return fmt.Errorf("redis: forget: %w", err)
@@ -546,6 +616,13 @@ func (s *Store[T]) extractPK(value T) string {
 		}
 	}
 	return uuid.New().String()
+}
+
+// entryKey builds a type-prefixed Redis key with a delimiter-safe identifier
+// component. The key remains the storage ID returned by Recall.
+func (s *Store[T]) entryKey(identifier, pk string) string {
+	encodedIdentifier := base64.RawURLEncoding.EncodeToString([]byte(identifier))
+	return s.keyPrefix + "id:" + encodedIdentifier + ":" + pk
 }
 
 func setRedisIdentifier[T any](value *T, schema *redisSchema, id string) {

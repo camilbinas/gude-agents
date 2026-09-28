@@ -71,45 +71,55 @@ func (s *EvalSuite) Run(ctx context.Context) (EvalReport, error) {
 		for ci := 0; ci < numCases; ci++ {
 			for ei := 0; ei < numEvals; ei++ {
 				idx := ci*numEvals + ei
+				if err := ctx.Err(); err != nil {
+					for i := idx; i < len(errs); i++ {
+						errs[i] = err
+					}
+					goto aggregate
+				}
 				res, err := s.evaluators[ei].Evaluate(ctx, s.cases[ci])
 				results[idx] = res
 				errs[idx] = err
 			}
 		}
 	} else {
-		// Parallel path — bounded concurrency via semaphore.
+		// Acquire worker capacity before starting each goroutine. This prevents
+		// queued work from starting after cancellation.
 		sem := make(chan struct{}, s.concurrency)
 		var wg sync.WaitGroup
 
 		for ci := 0; ci < numCases; ci++ {
 			for ei := 0; ei < numEvals; ei++ {
-				// Check context before dispatching new work.
+				idx := ci*numEvals + ei
 				select {
+				case sem <- struct{}{}:
 				case <-ctx.Done():
-					// Stop dispatching but wait for in-flight work below.
+					for i := idx; i < len(errs); i++ {
+						errs[i] = ctx.Err()
+					}
 					goto done
-				default:
 				}
 
 				wg.Add(1)
-				go func(caseIdx, evalIdx int) {
+				go func(caseIdx, evalIdx, resultIdx int) {
 					defer wg.Done()
+					defer func() { <-sem }()
 
-					sem <- struct{}{}        // acquire
-					defer func() { <-sem }() // release
-
-					idx := caseIdx*numEvals + evalIdx
+					if err := ctx.Err(); err != nil {
+						errs[resultIdx] = err
+						return
+					}
 					res, err := s.evaluators[evalIdx].Evaluate(ctx, s.cases[caseIdx])
-					results[idx] = res
-					errs[idx] = err
-				}(ci, ei)
+					results[resultIdx] = res
+					errs[resultIdx] = err
+				}(ci, ei, idx)
 			}
 		}
 	done:
 		wg.Wait()
 	}
 
-	// Aggregate results into CaseResults.
+aggregate:
 	caseResults := make([]CaseResults, numCases)
 	for ci := 0; ci < numCases; ci++ {
 		cr := CaseResults{
@@ -170,12 +180,13 @@ func (s *EvalSuite) Run(ctx context.Context) (EvalReport, error) {
 		}
 	}
 
-	return EvalReport{
+	report := EvalReport{
 		Timestamp:  time.Now(),
 		TotalCases: numCases,
 		Results:    caseResults,
 		Summaries:  summaries,
-	}, nil
+	}
+	return report, ctx.Err()
 }
 
 // joinErrors concatenates multiple error strings with "; " separator.

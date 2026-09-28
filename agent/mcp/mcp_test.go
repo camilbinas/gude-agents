@@ -1,7 +1,11 @@
 package mcp
 
 import (
+	"context"
+	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -180,5 +184,65 @@ func TestToolsConfig_IncludeEmpty(t *testing.T) {
 	// Empty include list is a no-op — all tools are allowed.
 	if !cfg.allow("read_file") {
 		t.Error("expected all tools to be allowed with empty include list (no-op)")
+	}
+}
+
+func newLifecycleTestPool(size, maxSize int) *Pool {
+	p := &Pool{maxSize: maxSize, size: size, sessions: make(chan *sdkmcp.ClientSession, maxSize)}
+	p.cond = sync.NewCond(&p.mu)
+	return p
+}
+
+func TestPoolClose_IsIdempotentAndLeavesLeaseChannelOpen(t *testing.T) {
+	p := newLifecycleTestPool(1, 1)
+	if err := p.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+
+	select {
+	case _, ok := <-p.sessions:
+		if !ok {
+			t.Fatal("Close closed the idle channel while a lease could still be released")
+		}
+		t.Fatal("unexpected idle session")
+	default:
+	}
+	p.release(nil)
+	if got := p.Size(); got != 0 {
+		t.Fatalf("Size() after releasing the active lease = %d, want 0", got)
+	}
+}
+
+func TestPoolAcquireAfterCloseReturnsClosedError(t *testing.T) {
+	p := newLifecycleTestPool(0, 1)
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	session, err := p.acquire(context.Background())
+	if session != nil {
+		t.Fatalf("acquire() session = %v, want nil", session)
+	}
+	if !errors.Is(err, errPoolClosed) {
+		t.Fatalf("acquire() error = %v, want %v", err, errPoolClosed)
+	}
+}
+
+func TestPoolCloseUnblocksWaitingAcquire(t *testing.T) {
+	p := newLifecycleTestPool(1, 1)
+	result := make(chan error, 1)
+	go func() { _, err := p.acquire(context.Background()); result <- err }()
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, errPoolClosed) {
+			t.Fatalf("waiting acquire() error = %v, want %v", err, errPoolClosed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiting acquire did not unblock after Close")
 	}
 }

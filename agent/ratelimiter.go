@@ -201,6 +201,10 @@ func (b *rateBucket) waitForCapacity(ctx context.Context, waitDuration time.Dura
 func (b *rateBucket) acquire(ctx context.Context) error {
 	b.mu.Lock()
 	for {
+		if err := ctx.Err(); err != nil {
+			b.mu.Unlock()
+			return err
+		}
 		if b.rpmLimit > 0 {
 			var count int
 			switch b.windowStrategy {
@@ -308,6 +312,10 @@ func newConcurrencySem(max int) *concurrencySem {
 // In BlockMode, it waits until a slot is released or the context is cancelled.
 func (s *concurrencySem) Acquire(ctx context.Context, behavior OverflowBehavior) error {
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 
 	for s.inflight >= s.max {
 		if behavior == FailFastMode {
@@ -337,6 +345,10 @@ func (s *concurrencySem) Acquire(ctx context.Context, behavior OverflowBehavior)
 			s.mu.Unlock()
 			return ctx.Err()
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
 	}
 	s.inflight++
 	s.mu.Unlock()
@@ -739,6 +751,11 @@ func noopRelease() {}
 // When a RateLimitStore is configured (via WithStore), all counter operations are
 // delegated to the store instead of the in-memory bucket map.
 func (rl *RateLimiter) Acquire(ctx context.Context, key string) (ReleaseFunc, error) {
+	// Never charge a request that was already cancelled before acquisition.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// When a store is configured, delegate all counter operations to it.
 	if rl.store != nil {
 		return rl.acquireWithStore(ctx, key)
@@ -788,6 +805,10 @@ func (rl *RateLimiter) Acquire(ctx context.Context, key string) (ReleaseFunc, er
 // operations. It checks per-key request limits, per-key token limits, global request
 // limits, global token limits, then acquires a concurrency slot if configured.
 func (rl *RateLimiter) acquireWithStore(ctx context.Context, key string) (ReleaseFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Determine per-key request limit and window.
 	reqLimit := rl.rpmLimit
 	reqWindow := 60 * time.Second

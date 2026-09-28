@@ -245,21 +245,24 @@ func TestProperty_GeminiContentBlockMapping(t *testing.T) {
 		case 2: // ToolResultBlock
 			content := rapid.StringMatching(`[a-zA-Z0-9 ]{0,50}`).Draw(t, "content")
 			toolUseID := rapid.StringMatching(`tu_[a-zA-Z0-9]{4,12}`).Draw(t, "toolUseID")
-			blocks := []agent.ContentBlock{agent.ToolResultBlock{
-				ToolUseID: toolUseID,
-				Content:   content,
-			}}
-			parts, err := toGeminiParts(blocks)
+			name := rapid.StringMatching(`[a-z_][a-z0-9_]{0,20}`).Draw(t, "toolName")
+			contents, err := toGeminiContents([]agent.Message{
+				{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.ToolUseBlock{ToolUseID: toolUseID, Name: name}}},
+				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.ToolResultBlock{ToolUseID: toolUseID, Content: content}}},
+			})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			parts := contents[1].Parts
 			if len(parts) != 1 {
 				t.Fatalf("expected 1 part, got %d", len(parts))
 			}
 			if parts[0].FunctionResponse == nil {
 				t.Fatal("expected FunctionResponse part")
 			}
-			// The implementation wraps content in map[string]any{"result": content}.
+			if parts[0].FunctionResponse.Name != name {
+				t.Fatalf("FunctionResponse.Name = %q, want %q", parts[0].FunctionResponse.Name, name)
+			}
 			if parts[0].FunctionResponse.Response["result"] != content {
 				t.Fatalf("FunctionResponse.Response[\"result\"] = %v, want %q",
 					parts[0].FunctionResponse.Response["result"], content)
@@ -593,11 +596,14 @@ func TestProperty_GeminiAllBlockTypesDontPanic(t *testing.T) {
 	t.Run("ToolResultBlock", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
 			inner := genGeminiToolResultBlock().Draw(t, "inner")
-			parts, err := toGeminiParts([]agent.ContentBlock{inner})
+			contents, err := toGeminiContents([]agent.Message{
+				{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.ToolUseBlock{ToolUseID: inner.ToolUseID, Name: "test_tool"}}},
+				{Role: agent.RoleUser, Content: []agent.ContentBlock{inner}},
+			})
 			if err != nil {
-				t.Fatalf("toGeminiParts(ToolResultBlock) error: %v", err)
+				t.Fatalf("toGeminiContents(ToolResultBlock) error: %v", err)
 			}
-			if len(parts) == 0 {
+			if len(contents[1].Parts) == 0 {
 				t.Fatal("expected non-empty parts for ToolResultBlock")
 			}
 		})

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -34,11 +35,15 @@ const (
 	thinkingStyleNone   thinkingStyle = iota // model does not support thinking
 	thinkingStyleClaude                      // {"thinking": {"type": "enabled", "budget_tokens": N}}
 	thinkingStyleNova2                       // {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "..."}}
+
+	defaultURLFetchTimeout          = 30 * time.Second
+	defaultURLFetchMaxResponseBytes = int64(10 * 1024 * 1024)
 )
 
 // BedrockProvider implements agent.Provider using the AWS Bedrock runtime.
 type BedrockProvider struct {
 	client           *bedrockruntime.Client
+	fetchClient      *http.Client
 	model            string
 	maxTokens        *int32              // nil = no explicit limit (provider default)
 	thinkingStyle    thinkingStyle       // set by model constructors
@@ -62,11 +67,29 @@ type options struct {
 	guardrailID      string
 	guardrailVersion string
 	cachingEnabled   bool
+	urlFetchTimeout  time.Duration
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
 func WithRegion(region string) Option {
 	return func(o *options) { o.region = region }
+}
+
+// WithURLFetchTimeout sets the timeout for downloading image and document URL sources.
+// Non-positive values retain the finite default timeout.
+func WithURLFetchTimeout(timeout time.Duration) Option {
+	return func(o *options) {
+		if timeout > 0 {
+			o.urlFetchTimeout = timeout
+		}
+	}
+}
+
+func newURLFetchClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = defaultURLFetchTimeout
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 // WithMaxTokens sets the maximum number of tokens in the response.
@@ -190,6 +213,7 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 
 	return &BedrockProvider{
 		client:           bedrockruntime.NewFromConfig(cfg, clientOpts...),
+		fetchClient:      newURLFetchClient(o.urlFetchTimeout),
 		model:            model,
 		maxTokens:        o.maxTokens,
 		thinkingStyle:    o.thinkingStyle,
@@ -220,7 +244,7 @@ func (p *BedrockProvider) Name() string { return "bedrock" }
 func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
 	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs, err := toBedrockMessages(params.Messages, p.model, cachingEnabled)
+	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, params.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -326,7 +350,7 @@ func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResp
 func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
 	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs, err := toBedrockMessages(params.Messages, p.model, cachingEnabled)
+	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, params.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -580,10 +604,14 @@ func isClaudeModel(modelID string) bool {
 // When cachingEnabled is true and the model is a Claude model, a CachePoint
 // is injected after every DocumentBlock in user messages.
 func toBedrockMessages(msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
+	return toBedrockMessagesWithFetcher(context.Background(), newURLFetchClient(0), msgs, modelID, cachingEnabled)
+}
+
+func toBedrockMessagesWithFetcher(ctx context.Context, fetchClient *http.Client, msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
 	injectCachePoints := cachingEnabled && isClaudeModel(modelID)
 	out := make([]types.Message, len(msgs))
 	for i, m := range msgs {
-		blocks, err := toBedrockContentBlocks(m.Content, modelID, injectCachePoints)
+		blocks, err := toBedrockContentBlocksWithFetcher(ctx, fetchClient, m.Content, modelID, injectCachePoints)
 		if err != nil {
 			return nil, err
 		}
@@ -605,6 +633,10 @@ func toBedrockRole(r agent.Role) types.ConversationRole {
 }
 
 func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectCachePoints bool) ([]types.ContentBlock, error) {
+	return toBedrockContentBlocksWithFetcher(context.Background(), newURLFetchClient(0), blocks, modelID, injectCachePoints)
+}
+
+func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Client, blocks []agent.ContentBlock, modelID string, injectCachePoints bool) ([]types.ContentBlock, error) {
 	out := make([]types.ContentBlock, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -637,7 +669,7 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectC
 				},
 			}
 			for _, img := range v.Images {
-				bytes, err := imageBytes(img.Source)
+				bytes, err := imageBytesWithFetcher(ctx, fetchClient, img.Source)
 				if err != nil {
 					return nil, fmt.Errorf("tool result ImageBlock: %w", err)
 				}
@@ -658,7 +690,7 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectC
 			out = append(out, &types.ContentBlockMemberToolResult{Value: trb})
 
 		case agent.ImageBlock:
-			bytes, err := imageBytes(v.Source)
+			bytes, err := imageBytesWithFetcher(ctx, fetchClient, v.Source)
 			if err != nil {
 				return nil, fmt.Errorf("ImageBlock: %w", err)
 			}
@@ -688,7 +720,7 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectC
 				if v.Source.FileID != "" {
 					return nil, fmt.Errorf("DocumentBlock: Bedrock does not support provider file IDs")
 				}
-				bytes, err := documentBytes(v.Source)
+				bytes, err := documentBytesWithFetcher(ctx, fetchClient, v.Source)
 				if err != nil {
 					return nil, fmt.Errorf("DocumentBlock: %w", err)
 				}
@@ -717,8 +749,12 @@ func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectC
 // imageBytes returns the raw bytes from an ImageSource.
 // If Source.Data is set, it is returned directly.
 // If Source.Base64 is set, it is decoded from standard base64.
-// If Source.URL is set, the image is fetched via HTTP GET.
+// If Source.URL is set, the image is fetched via a bounded HTTP GET.
 func imageBytes(src agent.ImageSource) ([]byte, error) {
+	return imageBytesWithFetcher(context.Background(), newURLFetchClient(0), src)
+}
+
+func imageBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.ImageSource) ([]byte, error) {
 	if len(src.Data) > 0 {
 		return src.Data, nil
 	}
@@ -730,19 +766,7 @@ func imageBytes(src agent.ImageSource) ([]byte, error) {
 		return b, nil
 	}
 	if src.URL != "" {
-		resp, err := http.Get(src.URL)
-		if err != nil {
-			return nil, fmt.Errorf("fetch image URL: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("fetch image URL: status %d", resp.StatusCode)
-		}
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("read image URL body: %w", err)
-		}
-		return b, nil
+		return fetchURLBytes(ctx, fetchClient, src.URL, "image")
 	}
 	return nil, fmt.Errorf("ImageSource has no data, base64, or URL")
 }
@@ -791,6 +815,10 @@ func sanitizeDocName(name string) string {
 
 // documentBytes returns the raw bytes from a DocumentSource, same logic as imageBytes.
 func documentBytes(src agent.DocumentSource) ([]byte, error) {
+	return documentBytesWithFetcher(context.Background(), newURLFetchClient(0), src)
+}
+
+func documentBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.DocumentSource) ([]byte, error) {
 	if len(src.Data) > 0 {
 		return src.Data, nil
 	}
@@ -802,21 +830,41 @@ func documentBytes(src agent.DocumentSource) ([]byte, error) {
 		return b, nil
 	}
 	if src.URL != "" {
-		resp, err := http.Get(src.URL)
-		if err != nil {
-			return nil, fmt.Errorf("fetch document URL: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("fetch document URL: status %d", resp.StatusCode)
-		}
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("read document URL body: %w", err)
-		}
-		return b, nil
+		return fetchURLBytes(ctx, fetchClient, src.URL, "document")
 	}
 	return nil, fmt.Errorf("DocumentSource has no data, base64, or URL")
+}
+
+func fetchURLBytes(ctx context.Context, fetchClient *http.Client, rawURL, resource string) ([]byte, error) {
+	if fetchClient == nil {
+		fetchClient = newURLFetchClient(0)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s URL: %w", resource, err)
+	}
+	resp, err := fetchClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s URL: %w", resource, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("fetch %s URL: status %d", resource, resp.StatusCode)
+	}
+	if resp.ContentLength > defaultURLFetchMaxResponseBytes {
+		return nil, fmt.Errorf("fetch %s URL: response exceeds %d-byte limit", resource, defaultURLFetchMaxResponseBytes)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, defaultURLFetchMaxResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s URL body: %w", resource, err)
+	}
+	if int64(len(body)) > defaultURLFetchMaxResponseBytes {
+		return nil, fmt.Errorf("fetch %s URL: response exceeds %d-byte limit", resource, defaultURLFetchMaxResponseBytes)
+	}
+	return body, nil
 }
 
 // toBedrockDocFormat maps a MIME type to the Bedrock DocumentFormat enum.

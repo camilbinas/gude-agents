@@ -300,3 +300,141 @@ func TestApprovalRequest_SnapshotNoDuplicateToolUseID(t *testing.T) {
 		t.Errorf("snapshot contains %d tool result(s) for ToolUseID %q — would cause duplicate ID error on resume", count, ar.ToolUseID)
 	}
 }
+
+func TestResumeWithApproval_RerunsExecutionChecks(t *testing.T) {
+	t.Run("schema", func(t *testing.T) {
+		handlerCalled := false
+		strictTool := tool.NewRaw("strict", "requires an id", map[string]any{
+			"type":       "object",
+			"required":   []string{"id"},
+			"properties": map[string]any{"id": map[string]any{"type": "string"}},
+		}, func(_ context.Context, _ json.RawMessage) (string, error) {
+			handlerCalled = true
+			return "ok", nil
+		}, tool.RequiresApproval())
+		provider := newScriptedProvider(
+			&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "schema-1", Name: "strict", Input: json.RawMessage(`{"id":"original"}`)}}},
+			&ProviderResponse{Text: "schema rejected"},
+		)
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{strictTool})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := Background()
+		if err := a.InvokeStream(c, "run", nil); !errors.Is(err, ErrToolApprovalRequired) {
+			t.Fatalf("expected approval request, got %v", err)
+		}
+		ar, _ := GetApprovalRequest(c)
+		ar.ToolInput = json.RawMessage(`{}`)
+		if _, err := a.ResumeWithApprovalInvoke(c, ar, tool.Allow()); err != nil {
+			t.Fatalf("ResumeWithApprovalInvoke: %v", err)
+		}
+		if handlerCalled {
+			t.Fatal("handler ran despite invalid approved input")
+		}
+	})
+
+	t.Run("role", func(t *testing.T) {
+		handlerCalled := false
+		restricted := tool.NewRaw("restricted", "admin only", map[string]any{"type": "object"}, func(_ context.Context, _ json.RawMessage) (string, error) {
+			handlerCalled = true
+			return "secret", nil
+		}, tool.RequiresApproval(), tool.AllowRoles("admin"))
+		provider := newScriptedProvider(
+			&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "role-1", Name: "restricted", Input: json.RawMessage(`{}`)}}},
+			&ProviderResponse{Text: "role rejected"},
+		)
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{restricted})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := Background().WithPrincipal(Principal{ID: "admin", Roles: []string{"admin"}})
+		if err := a.InvokeStream(c, "run", nil); !errors.Is(err, ErrToolApprovalRequired) {
+			t.Fatalf("expected approval request, got %v", err)
+		}
+		ar, _ := GetApprovalRequest(c)
+		c.Set(principalKey{}, Principal{ID: "guest", Roles: []string{"guest"}})
+		if _, err := a.ResumeWithApprovalInvoke(c, ar, tool.Allow()); err != nil {
+			t.Fatalf("ResumeWithApprovalInvoke: %v", err)
+		}
+		if handlerCalled {
+			t.Fatal("handler ran after approved caller lost the required role")
+		}
+	})
+
+	t.Run("guard and middleware", func(t *testing.T) {
+		var calls []string
+		guarded := tool.NewRaw("guarded", "guarded tool", map[string]any{"type": "object"}, func(_ context.Context, _ json.RawMessage) (string, error) {
+			calls = append(calls, "handler")
+			return "ok", nil
+		}, tool.RequiresApproval())
+		guarded.Guard = func(_ context.Context, _ json.RawMessage) (tool.Decision, error) {
+			calls = append(calls, "guard")
+			return tool.Allow(), nil
+		}
+		middleware := func(next ToolHandlerFunc) ToolHandlerFunc {
+			return func(c *Context, name string, input json.RawMessage) (string, error) {
+				calls = append(calls, "before middleware")
+				out, err := next(c, name, input)
+				calls = append(calls, "after middleware")
+				return out, err
+			}
+		}
+		provider := newScriptedProvider(
+			&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "guard-1", Name: "guarded", Input: json.RawMessage(`{}`)}}},
+			&ProviderResponse{Text: "done"},
+		)
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{guarded}, WithMiddleware(middleware))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := Background()
+		if err := a.InvokeStream(c, "run", nil); !errors.Is(err, ErrToolApprovalRequired) {
+			t.Fatalf("expected approval request, got %v", err)
+		}
+		ar, _ := GetApprovalRequest(c)
+		if _, err := a.ResumeWithApprovalInvoke(c, ar, tool.Allow()); err != nil {
+			t.Fatalf("ResumeWithApprovalInvoke: %v", err)
+		}
+		want := []string{"before middleware", "guard", "handler", "after middleware"}
+		if len(calls) != len(want) {
+			t.Fatalf("calls = %v, want %v", calls, want)
+		}
+		for i := range want {
+			if calls[i] != want[i] {
+				t.Fatalf("calls = %v, want %v", calls, want)
+			}
+		}
+	})
+}
+
+func TestResumeWithApproval_RichHandlerOnlyTool(t *testing.T) {
+	richCalled := false
+	richTool := tool.NewRichRaw("screenshot", "captures a screenshot", map[string]any{"type": "object"}, func(_ context.Context, _ json.RawMessage) (*tool.Output, error) {
+		richCalled = true
+		return &tool.Output{Text: "screenshot captured", Images: []tool.Image{{Base64: "aW1hZ2U=", MIMEType: "image/png"}}}, nil
+	}, tool.RequiresApproval())
+	provider := newScriptedProvider(
+		&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "rich-1", Name: "screenshot", Input: json.RawMessage(`{}`)}}},
+		&ProviderResponse{Text: "I reviewed the screenshot."},
+	)
+	a, err := New(provider, prompt.Text("helpful"), []tool.Tool{richTool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Background()
+	if err := a.InvokeStream(c, "take a screenshot", nil); !errors.Is(err, ErrToolApprovalRequired) {
+		t.Fatalf("expected approval request, got %v", err)
+	}
+	ar, _ := GetApprovalRequest(c)
+	result, err := a.ResumeWithApprovalInvoke(c, ar, tool.Allow())
+	if err != nil {
+		t.Fatalf("ResumeWithApprovalInvoke: %v", err)
+	}
+	if !richCalled {
+		t.Fatal("rich handler was not called")
+	}
+	if result != "I reviewed the screenshot." {
+		t.Errorf("result = %q", result)
+	}
+}

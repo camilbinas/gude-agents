@@ -68,20 +68,7 @@ func (a *Agent) ResumeWithApproval(c *Context, ar *ApprovalRequest, decision too
 		if !ok {
 			return fmt.Errorf("approval resume: tool %q not found", ar.ToolName)
 		}
-		allMiddleware := append([]Middleware{}, a.middlewares...)
-		handler := ChainMiddleware(
-			func(c *Context, toolName string, input json.RawMessage) (string, error) {
-				return t.Handler(c, input)
-			},
-			allMiddleware...,
-		)
-		out, err := handler(c, ar.ToolName, ar.ToolInput)
-		if err != nil {
-			toolErr := &ToolError{ToolName: ar.ToolName, Cause: err}
-			toolResult = ToolResultBlock{ToolUseID: ar.ToolUseID, Content: toolErr.Error(), IsError: true}
-		} else {
-			toolResult = ToolResultBlock{ToolUseID: ar.ToolUseID, Content: out}
-		}
+		toolResult = a.executeApprovedTool(c, t, ar, convID)
 	} else {
 		if a.auditHook != nil {
 			p, _ := GetTyped[Principal](c, principalKey{})
@@ -129,10 +116,96 @@ func (a *Agent) ResumeWithApproval(c *Context, ar *ApprovalRequest, decision too
 	c.setUsage(usage)
 
 	if err == nil && a.handoffStore != nil && convID != "" {
-		_ = a.handoffStore.DeleteHandoff(c, approvalStoreKey(convID))
+		if err := a.handoffStore.DeleteHandoff(c, approvalStoreKey(convID)); err != nil {
+			return fmt.Errorf("delete approval handoff: %w", err)
+		}
 	}
 
 	return err
+}
+
+// executeApprovedTool reruns the tool execution checks after human approval,
+// intentionally skipping only the approval gate that has already been satisfied.
+func (a *Agent) executeApprovedTool(c *Context, t tool.Tool, ar *ApprovalRequest, convID string) ToolResultBlock {
+	result := ToolResultBlock{ToolUseID: ar.ToolUseID}
+
+	if p, ok := GetTyped[Principal](c, principalKey{}); ok && !t.AllowedWithAttrs(p.Roles, p.Attrs) {
+		reason := "caller does not have the required role"
+		result.Content = denialResultJSON(ar.ToolName, reason)
+		result.IsError = true
+		return result
+	}
+
+	if err := ValidateToolInput(t.Spec.InputSchema, ar.ToolInput); err != nil {
+		toolErr := &ToolError{ToolName: ar.ToolName, Cause: err}
+		result.Content = toolErr.Error()
+		result.IsError = true
+		return result
+	}
+
+	// Match normal execution by giving the approved call fresh per-call state.
+	toolC := c
+	toolC.Set(widgetAccumulatorKey{}, &widgetAccumulator{})
+	toolC.Set(guardDenialKey{}, nil)
+
+	var richOutput *tool.Output
+	handler := ChainMiddleware(
+		func(c *Context, toolName string, input json.RawMessage) (string, error) {
+			if t.Guard != nil {
+				decision, err := t.Guard(c, input)
+				if err != nil {
+					reason := err.Error()
+					denial := guardDenialState{Tool: toolName, Reason: reason, Result: denialResultJSON(toolName, reason)}
+					c.Set(guardDenialKey{}, denial)
+					return denial.Result, nil
+				}
+				if !decision.Allow {
+					denial := guardDenialState{Tool: toolName, Reason: decision.Reason, Result: denialResultJSON(toolName, decision.Reason)}
+					c.Set(guardDenialKey{}, denial)
+					return denial.Result, nil
+				}
+			}
+			if t.RichHandler != nil {
+				var err error
+				richOutput, err = t.RichHandler(c, input)
+				if err != nil {
+					return "", err
+				}
+				if richOutput == nil {
+					return "", fmt.Errorf("rich tool %q returned nil output", toolName)
+				}
+				return richOutput.Text, nil
+			}
+			if t.Handler == nil {
+				return "", fmt.Errorf("tool %q has no handler", toolName)
+			}
+			return t.Handler(c, input)
+		},
+		append([]Middleware{}, a.middlewares...)...,
+	)
+
+	out, err := handler(toolC, ar.ToolName, ar.ToolInput)
+	if denial, ok := GetTyped[guardDenialState](toolC, guardDenialKey{}); ok {
+		result.Content = denial.Result
+		result.IsError = true
+		return result
+	}
+	if err != nil {
+		toolErr := &ToolError{ToolName: ar.ToolName, Cause: err}
+		result.Content = toolErr.Error()
+		result.IsError = true
+		return result
+	}
+
+	result.Content = out
+	if richOutput != nil {
+		for _, image := range richOutput.Images {
+			result.Images = append(result.Images, ImageBlock{Source: ImageSource{
+				Data: image.Data, Base64: image.Base64, URL: image.URL, MIMEType: image.MIMEType,
+			}})
+		}
+	}
+	return result
 }
 
 // ResumeWithApprovalInvoke is a convenience wrapper over ResumeWithApproval

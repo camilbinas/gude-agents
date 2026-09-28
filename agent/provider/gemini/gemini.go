@@ -341,10 +341,14 @@ func documentBytes(src agent.DocumentSource) ([]byte, error) {
 }
 
 // toGeminiContents converts framework messages to Gemini content objects.
+// Gemini identifies a function response by function name, whereas the framework
+// identifies tool results by tool-use ID. Track call IDs while preserving message
+// order so each response carries the name of the function that produced it.
 func toGeminiContents(msgs []agent.Message) ([]*genai.Content, error) {
+	toolNames := make(map[string]string)
 	out := make([]*genai.Content, len(msgs))
 	for i, m := range msgs {
-		parts, err := toGeminiParts(m.Content)
+		parts, err := toGeminiPartsWithToolNames(m.Content, toolNames)
 		if err != nil {
 			return nil, err
 		}
@@ -356,8 +360,15 @@ func toGeminiContents(msgs []agent.Message) ([]*genai.Content, error) {
 	return out, nil
 }
 
-// toGeminiParts converts framework content blocks to Gemini parts.
+// toGeminiParts converts standalone framework content blocks to Gemini parts.
+// It preserves the legacy ToolUseID fallback for callers without conversation
+// history. Provider requests use toGeminiContents, which always maps tool
+// responses to their preceding function names.
 func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
+	return toGeminiPartsWithToolNames(blocks, nil)
+}
+
+func toGeminiPartsWithToolNames(blocks []agent.ContentBlock, toolNames map[string]string) ([]*genai.Part, error) {
 	parts := make([]*genai.Part, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -370,9 +381,20 @@ func toGeminiParts(blocks []agent.ContentBlock) ([]*genai.Part, error) {
 					args = map[string]any{}
 				}
 			}
+			if toolNames != nil {
+				toolNames[v.ToolUseID] = v.Name
+			}
 			parts = append(parts, genai.NewPartFromFunctionCall(v.Name, args))
 		case agent.ToolResultBlock:
-			parts = append(parts, genai.NewPartFromFunctionResponse(v.ToolUseID, map[string]any{"result": v.Content}))
+			name := v.ToolUseID
+			if toolNames != nil {
+				var ok bool
+				name, ok = toolNames[v.ToolUseID]
+				if !ok {
+					return nil, fmt.Errorf("Gemini tool result references unknown tool use ID %q", v.ToolUseID)
+				}
+			}
+			parts = append(parts, genai.NewPartFromFunctionResponse(name, map[string]any{"result": v.Content}))
 			// Gemini function responses don't support images directly.
 			// Append images as inline image parts after the function response.
 			for _, img := range v.Images {

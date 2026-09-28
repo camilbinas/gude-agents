@@ -3,14 +3,16 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+var errPoolClosed = errors.New("mcp pool: closed")
 
 // Pool manages a pool of MCP server connections for high-concurrency use.
 // Each tool call acquires a connection from the pool, executes the call,
@@ -18,17 +20,17 @@ import (
 // a single subprocess.
 //
 // The pool lazily creates connections up to maxSize. When all connections
-// are busy, callers block on a buffered channel until one is returned.
+// are busy, callers block until one is returned or the pool closes.
 type Pool struct {
 	command string
 	args    []string
 	env     []string
 
 	mu       sync.Mutex
-	all      []*sdkmcp.ClientSession
+	cond     *sync.Cond
 	size     int
 	maxSize  int
-	closed   atomic.Bool
+	closed   bool
 	sessions chan *sdkmcp.ClientSession // buffered channel acts as the idle pool
 	toolDefs []*sdkmcp.Tool             // cached tool definitions from first connection
 }
@@ -82,6 +84,7 @@ func NewPool(ctx context.Context, command string, args []string, opts ...PoolOpt
 		maxSize:  cfg.maxSize,
 		sessions: make(chan *sdkmcp.ClientSession, cfg.maxSize),
 	}
+	p.cond = sync.NewCond(&p.mu)
 
 	// Start one connection to discover tools and validate the server.
 	session, err := p.startSession(ctx)
@@ -101,12 +104,9 @@ func NewPool(ctx context.Context, command string, args []string, opts ...PoolOpt
 	p.toolDefs = toolDefs
 
 	p.mu.Lock()
-	p.all = append(p.all, session)
 	p.size = 1
-	p.mu.Unlock()
-
-	// Put the initial session into the idle channel.
 	p.sessions <- session
+	p.mu.Unlock()
 
 	return p, nil
 }
@@ -133,57 +133,86 @@ func (p *Pool) startSession(ctx context.Context) (*sdkmcp.ClientSession, error) 
 
 // acquire gets an idle connection from the channel, or creates a new one
 // if the pool hasn't reached maxSize yet. If all connections are busy and
-// the pool is at capacity, the caller blocks until one is returned.
+// the pool is at capacity, the caller blocks until one is returned or the
+// pool is closed.
 func (p *Pool) acquire(ctx context.Context) (*sdkmcp.ClientSession, error) {
-	if p.closed.Load() {
-		return nil, fmt.Errorf("mcp pool: closed")
-	}
-
-	// Fast path: try to grab an idle session without blocking.
-	select {
-	case session := <-p.sessions:
-		return session, nil
-	default:
-	}
-
-	// Try to create a new connection if under capacity.
 	p.mu.Lock()
-	if p.size < p.maxSize {
-		p.size++
-		p.mu.Unlock()
+	for {
+		if p.closed {
+			p.mu.Unlock()
+			return nil, errPoolClosed
+		}
 
-		session, err := p.startSession(ctx)
-		if err != nil {
+		select {
+		case session := <-p.sessions:
+			p.mu.Unlock()
+			return session, nil
+		default:
+		}
+
+		if p.size < p.maxSize {
+			p.size++ // Reserve capacity while the connection is created.
+			p.mu.Unlock()
+
+			session, err := p.startSession(ctx)
+			if err != nil {
+				p.mu.Lock()
+				p.size--
+				p.cond.Broadcast()
+				p.mu.Unlock()
+				return nil, err
+			}
+
 			p.mu.Lock()
-			p.size--
+			if p.closed {
+				p.size--
+				p.cond.Broadcast()
+				p.mu.Unlock()
+				_ = session.Close()
+				return nil, errPoolClosed
+			}
+			p.mu.Unlock()
+			return session, nil
+		}
+
+		// A timed context cannot interrupt sync.Cond.Wait, so arrange for
+		// cancellation to wake waiters while keeping all channel operations
+		// serialized with Close and release.
+		if err := ctx.Err(); err != nil {
 			p.mu.Unlock()
 			return nil, err
 		}
-
-		p.mu.Lock()
-		p.all = append(p.all, session)
-		p.mu.Unlock()
-
-		return session, nil
-	}
-	p.mu.Unlock()
-
-	// Pool is at capacity — block until a session is returned or ctx is cancelled.
-	select {
-	case session := <-p.sessions:
-		return session, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+		cancelled := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				p.mu.Lock()
+				p.cond.Broadcast()
+				p.mu.Unlock()
+			case <-cancelled:
+			}
+		}()
+		p.cond.Wait()
+		close(cancelled)
 	}
 }
 
-// release returns a connection to the idle pool.
+// release returns a connection to the idle pool. After Close, it closes only
+// the returned lease; sessions actively in use are never closed by Close.
 func (p *Pool) release(session *sdkmcp.ClientSession) {
-	if p.closed.Load() {
-		_ = session.Close()
+	p.mu.Lock()
+	if p.closed {
+		p.size--
+		p.cond.Broadcast()
+		p.mu.Unlock()
+		if session != nil {
+			_ = session.Close()
+		}
 		return
 	}
 	p.sessions <- session
+	p.cond.Signal()
+	p.mu.Unlock()
 }
 
 // Tools returns tool.Tool values that use the pool for every call.
@@ -250,28 +279,34 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 	), nil
 }
 
-// Close shuts down all connections in the pool and terminates all subprocesses.
+// Close shuts down idle connections in the pool. It is safe to call multiple
+// times. Connections already leased to a caller remain usable until release.
 func (p *Pool) Close() error {
-	p.closed.Store(true)
-
-	// Drain the idle channel.
-	close(p.sessions)
-	for range p.sessions {
-		// drain
-	}
-
 	p.mu.Lock()
-	all := p.all
-	p.all = nil
-	p.mu.Unlock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.closed = true
 
-	var firstErr error
-	for _, s := range all {
-		if err := s.Close(); err != nil && firstErr == nil {
-			firstErr = err
+	idle := make([]*sdkmcp.ClientSession, 0, len(p.sessions))
+	for {
+		select {
+		case session := <-p.sessions:
+			idle = append(idle, session)
+			p.size--
+		default:
+			p.cond.Broadcast()
+			p.mu.Unlock()
+			var firstErr error
+			for _, session := range idle {
+				if err := session.Close(); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+			return firstErr
 		}
 	}
-	return firstErr
 }
 
 // Size returns the current number of active connections in the pool.
