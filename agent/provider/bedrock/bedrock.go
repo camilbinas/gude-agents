@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,12 +41,26 @@ const (
 
 	defaultURLFetchTimeout          = 30 * time.Second
 	defaultURLFetchMaxResponseBytes = int64(10 * 1024 * 1024)
+	defaultURLFetchMaxRedirects     = 3
+)
+
+// urlFetchPolicy controls which network targets URL media sources may access.
+// The zero value permits only publicly routable HTTPS targets.
+type urlFetchPolicy struct {
+	allowPrivateNetworks bool
+	lookupIPAddr         func(context.Context, string) ([]net.IPAddr, error)
+}
+
+var (
+	urlFetchMetadataIPv4 = netip.MustParseAddr("169.254.169.254")
+	urlFetchMetadataIPv6 = netip.MustParseAddr("fd00:ec2::254")
 )
 
 // BedrockProvider implements agent.Provider using the AWS Bedrock runtime.
 type BedrockProvider struct {
 	client           *bedrockruntime.Client
 	fetchClient      *http.Client
+	urlFetchPolicy   urlFetchPolicy
 	model            string
 	maxTokens        *int32              // nil = no explicit limit (provider default)
 	thinkingStyle    thinkingStyle       // set by model constructors
@@ -58,16 +75,17 @@ type BedrockProvider struct {
 type Option func(*options)
 
 type options struct {
-	region           string
-	maxTokens        *int32 // nil = no explicit limit
-	thinkingEffort   pvdr.ThinkingEffort
-	thinkingBudget   int64
-	thinkingStyle    thinkingStyle
-	apiKey           string
-	guardrailID      string
-	guardrailVersion string
-	cachingEnabled   bool
-	urlFetchTimeout  time.Duration
+	region                 string
+	maxTokens              *int32 // nil = no explicit limit
+	thinkingEffort         pvdr.ThinkingEffort
+	thinkingBudget         int64
+	thinkingStyle          thinkingStyle
+	apiKey                 string
+	guardrailID            string
+	guardrailVersion       string
+	cachingEnabled         bool
+	urlFetchTimeout        time.Duration
+	allowPrivateURLFetches bool
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
@@ -85,11 +103,44 @@ func WithURLFetchTimeout(timeout time.Duration) Option {
 	}
 }
 
-func newURLFetchClient(timeout time.Duration) *http.Client {
+// WithURLFetchAllowPrivateNetworks permits HTTPS URL media sources that resolve
+// to private network addresses. It is intended only for trusted internal
+// deployments. HTTP, loopback, link-local, metadata, multicast, and
+// unspecified targets remain blocked, and redirects are still revalidated.
+func WithURLFetchAllowPrivateNetworks() Option {
+	return func(o *options) { o.allowPrivateURLFetches = true }
+}
+
+func newURLFetchClient(timeout time.Duration, policies ...urlFetchPolicy) *http.Client {
 	if timeout <= 0 {
 		timeout = defaultURLFetchTimeout
 	}
-	return &http.Client{Timeout: timeout}
+	policy := urlFetchPolicy{}
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Do not delegate media URL resolution to an environment-configured proxy.
+	// The custom dialer validates and pins each direct connection to a checked IP.
+	transport.Proxy = nil
+	transport.DialContext = safeURLFetchDialContext(policy)
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
+
+func safeURLFetchDialContext(policy urlFetchPolicy) func(context.Context, string, string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URL fetch address %q: %w", address, err)
+		}
+		ips, err := resolveURLFetchHost(ctx, host, policy)
+		if err != nil {
+			return nil, err
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	}
 }
 
 // WithMaxTokens sets the maximum number of tokens in the response.
@@ -213,7 +264,8 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 
 	return &BedrockProvider{
 		client:           bedrockruntime.NewFromConfig(cfg, clientOpts...),
-		fetchClient:      newURLFetchClient(o.urlFetchTimeout),
+		fetchClient:      newURLFetchClient(o.urlFetchTimeout, urlFetchPolicy{allowPrivateNetworks: o.allowPrivateURLFetches}),
+		urlFetchPolicy:   urlFetchPolicy{allowPrivateNetworks: o.allowPrivateURLFetches},
 		model:            model,
 		maxTokens:        o.maxTokens,
 		thinkingStyle:    o.thinkingStyle,
@@ -244,7 +296,7 @@ func (p *BedrockProvider) Name() string { return "bedrock" }
 func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
 	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, params.Messages, p.model, cachingEnabled)
+	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, p.urlFetchPolicy, params.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -350,7 +402,7 @@ func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResp
 func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
 	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
 	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, params.Messages, p.model, cachingEnabled)
+	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, p.urlFetchPolicy, params.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -604,14 +656,14 @@ func isClaudeModel(modelID string) bool {
 // When cachingEnabled is true and the model is a Claude model, a CachePoint
 // is injected after every DocumentBlock in user messages.
 func toBedrockMessages(msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
-	return toBedrockMessagesWithFetcher(context.Background(), newURLFetchClient(0), msgs, modelID, cachingEnabled)
+	return toBedrockMessagesWithFetcher(context.Background(), newURLFetchClient(0), urlFetchPolicy{}, msgs, modelID, cachingEnabled)
 }
 
-func toBedrockMessagesWithFetcher(ctx context.Context, fetchClient *http.Client, msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
+func toBedrockMessagesWithFetcher(ctx context.Context, fetchClient *http.Client, fetchPolicy urlFetchPolicy, msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
 	injectCachePoints := cachingEnabled && isClaudeModel(modelID)
 	out := make([]types.Message, len(msgs))
 	for i, m := range msgs {
-		blocks, err := toBedrockContentBlocksWithFetcher(ctx, fetchClient, m.Content, modelID, injectCachePoints)
+		blocks, err := toBedrockContentBlocksWithFetcher(ctx, fetchClient, fetchPolicy, m.Content, modelID, injectCachePoints)
 		if err != nil {
 			return nil, err
 		}
@@ -633,10 +685,10 @@ func toBedrockRole(r agent.Role) types.ConversationRole {
 }
 
 func toBedrockContentBlocks(blocks []agent.ContentBlock, modelID string, injectCachePoints bool) ([]types.ContentBlock, error) {
-	return toBedrockContentBlocksWithFetcher(context.Background(), newURLFetchClient(0), blocks, modelID, injectCachePoints)
+	return toBedrockContentBlocksWithFetcher(context.Background(), newURLFetchClient(0), urlFetchPolicy{}, blocks, modelID, injectCachePoints)
 }
 
-func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Client, blocks []agent.ContentBlock, modelID string, injectCachePoints bool) ([]types.ContentBlock, error) {
+func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Client, fetchPolicy urlFetchPolicy, blocks []agent.ContentBlock, modelID string, injectCachePoints bool) ([]types.ContentBlock, error) {
 	out := make([]types.ContentBlock, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -669,7 +721,7 @@ func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Cl
 				},
 			}
 			for _, img := range v.Images {
-				bytes, err := imageBytesWithFetcher(ctx, fetchClient, img.Source)
+				bytes, err := imageBytesWithFetcherAndPolicy(ctx, fetchClient, fetchPolicy, img.Source)
 				if err != nil {
 					return nil, fmt.Errorf("tool result ImageBlock: %w", err)
 				}
@@ -720,7 +772,7 @@ func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Cl
 				if v.Source.FileID != "" {
 					return nil, fmt.Errorf("DocumentBlock: Bedrock does not support provider file IDs")
 				}
-				bytes, err := documentBytesWithFetcher(ctx, fetchClient, v.Source)
+				bytes, err := documentBytesWithFetcherAndPolicy(ctx, fetchClient, fetchPolicy, v.Source)
 				if err != nil {
 					return nil, fmt.Errorf("DocumentBlock: %w", err)
 				}
@@ -755,6 +807,10 @@ func imageBytes(src agent.ImageSource) ([]byte, error) {
 }
 
 func imageBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.ImageSource) ([]byte, error) {
+	return imageBytesWithFetcherAndPolicy(ctx, fetchClient, urlFetchPolicy{}, src)
+}
+
+func imageBytesWithFetcherAndPolicy(ctx context.Context, fetchClient *http.Client, fetchPolicy urlFetchPolicy, src agent.ImageSource) ([]byte, error) {
 	if len(src.Data) > 0 {
 		return src.Data, nil
 	}
@@ -766,7 +822,7 @@ func imageBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src ag
 		return b, nil
 	}
 	if src.URL != "" {
-		return fetchURLBytes(ctx, fetchClient, src.URL, "image")
+		return fetchURLBytesWithPolicy(ctx, fetchClient, fetchPolicy, src.URL, "image")
 	}
 	return nil, fmt.Errorf("ImageSource has no data, base64, or URL")
 }
@@ -819,6 +875,10 @@ func documentBytes(src agent.DocumentSource) ([]byte, error) {
 }
 
 func documentBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.DocumentSource) ([]byte, error) {
+	return documentBytesWithFetcherAndPolicy(ctx, fetchClient, urlFetchPolicy{}, src)
+}
+
+func documentBytesWithFetcherAndPolicy(ctx context.Context, fetchClient *http.Client, fetchPolicy urlFetchPolicy, src agent.DocumentSource) ([]byte, error) {
 	if len(src.Data) > 0 {
 		return src.Data, nil
 	}
@@ -830,21 +890,48 @@ func documentBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src
 		return b, nil
 	}
 	if src.URL != "" {
-		return fetchURLBytes(ctx, fetchClient, src.URL, "document")
+		return fetchURLBytesWithPolicy(ctx, fetchClient, fetchPolicy, src.URL, "document")
 	}
 	return nil, fmt.Errorf("DocumentSource has no data, base64, or URL")
 }
 
 func fetchURLBytes(ctx context.Context, fetchClient *http.Client, rawURL, resource string) ([]byte, error) {
+	return fetchURLBytesWithPolicy(ctx, fetchClient, urlFetchPolicy{}, rawURL, resource)
+}
+
+func fetchURLBytesWithPolicy(ctx context.Context, fetchClient *http.Client, fetchPolicy urlFetchPolicy, rawURL, resource string) ([]byte, error) {
 	if fetchClient == nil {
-		fetchClient = newURLFetchClient(0)
+		fetchClient = newURLFetchClient(0, fetchPolicy)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	target, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s URL: %w", resource, err)
 	}
-	resp, err := fetchClient.Do(req)
+	if err := validateURLFetchTarget(ctx, target, fetchPolicy); err != nil {
+		return nil, fmt.Errorf("fetch %s URL: %w", resource, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s URL: %w", resource, err)
+	}
+
+	client := *fetchClient
+	priorCheckRedirect := client.CheckRedirect
+	client.CheckRedirect = func(redirect *http.Request, via []*http.Request) error {
+		if len(via) > defaultURLFetchMaxRedirects {
+			return fmt.Errorf("URL fetch exceeded %d redirects", defaultURLFetchMaxRedirects)
+		}
+		if err := validateURLFetchTarget(redirect.Context(), redirect.URL, fetchPolicy); err != nil {
+			return fmt.Errorf("unsafe redirect target: %w", err)
+		}
+		if priorCheckRedirect != nil {
+			return priorCheckRedirect(redirect, via)
+		}
+		return nil
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s URL: %w", resource, err)
 	}
@@ -865,6 +952,75 @@ func fetchURLBytes(ctx context.Context, fetchClient *http.Client, rawURL, resour
 		return nil, fmt.Errorf("fetch %s URL: response exceeds %d-byte limit", resource, defaultURLFetchMaxResponseBytes)
 	}
 	return body, nil
+}
+
+func validateURLFetchTarget(ctx context.Context, target *url.URL, policy urlFetchPolicy) error {
+	if target == nil || target.Scheme != "https" {
+		return fmt.Errorf("only HTTPS URL targets are allowed")
+	}
+	if target.User != nil {
+		return fmt.Errorf("URL user credentials are not allowed")
+	}
+	host := target.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL host is required")
+	}
+	_, err := resolveURLFetchHost(ctx, host, policy)
+	return err
+}
+
+func resolveURLFetchHost(ctx context.Context, host string, policy urlFetchPolicy) ([]netip.Addr, error) {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if err := validateURLFetchIP(addr, policy); err != nil {
+			return nil, err
+		}
+		return []netip.Addr{addr}, nil
+	}
+
+	lookupIPAddr := policy.lookupIPAddr
+	if lookupIPAddr == nil {
+		lookupIPAddr = net.DefaultResolver.LookupIPAddr
+	}
+	resolved, err := lookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve URL host %q: %w", host, err)
+	}
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("resolve URL host %q: no addresses", host)
+	}
+
+	ips := make([]netip.Addr, 0, len(resolved))
+	for _, resolvedIP := range resolved {
+		addr, ok := netip.AddrFromSlice(resolvedIP.IP)
+		if !ok {
+			return nil, fmt.Errorf("resolve URL host %q: invalid address", host)
+		}
+		addr = addr.Unmap()
+		if err := validateURLFetchIP(addr, policy); err != nil {
+			return nil, fmt.Errorf("resolve URL host %q: %w", host, err)
+		}
+		ips = append(ips, addr)
+	}
+	return ips, nil
+}
+
+func validateURLFetchIP(addr netip.Addr, policy urlFetchPolicy) error {
+	switch {
+	case addr == urlFetchMetadataIPv4 || addr == urlFetchMetadataIPv6:
+		return fmt.Errorf("metadata IP address %s is not allowed", addr)
+	case addr.IsLoopback():
+		return fmt.Errorf("loopback IP address %s is not allowed", addr)
+	case addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast():
+		return fmt.Errorf("link-local IP address %s is not allowed", addr)
+	case addr.IsPrivate() && !policy.allowPrivateNetworks:
+		return fmt.Errorf("private IP address %s is not allowed", addr)
+	case addr.IsUnspecified():
+		return fmt.Errorf("unspecified IP address %s is not allowed", addr)
+	case addr.IsMulticast():
+		return fmt.Errorf("multicast IP address %s is not allowed", addr)
+	}
+	return nil
 }
 
 // toBedrockDocFormat maps a MIME type to the Bedrock DocumentFormat enum.

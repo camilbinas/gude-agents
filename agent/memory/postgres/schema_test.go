@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -68,5 +69,18 @@ func TestNewStoreKeepsEmbeddingConfigurationPerStore(t *testing.T) {
 	}
 	if first.embeddingCol == second.embeddingCol {
 		t.Fatal("test setup expected different embedding columns")
+	}
+}
+func TestParseSchemaRejectsPointerGenericType(t *testing.T) {
+	if _, err := parseSchema[schemaCacheTestEntry]("embedding"); err != nil {
+		t.Fatalf("value type must remain supported: %v", err)
+	}
+
+	_, err := parseSchema[*schemaCacheTestEntry]("embedding")
+	if err == nil {
+		t.Fatal("expected pointer generic type to be rejected")
+	}
+	if !strings.Contains(err.Error(), "T must be a non-pointer struct") || !strings.Contains(err.Error(), "*postgres.schemaCacheTestEntry") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

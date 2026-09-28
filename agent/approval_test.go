@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent/prompt"
@@ -436,5 +437,199 @@ func TestResumeWithApproval_RichHandlerOnlyTool(t *testing.T) {
 	}
 	if result != "I reviewed the screenshot." {
 		t.Errorf("result = %q", result)
+	}
+}
+
+type approvalBatchProvider struct {
+	mu        sync.Mutex
+	responses []*ProviderResponse
+	params    []ConverseParams
+}
+
+func (p *approvalBatchProvider) Name() string { return "approval-batch" }
+
+func (p *approvalBatchProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
+	return p.next(params)
+}
+
+func (p *approvalBatchProvider) ConverseStream(_ context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	response, err := p.next(params)
+	if err != nil {
+		return nil, err
+	}
+	if response.Text != "" && cb != nil {
+		cb(response.Text)
+	}
+	return response, nil
+}
+
+func (p *approvalBatchProvider) next(params ConverseParams) (*ProviderResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.params = append(p.params, params)
+	if len(p.responses) == 0 {
+		return nil, errors.New("approval batch provider: no response")
+	}
+	response := p.responses[0]
+	p.responses = p.responses[1:]
+	return response, nil
+}
+
+func TestResumeWithApprovals_TwoCallsOrderedSequentialAndParallel(t *testing.T) {
+	for _, parallel := range []bool{false, true} {
+		t.Run(map[bool]string{false: "sequential", true: "parallel"}[parallel], func(t *testing.T) {
+			provider := &approvalBatchProvider{responses: []*ProviderResponse{
+				{ToolCalls: []tool.Call{
+					{ToolUseID: "allow-1", Name: "allowed", Input: json.RawMessage(`{"value":"first"}`)},
+					{ToolUseID: "deny-2", Name: "denied", Input: json.RawMessage(`{"value":"second"}`)},
+				}},
+				{Text: "batch complete"},
+			}}
+			var mu sync.Mutex
+			handlers := make([]string, 0, 2)
+			allowed := tool.NewRaw("allowed", "allowed", map[string]any{"type": "object"}, func(_ context.Context, _ json.RawMessage) (string, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				handlers = append(handlers, "allowed")
+				return "allowed result", nil
+			}, tool.RequiresApproval())
+			denied := tool.NewRaw("denied", "denied", map[string]any{"type": "object"}, func(_ context.Context, _ json.RawMessage) (string, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				handlers = append(handlers, "denied")
+				return "denied result", nil
+			}, tool.RequiresApproval())
+			opts := []Option{}
+			if parallel {
+				opts = append(opts, WithParallelToolExecution())
+			}
+			a, err := New(provider, prompt.Text("helpful"), []tool.Tool{allowed, denied}, opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c := Background()
+			if err := a.InvokeStream(c, "run both", nil); !errors.Is(err, ErrToolApprovalRequired) {
+				t.Fatalf("InvokeStream error = %v, want ErrToolApprovalRequired", err)
+			}
+			ar, ok := GetApprovalRequest(c)
+			if !ok {
+				t.Fatal("expected approval request on caller context")
+			}
+			if ar.ToolName != "allowed" || ar.ToolUseID != "allow-1" {
+				t.Fatalf("legacy mirrors = %q/%q, want allowed/allow-1", ar.ToolName, ar.ToolUseID)
+			}
+			if len(ar.Calls) != 2 || ar.Calls[0].ToolUseID != "allow-1" || ar.Calls[1].ToolUseID != "deny-2" {
+				t.Fatalf("approval calls = %#v, want provider order", ar.Calls)
+			}
+			for _, message := range ar.Messages {
+				for _, block := range message.Content {
+					if result, ok := block.(ToolResultBlock); ok && result.Content == approvalSentinel {
+						t.Fatal("approval sentinel leaked into snapshot")
+					}
+				}
+			}
+
+			result, err := a.ResumeWithApprovalsInvoke(c, ar, map[string]tool.Decision{
+				"allow-1": tool.Allow(),
+				"deny-2":  tool.Deny("human denied"),
+			})
+			if err != nil {
+				t.Fatalf("ResumeWithApprovalsInvoke: %v", err)
+			}
+			if result != "batch complete" {
+				t.Fatalf("result = %q, want batch complete", result)
+			}
+			mu.Lock()
+			gotHandlers := append([]string(nil), handlers...)
+			mu.Unlock()
+			if len(gotHandlers) != 1 || gotHandlers[0] != "allowed" {
+				t.Fatalf("handlers = %v, want only allowed", gotHandlers)
+			}
+
+			provider.mu.Lock()
+			if len(provider.params) != 2 {
+				provider.mu.Unlock()
+				t.Fatalf("provider calls = %d, want 2", len(provider.params))
+			}
+			messages := provider.params[1].Messages
+			provider.mu.Unlock()
+			last := messages[len(messages)-1]
+			if last.Role != RoleUser || len(last.Content) != 2 {
+				t.Fatalf("resumed result message = %#v, want one two-result user message", last)
+			}
+			first, firstOK := last.Content[0].(ToolResultBlock)
+			second, secondOK := last.Content[1].(ToolResultBlock)
+			if !firstOK || !secondOK || first.ToolUseID != "allow-1" || first.Content != "allowed result" || second.ToolUseID != "deny-2" || !second.IsError {
+				t.Fatalf("ordered results = %#v, want allowed then denied", last.Content)
+			}
+		})
+	}
+}
+
+func TestResumeWithApprovals_InvalidDecisionMapRunsNoHandlers(t *testing.T) {
+	called := 0
+	makeTool := func(name string) tool.Tool {
+		return tool.NewRaw(name, name, map[string]any{"type": "object"}, func(_ context.Context, _ json.RawMessage) (string, error) {
+			called++
+			return "unexpected", nil
+		}, tool.RequiresApproval())
+	}
+	a, err := New(newScriptedProvider(), prompt.Text("helpful"), []tool.Tool{makeTool("first"), makeTool("second")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ar := &ApprovalRequest{Calls: []ApprovalCall{
+		{ToolName: "first", ToolUseID: "first-id", ToolInput: json.RawMessage(`{}`)},
+		{ToolName: "second", ToolUseID: "second-id", ToolInput: json.RawMessage(`{}`)},
+	}}
+	for name, decisions := range map[string]map[string]tool.Decision{
+		"missing": {"first-id": tool.Allow()},
+		"extra":   {"first-id": tool.Allow(), "second-id": tool.Allow(), "extra": tool.Allow()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := a.ResumeWithApprovals(Background(), ar, decisions, nil); err == nil {
+				t.Fatal("expected validation error")
+			}
+			if called != 0 {
+				t.Fatalf("handler count = %d, want 0", called)
+			}
+		})
+	}
+}
+
+func TestInvokeEventStream_EmitsOrderedApprovalCalls(t *testing.T) {
+	provider := &approvalBatchProvider{responses: []*ProviderResponse{{ToolCalls: []tool.Call{
+		{ToolUseID: "first", Name: "first", Input: json.RawMessage(`{}`)},
+		{ToolUseID: "second", Name: "second", Input: json.RawMessage(`{}`)},
+	}}}}
+	first := tool.NewRaw("first", "first", map[string]any{"type": "object"}, dummyHandler, tool.RequiresApproval())
+	second := tool.NewRaw("second", "second", map[string]any{"type": "object"}, dummyHandler, tool.RequiresApproval())
+	a, err := New(provider, prompt.Text("helpful"), []tool.Tool{first, second}, WithParallelToolExecution())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Background()
+	var approvalEvent *AgentEvent
+	for event := range a.InvokeEventStream(c, "run") {
+		if event.Type == EventToolApprovalRequired {
+			event := event
+			approvalEvent = &event
+		}
+	}
+	if approvalEvent == nil || len(approvalEvent.ApprovalCalls) != 2 {
+		t.Fatalf("approval event = %#v, want two calls", approvalEvent)
+	}
+	if approvalEvent.ApprovalCalls[0].ToolUseID != "first" || approvalEvent.ApprovalCalls[1].ToolUseID != "second" {
+		t.Fatalf("event calls = %#v, want provider order", approvalEvent.ApprovalCalls)
+	}
+	if approvalEvent.ApprovalToolName != "first" {
+		// ApprovalToolName remains the singleton-compatible mirror; ApprovalCalls
+		// carries the ToolUseIDs for batch consumers.
+		t.Fatalf("legacy event approval name = %q, want first", approvalEvent.ApprovalToolName)
+	}
+	ar, ok := GetApprovalRequest(c)
+	if !ok || len(ar.Calls) != 2 || ar.Calls[0].ToolUseID != "first" || ar.Calls[1].ToolUseID != "second" {
+		t.Fatalf("caller approval request = %#v, want ordered calls", ar)
 	}
 }

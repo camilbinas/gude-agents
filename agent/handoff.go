@@ -26,6 +26,9 @@ type HandoffRequest struct {
 	// Messages is the full conversation state at the point of handoff,
 	// allowing the caller to persist it and resume later.
 	Messages []Message
+	// ApprovalCalls preserves a pending batch approval when this request is used
+	// as the durable approval handoff record. It is empty for normal handoffs.
+	ApprovalCalls []ApprovalCall
 }
 
 // GetHandoffRequest extracts the HandoffRequest from a *Context.

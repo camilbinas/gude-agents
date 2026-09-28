@@ -139,8 +139,10 @@ type AgentEvent struct {
 	HandoffReason   string `json:"handoff_reason,omitempty"`
 	HandoffQuestion string `json:"handoff_question,omitempty"`
 
-	// Tool approval event payload (EventToolApprovalRequired). Both fields are
-	// populated only when Type is EventToolApprovalRequired.
+	// Tool approval event payload (EventToolApprovalRequired). ApprovalCalls is
+	// populated in provider order. The scalar fields mirror the first call for
+	// singleton compatibility.
+	ApprovalCalls     []ApprovalCall  `json:"approval_calls,omitempty"`
 	ApprovalToolName  string          `json:"approval_tool_name,omitempty"`
 	ApprovalToolInput json.RawMessage `json:"approval_tool_input,omitempty"`
 }
@@ -271,6 +273,7 @@ func (a *Agent) InvokeEventStream(c *Context, userMessage string, opts ...EventS
 				}
 				if ar, ok := GetApprovalRequest(streamC); ok {
 					c.Set(approvalKey{}, ar)
+					ev.ApprovalCalls = copyApprovalCalls(ar.Calls)
 					ev.ApprovalToolName = ar.ToolName
 					if ar.ToolInput != nil {
 						inputCopy := make(json.RawMessage, len(ar.ToolInput))

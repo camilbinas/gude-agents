@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -253,5 +254,18 @@ func TestStoreRecallConcurrentWithUpdate(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+func TestParseMemSchemaRejectsPointerGenericType(t *testing.T) {
+	if _, err := parseMemSchema[testEntry](); err != nil {
+		t.Fatalf("value type must remain supported: %v", err)
+	}
+
+	_, err := parseMemSchema[*testEntry]()
+	if err == nil {
+		t.Fatal("expected pointer generic type to be rejected")
+	}
+	if !strings.Contains(err.Error(), "T must be a non-pointer struct") || !strings.Contains(err.Error(), "*memory.testEntry") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

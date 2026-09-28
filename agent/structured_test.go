@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -536,6 +537,49 @@ func TestInvokeStructured_MemoryLoadAndSaveCalled(t *testing.T) {
 	}
 	if mem.saveCalled != 1 {
 		t.Errorf("expected Save called once, got %d", mem.saveCalled)
+	}
+}
+
+func TestInvokeStructured_RAGContextIsTransient(t *testing.T) {
+	validJSON, _ := json.Marshal(SimpleStruct{Name: "test", Count: 1})
+	provider := &structuredTestProvider{response: &ProviderResponse{ToolCalls: []tool.Call{{
+		ToolUseID: "tc1", Name: structuredOutputToolName, Input: json.RawMessage(validJSON),
+	}}}}
+	history := []Message{
+		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "earlier question"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "earlier answer"}}},
+	}
+	mem := &trackingMemory{data: history}
+	a, err := New(provider, prompt.Text("sys"), nil,
+		WithRetriever(&countingRetriever{docs: []Document{{Content: "transient retrieved context"}}}),
+		WithConversation(mem, "conv1"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InvokeStructured[SimpleStruct](Background(), a, "current question"); err != nil {
+		t.Fatalf("InvokeStructured failed: %v", err)
+	}
+
+	if len(provider.capturedParams.Messages) != 5 {
+		t.Fatalf("expected history, RAG pair, and user message sent to provider; got %d messages", len(provider.capturedParams.Messages))
+	}
+	if !reflect.DeepEqual(provider.capturedParams.Messages[0:2], history) {
+		t.Fatalf("provider did not receive loaded history: got %#v", provider.capturedParams.Messages[0:2])
+	}
+	if len(mem.data) != 4 {
+		t.Fatalf("expected loaded history, user message, and structured response saved; got %d messages", len(mem.data))
+	}
+	if !reflect.DeepEqual(mem.data[0:2], history) {
+		t.Fatalf("saved history changed: got %#v", mem.data[0:2])
+	}
+	for i, message := range mem.data {
+		for _, block := range message.Content {
+			if text, ok := block.(TextBlock); ok && (strings.Contains(text.Text, "transient retrieved context") || text.Text == "OK") {
+				t.Fatalf("saved message %d contains transient RAG context: %q", i, text.Text)
+			}
+		}
 	}
 }
 

@@ -173,12 +173,9 @@ func NewStore[T any](opts Options, embedder agent.Embedder, dim int, sopts ...St
 		_ = client.Do(context.Background(), "FT.DROPINDEX", cfg.indexName, "DD").Err()
 	}
 
-	// Build FT.CREATE args.
-	createArgs := buildFTCreate(cfg, schema, dim)
-	err = client.Do(context.Background(), createArgs...).Err()
-	if err != nil && !strings.Contains(err.Error(), "Index already exists") {
+	if err := createOrValidateIndex(context.Background(), client, cfg, schema, dim); err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("redis: create index: %w", err)
+		return nil, err
 	}
 
 	return &Store[T]{
@@ -475,7 +472,7 @@ func parseRedisSchema[T any]() (*redisSchema, error) {
 	var zero T
 	t := reflect.TypeOf(zero)
 	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+		return nil, fmt.Errorf("redis: T must be a non-pointer struct; got %s", t)
 	}
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("redis: T must be a struct, got %s", t.Kind())
@@ -562,6 +559,168 @@ func inferRedisFieldType(t reflect.Type) redisFieldType {
 		}
 		return fieldTAG
 	}
+}
+
+func createOrValidateIndex(ctx context.Context, client redisClient, cfg *storeConfig, schema *redisSchema, dim int) error {
+	createArgs := buildFTCreate(cfg, schema, dim)
+	if err := client.Do(ctx, createArgs...).Err(); err == nil {
+		return nil
+	} else if !strings.Contains(strings.ToLower(err.Error()), "index already exists") {
+		return fmt.Errorf("redis: create index: %w", err)
+	}
+
+	info, err := client.Do(ctx, "FT.INFO", cfg.indexName).Result()
+	if err != nil {
+		return fmt.Errorf("redis: inspect existing index %q: %w", cfg.indexName, err)
+	}
+	return validateExistingIndex(info, cfg, schema, dim)
+}
+
+// validateExistingIndex checks that a pre-existing RediSearch index can safely
+// serve the schema requested by this store. It accepts both RESP2 key/value
+// arrays and RESP3 maps returned by FT.INFO.
+func validateExistingIndex(info any, cfg *storeConfig, schema *redisSchema, dim int) error {
+	incompatible := func(format string, args ...any) error {
+		return fmt.Errorf("redis: existing index %q is incompatible: %s", cfg.indexName, fmt.Sprintf(format, args...))
+	}
+
+	definition := redisInfoField(info, "index_definition")
+	if keyType := strings.ToUpper(redisInfoString(redisInfoField(definition, "key_type"))); keyType != "HASH" {
+		return incompatible("key type is %q, want HASH", keyType)
+	}
+	prefixes := redisInfoStrings(redisInfoField(definition, "prefixes"))
+	if len(prefixes) != 1 || prefixes[0] != cfg.keyPrefix {
+		return incompatible("prefixes are %q, want [%q]", prefixes, cfg.keyPrefix)
+	}
+
+	attributes := redisInfoList(redisInfoField(info, "attributes"))
+	if attributes == nil {
+		return incompatible("attributes are missing")
+	}
+	for _, field := range schema.Fields {
+		attribute := redisAttribute(attributes, field.HashField)
+		if attribute == nil {
+			return incompatible("field %q is missing", field.HashField)
+		}
+		wantType := redisFieldTypeName(field.FieldType)
+		if gotType := strings.ToUpper(redisInfoString(redisInfoField(attribute, "type"))); gotType != wantType {
+			return incompatible("field %q type is %q, want %s", field.HashField, gotType, wantType)
+		}
+	}
+
+	embedding := redisAttribute(attributes, "embedding")
+	if embedding == nil {
+		return incompatible("embedding vector field is missing")
+	}
+	if got := strings.ToUpper(redisInfoString(redisInfoField(embedding, "type"))); got != "VECTOR" {
+		return incompatible("embedding type is %q, want VECTOR", got)
+	}
+	if got := strings.ToUpper(redisInfoString(redisInfoField(embedding, "algorithm"))); got != "HNSW" {
+		return incompatible("embedding algorithm is %q, want HNSW", got)
+	}
+	if got := strings.ToUpper(redisInfoString(redisInfoField(embedding, "data_type"))); got != "FLOAT32" {
+		return incompatible("embedding data type is %q, want FLOAT32", got)
+	}
+	if got := strings.ToUpper(redisInfoString(redisInfoField(embedding, "distance_metric"))); got != "COSINE" {
+		return incompatible("embedding distance metric is %q, want COSINE", got)
+	}
+	gotDim, err := strconv.Atoi(redisInfoString(redisInfoField(embedding, "dim")))
+	if err != nil || gotDim != dim {
+		return incompatible("embedding DIM is %q, want %d", redisInfoString(redisInfoField(embedding, "dim")), dim)
+	}
+	return nil
+}
+
+func redisFieldTypeName(fieldType redisFieldType) string {
+	switch fieldType {
+	case fieldTAG:
+		return "TAG"
+	case fieldNUMERIC:
+		return "NUMERIC"
+	case fieldTEXT:
+		return "TEXT"
+	default:
+		return ""
+	}
+}
+
+func redisAttribute(attributes []any, name string) any {
+	for _, attribute := range attributes {
+		attributeName := redisInfoString(redisInfoField(attribute, "attribute"))
+		if attributeName == "" {
+			attributeName = redisInfoString(redisInfoField(attribute, "identifier"))
+		}
+		if attributeName == name {
+			return attribute
+		}
+	}
+	return nil
+}
+
+func redisInfoField(value any, key string) any {
+	switch v := value.(type) {
+	case map[string]any:
+		for candidate, field := range v {
+			if strings.EqualFold(candidate, key) {
+				return field
+			}
+		}
+	case map[any]any:
+		for candidate, field := range v {
+			if strings.EqualFold(redisInfoString(candidate), key) {
+				return field
+			}
+		}
+	case []any:
+		for i := 0; i+1 < len(v); i += 2 {
+			if strings.EqualFold(redisInfoString(v[i]), key) {
+				return v[i+1]
+			}
+		}
+	}
+	return nil
+}
+
+func redisInfoString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func redisInfoList(value any) []any {
+	switch v := value.(type) {
+	case []any:
+		return v
+	case []string:
+		result := make([]any, len(v))
+		for i := range v {
+			result[i] = v[i]
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func redisInfoStrings(value any) []string {
+	if values := redisInfoList(value); values != nil {
+		result := make([]string, len(values))
+		for i, item := range values {
+			result[i] = redisInfoString(item)
+		}
+		return result
+	}
+	if value == nil {
+		return nil
+	}
+	return []string{redisInfoString(value)}
 }
 
 func buildFTCreate(cfg *storeConfig, schema *redisSchema, dim int) []any {

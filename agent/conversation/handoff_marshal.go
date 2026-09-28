@@ -10,10 +10,11 @@ import (
 // The Messages field uses the same type-discriminated encoding as all
 // other durable conversation stores.
 type jsonHandoffRequest struct {
-	Reason         string        `json:"reason"`
-	Question       string        `json:"question"`
-	ConversationID string        `json:"conversation_id"`
-	Messages       []jsonMessage `json:"messages"`
+	Reason         string               `json:"reason"`
+	Question       string               `json:"question"`
+	ConversationID string               `json:"conversation_id"`
+	Messages       []jsonMessage        `json:"messages"`
+	ApprovalCalls  []agent.ApprovalCall `json:"approval_calls,omitempty"`
 }
 
 // MarshalHandoffRequest serialises a HandoffRequest to JSON.
@@ -37,6 +38,7 @@ func MarshalHandoffRequest(hr *agent.HandoffRequest) ([]byte, error) {
 		Question:       hr.Question,
 		ConversationID: hr.ConversationID,
 		Messages:       jmsgs,
+		ApprovalCalls:  hr.ApprovalCalls,
 	})
 }
 
@@ -63,5 +65,6 @@ func UnmarshalHandoffRequest(data []byte) (*agent.HandoffRequest, error) {
 		Question:       j.Question,
 		ConversationID: j.ConversationID,
 		Messages:       messages,
+		ApprovalCalls:  j.ApprovalCalls,
 	}, nil
 }

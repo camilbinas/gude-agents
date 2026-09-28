@@ -52,7 +52,7 @@ func parseSchema[T any](embeddingCol string) (*tableSchema, error) {
 	var zero T
 	t := reflect.TypeOf(zero)
 	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+		return nil, fmt.Errorf("postgres: T must be a non-pointer struct; got %s", t)
 	}
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("postgres: T must be a struct, got %s", t.Kind())

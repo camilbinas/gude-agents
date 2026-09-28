@@ -413,7 +413,9 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 					}
 				}
 				if cfg == nil || !cfg.skipConversationSave {
-					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
+					if err := a.saveConversation(c, convID, messages[ragOffset:], cumulative, h); err != nil {
+						return cumulative, "", err
+					}
 				}
 				if a.auditHook != nil {
 					rec := HandoffAuditRecord{
@@ -433,30 +435,38 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 				return cumulative, "", ErrHandoffRequested
 			}
 
-			// Handle tool approval.
+			// Handle tool approval. Keep completed results in the snapshot, but
+			// never persist the internal approval sentinels as tool results.
 			if isApprovalResult(results) {
-				// Snapshot messages NOW — before appending any placeholder result.
-				// The snapshot ends at the assistant message containing the ToolUseBlock.
-				// ResumeWithApproval will append the real tool result on top of this,
-				// so we must NOT include a placeholder here to avoid duplicate ToolUseIDs.
-				if ar, ok := GetApprovalRequest(iterC); ok {
-					ar.Messages = append([]Message(nil), messages...)
-					ar.ConversationID = convID
-					// Propagate onto the outer context so callers can call GetApprovalRequest(c).
-					c.Set(approvalKey{}, ar)
-					if a.handoffStore != nil && convID != "" {
-						if err := a.handoffStore.SaveHandoff(c, approvalStoreKey(convID), &HandoffRequest{
-							Reason:         "tool approval pending",
-							Question:       ar.ToolName,
-							ConversationID: convID,
-							Messages:       ar.Messages,
-						}); err != nil {
-							return cumulative, "", fmt.Errorf("save approval handoff: %w", err)
-						}
+				ar := &ApprovalRequest{Calls: approvalCallsFromResults(results, resp.ToolCalls), ConversationID: convID}
+				setLegacyApprovalFields(ar)
+				completed := make([]ContentBlock, 0, len(results)-len(ar.Calls))
+				for _, result := range results {
+					if result.Content != approvalSentinel {
+						completed = append(completed, result)
+					}
+				}
+				if len(completed) > 0 {
+					messages = append(messages, Message{Role: RoleUser, Content: completed})
+				}
+				ar.Messages = append([]Message(nil), messages...)
+				// Propagate onto the outer context so callers can call GetApprovalRequest(c).
+				c.Set(approvalKey{}, ar)
+				if a.handoffStore != nil && convID != "" {
+					if err := a.handoffStore.SaveHandoff(c, approvalStoreKey(convID), &HandoffRequest{
+						Reason:         "tool approval pending",
+						Question:       ar.ToolName,
+						ConversationID: convID,
+						Messages:       ar.Messages,
+						ApprovalCalls:  ar.Calls,
+					}); err != nil {
+						return cumulative, "", fmt.Errorf("save approval handoff: %w", err)
 					}
 				}
 				if cfg == nil || !cfg.skipConversationSave {
-					a.saveConversation(c, convID, messages[ragOffset:], cumulative, h)
+					if err := a.saveConversation(c, convID, messages[ragOffset:], cumulative, h); err != nil {
+						return cumulative, "", err
+					}
 				}
 				if a.auditHook != nil {
 					rec := ApprovalAuditRecord{
@@ -467,10 +477,8 @@ func (a *Agent) runLoop(c *Context, convID string, messages []Message, ragOffset
 					if p, ok := GetTyped[Principal](c, principalKey{}); ok {
 						rec.Principal = p
 					}
-					if ar, ok := GetApprovalRequest(iterC); ok {
-						rec.ToolName = ar.ToolName
-						rec.ToolInput = inputForAudit(ar.ToolInput, a.auditCaptureContent)
-					}
+					rec.ToolName = ar.ToolName
+					rec.ToolInput = inputForAudit(ar.ToolInput, a.auditCaptureContent)
 					a.auditHook.OnApprovalRequest(rec)
 				}
 				return cumulative, "", ErrToolApprovalRequired
@@ -628,16 +636,9 @@ func (a *Agent) executeToolsWithMiddleware(c *Context, calls []tool.Call, availa
 			return
 		}
 
-		// RequiresApproval: pause before invoking — store an ApprovalRequest on the
-		// context and return the sentinel so runLoop can snapshot and surface it.
+		// RequiresApproval: pause before invoking — return the sentinel so
+		// runLoop can derive and expose the ordered batch request.
 		if t.NeedsApproval() {
-			// Approval requests must be visible to runLoop on the outer invocation
-			// context. Parallel tool calls otherwise use cloned scratch contexts.
-			c.Set(approvalKey{}, &ApprovalRequest{
-				ToolName:  tc.Name,
-				ToolInput: tc.Input,
-				ToolUseID: tc.ToolUseID,
-			})
 			tf.finish(nil, approvalSentinel)
 			results[i] = ToolResultBlock{ToolUseID: tc.ToolUseID, Content: approvalSentinel}
 			return

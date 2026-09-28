@@ -12,6 +12,10 @@ func TestMarshalHandoffRequest_RoundTrip(t *testing.T) {
 		Reason:         "needs manager approval",
 		Question:       "Can you approve a $500 refund?",
 		ConversationID: "conv-abc",
+		ApprovalCalls: []agent.ApprovalCall{
+			{ToolName: "refund", ToolInput: []byte(`{"amount":500}`), ToolUseID: "approval-1"},
+			{ToolName: "notify", ToolInput: []byte(`{"channel":"ops"}`), ToolUseID: "approval-2"},
+		},
 		Messages: []agent.Message{
 			{
 				Role: agent.RoleUser,
@@ -59,6 +63,9 @@ func TestMarshalHandoffRequest_RoundTrip(t *testing.T) {
 	}
 	if restored.ConversationID != original.ConversationID {
 		t.Errorf("ConversationID = %q, want %q", restored.ConversationID, original.ConversationID)
+	}
+	if !reflect.DeepEqual(restored.ApprovalCalls, original.ApprovalCalls) {
+		t.Errorf("ApprovalCalls = %#v, want %#v", restored.ApprovalCalls, original.ApprovalCalls)
 	}
 	if len(restored.Messages) != len(original.Messages) {
 		t.Fatalf("Messages len = %d, want %d", len(restored.Messages), len(original.Messages))

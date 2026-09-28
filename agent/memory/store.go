@@ -381,7 +381,7 @@ func parseMemSchema[T any]() (*memSchema, error) {
 	var zero T
 	t := reflect.TypeOf(zero)
 	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+		return nil, fmt.Errorf("memory: T must be a non-pointer struct; got %s", t)
 	}
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("memory: T must be a struct, got %s", t.Kind())

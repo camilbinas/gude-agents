@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
-	"net/http/httptest"
+	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -890,23 +892,30 @@ func TestURLSourceFetchesUseConfiguredClient(t *testing.T) {
 	const imageBody = "image bytes"
 	const documentBody = "document bytes"
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %s, want GET", r.Method)
-		}
-		switch r.URL.Path {
-		case "/image":
-			_, _ = w.Write([]byte(imageBody))
-		case "/document":
-			_, _ = w.Write([]byte(documentBody))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
 	client := newURLFetchClient(time.Second)
-	image, err := imageBytesWithFetcher(context.Background(), client, agent.ImageSource{URL: server.URL + "/image"})
+	client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", req.Method)
+		}
+		var body string
+		switch req.URL.Path {
+		case "/image":
+			body = imageBody
+		case "/document":
+			body = documentBody
+		default:
+			t.Fatalf("unexpected URL path %q", req.URL.Path)
+		}
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader(body)),
+			ContentLength: int64(len(body)),
+			Request:       req,
+		}, nil
+	})
+
+	image, err := imageBytesWithFetcher(context.Background(), client, agent.ImageSource{URL: "https://8.8.8.8/image"})
 	if err != nil {
 		t.Fatalf("imageBytesWithFetcher() error = %v", err)
 	}
@@ -914,7 +923,7 @@ func TestURLSourceFetchesUseConfiguredClient(t *testing.T) {
 		t.Errorf("imageBytesWithFetcher() = %q, want %q", image, imageBody)
 	}
 
-	document, err := documentBytesWithFetcher(context.Background(), client, agent.DocumentSource{URL: server.URL + "/document"})
+	document, err := documentBytesWithFetcher(context.Background(), client, agent.DocumentSource{URL: "https://8.8.8.8/document"})
 	if err != nil {
 		t.Fatalf("documentBytesWithFetcher() error = %v", err)
 	}
@@ -923,29 +932,144 @@ func TestURLSourceFetchesUseConfiguredClient(t *testing.T) {
 	}
 }
 
-func TestFetchURLBytesRejectsNon2xxResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "unavailable", http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
+func TestFetchURLBytesRejectsUnsafeTargetsBeforeTransport(t *testing.T) {
+	unsafeURLs := []struct {
+		name   string
+		url    string
+		reason string
+	}{
+		{name: "HTTP", url: "http://8.8.8.8/image", reason: "only HTTPS"},
+		{name: "loopback IPv4", url: "https://127.0.0.1/image", reason: "loopback"},
+		{name: "private IPv4", url: "https://10.0.0.1/image", reason: "private"},
+		{name: "private IPv6", url: "https://[fd00::1]/image", reason: "private"},
+		{name: "link-local IPv4", url: "https://169.254.10.1/image", reason: "link-local"},
+		{name: "link-local IPv6", url: "https://[fe80::1]/image", reason: "link-local"},
+		{name: "metadata", url: "https://169.254.169.254/image", reason: "metadata"},
+	}
 
-	_, err := fetchURLBytes(context.Background(), server.Client(), server.URL, "image")
+	for _, tt := range unsafeURLs {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				called = true
+				return nil, errors.New("transport should not be called")
+			})}
+			_, err := fetchURLBytes(context.Background(), client, tt.url, "image")
+			if err == nil || !strings.Contains(err.Error(), tt.reason) {
+				t.Fatalf("fetchURLBytes() error = %v, want %q rejection", err, tt.reason)
+			}
+			if called {
+				t.Fatal("unsafe URL reached transport")
+			}
+		})
+	}
+}
+
+func TestValidateURLFetchTargetRejectsPrivateDNSAnswers(t *testing.T) {
+	lookup := func(_ context.Context, host string) ([]net.IPAddr, error) {
+		switch host {
+		case "private.example.test":
+			return []net.IPAddr{{IP: net.ParseIP("10.0.0.4")}}, nil
+		case "mixed.example.test":
+			return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}, {IP: net.ParseIP("10.0.0.4")}}, nil
+		case "public.example.test":
+			return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+		default:
+			return nil, errors.New("unexpected lookup")
+		}
+	}
+	policy := urlFetchPolicy{lookupIPAddr: lookup}
+
+	for _, host := range []string{"private.example.test", "mixed.example.test"} {
+		target, err := url.Parse("https://" + host + "/image")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = validateURLFetchTarget(context.Background(), target, policy)
+		if err == nil || !strings.Contains(err.Error(), "private") {
+			t.Errorf("validateURLFetchTarget(%q) error = %v, want private-address rejection", host, err)
+		}
+	}
+
+	target, err := url.Parse("https://public.example.test/image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateURLFetchTarget(context.Background(), target, policy); err != nil {
+		t.Fatalf("validateURLFetchTarget(public URL) error = %v", err)
+	}
+}
+
+func TestFetchURLBytesRejectsUnsafeRedirectTarget(t *testing.T) {
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Header:     http.Header{"Location": []string{"https://127.0.0.1/private"}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    req,
+		}, nil
+	})}
+
+	_, err := fetchURLBytes(context.Background(), client, "https://8.8.8.8/start", "image")
+	if err == nil || !strings.Contains(err.Error(), "unsafe redirect target") {
+		t.Fatalf("fetchURLBytes() error = %v, want unsafe redirect rejection", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1; unsafe redirect must not be requested", requests)
+	}
+}
+
+func TestFetchURLBytesBoundsRedirects(t *testing.T) {
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Header:     http.Header{"Location": []string{"https://8.8.8.8/again"}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    req,
+		}, nil
+	})}
+
+	_, err := fetchURLBytes(context.Background(), client, "https://8.8.8.8/start", "document")
+	if err == nil || !strings.Contains(err.Error(), "exceeded 3 redirects") {
+		t.Fatalf("fetchURLBytes() error = %v, want redirect-limit error", err)
+	}
+	if requests != defaultURLFetchMaxRedirects+1 {
+		t.Fatalf("requests = %d, want %d", requests, defaultURLFetchMaxRedirects+1)
+	}
+}
+
+func TestFetchURLBytesRejectsNon2xxResponse(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("unavailable")),
+			Request:    req,
+		}, nil
+	})}
+
+	_, err := fetchURLBytes(context.Background(), client, "https://8.8.8.8/image", "image")
 	if err == nil || !strings.Contains(err.Error(), "status 503") {
 		t.Fatalf("fetchURLBytes() error = %v, want non-2xx status error", err)
 	}
 }
 
 func TestFetchURLBytesRejectsOversizedResponse(t *testing.T) {
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode:    http.StatusOK,
 			Header:        make(http.Header),
 			Body:          io.NopCloser(strings.NewReader(strings.Repeat("x", int(defaultURLFetchMaxResponseBytes+1)))),
 			ContentLength: -1,
+			Request:       req,
 		}, nil
 	})}
 
-	_, err := fetchURLBytes(context.Background(), client, "https://example.test/document", "document")
+	_, err := fetchURLBytes(context.Background(), client, "https://8.8.8.8/document", "document")
 	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
 		t.Fatalf("fetchURLBytes() error = %v, want size-limit error", err)
 	}
@@ -953,17 +1077,17 @@ func TestFetchURLBytesRejectsOversizedResponse(t *testing.T) {
 
 func TestFetchURLBytesHonorsContextCancellation(t *testing.T) {
 	requestStarted := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		close(requestStarted)
-		<-r.Context().Done()
-	}))
-	defer server.Close()
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := fetchURLBytes(ctx, newURLFetchClient(time.Second), server.URL, "image")
+		_, err := fetchURLBytes(ctx, client, "https://8.8.8.8/image", "image")
 		errCh <- err
 	}()
 
@@ -981,6 +1105,32 @@ func TestFetchURLBytesHonorsContextCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("fetchURLBytes() did not return after context cancellation")
+	}
+}
+
+func TestWithURLFetchAllowPrivateNetworks(t *testing.T) {
+	o := &options{}
+	WithURLFetchAllowPrivateNetworks()(o)
+	if !o.allowPrivateURLFetches {
+		t.Fatal("trusted internal URL-fetch option did not enable private networks")
+	}
+
+	lookup := func(_ context.Context, host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("10.0.0.4")}}, nil
+	}
+	policy := urlFetchPolicy{allowPrivateNetworks: o.allowPrivateURLFetches, lookupIPAddr: lookup}
+	target, err := url.Parse("https://internal.example.test/image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateURLFetchTarget(context.Background(), target, policy); err != nil {
+		t.Fatalf("private HTTPS target with trusted option error = %v", err)
+	}
+	if err := validateURLFetchIP(netip.MustParseAddr("127.0.0.1"), policy); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("trusted option loopback validation error = %v, want loopback rejection", err)
+	}
+	if err := validateURLFetchIP(urlFetchMetadataIPv4, policy); err == nil || !strings.Contains(err.Error(), "metadata") {
+		t.Fatalf("trusted option metadata validation error = %v, want metadata rejection", err)
 	}
 }
 

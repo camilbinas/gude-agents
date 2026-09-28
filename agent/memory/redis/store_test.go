@@ -2,7 +2,9 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -34,6 +36,8 @@ type fakeRedisClient struct {
 	hsets    []string
 	dels     [][]string
 	doResult any
+	doCalls  [][]any
+	doFunc   func([]any) (any, error)
 }
 
 func (c *fakeRedisClient) Ping(context.Context) *goredis.StatusCmd {
@@ -73,8 +77,16 @@ func (c *fakeRedisClient) Del(_ context.Context, keys ...string) *goredis.IntCmd
 }
 
 func (c *fakeRedisClient) Do(ctx context.Context, args ...any) *goredis.Cmd {
+	c.doCalls = append(c.doCalls, append([]any(nil), args...))
 	cmd := goredis.NewCmd(ctx, args...)
-	if c.doResult != nil {
+	if c.doFunc != nil {
+		result, err := c.doFunc(args)
+		if err != nil {
+			cmd.SetErr(err)
+		} else {
+			cmd.SetVal(result)
+		}
+	} else if c.doResult != nil {
 		cmd.SetVal(c.doResult)
 	}
 	return cmd
@@ -223,5 +235,110 @@ func TestCollectPagedKeysReadsAllResults(t *testing.T) {
 	}
 	if len(offsets) != 11 || offsets[0] != 0 || offsets[len(offsets)-1] != 10000 {
 		t.Fatalf("unexpected pagination offsets: %v", offsets)
+	}
+}
+func TestParseRedisSchemaRejectsPointerGenericType(t *testing.T) {
+	if _, err := parseRedisSchema[redisTestEntry](); err != nil {
+		t.Fatalf("value type must remain supported: %v", err)
+	}
+
+	_, err := parseRedisSchema[*redisTestEntry]()
+	if err == nil {
+		t.Fatal("expected pointer generic type to be rejected")
+	}
+	if !strings.Contains(err.Error(), "T must be a non-pointer struct") || !strings.Contains(err.Error(), "*redis.redisTestEntry") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateOrValidateIndexAcceptsCompatibleExistingIndex(t *testing.T) {
+	schema, err := parseRedisSchema[redisTestEntry]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &storeConfig{indexName: "memory-index", keyPrefix: "memory:"}
+	client := &fakeRedisClient{doFunc: func(args []any) (any, error) {
+		switch args[0] {
+		case "FT.CREATE":
+			return nil, errors.New("Index already exists")
+		case "FT.INFO":
+			return existingRedisIndexInfo(cfg.keyPrefix, "TEXT", 3), nil
+		default:
+			t.Fatalf("unexpected Redis command: %v", args)
+			return nil, nil
+		}
+	}}
+
+	if err := createOrValidateIndex(context.Background(), client, cfg, schema, 3); err != nil {
+		t.Fatalf("compatible existing index was rejected: %v", err)
+	}
+	if len(client.doCalls) != 2 || client.doCalls[0][0] != "FT.CREATE" || client.doCalls[1][0] != "FT.INFO" {
+		t.Fatalf("commands = %v, want FT.CREATE followed by FT.INFO", client.doCalls)
+	}
+}
+
+func TestValidateExistingIndexRejectsIncompatibleIndex(t *testing.T) {
+	schema, err := parseRedisSchema[redisTestEntry]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &storeConfig{indexName: "memory-index", keyPrefix: "memory:"}
+
+	cases := []struct {
+		name string
+		info any
+		want string
+	}{
+		{
+			name: "prefix",
+			info: existingRedisIndexInfo("other:", "TEXT", 3),
+			want: "prefixes",
+		},
+		{
+			name: "field type",
+			info: existingRedisIndexInfo("memory:", "TAG", 3),
+			want: `field "content" type`,
+		},
+		{
+			name: "vector dimension",
+			info: existingRedisIndexInfoRESP3("memory:", "TEXT", "4"),
+			want: "embedding DIM",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateExistingIndex(tc.info, cfg, schema, 3)
+			if err == nil {
+				t.Fatal("expected incompatible index to be rejected")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func existingRedisIndexInfo(prefix, contentType string, dim int) []any {
+	return []any{
+		"index_definition", []any{"key_type", "HASH", "prefixes", []any{prefix}},
+		"attributes", []any{
+			[]any{"identifier", "id", "attribute", "id", "type", "TAG"},
+			[]any{"identifier", "tenant", "attribute", "tenant", "type", "TAG"},
+			[]any{"identifier", "content", "attribute", "content", "type", contentType},
+			[]any{"identifier", "embedding", "attribute", "embedding", "type", "VECTOR", "algorithm", "HNSW", "data_type", "FLOAT32", "dim", dim, "distance_metric", "COSINE"},
+		},
+	}
+}
+
+func existingRedisIndexInfoRESP3(prefix, contentType, dim string) map[string]any {
+	return map[string]any{
+		"index_definition": map[string]any{"key_type": "HASH", "prefixes": []any{prefix}},
+		"attributes": []any{
+			map[string]any{"identifier": "id", "attribute": "id", "type": "TAG"},
+			map[string]any{"identifier": "tenant", "attribute": "tenant", "type": "TAG"},
+			map[string]any{"identifier": "content", "attribute": "content", "type": contentType},
+			map[string]any{"identifier": "embedding", "attribute": "embedding", "type": "VECTOR", "algorithm": "HNSW", "data_type": "FLOAT32", "dim": dim, "distance_metric": "COSINE"},
+		},
 	}
 }

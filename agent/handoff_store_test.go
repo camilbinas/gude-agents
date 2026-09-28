@@ -222,6 +222,32 @@ func TestHandoffStore_SaveErrorsAreReturned(t *testing.T) {
 	})
 }
 
+func TestPauseConversationSaveErrorsAreReturned(t *testing.T) {
+	t.Run("human handoff", func(t *testing.T) {
+		saveErr := errors.New("conversation save failed")
+		provider := newScriptedProvider(&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "h-conversation-save", Name: "ask_human", Input: json.RawMessage(`{"reason":"r","question":"q"}`)}}})
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{NewHandoffTool("ask_human", "")}, WithConversation(&errorConversation{saveErr: saveErr}, "human-conversation-save"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.InvokeStream(Background(), "help", nil); !errors.Is(err, saveErr) {
+			t.Fatalf("expected conversation save error, got %v", err)
+		}
+	})
+
+	t.Run("tool approval", func(t *testing.T) {
+		saveErr := errors.New("approval conversation save failed")
+		provider := newScriptedProvider(&ProviderResponse{ToolCalls: []tool.Call{{ToolUseID: "a-conversation-save", Name: "delete_order", Input: json.RawMessage(`{"order_id":"1"}`)}}})
+		a, err := New(provider, prompt.Text("helpful"), []tool.Tool{deleteOrderTool()}, WithConversation(&errorConversation{saveErr: saveErr}, "approval-conversation-save"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.InvokeStream(Background(), "delete", nil); !errors.Is(err, saveErr) {
+			t.Fatalf("expected approval conversation save error, got %v", err)
+		}
+	})
+}
+
 func TestHandoffStore_DeleteErrorsAreReturned(t *testing.T) {
 	t.Run("human handoff", func(t *testing.T) {
 		storeErr := errors.New("delete failed")
