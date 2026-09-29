@@ -266,10 +266,10 @@ func TestInferenceOptions_Compose(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithMaxTokens tests
+// WithMaxOutputTokens tests
 // ---------------------------------------------------------------------------
 
-func TestWithMaxTokens_Valid(t *testing.T) {
+func TestWithMaxOutputTokens_Valid(t *testing.T) {
 	tests := []struct {
 		name string
 		val  int
@@ -281,7 +281,7 @@ func TestWithMaxTokens_Valid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &Agent{}
-			opt := WithMaxTokens(tt.val)
+			opt := WithMaxOutputTokens(tt.val)
 			if err := opt(a); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -298,7 +298,7 @@ func TestWithMaxTokens_Valid(t *testing.T) {
 	}
 }
 
-func TestWithMaxTokens_Invalid(t *testing.T) {
+func TestWithMaxOutputTokens_Invalid(t *testing.T) {
 	tests := []struct {
 		name string
 		val  int
@@ -310,7 +310,7 @@ func TestWithMaxTokens_Invalid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &Agent{}
-			opt := WithMaxTokens(tt.val)
+			opt := WithMaxOutputTokens(tt.val)
 			if err := opt(a); err == nil {
 				t.Errorf("expected error for maxTokens=%d, got nil", tt.val)
 			}

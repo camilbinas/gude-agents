@@ -30,7 +30,7 @@ func TestProperty_SystemBlockCacheControlOnLastElementOnly(t *testing.T) {
 			cachingEnabled: true,
 		}
 
-		params := agent.ConverseParams{
+		params := agent.ModelRequest{
 			Messages: []agent.Message{
 				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 			},
@@ -241,7 +241,7 @@ func TestProperty_NoDocumentBlock_IdenticalAnthropicPayload(t *testing.T) {
 func TestProperty_NoDocumentBlock_IdenticalAnthropicSystemPrompt(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		text := rapid.StringOf(rapid.RuneFrom([]rune("abcdefghijklmnopqrstuvwxyz "))).Draw(t, "text")
-		params := agent.ConverseParams{
+		params := agent.ModelRequest{
 			Messages: []agent.Message{
 				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: text}}},
 			},

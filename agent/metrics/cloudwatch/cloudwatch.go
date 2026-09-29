@@ -26,8 +26,8 @@ type cloudwatchClient interface {
 	PutMetricData(ctx context.Context, params *cw.PutMetricDataInput, optFns ...func(*cw.Options)) (*cw.PutMetricDataOutput, error)
 }
 
-// cloudwatchHook implements agent.MetricsHook by buffering metric data points
-// and flushing them to CloudWatch periodically.
+// cloudwatchHook implements the observer capabilities needed for metrics by
+// buffering metric data points and flushing them to CloudWatch periodically.
 type cloudwatchHook struct {
 	client        cloudwatchClient
 	namespace     string
@@ -42,7 +42,14 @@ type cloudwatchHook struct {
 	doneCh chan struct{}
 }
 
-var _ agent.MetricsHook = (*cloudwatchHook)(nil)
+var (
+	_ agent.InvokeObserver     = (*cloudwatchHook)(nil)
+	_ agent.IterationObserver  = (*cloudwatchHook)(nil)
+	_ agent.ModelObserver      = (*cloudwatchHook)(nil)
+	_ agent.ToolObserver       = (*cloudwatchHook)(nil)
+	_ agent.GuardrailObserver  = (*cloudwatchHook)(nil)
+	_ agent.AttachmentObserver = (*cloudwatchHook)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -167,83 +174,88 @@ func (h *cloudwatchHook) Shutdown(ctx context.Context) error {
 }
 
 // ---------------------------------------------------------------------------
-// Hook methods
+// Observer methods
 // ---------------------------------------------------------------------------
 
-func (h *cloudwatchHook) OnInvokeStart() func(err error, usage agent.TokenUsage) {
-	start := time.Now()
-	return func(err error, usage agent.TokenUsage) {
-		elapsed := time.Since(start).Seconds()
-		h.append(durationDatum("AgentInvokeDuration", elapsed))
-		h.append(counterDatum("AgentInvokeTotal", 1, dim("Status", statusValue(err))))
+func (h *cloudwatchHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
+	h.append(durationDatum("AgentInvokeDuration", record.Duration.Seconds()))
+	h.append(counterDatum("AgentInvokeTotal", 1, dim("Status", statusValue(record.Err))))
+	return ctx
 }
 
-func (h *cloudwatchHook) OnIterationStart() {
-	h.append(counterDatum("AgentIterationTotal", 1))
+func (h *cloudwatchHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.append(counterDatum("AgentIterationTotal", 1))
+	}
+	return ctx
 }
 
-func (h *cloudwatchHook) OnIterationEnd(toolCount int, isFinal bool) {
-	// Iteration count is already tracked in OnIterationStart.
-	// OnIterationEnd is available for custom extensions; no additional metrics emitted.
-}
-
-func (h *cloudwatchHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {
+func (h *cloudwatchHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
+	}
+	modelID := record.ModelID
 	if modelID == "" {
 		modelID = "unknown"
 	}
-	start := time.Now()
-	return func(err error, usage agent.TokenUsage) {
-		elapsed := time.Since(start).Seconds()
-		modelDim := dim("ModelId", modelID)
-		h.append(durationDatum("AgentProviderCallDuration", elapsed))
-		h.append(counterDatum("AgentProviderCallTotal", 1, modelDim, dim("Status", statusValue(err))))
-		if err == nil {
-			h.append(counterDatum("AgentProviderTokensTotal", float64(usage.InputTokens),
-				modelDim, dim("Direction", "input")))
-			h.append(counterDatum("AgentProviderTokensTotal", float64(usage.OutputTokens),
-				modelDim, dim("Direction", "output")))
-			if usage.CacheReadTokens > 0 {
-				h.append(counterDatum("AgentProviderTokensTotal", float64(usage.CacheReadTokens),
-					modelDim, dim("Direction", "cache_read")))
-			}
-			if usage.CacheWriteTokens > 0 {
-				h.append(counterDatum("AgentProviderTokensTotal", float64(usage.CacheWriteTokens),
-					modelDim, dim("Direction", "cache_write")))
-			}
+	modelDim := dim("ModelId", modelID)
+	h.append(durationDatum("AgentProviderCallDuration", record.Duration.Seconds()))
+	h.append(counterDatum("AgentProviderCallTotal", 1, modelDim, dim("Status", statusValue(record.Err))))
+	if record.Err == nil {
+		h.append(counterDatum("AgentProviderTokensTotal", float64(record.Usage.InputTokens),
+			modelDim, dim("Direction", "input")))
+		h.append(counterDatum("AgentProviderTokensTotal", float64(record.Usage.OutputTokens),
+			modelDim, dim("Direction", "output")))
+		if record.Usage.CacheReadTokens > 0 {
+			h.append(counterDatum("AgentProviderTokensTotal", float64(record.Usage.CacheReadTokens),
+				modelDim, dim("Direction", "cache_read")))
+		}
+		if record.Usage.CacheWriteTokens > 0 {
+			h.append(counterDatum("AgentProviderTokensTotal", float64(record.Usage.CacheWriteTokens),
+				modelDim, dim("Direction", "cache_write")))
 		}
 	}
+	return ctx
 }
 
-func (h *cloudwatchHook) OnToolStart(toolName string) func(err error) {
-	start := time.Now()
-	return func(err error) {
-		elapsed := time.Since(start).Seconds()
-		toolDim := dim("ToolName", toolName)
-		h.append(durationDatum("AgentToolCallDuration", elapsed, toolDim))
-		h.append(counterDatum("AgentToolCallTotal", 1, toolDim, dim("Status", statusValue(err))))
+func (h *cloudwatchHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
+	toolDim := dim("ToolName", record.Name)
+	h.append(durationDatum("AgentToolCallDuration", record.Duration.Seconds(), toolDim))
+	h.append(counterDatum("AgentToolCallTotal", 1, toolDim, dim("Status", statusValue(record.Err))))
+	return ctx
 }
 
-func (h *cloudwatchHook) OnGuardrailComplete(direction string, blocked bool) {
-	if blocked {
-		h.append(counterDatum("AgentGuardrailBlockTotal", 1, dim("Direction", direction)))
+func (h *cloudwatchHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+	if record.Phase == agent.End && record.Blocked {
+		h.append(counterDatum("AgentGuardrailBlockTotal", 1, dim("Direction", record.Direction)))
 	}
+	return ctx
 }
 
-func (h *cloudwatchHook) OnImagesAttached(imageCount int) {
-	h.append(counterDatum("AgentImagesAttachedTotal", float64(imageCount)))
-}
-
-func (h *cloudwatchHook) OnDocumentsAttached(docCount int) {
-	h.append(counterDatum("AgentDocumentsAttachedTotal", float64(docCount)))
+func (h *cloudwatchHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
+	}
+	if record.ImageCount > 0 {
+		h.append(counterDatum("AgentImagesAttachedTotal", float64(record.ImageCount)))
+	}
+	if record.DocumentCount > 0 {
+		h.append(counterDatum("AgentDocumentsAttachedTotal", float64(record.DocumentCount)))
+	}
+	return ctx
 }
 
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
 
-// Option configures the CloudWatch metrics hook.
+// Option configures the CloudWatch metrics observer.
 type Option func(*cloudwatchHook)
 
 // WithNamespace sets the CloudWatch namespace for all published metrics.
@@ -298,9 +310,11 @@ func WithMetrics(opts ...Option) (agent.Option, func(context.Context) error) {
 			}
 			hook.client = cw.NewFromConfig(cfg)
 		}
-		go hook.flushLoop()
 		hook.agentName = a.Name()
-		a.SetMetricsHook(hook)
+		if err := agent.WithObserver(hook)(a); err != nil {
+			return err
+		}
+		go hook.flushLoop()
 		shutdownFn = hook.Shutdown
 		return nil
 	}

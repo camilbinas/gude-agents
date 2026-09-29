@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"pgregory.net/rapid"
 )
 
@@ -236,14 +235,9 @@ type noCallProvider struct {
 
 func (p *noCallProvider) Name() string { return "mock" }
 
-func (p *noCallProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
+func (p *noCallProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	p.called = true
-	return &ProviderResponse{Text: "should not reach"}, nil
-}
-
-func (p *noCallProvider) ConverseStream(_ context.Context, _ ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	p.called = true
-	return &ProviderResponse{Text: "should not reach"}, nil
+	return &ModelResponse{Text: "should not reach"}, nil
 }
 
 // genInvalidInferenceConfig generates an InferenceConfig with at least one
@@ -302,7 +296,7 @@ func TestProperty_PerInvocationValidationBlocksProviderCall(t *testing.T) {
 		invalidCfg := genInvalidInferenceConfig(rt)
 		mock := &noCallProvider{}
 
-		a, err := New(mock, prompt.Text("sys"), nil)
+		a, err := New(mock, "sys")
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}

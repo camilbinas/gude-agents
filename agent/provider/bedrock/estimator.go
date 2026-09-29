@@ -34,11 +34,11 @@ func NewEstimator(provider *BedrockProvider) *Estimator {
 	}
 }
 
-// EstimateTokens calls the Bedrock CountTokens API with the given converse
-// parameters and returns the exact input token count reported by the service.
+// EstimateTokens calls the Bedrock CountTokens API with the given model
+// request and returns the exact input token count reported by the service.
 // On any API error, it returns (0, err).
-func (e *Estimator) EstimateTokens(ctx context.Context, params agent.ConverseParams) (int, error) {
-	msgs, err := toBedrockMessagesWithFetcher(ctx, e.fetchClient, e.urlFetchPolicy, params.Messages, e.model, false)
+func (e *Estimator) EstimateTokens(ctx context.Context, req agent.ModelRequest) (int, error) {
+	msgs, err := toBedrockMessagesWithFetcher(ctx, e.fetchClient, e.urlFetchPolicy, req.Messages, e.model, false)
 	if err != nil {
 		return 0, err
 	}
@@ -47,13 +47,13 @@ func (e *Estimator) EstimateTokens(ctx context.Context, params agent.ConversePar
 		Messages: msgs,
 	}
 
-	if params.System != "" {
+	if req.System != "" {
 		converseReq.System = []types.SystemContentBlock{
-			&types.SystemContentBlockMemberText{Value: params.System},
+			&types.SystemContentBlockMemberText{Value: req.System},
 		}
 	}
 
-	if tc := toToolConfig(params.ToolConfig); tc != nil {
+	if tc := toToolConfig(req.Tools); tc != nil {
 		converseReq.ToolConfig = tc
 	}
 

@@ -31,13 +31,11 @@ func bufferSnapshot(h *cloudwatchHook) []cwtypes.MetricDatum {
 // Property 6: CloudWatch invoke counter correctness with status mapping
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_CWInvokeCounterCorrectness verifies that for any sequence of
 // N invocations with random success/error outcomes, the CloudWatch buffer
 // contains exactly N AgentInvokeTotal counter data points, and the Status
 // dimension on each is "success" when the error was nil and "error" when
 // non-nil.
-//
 func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -53,8 +51,6 @@ func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 
 		for i := range n {
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
-			finish := hook.OnInvokeStart()
-
 			var err error
 			if isErr {
 				err = errors.New("fail")
@@ -64,7 +60,9 @@ func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 				expectedSuccess++
 				expectedStatuses = append(expectedStatuses, "success")
 			}
-			finish(err, agent.TokenUsage{})
+			_ = hook.ObserveInvoke(context.Background(), agent.InvokeRecord{
+				Phase: agent.End, Err: err,
+			})
 		}
 
 		// Inspect the buffer directly (no flush).
@@ -119,7 +117,6 @@ func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 // Property 7: CloudWatch provider metrics with model ID fallback
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_CWProviderMetricsModelIDFallback verifies that for any sequence
 // of provider call completions with random TokenUsage values (non-negative
 // InputTokens and OutputTokens), random model ID strings (including empty),
@@ -130,7 +127,6 @@ func TestProperty_CWInvokeCounterCorrectness(t *testing.T) {
 //     with correct ModelId and Direction dimension values (only for successful calls)
 //   - The ModelId dimension equals the input string when non-empty and "unknown"
 //     when the input is empty
-//
 func TestProperty_CWProviderMetricsModelIDFallback(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -173,8 +169,6 @@ func TestProperty_CWProviderMetricsModelIDFallback(t *testing.T) {
 			outputTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("output_tokens_%d", i))
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
 
-			finish := hook.OnProviderCallStart(modelID)
-
 			effectiveModelID := modelID
 			if effectiveModelID == "" {
 				effectiveModelID = "unknown"
@@ -191,7 +185,9 @@ func TestProperty_CWProviderMetricsModelIDFallback(t *testing.T) {
 				InputTokens:  inputTokens,
 				OutputTokens: outputTokens,
 			}
-			finish(err, usage)
+			_ = hook.ObserveModel(context.Background(), agent.ModelCallRecord{
+				Phase: agent.End, ModelID: modelID, Usage: usage, Err: err,
+			})
 
 			expectedCalls[callKey{effectiveModelID, status}]++
 
@@ -325,12 +321,10 @@ func TestProperty_CWProviderMetricsModelIDFallback(t *testing.T) {
 // Property 8: CloudWatch tool call counter correctness
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_CWToolCallCounterCorrectness verifies that for any sequence of
 // tool executions with random tool names and random success/error outcomes,
 // the CloudWatch buffer contains one AgentToolCallTotal data point per call
 // with the correct ToolName and Status dimensions.
-//
 func TestProperty_CWToolCallCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -357,15 +351,15 @@ func TestProperty_CWToolCallCounterCorrectness(t *testing.T) {
 			toolName := rapid.StringMatching("[a-zA-Z][a-zA-Z0-9_-]*").Draw(rt, fmt.Sprintf("tool_%d", i))
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
 
-			finish := hook.OnToolStart(toolName)
-
 			var err error
 			status := "success"
 			if isErr {
 				err = errors.New("fail")
 				status = "error"
 			}
-			finish(err)
+			_ = hook.ObserveTool(context.Background(), agent.ToolCallRecord{
+				Phase: agent.End, Name: toolName, Err: err,
+			})
 
 			expectedCounts[toolKey{toolName, status}]++
 			records = append(records, callRecord{toolName: toolName, status: status})
@@ -421,13 +415,11 @@ func TestProperty_CWToolCallCounterCorrectness(t *testing.T) {
 // Property 9: CloudWatch guardrail block counter selectivity
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_CWGuardrailBlockSelectivity verifies that for any sequence of
 // guardrail completions with random direction ("input"/"output") and random
 // blocked (true/false) values, the CloudWatch buffer contains
 // AgentGuardrailBlockTotal data points only for calls where blocked was true,
 // with the correct Direction dimension.
-//
 func TestProperty_CWGuardrailBlockSelectivity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -446,7 +438,9 @@ func TestProperty_CWGuardrailBlockSelectivity(t *testing.T) {
 			direction := rapid.SampledFrom([]string{"input", "output"}).Draw(rt, fmt.Sprintf("dir_%d", i))
 			blocked := rapid.Bool().Draw(rt, fmt.Sprintf("blocked_%d", i))
 
-			hook.OnGuardrailComplete(direction, blocked)
+			_ = hook.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+				Phase: agent.End, Direction: direction, Blocked: blocked,
+			})
 
 			if blocked {
 				expectedCounts[direction]++
@@ -505,7 +499,7 @@ func TestProperty_CWGuardrailBlockSelectivity(t *testing.T) {
 		}
 
 		// Verify the buffer contains NO other metric types (only guardrail data
-		// points should be present since we only called OnGuardrailComplete).
+		// points should be present since we only called ObserveGuardrail).
 		if len(buf) != len(blockTotals) {
 			rt.Fatalf("buffer contains unexpected data points: total %d, AgentGuardrailBlockTotal %d",
 				len(buf), len(blockTotals))
@@ -517,11 +511,9 @@ func TestProperty_CWGuardrailBlockSelectivity(t *testing.T) {
 // Property 10: CloudWatch iteration counter monotonicity
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_CWIterationCounterMonotonicity verifies that for any
-// non-negative integer N, calling OnIterationStart exactly N times results
+// non-negative integer N, calling ObserveIteration with Start records exactly N times results
 // in exactly N AgentIterationTotal data points in the CloudWatch buffer.
-//
 func TestProperty_CWIterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}
@@ -530,7 +522,7 @@ func TestProperty_CWIterationCounterMonotonicity(t *testing.T) {
 		n := rapid.IntRange(0, 100).Draw(rt, "n")
 
 		for range n {
-			hook.OnIterationStart()
+			_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 		}
 
 		// Inspect the buffer directly (no flush).
@@ -557,7 +549,7 @@ func TestProperty_CWIterationCounterMonotonicity(t *testing.T) {
 		}
 
 		// The buffer should contain ONLY AgentIterationTotal data points
-		// since we only called OnIterationStart.
+		// since we only called ObserveIteration with Start records.
 		if len(buf) != n {
 			rt.Fatalf("buffer contains unexpected data points: total %d, AgentIterationTotal %d",
 				len(buf), n)
@@ -569,12 +561,10 @@ func TestProperty_CWIterationCounterMonotonicity(t *testing.T) {
 // Property 11: CloudWatch batch splitting respects PutMetricData limit
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_CWBatchSplitting verifies that for any buffer containing
 // between 1 and 3000 metric data points, when flushed, each PutMetricData
 // API call contains at most 1000 data points, and the total number of data
 // points across all calls equals the original buffer size.
-//
 func TestProperty_CWBatchSplitting(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		mock := &mockCWClient{}

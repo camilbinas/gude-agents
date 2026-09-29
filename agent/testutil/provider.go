@@ -12,17 +12,17 @@ import (
 )
 
 // MockProvider is a configurable test provider that covers the common patterns
-// needed across agent unit tests: scripted responses, param capture, streaming,
+// needed across agent unit tests: scripted responses, request capture, streaming,
 // delays, and error injection. Configure via WithResponses, WithCapture,
 // WithError, WithDelay, and WithFailFirst options.
 type MockProvider struct {
 	mu        sync.Mutex
-	responses []*agent.ProviderResponse
+	responses []*agent.ModelResponse
 	callIndex int
 
 	// capture
 	capture  bool
-	captured []agent.ConverseParams
+	captured []agent.ModelRequest
 
 	// error injection
 	fixedErr  error
@@ -45,14 +45,14 @@ type MockProviderOption func(*MockProvider)
 
 // WithResponses sets the scripted response queue. Responses are returned in
 // order. If the queue is exhausted, subsequent calls return an error.
-func WithResponses(responses ...*agent.ProviderResponse) MockProviderOption {
+func WithResponses(responses ...*agent.ModelResponse) MockProviderOption {
 	return func(p *MockProvider) {
 		p.responses = append(p.responses, responses...)
 	}
 }
 
-// WithCapture enables recording of all ConverseParams received by the provider.
-// Access recorded params via Provider.Captured().
+// WithCapture enables recording of all ModelRequests received by the provider.
+// Access recorded requests via Provider.Captured().
 func WithCapture() MockProviderOption {
 	return func(p *MockProvider) { p.capture = true }
 }
@@ -72,14 +72,14 @@ func WithFailFirst(n int, err error) MockProviderOption {
 }
 
 // WithDelay makes each call block for d before responding. The delay respects
-// context cancellation, so it works correctly with WithTimeout tests.
+// context cancellation, so it works correctly with timeout tests.
 func WithDelay(d time.Duration) MockProviderOption {
 	return func(p *MockProvider) { p.delay = d }
 }
 
 // WithStreamWords enables word-level streaming for text responses. When set,
-// ConverseStream delivers text as individual word chunks via the callback.
-// Default is to deliver the full text as a single chunk.
+// Stream emits text as individual word chunks. Default is to emit the full text
+// as a single event.
 func WithStreamWords() MockProviderOption {
 	return func(p *MockProvider) { p.streamWords = true }
 }
@@ -100,50 +100,8 @@ func NewMockProvider(opts ...MockProviderOption) *MockProvider {
 	return p
 }
 
-// Converse implements agent.Provider.
-func (p *MockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return p.call(ctx, params, nil)
-}
-
-// ConverseStream implements agent.Provider.
-func (p *MockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	return p.call(ctx, params, cb)
-}
-
-// Name implements agent.Provider.
-func (p *MockProvider) Name() string { return "mock" }
-
-// ModelID implements agent.ModelIdentifier.
-func (p *MockProvider) ModelID() string { return p.modelID }
-
-// Captured returns all ConverseParams received since the provider was created.
-// Only populated when WithCapture() is set.
-func (p *MockProvider) Captured() []agent.ConverseParams {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]agent.ConverseParams, len(p.captured))
-	copy(out, p.captured)
-	return out
-}
-
-// CallCount returns the number of times the provider has been called.
-func (p *MockProvider) CallCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.callIndex
-}
-
-// Reset resets the call index and captured params, allowing the provider to
-// be reused across test cases.
-func (p *MockProvider) Reset() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.callIndex = 0
-	p.captured = nil
-	p.failCount.Store(0)
-}
-
-func (p *MockProvider) call(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
+// Stream implements agent.Provider.
+func (p *MockProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	// Apply delay (respects context cancellation).
 	if p.delay > 0 {
 		select {
@@ -156,9 +114,9 @@ func (p *MockProvider) call(ctx context.Context, params agent.ConverseParams, cb
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Capture params if requested.
+	// Capture the request if requested.
 	if p.capture {
-		p.captured = append(p.captured, params)
+		p.captured = append(p.captured, req)
 	}
 
 	// Fixed error — always return this.
@@ -181,20 +139,53 @@ func (p *MockProvider) call(ctx context.Context, params agent.ConverseParams, cb
 	resp := p.responses[p.callIndex]
 	p.callIndex++
 
-	// Stream text via callback.
-	if cb != nil && len(resp.ToolCalls) == 0 && resp.Text != "" {
+	// Stream text via model events.
+	if emit != nil && len(resp.ToolCalls) == 0 && resp.Text != "" {
 		if p.streamWords {
 			words := strings.Fields(resp.Text)
-			for i, w := range words {
+			for i, word := range words {
 				if i > 0 {
-					cb(" ")
+					emit(agent.ModelEvent{Type: agent.ModelEventText, Text: " "})
 				}
-				cb(w)
+				emit(agent.ModelEvent{Type: agent.ModelEventText, Text: word})
 			}
 		} else {
-			cb(resp.Text)
+			emit(agent.ModelEvent{Type: agent.ModelEventText, Text: resp.Text})
 		}
 	}
 
 	return resp, nil
+}
+
+// Name implements agent.Provider.
+func (p *MockProvider) Name() string { return "mock" }
+
+// ModelID implements agent.ModelIdentifier.
+func (p *MockProvider) ModelID() string { return p.modelID }
+
+// Captured returns all ModelRequests received since the provider was created.
+// Only populated when WithCapture() is set.
+func (p *MockProvider) Captured() []agent.ModelRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]agent.ModelRequest, len(p.captured))
+	copy(out, p.captured)
+	return out
+}
+
+// CallCount returns the number of successful scripted responses consumed.
+func (p *MockProvider) CallCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.callIndex
+}
+
+// Reset resets the call index and captured requests, allowing the provider to
+// be reused across test cases.
+func (p *MockProvider) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.callIndex = 0
+	p.captured = nil
+	p.failCount.Store(0)
 }

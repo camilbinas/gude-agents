@@ -1,14 +1,13 @@
 // Example: Extended thinking with live reasoning output.
 //
 // Shows how to enable extended thinking on a provider and consume the model's
-// internal reasoning alongside the final answer using Agent.InvokeEventStream.
-// Both EventThinkingChunk and EventTextChunk are interleaved on the same
-// channel — no separate EventHook implementation needed.
+// internal reasoning alongside the final answer using Agent.Stream.
+// EventThinking and EventText values are interleaved on the same iterator.
 //
 // Note: with extended thinking enabled, Claude tends to also explain its
 // reasoning in the response text — this is intentional model behavior, not a
-// bug. The thinking_chunk events give you the raw internal scratchpad; the
-// text_chunk events are Claude's visible summary of that reasoning.
+// bug. Thinking events give you the raw internal scratchpad; text events are
+// Claude's visible summary of that reasoning.
 //
 // Run:
 //
@@ -33,10 +32,9 @@ func main() {
 
 	provider := anthropic.Must(anthropic.New("claude-sonnet-4-6", anthropic.WithThinking(pvdr.ThinkingLow)))
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a careful analytical thinker. Work through problems step by step."),
-		nil,
+		prompt.Text("You are a careful analytical thinker. Work through problems step by step.").String(),
 		auto.WithLogging(),
 	)
 	if err != nil {
@@ -47,26 +45,26 @@ func main() {
 
 	fmt.Println("── reasoning ──")
 	inThinking := false
-	for ev := range a.InvokeEventStream(agent.Background(), question) {
+	for ev, err := range a.Stream(agent.Background(), question) {
+		if err != nil {
+			log.Fatal(err)
+		}
 		switch ev.Type {
-		case agent.EventThinkingChunk:
+		case agent.EventThinking:
 			if !inThinking {
 				inThinking = true
 			}
-			fmt.Print(ev.ThinkingChunk)
+			fmt.Print(ev.Thinking.Content)
 
-		case agent.EventTextChunk:
+		case agent.EventText:
 			if inThinking {
 				fmt.Println("\n── answer ──")
 				inThinking = false
 			}
-			fmt.Print(ev.TextChunk)
+			fmt.Print(ev.Text.Content)
 
-		case agent.EventInvokeEnd:
+		case agent.EventEnd:
 			fmt.Println()
-			if ev.Err != nil {
-				log.Fatal(ev.Err)
-			}
 		}
 	}
 }

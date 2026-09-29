@@ -4,11 +4,11 @@ import (
 	"log/slog"
 )
 
-// Option configures the slog logging hook.
+// Option configures the slog logging observer.
 type Option func(*slogHook)
 
 // WithHandler sets a custom slog.Handler for log output.
-// When not set, the hook uses slog.Default().
+// When not set, the observer uses slog.Default().
 func WithHandler(h slog.Handler) Option {
 	return func(s *slogHook) {
 		s.logger = slog.New(h)

@@ -2,7 +2,10 @@ module github.com/camilbinas/gude-agents/agent/rag/gemini
 
 go 1.25.0
 
-require google.golang.org/genai v1.54.0
+require (
+	github.com/camilbinas/gude-agents v0.85.1
+	google.golang.org/genai v1.54.0
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

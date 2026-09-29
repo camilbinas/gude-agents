@@ -1,6 +1,6 @@
-// Example: InvokeEventStream — consume every event from an agent run as a
-// channel of typed AgentEvent values. Useful for building UIs (SSE, WebSocket,
-// CLI dashboards) without implementing the EventHook interface manually.
+// Example: Stream — consume every event from an agent run as a sequence of
+// typed Event values. Useful for building UIs (SSE, WebSocket, CLI dashboards)
+// while preserving live model output and detailed lifecycle events.
 //
 // Run:
 //
@@ -13,7 +13,6 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
 )
@@ -21,61 +20,84 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.GlobalClaudeSonnet4_6()),
-		prompt.Text("You are concise."),
-		nil,
+		"You are concise.",
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	events := a.InvokeEventStream(agent.Background(), "Give me three fun facts about raccoons.")
-
-	for ev := range events {
+	ctx := agent.Background().WithDetailedEvents()
+	var streamErr error
+	for ev, err := range a.Stream(ctx, "Give me three fun facts about raccoons.") {
 		switch ev.Type {
-		case agent.EventInvokeStart:
+		case agent.EventStart:
 			fmt.Println("── invoke started ──")
 
 		case agent.EventIterationStart:
-			fmt.Printf("[iter %d] start\n", ev.Iteration)
+			if ev.Lifecycle != nil {
+				fmt.Printf("[iter %d] start\n", ev.Lifecycle.Iteration)
+			}
 
 		case agent.EventModelStart:
 			fmt.Println("  model: thinking…")
 
-		case agent.EventTextChunk:
-			fmt.Print(ev.TextChunk)
+		case agent.EventText:
+			if ev.Text != nil {
+				fmt.Print(ev.Text.Content)
+			}
 
-		case agent.EventThinkingChunk:
-			// Useful when extended thinking is enabled.
-			fmt.Print(ev.ThinkingChunk)
+		case agent.EventThinking:
+			if ev.Thinking != nil {
+				fmt.Print(ev.Thinking.Content)
+			}
 
-		case agent.EventToolCallStart:
-			fmt.Printf("\n  tool: %s start (%s)\n", ev.ToolName, ev.ToolInput)
+		case agent.EventToolStart:
+			if ev.Tool != nil {
+				fmt.Printf("\n  tool: %s start (%s)\n", ev.Tool.Name, ev.Tool.Input)
+			}
 
-		case agent.EventToolCallEnd:
-			if ev.Err != nil {
-				fmt.Printf("  tool: %s err: %v\n", ev.ToolName, ev.Err)
+		case agent.EventToolEnd:
+			if ev.Tool == nil {
+				break
+			}
+			if ev.Tool.Error != nil {
+				fmt.Printf("  tool: %s err: %s\n", ev.Tool.Name, ev.Tool.Error.Message)
 			} else {
-				fmt.Printf("  tool: %s ok (%s) in %s\n", ev.ToolName, ev.ToolOutput, ev.Duration)
+				fmt.Printf("  tool: %s ok (%s) in %s\n", ev.Tool.Name, ev.Tool.Output, ev.Tool.Duration)
 			}
 
 		case agent.EventModelEnd:
-			fmt.Printf("\n  model: stop=%s\n", ev.StopReason)
+			if ev.Lifecycle != nil {
+				fmt.Printf("\n  model: stop=%s\n", ev.Lifecycle.StopReason)
+			}
 
 		case agent.EventIterationEnd:
-			fmt.Printf("[iter %d] end (tools=%d, final=%v, %s)\n",
-				ev.Iteration, ev.ToolCount, ev.IsFinal, ev.Duration)
+			if ev.Lifecycle != nil {
+				fmt.Printf("[iter %d] end (tools=%d, final=%v, %s)\n",
+					ev.Lifecycle.Iteration, ev.Lifecycle.ToolCount, ev.Lifecycle.IsFinal, ev.Lifecycle.Duration)
+			}
 
 		case agent.EventMaxIterations:
-			fmt.Printf("!! max iterations exceeded (limit=%d)\n", ev.IterationLimit)
+			if ev.Lifecycle != nil {
+				fmt.Printf("!! max iterations exceeded (limit=%d)\n", ev.Lifecycle.Limit)
+			}
 
-		case agent.EventInvokeEnd:
+		case agent.EventEnd:
 			fmt.Println("── invoke ended ──")
-			fmt.Printf("usage: in=%d out=%d\n", ev.Usage.InputTokens, ev.Usage.OutputTokens)
-			if ev.Err != nil {
-				log.Fatalf("invocation failed: %v", ev.Err)
+			if ev.Result != nil {
+				fmt.Printf("usage: in=%d out=%d\n", ev.Result.Usage.InputTokens, ev.Result.Usage.OutputTokens)
+			}
+			if ev.Error != nil {
+				fmt.Printf("invocation failed: %s\n", ev.Error.Message)
 			}
 		}
+		if err != nil {
+			streamErr = err
+		}
+	}
+	if streamErr != nil {
+		log.Fatal(streamErr)
 	}
 }

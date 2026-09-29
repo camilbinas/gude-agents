@@ -87,19 +87,19 @@ func New(apiKey string, opts ...Option) tool.Tool {
 	maxResults := cfg.maxResults
 	maxChars := cfg.maxChars
 
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{
+				"type":        "string",
+				"description": "The search query",
+			},
+		},
+		"required": []any{"query"},
+	}
 	return tool.NewRaw(
 		"web_search",
 		"Search the web for current information. Returns titles, URLs, and content snippets.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"query": map[string]any{
-					"type":        "string",
-					"description": "The search query",
-				},
-			},
-			"required": []any{"query"},
-		},
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var req struct {
 				Query string `json:"query"`
@@ -116,6 +116,7 @@ func New(apiKey string, opts ...Option) tool.Tool {
 			log.Logf("got results")
 			return result, nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 

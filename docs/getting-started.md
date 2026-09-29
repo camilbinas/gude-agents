@@ -1,209 +1,116 @@
-# Getting Started
+# Getting started
 
-This guide walks you through installing gude-agents, running your first agent, and understanding the core concepts you'll use in every project.
-
-## Installation
-
-The core module provides the agent framework, tools, memory, and prompt system:
+## Install
 
 ```bash
-go get github.com/camilbinas/gude-agents
+go get github.com/camilbinas/gude-agents/agent
 ```
 
-Then add the provider and driver modules you need:
+Provider and backend packages are separate Go modules. Add only the packages used by your application.
 
-```bash
-# Pick a provider
-go get github.com/camilbinas/gude-agents/agent/provider/bedrock     # AWS Bedrock
-go get github.com/camilbinas/gude-agents/agent/provider/anthropic   # Anthropic
-go get github.com/camilbinas/gude-agents/agent/provider/openai      # OpenAI
-go get github.com/camilbinas/gude-agents/agent/provider/gemini      # Google Gemini
-
-# Optional: conversation drivers (in-memory and disk are included in the core)
-go get github.com/camilbinas/gude-agents/agent/conversation/redis         # Redis conversation
-go get github.com/camilbinas/gude-agents/agent/conversation/dynamodb      # DynamoDB conversation
-go get github.com/camilbinas/gude-agents/agent/conversation/sqlite        # SQLite conversation
-go get github.com/camilbinas/gude-agents/agent/conversation/postgres      # PostgreSQL conversation
-
-# Optional: RAG embedders and vector stores
-go get github.com/camilbinas/gude-agents/agent/rag/bedrock          # Bedrock knowledge bases + embedders
-go get github.com/camilbinas/gude-agents/agent/rag/openai           # OpenAI embedders
-go get github.com/camilbinas/gude-agents/agent/rag/gemini           # Gemini embedders
-go get github.com/camilbinas/gude-agents/agent/rag/redis            # Redis vector store
-go get github.com/camilbinas/gude-agents/agent/rag/postgres         # PostgreSQL + pgvector
-
-# Optional: MCP tool integration
-go get github.com/camilbinas/gude-agents/agent/mcp
-
-# Optional: Agent-to-Agent (A2A) protocol
-go get github.com/camilbinas/gude-agents/agent/a2a
-```
-
-Each module only pulls the dependencies it needs — using Bedrock won't download the OpenAI or Gemini SDKs.
-
-## Minimal Working Example
-
-The simplest agent creates a provider, builds an agent with `Default`, sends a message with `Invoke`, and prints the result.
-
-Make sure `AWS_REGION` is set before running (Bedrock defaults to `us-east-1` if unset):
-
-```bash
-export AWS_REGION=eu-central-1
-```
+## Create and invoke an agent
 
 ```go
 package main
 
 import (
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
 
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+    "github.com/camilbinas/gude-agents/agent"
+    "github.com/camilbinas/gude-agents/agent/conversation"
+    "github.com/camilbinas/gude-agents/agent/provider/openai"
+    "github.com/camilbinas/gude-agents/agent/tool"
 )
 
+type WeatherInput struct {
+    City string `json:"city" description:"City to look up" required:"true"`
+}
+
 func main() {
-	// 1. Create a provider.
-	provider, err := bedrock.Standard()
-	if err != nil {
-		log.Fatal(err)
-	}
+    weather := tool.New("weather", "Get current weather", func(ctx context.Context, in WeatherInput) (string, error) {
+        return "18 C in " + in.City, nil
+    })
 
-	// 2. Create an agent with sensible defaults and debug logging.
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil, // no tools
-		debug.WithLogging(),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+    prov, err := openai.New("gpt-4o-mini")
+    if err != nil {
+        log.Fatal(err)
+    }
+    a, err := agent.New(prov, "Answer clearly and use tools when useful.",
+        agent.WithTools(weather),
+        agent.WithConversationStore(conversation.NewInMemory()),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	// 3. Send a message and get the response.
-	c := agent.Background()
-	result, err := a.Invoke(c, "What is the capital of France?")
-	if err != nil {
-		log.Fatal(err)
-	}
+    ctx := agent.NewContext(context.Background()).
+        WithConversationID("demo-thread").
+        WithIdentity("user-123")
 
-	fmt.Println(result)
-	fmt.Printf("Tokens: %d in, %d out\n", c.Usage().InputTokens, c.Usage().OutputTokens)
+    result, err := a.Invoke(ctx, "What is the weather in Lisbon?")
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(result.Text)
+    fmt.Println("tokens:", result.Usage.Total())
+
+    if err := a.Shutdown(context.Background()); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
-## Provider Configuration
+`Agent` configuration is fixed after `New`, except a supplied dynamic `tool.Registry`. Configure each call by chaining mutable `Context.With…` methods before invocation.
 
-Each provider reads credentials from environment variables by default. Set the variables for the provider you want to use:
-
-| Provider | Environment Variable | Description |
-|----------|---------------------|-------------|
-| Bedrock | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Uses the standard AWS credential chain. Configure your region and credentials as you would for any AWS SDK. Alternatively, set `AWS_BEARER_TOKEN_BEDROCK` to use an API key instead of IAM credentials. |
-| Anthropic | `ANTHROPIC_API_KEY` | Your Anthropic API key. Can also be set programmatically with `anthropic.WithAPIKey(key)`. |
-| OpenAI | `OPENAI_API_KEY` | Your OpenAI API key. Can also be set programmatically with `openai.WithAPIKey(key)`. |
-
-Bedrock relies on the AWS SDK's default credential chain, so any method that works for AWS (environment variables, `~/.aws/credentials`, IAM roles, etc.) will work here. You can override the region with `bedrock.WithRegion("eu-central-1")`.
-
-> **Important:** `AWS_REGION` must be set when using the Bedrock provider. If unset, it defaults to `us-east-1`, which may not match the region where your models are enabled. Set it via environment variable or explicitly with `bedrock.WithRegion("your-region")`:
->
-> ```bash
-> export AWS_REGION=eu-central-1
-> ```
-
-## Invoke vs InvokeStream
-
-The agent provides two ways to get a response:
-
-### Invoke
-
-`Invoke` is a blocking call that collects the full response into a single string and returns it:
+## Stream application events
 
 ```go
-func (a *Agent) Invoke(c *Context, userMessage string) (string, error)
+for event, err := range a.Stream(ctx.WithDetailedEvents(), "Explain the forecast") {
+    if err != nil {
+        log.Fatal(err)
+    }
+    switch event.Type {
+    case agent.EventText:
+        fmt.Print(event.Text.Content)
+    case agent.EventInterrupt:
+        fmt.Printf("\npaused: %s\n", event.Interrupt.ID)
+    case agent.EventEnd:
+        result = *event.Result
+    }
+}
 ```
 
-Use `Invoke` when you want the complete answer before processing it — the simplest option for scripts, CLI tools, and backend services.
-
-### InvokeStream
-
-`InvokeStream` delivers the response incrementally through a callback as the LLM generates tokens:
+For live text only:
 
 ```go
-func (a *Agent) InvokeStream(c *Context, userMessage string, cb StreamCallback) error
+for chunk, err := range a.TextStream(ctx, "Explain the forecast") {
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Print(chunk)
+}
 ```
 
-`StreamCallback` is `func(chunk string)`. Each call receives a text chunk as it arrives from the provider. Use `InvokeStream` when you need real-time output — chat UIs, server-sent events, or any scenario where perceived latency matters.
+Breaking out of either iterator cancels the invocation. Consume through `EventEnd` when the completed turn must be persisted.
+
+## Continue an interrupt
+
+An interrupt is a successful paused result, not an error:
 
 ```go
-c := agent.Background()
-err := a.InvokeStream(c, "Tell me a joke", func(chunk string) {
-	fmt.Print(chunk) // prints tokens as they arrive
-})
+result, err := a.Invoke(ctx, "Delete order 42")
+if err != nil {
+    log.Fatal(err)
+}
+if result.StopReason == agent.StopInterrupt {
+    result, err = a.Resume(ctx, result.Interrupt, agent.Approve())
+}
 ```
 
-Under the hood, `Invoke` is a thin wrapper around `InvokeStream` that concatenates all chunks into a string.
+Use `Deny(reason)` or `Decide(map[callID]tool.Decision)` for approval interrupts and `Respond(text)` for human-input interrupts. See [Interrupts](interrupts.md).
 
-## Logging
+## Next
 
-gude-agents ships two logging packages. Both implement the same hook interfaces so you can swap them without changing your agent code. See [Structured Logging](logging.md) for the full logging API including `auto.WithLogging()`, structured slog output, and the `WithLogger` context helper.
-
-### debug — colored output for local development
-
-`agent/logging/debug` prints human-readable, ANSI-colored trace output to stdout. Zero configuration required — just add `debug.WithLogging()` as an option:
-
-```go
-import "github.com/camilbinas/gude-agents/agent/logging/debug"
-
-a, err := agent.Default(provider, instructions, tools,
-    debug.WithLogging(),
-)
-```
-
-Not intended for production — the colored output is designed to be read while the agent is running, not aggregated.
-
-## Preset Constructors
-
-All presets accept `(provider, instructions, tools, ...Option)` and return `(*Agent, error)`. Options passed after the defaults override them.
-
-| Preset | Max Iterations | Parallel Tools | Use Case |
-|--------|---------------|----------------|----------|
-| `Default` | 5 | on | Standalone agents |
-| `Worker` | 3 | on | Sub-agents in multi-agent setups |
-| `Orchestrator` | 5 | on | Parent agent routing to specialists |
-| `RAGAgent` | 5 | on | Retrieval-augmented generation (takes a `Retriever` parameter before tools) |
-
-```go
-a, err := agent.Default(provider, instructions, tools,
-	agent.WithMaxIterations(10), // override the default 5
-)
-```
-
-## Running the Examples
-
-The `examples/` directory is a separate Go module with its own `go.mod`. Run examples from inside that directory:
-
-```bash
-cd examples
-go run ./getting-started
-```
-
-Most examples read configuration from `examples/.env` via godotenv. Create one with your credentials:
-
-```bash
-# examples/.env
-AWS_REGION=eu-central-1
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-POSTGRES_URL=postgres://user:pass@localhost:5432/mydb?sslmode=disable
-REDIS_ADDR=localhost:6379
-```
-
-Only the variables relevant to the example you're running need to be set.
-
-## See Also
-
-- [Agent API Reference](agent-api.md) — full list of options and methods
-- [Providers](providers.md) — Bedrock, Anthropic, and OpenAI provider details
-- [Multi-Agent Composition](multi-agent.md) — orchestrator + worker patterns
+Read [Agent API](agent-api.md), [Invocation context](invocation-context.md), [Tools](tools.md), and [Conversation persistence](conversation.md).

@@ -15,14 +15,14 @@
 //	})
 //	defer shutdown(ctx)
 //
-//	a, err := agent.New(provider, instructions, tools,
+//	a, err := agent.New(provider, instructions,
+//	    agent.WithTools(tools...),
 //	    sentrytrace.WithSentry(),
 //	)
 package sentry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -170,16 +170,16 @@ func WithSentry(opts ...tracing.TracingOption) agent.Option {
 // as Sentry issues linked to the active OTEL trace.
 func ErrorCaptureMiddleware() agent.Middleware {
 	return func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
-			result, err := next(c, toolName, input)
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
+			result, err := next(ctx, call)
 			if err != nil {
 				gosentry.WithScope(func(scope *gosentry.Scope) {
 					scope.SetTag("agent.error_type", "tool_error")
-					scope.SetTag("tool.name", toolName)
-					setTraceContext(c, scope)
+					scope.SetTag("tool.name", call.Name)
+					setTraceContext(ctx, scope)
 					client := gosentry.CurrentHub().Client()
 					if client != nil {
-						client.CaptureException(err, &gosentry.EventHint{Context: c}, scope)
+						client.CaptureException(err, &gosentry.EventHint{Context: ctx}, scope)
 					}
 				})
 			}
@@ -192,17 +192,17 @@ func ErrorCaptureMiddleware() agent.Middleware {
 // breadcrumb for every tool call.
 func BreadcrumbMiddleware() agent.Middleware {
 	return func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 			start := time.Now()
-			result, err := next(c, toolName, input)
+			result, err := next(ctx, call)
 			elapsed := time.Since(start)
 
 			data := map[string]any{
-				"tool":     toolName,
+				"tool":     call.Name,
 				"duration": elapsed.String(),
 			}
 
-			inputStr := string(input)
+			inputStr := string(call.Input)
 			if len(inputStr) > 200 {
 				inputStr = inputStr[:200] + "..."
 			}
@@ -213,7 +213,7 @@ func BreadcrumbMiddleware() agent.Middleware {
 				level = gosentry.LevelError
 				data["error"] = err.Error()
 			} else {
-				preview := result
+				preview := result.Text
 				if len(preview) > 200 {
 					preview = preview[:200] + "..."
 				}
@@ -222,7 +222,7 @@ func BreadcrumbMiddleware() agent.Middleware {
 
 			gosentry.AddBreadcrumb(&gosentry.Breadcrumb{
 				Category:  "agent.tool",
-				Message:   fmt.Sprintf("tool.%s", toolName),
+				Message:   fmt.Sprintf("tool.%s", call.Name),
 				Level:     level,
 				Data:      data,
 				Timestamp: time.Now(),

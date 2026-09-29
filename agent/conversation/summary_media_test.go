@@ -187,7 +187,7 @@ func TestStripNonTextBlocks(t *testing.T) {
 
 func TestNewMediaSummaryFunc_RolePreservation(t *testing.T) {
 	provider := testutil.NewMockProvider(testutil.WithResponses(
-		&agent.ProviderResponse{Text: "described image content"},
+		&agent.ModelResponse{Text: "described image content"},
 	))
 	fn := NewMediaSummaryFunc(provider, "describe this")
 
@@ -206,7 +206,7 @@ func TestNewMediaSummaryFunc_RolePreservation(t *testing.T) {
 
 func TestNewMediaSummaryFunc_SingleTextBlockOutput(t *testing.T) {
 	provider := testutil.NewMockProvider(testutil.WithResponses(
-		&agent.ProviderResponse{Text: "summary text"},
+		&agent.ModelResponse{Text: "summary text"},
 	))
 	fn := NewMediaSummaryFunc(provider, "describe this")
 
@@ -249,7 +249,7 @@ func TestNewMediaSummaryFunc_ErrorWrapping(t *testing.T) {
 
 func TestDefaultMediaSummaryFunc_Works(t *testing.T) {
 	provider := testutil.NewMockProvider(testutil.WithResponses(
-		&agent.ProviderResponse{Text: "image shows a cat"},
+		&agent.ModelResponse{Text: "image shows a cat"},
 	))
 	fn := DefaultMediaSummaryFunc(provider)
 
@@ -332,7 +332,7 @@ func TestMediaSummary_IntegrationFlow(t *testing.T) {
 		}
 	}
 
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 

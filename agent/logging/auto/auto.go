@@ -16,7 +16,7 @@ import (
 )
 
 // WithLogging returns an agent.Option that installs the appropriate logging
-// hook based on the environment. Checks APP_ENV, ENV, and ENVIRONMENT
+// observer based on the environment. Checks APP_ENV, ENV, and ENVIRONMENT
 // (first non-empty wins).
 //
 //   - development, dev, or local: colored debug output to stdout

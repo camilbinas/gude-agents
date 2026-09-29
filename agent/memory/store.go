@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -23,7 +23,7 @@ import (
 type Store[T any] struct {
 	mu       sync.RWMutex
 	entries  map[string][]memEntry[T] // keyed by identifier
-	embedder agent.Embedder
+	embedder rag.Embedder
 	schema   *memSchema
 }
 
@@ -41,7 +41,7 @@ type memSchema struct {
 
 // NewStore creates an in-memory Store for the given struct type T.
 // It parses `db` struct tags to identify the pk, identifier, and content fields.
-func NewStore[T any](embedder agent.Embedder) (*Store[T], error) {
+func NewStore[T any](embedder rag.Embedder) (*Store[T], error) {
 	if embedder == nil {
 		return nil, errors.New("memory: embedder is required")
 	}
@@ -86,24 +86,36 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	return nil
 }
 
-// Recall retrieves values by semantic similarity to the query.
-func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...RecallOption) ([]Entry[T], error) {
-	if identifier == "" {
-		return nil, errors.New("memory: identifier must not be empty")
+// Recall retrieves values by semantic similarity. The in-memory backend does
+// not support field filtering or explicit field ordering.
+func (s *Store[T]) Recall(ctx context.Context, identity string, query RecallQuery) ([]Entry[T], error) {
+	if identity == "" {
+		return nil, errors.New("memory: identity must not be empty")
 	}
-	if limit < 1 {
-		return nil, errors.New("memory: limit must be at least 1")
+	if query.Text == "" {
+		return nil, fmt.Errorf("%w: text must not be empty", ErrInvalidRecallQuery)
+	}
+	if query.Limit < 0 {
+		return nil, fmt.Errorf("%w: limit must be >= 0, got %d", ErrInvalidRecallQuery, query.Limit)
+	}
+	if math.IsNaN(query.MinSimilarity) || query.MinSimilarity < 0 || query.MinSimilarity > 1 {
+		return nil, fmt.Errorf("%w: min similarity must be between 0 and 1, got %v", ErrInvalidRecallQuery, query.MinSimilarity)
+	}
+	if len(query.Filters) > 0 {
+		return nil, fmt.Errorf("%w: in-memory store does not support filters", ErrUnsupportedFilter)
+	}
+	if len(query.Order) > 0 {
+		return nil, fmt.Errorf("%w: in-memory store does not support explicit ordering", ErrUnsupportedOrder)
 	}
 
-	embedding, err := s.embedder.Embed(ctx, query)
+	embedding, err := s.embedder.Embed(ctx, query.Text)
 	if err != nil {
 		return nil, fmt.Errorf("memory: embed query: %w", err)
 	}
 
 	s.mu.RLock()
-	bucket := append([]memEntry[T](nil), s.entries[identifier]...)
+	bucket := append([]memEntry[T](nil), s.entries[identity]...)
 	s.mu.RUnlock()
-
 	if len(bucket) == 0 {
 		return []Entry[T]{}, nil
 	}
@@ -112,20 +124,23 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 		entry memEntry[T]
 		score float64
 	}
-	results := make([]scored, len(bucket))
-	for i, e := range bucket {
-		results[i] = scored{entry: e, score: cosineSimilarity(embedding, e.embedding)}
+	results := make([]scored, 0, len(bucket))
+	for _, entry := range bucket {
+		score := cosineSimilarity(embedding, entry.embedding)
+		if query.MinSimilarity == 0 || score >= query.MinSimilarity {
+			results = append(results, scored{entry: entry, score: score})
+		}
 	}
-	sort.Slice(results, func(i, j int) bool {
+	sort.SliceStable(results, func(i, j int) bool {
 		return results[i].score > results[j].score
 	})
-	if limit > len(results) {
-		limit = len(results)
+	if query.Limit > 0 && query.Limit < len(results) {
+		results = results[:query.Limit]
 	}
 
-	entries := make([]Entry[T], limit)
-	for i := 0; i < limit; i++ {
-		entries[i] = Entry[T]{ID: results[i].entry.id, Value: results[i].entry.value, Score: results[i].score}
+	entries := make([]Entry[T], len(results))
+	for i, result := range results {
+		entries[i] = Entry[T]{ID: result.entry.id, Value: result.entry.value, Score: result.score}
 	}
 	return entries, nil
 }
@@ -199,7 +214,7 @@ func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
 type ToolOption func(*toolCfg)
 type toolCfg struct {
 	name, description string
-	scope             string // named scope key; empty = use Identifier()
+	scope             string // named scope key; empty = use the invocation Identity()
 }
 
 // WithToolName sets the tool name.
@@ -220,8 +235,10 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
-// WithScope configures the tool to read its identifier from a named scope
-// on the context (via c.Scope(key)) instead of the default c.Identifier().
+// WithScope configures the tool to partition entries by a named scope on the
+// context (set with c.WithScope(key, value)) instead of the default
+// c.Identity(). Scopes are strict: if the scope is not set, the tool call
+// fails with ErrMissingIdentity; it never falls back to the identity.
 func WithScope(key string) ToolOption {
 	return func(c *toolCfg) {
 		c.scope = key
@@ -235,11 +252,11 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 		o(cfg)
 	}
 	schema := generateMemSchema[T]()
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx, cfg.scope)
-			if id == "" {
-				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
+			id, err := ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 			var value T
 			if err := json.Unmarshal(input, &value); err != nil {
@@ -247,6 +264,7 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			}
 			return "Remembered.", store.Remember(ctx, id, value)
 		},
+		tool.WithSchema(schema),
 	)
 }
 
@@ -264,11 +282,11 @@ func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	} else {
 		schema["required"] = []any{"id"}
 	}
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx, cfg.scope)
-			if identifier == "" {
-				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
+			identity, err := ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 			var params struct {
 				ID string `json:"id"`
@@ -280,11 +298,12 @@ func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			if err := json.Unmarshal(input, &value); err != nil {
 				return "", fmt.Errorf("memory: unmarshal: %w", err)
 			}
-			if err := store.Update(ctx, identifier, params.ID, value); err != nil {
+			if err := store.Update(ctx, identity, params.ID, value); err != nil {
 				return "", err
 			}
 			return "Updated.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
@@ -302,11 +321,11 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 		},
 		"required": []any{"query"},
 	}
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx, cfg.scope)
-			if id == "" {
-				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
+			id, err := ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 			var params struct {
 				Query string `json:"query"`
@@ -318,7 +337,7 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			if params.Limit == 0 {
 				params.Limit = 5
 			}
-			results, err := store.Recall(ctx, id, params.Query, params.Limit)
+			results, err := store.Recall(ctx, id, RecallQuery{Text: params.Query, Limit: params.Limit})
 			if err != nil {
 				return "", err
 			}
@@ -335,6 +354,7 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			}
 			return b.String(), nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
@@ -351,11 +371,11 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 		},
 		"required": []any{"id"},
 	}
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx, cfg.scope)
-			if identifier == "" {
-				return "", errors.New("memory: identifier not found in context; use c.WithIdentifier")
+			identity, err := ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 			var params struct {
 				ID string `json:"id"`
@@ -363,19 +383,13 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			if err := json.Unmarshal(input, &params); err != nil {
 				return "", err
 			}
-			return "Forgotten.", store.Forget(ctx, identifier, params.ID)
+			return "Forgotten.", store.Forget(ctx, identity, params.ID)
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // --- Internal helpers ---
-
-// identifierFromContext extracts the identifier from a context.Context.
-// If scope is non-empty, uses agent.ScopeFrom which checks the named scope
-// first, then falls back to Identifier().
-func identifierFromContext(ctx context.Context, scope string) string {
-	return agent.ScopeFrom(ctx, scope)
-}
 
 func parseMemSchema[T any]() (*memSchema, error) {
 	var zero T

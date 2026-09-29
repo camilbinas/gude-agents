@@ -18,9 +18,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/memory"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
@@ -42,27 +40,22 @@ func main() {
 
 	store := conversation.NewWindow(conversation.NewInMemory(), 40)
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text(
-			"You are a helpful assistant with long-term memory. "+
-				"Use remember to store facts, preferences, and decisions the user shares. "+
-				"Use recall to retrieve relevant context before answering questions. "+
-				"Use forget to remove a specific memory when the user asks you to forget something.",
-		),
-		[]tool.Tool{
+		"You are a helpful assistant with long-term memory. Use remember to store facts, preferences, and decisions the user shares. Use recall to retrieve relevant context before answering questions. Use forget to remove a specific memory when the user asks you to forget something.",
+		agent.WithTools(
 			memory.NewRememberTool(mem),
 			memory.NewRecallTool(mem),
 			memory.NewForgetTool(mem),
-		},
+		),
 		auto.WithLogging(),
-		agent.WithConversation(store, "memory-session"),
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := agent.Background().WithIdentifier("user-123")
+	ctx := agent.Background().WithIdentity("user-123").WithConversationID("memory-session")
 
 	fmt.Println("Chat agent with in-memory memory. Type 'quit' to exit, 'clear' to forget all.")
 	fmt.Println("Try: 'Remember that I prefer dark mode' then 'What are my preferences?'")
@@ -71,10 +64,6 @@ func main() {
 
 	utils.Chat(ctx, a, utils.ChatOptions{
 		ClearFunc: func(ctx context.Context) error {
-			if err := mem.ForgetAll(ctx, "user-123"); err != nil {
-				return err
-			}
-
 			return mem.ForgetAll(ctx, "user-123")
 		},
 	})

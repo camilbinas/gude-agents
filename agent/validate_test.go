@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -73,35 +72,35 @@ func TestValidateToolInput_EnumFieldAbsent_OK(t *testing.T) {
 // returns IsError=true with a ToolError when a required field is missing.
 func TestExecuteTools_SchemaValidation_MissingRequired(t *testing.T) {
 	handlerCalled := false
-	greetTool := tool.NewRaw("greet", "greets someone", map[string]any{
+	greetTool := tool.NewRaw("greet", "greets someone", func(_ context.Context, _ json.RawMessage) (string, error) {
+		handlerCalled = true
+		return "hello", nil
+	}, tool.WithSchema(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"name": map[string]any{"type": "string"},
 		},
 		"required": []any{"name"},
-	}, func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return "hello", nil
-	})
+	}))
 
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			{ToolUseID: "tc1", Name: "greet", Input: json.RawMessage(`{}`)},
 		}},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{Text: "done"},
 	)
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{greetTool})
+	a, err := New(sp, "sys", WithTools(greetTool))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	cp := newCapturingProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			{ToolUseID: "tc1", Name: "greet", Input: json.RawMessage(`{}`)},
 		}},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{Text: "done"},
 	)
-	a2, _ := New(cp, prompt.Text("sys"), []tool.Tool{greetTool})
+	a2, _ := New(cp, "sys", WithTools(greetTool))
 	_, err = a2.Invoke(Background(), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -137,24 +136,24 @@ func TestExecuteTools_SchemaValidation_MissingRequired(t *testing.T) {
 // TestExecuteTools_SchemaValidation_InvalidEnum verifies IsError=true for bad enum value.
 func TestExecuteTools_SchemaValidation_InvalidEnum(t *testing.T) {
 	handlerCalled := false
-	colorTool := tool.NewRaw("paint", "paints a color", map[string]any{
+	colorTool := tool.NewRaw("paint", "paints a color", func(_ context.Context, _ json.RawMessage) (string, error) {
+		handlerCalled = true
+		return "painted", nil
+	}, tool.WithSchema(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"color": map[string]any{"type": "string", "enum": []any{"red", "green", "blue"}},
 		},
 		"required": []any{"color"},
-	}, func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return "painted", nil
-	})
+	}))
 
 	cp := newCapturingProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			{ToolUseID: "tc1", Name: "paint", Input: json.RawMessage(`{"color":"purple"}`)},
 		}},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{Text: "done"},
 	)
-	a, _ := New(cp, prompt.Text("sys"), []tool.Tool{colorTool})
+	a, _ := New(cp, "sys", WithTools(colorTool))
 	_, err := a.Invoke(Background(), "paint it")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -182,24 +181,24 @@ func TestExecuteTools_SchemaValidation_InvalidEnum(t *testing.T) {
 // TestExecuteTools_SchemaValidation_ValidPayload verifies handler IS called for valid input.
 func TestExecuteTools_SchemaValidation_ValidPayload(t *testing.T) {
 	handlerCalled := false
-	greetTool := tool.NewRaw("greet", "greets someone", map[string]any{
+	greetTool := tool.NewRaw("greet", "greets someone", func(_ context.Context, _ json.RawMessage) (string, error) {
+		handlerCalled = true
+		return "hello alice", nil
+	}, tool.WithSchema(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"name": map[string]any{"type": "string"},
 		},
 		"required": []any{"name"},
-	}, func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return "hello alice", nil
-	})
+	}))
 
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			{ToolUseID: "tc1", Name: "greet", Input: json.RawMessage(`{"name":"alice"}`)},
 		}},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{Text: "done"},
 	)
-	a, _ := New(sp, prompt.Text("sys"), []tool.Tool{greetTool})
+	a, _ := New(sp, "sys", WithTools(greetTool))
 	_, err := a.Invoke(Background(), "greet alice")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

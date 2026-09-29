@@ -28,26 +28,26 @@ func New(encodingName string) (*Estimator, error) {
 	return &Estimator{enc: enc}, nil
 }
 
-// EstimateTokens extracts all text content from params (system prompt,
+// EstimateTokens extracts all text content from req (system prompt,
 // message text blocks, and JSON-serialized tool specs), encodes it using
 // the BPE tokenizer, and returns the token count.
 // This operation is fully offline — no network calls are made.
-func (e *Estimator) EstimateTokens(_ context.Context, params agent.ConverseParams) (int, error) {
-	text := extractText(params)
+func (e *Estimator) EstimateTokens(_ context.Context, req agent.ModelRequest) (int, error) {
+	text := extractText(req)
 	tokens := e.enc.Encode(text, nil, nil)
 	return len(tokens), nil
 }
 
-// extractText concatenates all text sources from ConverseParams in the same
-// order as CharEstimator: system prompt, message text blocks, tool config specs.
-func extractText(params agent.ConverseParams) string {
+// extractText concatenates all text sources from ModelRequest in the same
+// order as CharEstimator: system prompt, message text blocks, tool specs.
+func extractText(req agent.ModelRequest) string {
 	var buf []byte
 
 	// System prompt.
-	buf = append(buf, params.System...)
+	buf = append(buf, req.System...)
 
 	// All TextBlock.Text from messages.
-	for _, msg := range params.Messages {
+	for _, msg := range req.Messages {
 		for _, block := range msg.Content {
 			if tb, ok := block.(agent.TextBlock); ok {
 				buf = append(buf, tb.Text...)
@@ -55,8 +55,8 @@ func extractText(params agent.ConverseParams) string {
 		}
 	}
 
-	// JSON-serialized ToolConfig specs.
-	for _, spec := range params.ToolConfig {
+	// JSON-serialized tool specs.
+	for _, spec := range req.Tools {
 		data, err := json.Marshal(spec)
 		if err != nil {
 			continue

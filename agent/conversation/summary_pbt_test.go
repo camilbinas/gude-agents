@@ -50,7 +50,7 @@ func TestProperty3_SummaryNoRetriggerAfterCompletion(t *testing.T) {
 		msgs := makeMessages(msgCount)
 
 		// First Save — triggers summarization
-		if err := s.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 			rt.Fatalf("first Save failed: %v", err)
 		}
 
@@ -74,7 +74,7 @@ func TestProperty3_SummaryNoRetriggerAfterCompletion(t *testing.T) {
 		}
 
 		// Second Save at same count — must NOT re-trigger
-		if err := s.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 			rt.Fatalf("second Save failed: %v", err)
 		}
 
@@ -143,7 +143,7 @@ func TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_ = s.Save(ctx, "conv", msgs)
+				_ = saveLatest(ctx, s, "conv", msgs)
 			}()
 		}
 		wg.Wait()
@@ -228,12 +228,12 @@ func TestProperty2_Preservation_BelowThresholdUnchanged(t *testing.T) {
 		}
 
 		// Save messages
-		if err := s.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 			rt.Fatalf("Save failed: %v", err)
 		}
 
 		// Load messages back
-		loaded, err := s.Load(ctx, "conv")
+		loaded, err := loadMessages(ctx, s, "conv")
 		if err != nil {
 			rt.Fatalf("Load failed: %v", err)
 		}
@@ -343,15 +343,17 @@ func TestProperty1_BugCondition_SummaryMessageRoleViolation(t *testing.T) {
 		}
 
 		// Save messages — triggers summarization
-		if err := s.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 			rt.Fatalf("Save failed: %v", err)
 		}
 
 		// Wait for summarization to complete
-		s.Wait()
+		if err := s.Flush(context.Background()); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
 
 		// Load the stored result
-		loaded, err := s.Load(ctx, "conv")
+		loaded, err := loadMessages(ctx, s, "conv")
 		if err != nil {
 			rt.Fatalf("Load failed: %v", err)
 		}

@@ -1,13 +1,13 @@
 // Example: Two independent conversations sharing a single agent instance.
 //
-// A single Agent is created with WithSharedConversation — no default conversation ID.
-// Each conversation supplies its own ID per invocation via WithConversationID,
-// so their histories are stored and retrieved independently.
+// A single Agent is created with WithConversationStore. Each conversation
+// supplies its own ID per invocation via WithConversationID, so their histories
+// are stored and retrieved independently.
 //
 // Key concepts demonstrated:
-//   - agent.WithSharedConversation — shared store, no default conversation ID
-//   - c.WithConversationID         — per-invocation conversation scoping
-//   - conversation.NewStore        — in-memory conversation store
+//   - agent.WithConversationStore — one store shared by all invocations
+//   - c.WithConversationID        — per-invocation conversation scoping
+//   - conversation.NewInMemory    — in-memory conversation store
 //
 // Run:
 //
@@ -22,27 +22,22 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
-
 	store := conversation.NewInMemory()
 
-	// WithSharedConversation: no default conversation ID — each call must supply one.
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a friendly assistant. Remember details the user shares."),
-		nil,
-		agent.WithSharedConversation(store),
+		"You are a friendly assistant. Remember details the user shares.",
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Conversation A — Alice
 	ctxA := agent.Background().WithConversationID("conv-alice")
 	ctxB := agent.Background().WithConversationID("conv-bob")
 
@@ -51,25 +46,17 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s: %v", label, err)
 		}
-		fmt.Printf("[%s] User: %s\n[%s]  Bot: %s\n\n", label, msg, label, result)
-		return result
+		fmt.Printf("[%s] User: %s\n[%s]  Bot: %s\n\n", label, msg, label, result.Text)
+		return result.Text
 	}
 
-	// Alice's conversation
 	invoke(ctxA, "Alice", "Hi, my name is Alice and I work in travel tech.")
 	invoke(ctxA, "Alice", "What field do I work in?")
-
-	// Bob's conversation — completely separate history
 	invoke(ctxB, "Bob", "Hey, I'm Bob and I'm a software engineer.")
 	invoke(ctxB, "Bob", "What's my profession?")
-
-	// Back to Alice — she still remembers her own context
 	invoke(ctxA, "Alice", "Do you remember my name?")
-
-	// Bob doesn't know anything about Alice
 	invoke(ctxB, "Bob", "Do you know someone named Alice?")
 
-	// Show what's in the store
 	ids, _ := store.List(context.Background())
 	fmt.Printf("Conversations in store: %v\n", ids)
 }

@@ -7,36 +7,25 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 // ---------------------------------------------------------------------------
-// WithTimeout tests
+// WithProviderTimeout tests
 // ---------------------------------------------------------------------------
 
 // slowProvider blocks for the given duration before responding.
 type slowProvider struct {
 	delay    time.Duration
-	response *ProviderResponse
+	response *ModelResponse
 }
 
 func (p *slowProvider) Name() string { return "mock" }
 
-func (p *slowProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
+func (p *slowProvider) Stream(ctx context.Context, _ ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
 	select {
 	case <-time.After(p.delay):
-		return p.response, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (p *slowProvider) ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
-	select {
-	case <-time.After(p.delay):
-		if cb != nil && p.response.Text != "" {
-			cb(p.response.Text)
+		if emit != nil && p.response.Text != "" {
+			emit(ModelEvent{Type: ModelEventText, Text: p.response.Text})
 		}
 		return p.response, nil
 	case <-ctx.Done():
@@ -44,12 +33,12 @@ func (p *slowProvider) ConverseStream(ctx context.Context, params ConverseParams
 	}
 }
 
-func TestWithTimeout_ProviderRespondsInTime(t *testing.T) {
+func TestWithProviderTimeout_ProviderRespondsInTime(t *testing.T) {
 	sp := &slowProvider{
 		delay:    10 * time.Millisecond,
-		response: &ProviderResponse{Text: "fast"},
+		response: &ModelResponse{Text: "fast"},
 	}
-	a, err := New(sp, prompt.Text("sys"), nil, WithTimeout(1*time.Second))
+	a, err := New(sp, "sys", WithProviderTimeout(1*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,17 +47,17 @@ func TestWithTimeout_ProviderRespondsInTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if result != "fast" {
-		t.Errorf("expected %q, got %q", "fast", result)
+	if result.Text != "fast" {
+		t.Errorf("expected %q, got %q", "fast", result.Text)
 	}
 }
 
-func TestWithTimeout_ProviderTimesOut(t *testing.T) {
+func TestWithProviderTimeout_ProviderTimesOut(t *testing.T) {
 	sp := &slowProvider{
 		delay:    5 * time.Second,
-		response: &ProviderResponse{Text: "slow"},
+		response: &ModelResponse{Text: "slow"},
 	}
-	a, err := New(sp, prompt.Text("sys"), nil, WithTimeout(50*time.Millisecond))
+	a, err := New(sp, "sys", WithProviderTimeout(50*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,12 +77,12 @@ func TestWithTimeout_ProviderTimesOut(t *testing.T) {
 	}
 }
 
-func TestWithTimeout_ZeroMeansNoTimeout(t *testing.T) {
+func TestWithProviderTimeout_ZeroMeansNoTimeout(t *testing.T) {
 	sp := &slowProvider{
 		delay:    10 * time.Millisecond,
-		response: &ProviderResponse{Text: "ok"},
+		response: &ModelResponse{Text: "ok"},
 	}
-	a, err := New(sp, prompt.Text("sys"), nil, WithTimeout(0))
+	a, err := New(sp, "sys", WithProviderTimeout(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,53 +91,49 @@ func TestWithTimeout_ZeroMeansNoTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success with zero timeout, got: %v", err)
 	}
-	if result != "ok" {
-		t.Errorf("expected %q, got %q", "ok", result)
+	if result.Text != "ok" {
+		t.Errorf("expected %q, got %q", "ok", result.Text)
 	}
 }
 
-func TestWithTimeout_NegativeReturnsError(t *testing.T) {
-	_, err := New(mockProvider{}, prompt.Text("sys"), nil, WithTimeout(-1*time.Second))
+func TestWithProviderTimeout_NegativeReturnsError(t *testing.T) {
+	_, err := New(mockProvider{}, "sys", WithProviderTimeout(-1*time.Second))
 	if err == nil {
 		t.Fatal("expected error for negative timeout")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// WithRetry tests
+// WithProviderRetry tests
 // ---------------------------------------------------------------------------
 
 // failNProvider fails the first N calls, then succeeds.
 type failNProvider struct {
 	failCount int
 	calls     atomic.Int32
-	response  *ProviderResponse
+	response  *ModelResponse
 }
 
 func (p *failNProvider) Name() string { return "mock" }
 
-func (p *failNProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.ConverseStream(ctx, params, nil)
-}
-
-func (p *failNProvider) ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (p *failNProvider) Stream(_ context.Context, _ ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
 	n := int(p.calls.Add(1))
 	if n <= p.failCount {
 		return nil, fmt.Errorf("transient error (call %d)", n)
 	}
-	if cb != nil && p.response.Text != "" {
-		cb(p.response.Text)
+	if emit != nil && p.response.Text != "" {
+		emit(ModelEvent{Type: ModelEventText, Text: p.response.Text})
 	}
 	return p.response, nil
 }
 
-func TestWithRetry_SucceedsAfterTransientFailure(t *testing.T) {
+func TestWithProviderRetry_SucceedsAfterTransientFailure(t *testing.T) {
 	fp := &failNProvider{
 		failCount: 2,
-		response:  &ProviderResponse{Text: "recovered"},
+		response:  &ModelResponse{Text: "recovered"},
 	}
-	a, err := New(fp, prompt.Text("sys"), nil,
-		WithRetry(3, 10*time.Millisecond),
+	a, err := New(fp, "sys",
+		WithProviderRetry(3, 10*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -158,21 +143,21 @@ func TestWithRetry_SucceedsAfterTransientFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success after retry, got: %v", err)
 	}
-	if result != "recovered" {
-		t.Errorf("expected %q, got %q", "recovered", result)
+	if result.Text != "recovered" {
+		t.Errorf("expected %q, got %q", "recovered", result.Text)
 	}
 	if calls := int(fp.calls.Load()); calls != 3 {
 		t.Errorf("expected 3 calls (2 failures + 1 success), got %d", calls)
 	}
 }
 
-func TestWithRetry_ExhaustsRetries(t *testing.T) {
+func TestWithProviderRetry_ExhaustsRetries(t *testing.T) {
 	fp := &failNProvider{
 		failCount: 10, // always fails
-		response:  &ProviderResponse{Text: "never"},
+		response:  &ModelResponse{Text: "never"},
 	}
-	a, err := New(fp, prompt.Text("sys"), nil,
-		WithRetry(2, 10*time.Millisecond),
+	a, err := New(fp, "sys",
+		WithProviderRetry(2, 10*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -188,13 +173,13 @@ func TestWithRetry_ExhaustsRetries(t *testing.T) {
 	}
 }
 
-func TestWithRetry_ZeroMeansNoRetry(t *testing.T) {
+func TestWithProviderRetry_ZeroMeansNoRetry(t *testing.T) {
 	fp := &failNProvider{
 		failCount: 1,
-		response:  &ProviderResponse{Text: "ok"},
+		response:  &ModelResponse{Text: "ok"},
 	}
-	a, err := New(fp, prompt.Text("sys"), nil,
-		WithRetry(0, 10*time.Millisecond),
+	a, err := New(fp, "sys",
+		WithProviderRetry(0, 10*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -209,13 +194,13 @@ func TestWithRetry_ZeroMeansNoRetry(t *testing.T) {
 	}
 }
 
-func TestWithRetry_RespectsContextCancellation(t *testing.T) {
+func TestWithProviderRetry_RespectsContextCancellation(t *testing.T) {
 	fp := &failNProvider{
 		failCount: 10,
-		response:  &ProviderResponse{Text: "never"},
+		response:  &ModelResponse{Text: "never"},
 	}
-	a, err := New(fp, prompt.Text("sys"), nil,
-		WithRetry(5, 500*time.Millisecond), // long delay
+	a, err := New(fp, "sys",
+		WithProviderRetry(5, 500*time.Millisecond), // long delay
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -234,8 +219,8 @@ func TestWithRetry_RespectsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestWithRetry_NegativeReturnsError(t *testing.T) {
-	_, err := New(mockProvider{}, prompt.Text("sys"), nil, WithRetry(-1, time.Second))
+func TestWithProviderRetry_NegativeReturnsError(t *testing.T) {
+	_, err := New(mockProvider{}, "sys", WithProviderRetry(-1, time.Second))
 	if err == nil {
 		t.Fatal("expected error for negative maxRetries")
 	}
@@ -249,24 +234,24 @@ func TestTimeoutAndRetry_Combined(t *testing.T) {
 	// Provider is slow on first 2 calls (triggers timeout), fast on 3rd.
 	var calls atomic.Int32
 	sp := &funcProvider{
-		fn: func(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+		fn: func(ctx context.Context, params ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 			n := int(calls.Add(1))
 			if n <= 2 {
 				// Slow — will be killed by timeout.
 				select {
 				case <-time.After(5 * time.Second):
-					return &ProviderResponse{Text: "slow"}, nil
+					return &ModelResponse{Text: "slow"}, nil
 				case <-ctx.Done():
 					return nil, ctx.Err()
 				}
 			}
-			return &ProviderResponse{Text: "fast"}, nil
+			return &ModelResponse{Text: "fast"}, nil
 		},
 	}
 
-	a, err := New(sp, prompt.Text("sys"), nil,
-		WithTimeout(50*time.Millisecond),
-		WithRetry(3, 10*time.Millisecond),
+	a, err := New(sp, "sys",
+		WithProviderTimeout(50*time.Millisecond),
+		WithProviderRetry(3, 10*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -276,39 +261,70 @@ func TestTimeoutAndRetry_Combined(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success after timeout+retry, got: %v", err)
 	}
-	if result != "fast" {
-		t.Errorf("expected %q, got %q", "fast", result)
+	if result.Text != "fast" {
+		t.Errorf("expected %q, got %q", "fast", result.Text)
 	}
 	if c := int(calls.Load()); c != 3 {
 		t.Errorf("expected 3 calls, got %d", c)
 	}
 }
 
-func TestWithRetry_DoesNotRetryAfterVisibleStreamOutput(t *testing.T) {
+func TestWithProviderRetry_DoesNotRetryAfterVisibleStreamOutput(t *testing.T) {
 	partialErr := errors.New("stream interrupted after partial output")
 	calls := 0
-	provider := &funcProvider{fn: func(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+	provider := &funcProvider{fn: func(_ context.Context, _ ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
 		calls++
 		if calls == 1 {
-			cb("partial")
+			emit(ModelEvent{Type: ModelEventText, Text: "partial"})
 			return nil, partialErr
 		}
-		return &ProviderResponse{Text: "replacement"}, nil
+		return &ModelResponse{Text: "replacement"}, nil
 	}}
-	a, err := New(provider, prompt.Text("sys"), nil, WithRetry(2, time.Millisecond))
+	a, err := New(provider, "sys", WithProviderRetry(2, time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var chunks []string
-	err = a.InvokeStream(Background(), "hi", func(chunk string) { chunks = append(chunks, chunk) })
+	for chunk, serr := range a.TextStream(Background(), "hi") {
+		if serr != nil {
+			err = serr
+			break
+		}
+		chunks = append(chunks, chunk)
+	}
 	if !errors.Is(err, partialErr) {
-		t.Fatalf("InvokeStream error = %v, want partial stream error", err)
+		t.Fatalf("TextStream error = %v, want partial stream error", err)
 	}
 	if calls != 1 {
 		t.Fatalf("provider calls = %d, want 1 after visible output", calls)
 	}
 	if len(chunks) != 1 || chunks[0] != "partial" {
 		t.Fatalf("visible chunks = %#v, want only partial", chunks)
+	}
+}
+
+func TestWithProviderRetry_DoesNotRetryAfterThinkingEvent(t *testing.T) {
+	thinkingErr := errors.New("stream interrupted after thinking")
+	calls := 0
+	provider := &funcProvider{fn: func(_ context.Context, _ ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
+		calls++
+		emit(ModelEvent{Type: ModelEventThinking, Text: "reasoning"})
+		return nil, thinkingErr
+	}}
+	a, err := New(provider, "sys", WithProviderRetry(2, time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, streamErr := collectStream(a.Stream(Background(), "hi"))
+	if !errors.Is(streamErr, thinkingErr) {
+		t.Fatalf("Stream error = %v, want thinking stream error", streamErr)
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1 after thinking event", calls)
+	}
+	if len(events) < 2 || events[1].Type != EventThinking || events[1].Thinking == nil || events[1].Thinking.Content != "reasoning" {
+		t.Fatalf("events = %#v, want reasoning thinking event", events)
 	}
 }

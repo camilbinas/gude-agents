@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	agent "github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -31,20 +30,27 @@ func findMetric(rm metricdata.ResourceMetrics, name string) *metricdata.Metrics 
 // Unit Tests
 // ---------------------------------------------------------------------------
 
-// TestWithMetrics_InstallsHook verifies WithMetrics sets MetricsHook on agent.
-func TestWithMetrics_InstallsHook(t *testing.T) {
+// TestWithMetrics_RegistersObserver verifies WithMetrics installs a working observer.
+func TestWithMetrics_RegistersObserver(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(mp))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
+	a, err := agent.New(prov, "sys", WithMetrics(mp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if _, err := a.Invoke(agent.Background(), "hello"); err != nil {
+		t.Fatalf("invoke error: %v", err)
+	}
 
-	if a.MetricsHook() == nil {
-		t.Fatal("expected MetricsHook to be set after WithMetrics, got nil")
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+	if findMetric(rm, "agent.invoke.total") == nil {
+		t.Fatal("expected observer to record agent.invoke.total")
 	}
 }
 
@@ -54,16 +60,16 @@ func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(mp))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
+	a, err := agent.New(prov, "sys", agent.WithName("metrics-agent"), WithMetrics(mp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Trigger an invocation via the hook directly.
-	hook := a.MetricsHook()
-	finish := hook.OnInvokeStart()
-	finish(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
+	// Trigger an invocation through the registered observer.
+	if _, err := a.Invoke(agent.Background(), "hello"); err != nil {
+		t.Fatalf("invoke error: %v", err)
+	}
 
 	// Collect metrics via ManualReader.
 	var rm metricdata.ResourceMetrics
@@ -75,20 +81,33 @@ func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 	if m == nil {
 		t.Fatal("expected agent.invoke.total metric in custom MeterProvider, not found")
 	}
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("agent.invoke.total data type = %T, want metricdata.Sum[int64]", m.Data)
+	}
+	foundAgentName := false
+	for _, point := range sum.DataPoints {
+		if matchOTELAttrs(point, map[string]string{"agent_name": "metrics-agent", "status": "success"}) {
+			foundAgentName = true
+		}
+	}
+	if !foundAgentName {
+		t.Fatal("expected agent_name attribute on invocation metric")
+	}
 }
 
 // TestWithMetrics_NilMeterProvider verifies nil MeterProvider falls back to global.
 func TestWithMetrics_NilMeterProvider(t *testing.T) {
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
 	// Should not panic and should install hook using global provider.
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(nil))
+	a, err := agent.New(prov, "sys", WithMetrics(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if a.MetricsHook() == nil {
-		t.Fatal("expected MetricsHook to be set with nil MeterProvider (global fallback), got nil")
+	if a == nil {
+		t.Fatal("expected agent construction with global MeterProvider to succeed")
 	}
 }
 
@@ -98,8 +117,8 @@ func TestWithMetrics_WithNamespace(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
-	_, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
+	_, err := agent.New(prov, "sys",
 		WithMetrics(mp, WithNamespace("myapp")),
 	)
 	if err != nil {
@@ -123,7 +142,7 @@ func TestWithMetrics_WithNamespace(t *testing.T) {
 	if err := h.register(); err != nil {
 		t.Fatalf("register error: %v", err)
 	}
-	h.OnIterationStart()
+	_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
 	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("failed to collect metrics: %v", err)
@@ -167,23 +186,31 @@ func TestDurationRecording(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
 
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithMetrics(mp))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
+	a, err := agent.New(prov, "sys", WithMetrics(mp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	hook := a.MetricsHook()
+	if _, err := a.Invoke(agent.Background(), "hello"); err != nil {
+		t.Fatalf("invoke error: %v", err)
+	}
 
-	// Exercise all duration-recording hooks.
-	finishInvoke := hook.OnInvokeStart()
-	finishInvoke(nil, agent.TokenUsage{})
-
-	finishProvider := hook.OnProviderCallStart("test-model")
-	finishProvider(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
-
-	finishTool := hook.OnToolStart("my-tool")
-	finishTool(nil)
+	// Register direct normalized records for provider and tool duration coverage.
+	h := &otelHook{meter: mp.Meter("duration-direct")}
+	if err := h.register(); err != nil {
+		t.Fatalf("register error: %v", err)
+	}
+	_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+		Phase: agent.End, ModelID: "test-model", Duration: 3,
+		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+	})
+	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+		Phase: agent.End, Name: "my-tool", Duration: 4,
+	})
+	_ = h.ObserveAttachment(context.Background(), agent.AttachmentRecord{
+		Phase: agent.End, ImageCount: 2, DocumentCount: 3,
+	})
 
 	// Collect metrics.
 	var rm metricdata.ResourceMetrics
@@ -222,6 +249,12 @@ func TestDurationRecording(t *testing.T) {
 			if dp.Count != 1 {
 				t.Errorf("metric %q: expected count 1, got %d", name, dp.Count)
 			}
+		}
+	}
+
+	for _, name := range []string{"agent.images.attached.total", "agent.documents.attached.total"} {
+		if findMetric(rm, name) == nil {
+			t.Errorf("attachment metric %q not found", name)
 		}
 	}
 }

@@ -16,7 +16,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	ragredis "github.com/camilbinas/gude-agents/agent/rag/redis"
@@ -56,14 +55,12 @@ func main() {
 	fmt.Printf("Ingested %d documents\n", len(docs))
 
 	provider := bedrock.Must(bedrock.Standard())
-
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
-	a, err := agent.RAGAgent(
+	a, err := agent.New(
 		provider,
-		prompt.Text("Answer questions using only the provided context. Be concise."),
-		retriever,
-		nil,
+		"Answer questions using only the provided context. Be concise.",
+		agent.WithRetriever(retriever),
 		auto.WithLogging(),
 	)
 	if err != nil {

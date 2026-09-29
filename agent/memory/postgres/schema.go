@@ -24,7 +24,8 @@ const (
 // columnInfo describes a single struct field → column mapping.
 type columnInfo struct {
 	FieldIndex int        // index in the struct
-	Column     string     // SQL column name
+	QueryField string     // portable recall field name from the db tag
+	Column     string     // sanitized SQL column name
 	Role       columnRole // special role (pk, identifier, content, etc.)
 	IsJSONB    bool       // serialize as JSONB
 	NoInput    bool       // exclude from LLM input schema
@@ -92,6 +93,7 @@ func parseSchema[T any](embeddingCol string) (*tableSchema, error) {
 
 		info := columnInfo{
 			FieldIndex: i,
+			QueryField: colName,
 			Column:     colName,
 		}
 
@@ -153,6 +155,20 @@ func (s *tableSchema) columnNames() []string {
 		names[i] = c.Column
 	}
 	return names
+}
+
+// recallColumn resolves an exact db-tag field name to an allowlisted,
+// sanitized SQL identifier.
+func (s *tableSchema) recallColumn(field string) (string, bool) {
+	if field == "" {
+		return "", false
+	}
+	for _, column := range s.Columns {
+		if column.QueryField == field {
+			return column.Column, true
+		}
+	}
+	return "", false
 }
 
 // insertColumns returns column names for INSERT (all columns + embedding).

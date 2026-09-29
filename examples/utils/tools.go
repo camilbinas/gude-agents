@@ -79,27 +79,29 @@ func SearchDocsTool() tool.Tool {
 
 // LookupOrderTool returns a mock order lookup tool for handoff examples.
 func LookupOrderTool() tool.Tool {
-	return tool.NewRaw("lookup_order", "Look up order details by ID", map[string]any{
+	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"order_id": map[string]any{"type": "string", "description": "The order ID"},
 		},
 		"required": []string{"order_id"},
-	}, func(_ context.Context, input json.RawMessage) (string, error) {
+	}
+	return tool.NewRaw("lookup_order", "Look up order details by ID", func(_ context.Context, input json.RawMessage) (string, error) {
 		return `{"order_id": "ORD-1234", "status": "delivered", "total": "$49.99", "item": "Wireless Headphones"}`, nil
-	})
+	}, tool.WithSchema(schema))
 }
 
 // ProcessRefundTool returns a mock refund tool for handoff/support examples.
 func ProcessRefundTool() tool.Tool {
-	return tool.NewRaw("process_refund", "Process a refund for an order", map[string]any{
+	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"order_id": map[string]any{"type": "string", "description": "The order ID"},
 			"amount":   map[string]any{"type": "string", "description": "Refund amount"},
 		},
 		"required": []string{"order_id", "amount"},
-	}, func(_ context.Context, input json.RawMessage) (string, error) {
+	}
+	return tool.NewRaw("process_refund", "Process a refund for an order", func(_ context.Context, input json.RawMessage) (string, error) {
 		return `{"status": "refunded", "amount": "$49.99"}`, nil
-	})
+	}, tool.WithSchema(schema))
 }

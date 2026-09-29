@@ -5,10 +5,8 @@ import (
 	"fmt"
 )
 
-// Logger allows tools to emit log messages during execution.
-// Messages appear in the logging hook indented under the tool's line.
-// The logger is injected into the tool's context automatically when a
-// LoggingHook is configured on the agent.
+// Logger allows tools to emit messages during execution. The agent injects it
+// when a ToolLogObserver is configured; callers can retrieve it with LoggerFrom.
 type Logger interface {
 	// Log emits a message from within a tool execution.
 	Log(msg string)

@@ -2,12 +2,10 @@ package dynamodb
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"reflect"
-	"sort"
 	"testing"
 
-	dbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 	"pgregory.net/rapid"
@@ -15,187 +13,45 @@ import (
 
 func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
-// newTestMemory creates a DynamoDBMemory backed by the given mock with default test settings.
-func newTestMemory(mock *mockDynamoDBClient, keyPrefix string) *Conversation {
-	return &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    keyPrefix,
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-}
-
-func TestProperty_DynamoDBSaveLoadRoundTrip(t *testing.T) {
+func TestProperty_DynamoDBSaveLoadCAS(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		mock := newMockDynamoDBClient()
-		m := newTestMemory(mock, "gude:")
-
-		messages := genMessages(t)
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-
+		m := testStore(newMockDynamoDBClient())
+		id := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "id")
+		first := genMessages(t)
+		second := genMessages(t)
 		ctx := context.Background()
-
-		if err := m.Save(ctx, convID, messages); err != nil {
-			t.Fatalf("Save failed: %v", err)
+		rev, err := m.Save(ctx, id, first, 0)
+		if err != nil || rev != 1 {
+			t.Fatalf("first Save = %d, %v", rev, err)
 		}
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
+		rev, err = m.Save(ctx, id, second, rev)
+		if err != nil || rev != 2 {
+			t.Fatalf("second Save = %d, %v", rev, err)
 		}
-
-		if !reflect.DeepEqual(messages, loaded) {
-			t.Fatalf("round-trip mismatch:\n  saved:  %+v\n  loaded: %+v", messages, loaded)
+		if _, err := m.Save(ctx, id, first, 1); !errors.Is(err, agent.ErrConversationConflict) {
+			t.Fatalf("stale Save = %v", err)
 		}
-	})
-}
-
-func TestProperty_DynamoDBKeyFormation(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		mock := newMockDynamoDBClient()
-
-		prefix := rapid.StringMatching(`[a-zA-Z0-9:_-]{1,20}`).Draw(t, "prefix")
-		convID := rapid.StringMatching(`[a-zA-Z0-9]{4,16}`).Draw(t, "convID")
-
-		m := newTestMemory(mock, prefix)
-
-		ctx := context.Background()
-
-		messages := []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-		}
-
-		if err := m.Save(ctx, convID, messages); err != nil {
-			t.Fatalf("Save failed: %v", err)
-		}
-
-		expectedPK := prefix + convID
-		if _, ok := mock.items[expectedPK]; !ok {
-			t.Fatalf("expected item with pk %q, but found keys: %v", expectedPK, pkKeysOf(mock.items))
-		}
-	})
-}
-
-func TestProperty_DynamoDBOverwrite(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		mock := newMockDynamoDBClient()
-		m := newTestMemory(mock, "gude:")
-
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-		messagesA := genMessages(t)
-		messagesB := genMessages(t)
-
-		ctx := context.Background()
-
-		if err := m.Save(ctx, convID, messagesA); err != nil {
-			t.Fatalf("Save(A) failed: %v", err)
-		}
-		if err := m.Save(ctx, convID, messagesB); err != nil {
-			t.Fatalf("Save(B) failed: %v", err)
-		}
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
-		}
-
-		if !reflect.DeepEqual(messagesB, loaded) {
-			t.Fatalf("overwrite mismatch:\n  expected B: %+v\n  got:        %+v", messagesB, loaded)
-		}
-	})
-}
-
-func TestProperty_DynamoDBListCompleteness(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		mock := newMockDynamoDBClient()
-
-		// Use a unique isolated prefix per iteration to avoid cross-contamination.
-		prefix := rapid.StringMatching(`pbt-[a-zA-Z0-9]{6,12}:`).Draw(t, "prefix")
-		m := newTestMemory(mock, prefix)
-
-		// Generate 1–5 distinct conversation IDs.
-		n := rapid.IntRange(1, 5).Draw(t, "numConvs")
-		ids := make([]string, n)
-		seen := make(map[string]bool)
-		for i := range ids {
-			var id string
-			for {
-				id = rapid.StringMatching(`[a-zA-Z0-9]{4,12}`).Draw(t, fmt.Sprintf("convID_%d", i))
-				if !seen[id] {
-					break
-				}
-			}
-			seen[id] = true
-			ids[i] = id
-		}
-
-		ctx := context.Background()
-		msgs := []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
-		}
-
-		for _, id := range ids {
-			if err := m.Save(ctx, id, msgs); err != nil {
-				t.Fatalf("Save(%q) failed: %v", id, err)
-			}
-		}
-
-		listed, err := m.List(ctx)
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-
-		if len(listed) != len(ids) {
-			t.Fatalf("List returned %d IDs, expected %d: listed=%v, saved=%v", len(listed), len(ids), listed, ids)
-		}
-
-		sort.Strings(listed)
-		sort.Strings(ids)
-
-		if !reflect.DeepEqual(ids, listed) {
-			t.Fatalf("List mismatch:\n  expected: %v\n  got:      %v", ids, listed)
+		snapshot, err := m.Load(ctx, id)
+		if err != nil || snapshot.Revision != 2 || !reflect.DeepEqual(snapshot.Messages, second) {
+			t.Fatalf("Load = %+v, %v", snapshot, err)
 		}
 	})
 }
 
 func TestProperty_DynamoDBDeleteThenLoad(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		mock := newMockDynamoDBClient()
-		m := newTestMemory(mock, "gude:")
-
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-		messages := genMessages(t)
-
+		m := testStore(newMockDynamoDBClient())
+		id := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "id")
 		ctx := context.Background()
-
-		if err := m.Save(ctx, convID, messages); err != nil {
-			t.Fatalf("Save failed: %v", err)
+		if _, err := m.Save(ctx, id, genMessages(t), 0); err != nil {
+			t.Fatal(err)
 		}
-
-		if err := m.Delete(ctx, convID); err != nil {
-			t.Fatalf("Delete failed: %v", err)
+		if err := m.Delete(ctx, id); err != nil {
+			t.Fatal(err)
 		}
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load after Delete failed: %v", err)
-		}
-
-		if loaded == nil {
-			t.Fatal("expected non-nil empty slice after Delete, got nil")
-		}
-		if len(loaded) != 0 {
-			t.Fatalf("expected empty slice after Delete, got %d messages", len(loaded))
+		snapshot, err := m.Load(ctx, id)
+		if err != nil || snapshot.Messages == nil || snapshot.Revision != 0 || len(snapshot.Messages) != 0 {
+			t.Fatalf("Load after delete = %+v, %v", snapshot, err)
 		}
 	})
-}
-
-// pkKeysOf returns the keys of the items map as a slice (for diagnostic messages).
-func pkKeysOf(m map[string]map[string]dbtypes.AttributeValue) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }

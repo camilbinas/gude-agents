@@ -8,17 +8,18 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // scriptedProvider is a mock agent.Provider that returns pre-defined responses
-// in sequence. Each call to Converse returns the next response from the list.
+// in sequence. Each call to Stream returns the next response from the list.
 type scriptedProvider struct {
-	responses []*agent.ProviderResponse
+	responses []*agent.ModelResponse
 	errors    []error
 	callCount int
 }
 
-func newScriptedProvider(responses []*agent.ProviderResponse, errs []error) *scriptedProvider {
+func newScriptedProvider(responses []*agent.ModelResponse, errs []error) *scriptedProvider {
 	return &scriptedProvider{
 		responses: responses,
 		errors:    errs,
@@ -27,7 +28,7 @@ func newScriptedProvider(responses []*agent.ProviderResponse, errs []error) *scr
 
 func (sp *scriptedProvider) Name() string { return "mock" }
 
-func (sp *scriptedProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
+func (sp *scriptedProvider) Stream(_ context.Context, _ agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	idx := sp.callCount
 	sp.callCount++
 	if idx < len(sp.errors) && sp.errors[idx] != nil {
@@ -39,13 +40,9 @@ func (sp *scriptedProvider) Converse(_ context.Context, _ agent.ConverseParams) 
 	return nil, errors.New("scriptedProvider: no more responses")
 }
 
-func (sp *scriptedProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, _ agent.StreamCallback) (*agent.ProviderResponse, error) {
-	return nil, errors.New("scriptedProvider: ConverseStream not implemented")
-}
-
 func TestFaithfulness_AllClaimsSupported(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1: claims extraction
 			{Text: `{"claims": ["Go is a language", "Go was created at Google"]}`},
 			// Step 2: verdict judgment
@@ -57,7 +54,7 @@ func TestFaithfulness_AllClaimsSupported(t *testing.T) {
 	f := NewFaithfulness(provider)
 	result, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Go is a language created at Google.",
-		RetrievedContext: []agent.Document{{Content: "Go is a programming language created at Google."}},
+		RetrievedContext: []rag.Document{{Content: "Go is a programming language created at Google."}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -73,7 +70,7 @@ func TestFaithfulness_AllClaimsSupported(t *testing.T) {
 
 func TestFaithfulness_NoClaimsSupported(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1: claims extraction
 			{Text: `{"claims": ["Go is slow", "Go has no generics"]}`},
 			// Step 2: verdict judgment — all unsupported
@@ -85,7 +82,7 @@ func TestFaithfulness_NoClaimsSupported(t *testing.T) {
 	f := NewFaithfulness(provider)
 	result, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Go is slow and has no generics.",
-		RetrievedContext: []agent.Document{{Content: "Go is fast and supports generics since 1.18."}},
+		RetrievedContext: []rag.Document{{Content: "Go is fast and supports generics since 1.18."}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -104,7 +101,7 @@ func TestFaithfulness_NoClaimsSupported(t *testing.T) {
 
 func TestFaithfulness_MixedClaims(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1: claims extraction — 3 claims
 			{Text: `{"claims": ["Go is compiled", "Go is dynamically typed", "Go has garbage collection"]}`},
 			// Step 2: verdict judgment — 2 supported, 1 unsupported
@@ -116,7 +113,7 @@ func TestFaithfulness_MixedClaims(t *testing.T) {
 	f := NewFaithfulness(provider)
 	result, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Go is compiled, dynamically typed, and has garbage collection.",
-		RetrievedContext: []agent.Document{{Content: "Go is a statically typed, compiled language with garbage collection."}},
+		RetrievedContext: []rag.Document{{Content: "Go is a statically typed, compiled language with garbage collection."}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -133,7 +130,7 @@ func TestFaithfulness_MixedClaims(t *testing.T) {
 
 func TestFaithfulness_NoClaimsFound(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1: claims extraction — empty claims
 			{Text: `{"claims": []}`},
 		},
@@ -143,7 +140,7 @@ func TestFaithfulness_NoClaimsFound(t *testing.T) {
 	f := NewFaithfulness(provider)
 	result, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Hello!",
-		RetrievedContext: []agent.Document{{Content: "Some context."}},
+		RetrievedContext: []rag.Document{{Content: "Some context."}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -163,14 +160,14 @@ func TestFaithfulness_NoClaimsFound(t *testing.T) {
 func TestFaithfulness_ProviderErrorOnClaimsExtraction(t *testing.T) {
 	providerErr := errors.New("network timeout")
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{nil},
+		[]*agent.ModelResponse{nil},
 		[]error{providerErr},
 	)
 
 	f := NewFaithfulness(provider)
 	_, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Some output.",
-		RetrievedContext: []agent.Document{{Content: "Some context."}},
+		RetrievedContext: []rag.Document{{Content: "Some context."}},
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -183,7 +180,7 @@ func TestFaithfulness_ProviderErrorOnClaimsExtraction(t *testing.T) {
 func TestFaithfulness_ProviderErrorOnVerdictJudgment(t *testing.T) {
 	providerErr := errors.New("rate limit exceeded")
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1 succeeds
 			{Text: `{"claims": ["Go is fast"]}`},
 			nil, // Step 2 fails
@@ -194,7 +191,7 @@ func TestFaithfulness_ProviderErrorOnVerdictJudgment(t *testing.T) {
 	f := NewFaithfulness(provider)
 	_, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Go is fast.",
-		RetrievedContext: []agent.Document{{Content: "Go is a fast language."}},
+		RetrievedContext: []rag.Document{{Content: "Go is a fast language."}},
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -206,7 +203,7 @@ func TestFaithfulness_ProviderErrorOnVerdictJudgment(t *testing.T) {
 
 func TestFaithfulness_MalformedClaimsResponse(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1: malformed JSON
 			{Text: `not valid json at all`},
 		},
@@ -216,7 +213,7 @@ func TestFaithfulness_MalformedClaimsResponse(t *testing.T) {
 	f := NewFaithfulness(provider)
 	_, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Some output.",
-		RetrievedContext: []agent.Document{{Content: "Some context."}},
+		RetrievedContext: []rag.Document{{Content: "Some context."}},
 	})
 	if err == nil {
 		t.Fatal("expected error for malformed claims response, got nil")
@@ -228,7 +225,7 @@ func TestFaithfulness_MalformedClaimsResponse(t *testing.T) {
 
 func TestFaithfulness_MalformedVerdictsResponse(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			// Step 1: valid claims
 			{Text: `{"claims": ["Go is fast"]}`},
 			// Step 2: malformed JSON
@@ -240,7 +237,7 @@ func TestFaithfulness_MalformedVerdictsResponse(t *testing.T) {
 	f := NewFaithfulness(provider)
 	_, err := f.Evaluate(context.Background(), EvalCase{
 		ActualOutput:     "Go is fast.",
-		RetrievedContext: []agent.Document{{Content: "Go is a fast language."}},
+		RetrievedContext: []rag.Document{{Content: "Go is a fast language."}},
 	})
 	if err == nil {
 		t.Fatal("expected error for malformed verdicts response, got nil")

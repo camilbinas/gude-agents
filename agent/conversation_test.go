@@ -2,22 +2,21 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 func TestWithConversationID_OverridesDefault(t *testing.T) {
 	sp := newScriptedProvider(
-		&ProviderResponse{Text: "reply for conv-A"},
-		&ProviderResponse{Text: "reply for conv-B"},
+		&ModelResponse{Text: "reply for conv-A"},
+		&ModelResponse{Text: "reply for conv-B"},
 	)
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "default-conv"))
+	a, err := New(sp, "sys", WithConversationStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +27,8 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "reply for conv-A" {
-		t.Errorf("expected %q, got %q", "reply for conv-A", result)
+	if result.Text != "reply for conv-A" {
+		t.Errorf("expected %q, got %q", "reply for conv-A", result.Text)
 	}
 
 	// Invoke with per-request conversation ID "conv-B".
@@ -38,14 +37,14 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "reply for conv-B" {
-		t.Errorf("expected %q, got %q", "reply for conv-B", result)
+	if result.Text != "reply for conv-B" {
+		t.Errorf("expected %q, got %q", "reply for conv-B", result.Text)
 	}
 
 	// Verify each conversation was saved separately.
-	msgsA, _ := store.Load(context.Background(), "conv-A")
-	msgsB, _ := store.Load(context.Background(), "conv-B")
-	msgsDefault, _ := store.Load(context.Background(), "default-conv")
+	msgsA, _ := testLoadMessages(context.Background(), store, "conv-A")
+	msgsB, _ := testLoadMessages(context.Background(), store, "conv-B")
+	msgsDefault, _ := testLoadMessages(context.Background(), store, "default-conv")
 
 	if len(msgsA) != 2 {
 		t.Errorf("conv-A: expected 2 messages, got %d", len(msgsA))
@@ -58,35 +57,34 @@ func TestWithConversationID_OverridesDefault(t *testing.T) {
 	}
 }
 
-func TestWithConversationID_FallsBackToDefault(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "reply"})
+func TestConversationID_ComesFromContext(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "reply"})
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "fallback"))
+	a, err := New(sp, "sys", WithConversationStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Invoke without per-request override — should use "fallback".
-	_, err = a.Invoke(Background(), "hello")
+	_, err = a.Invoke(Background().WithConversationID("fallback"), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	msgs, _ := store.Load(context.Background(), "fallback")
+	msgs, _ := testLoadMessages(context.Background(), store, "fallback")
 	if len(msgs) != 2 {
 		t.Errorf("expected 2 messages in fallback conv, got %d", len(msgs))
 	}
 }
 
-func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
+func TestConversationStore_IsolatesContextConversationIDs(t *testing.T) {
 	sp := newScriptedProvider(
-		&ProviderResponse{Text: "user-1 reply"},
-		&ProviderResponse{Text: "user-2 reply"},
+		&ModelResponse{Text: "user-1 reply"},
+		&ModelResponse{Text: "user-2 reply"},
 	)
 
 	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithSharedConversation(store))
+	a, err := New(sp, "sys", WithConversationStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,15 +102,15 @@ func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if r1 != "user-1 reply" {
-		t.Errorf("user-1: expected %q, got %q", "user-1 reply", r1)
+	if r1.Text != "user-1 reply" {
+		t.Errorf("user-1: expected %q, got %q", "user-1 reply", r1.Text)
 	}
-	if r2 != "user-2 reply" {
-		t.Errorf("user-2: expected %q, got %q", "user-2 reply", r2)
+	if r2.Text != "user-2 reply" {
+		t.Errorf("user-2: expected %q, got %q", "user-2 reply", r2.Text)
 	}
 
-	msgs1, _ := store.Load(context.Background(), "user-1")
-	msgs2, _ := store.Load(context.Background(), "user-2")
+	msgs1, _ := testLoadMessages(context.Background(), store, "user-1")
+	msgs2, _ := testLoadMessages(context.Background(), store, "user-2")
 
 	if len(msgs1) != 2 {
 		t.Errorf("user-1: expected 2 messages, got %d", len(msgs1))
@@ -122,25 +120,27 @@ func TestWithSharedConversation_RequiresContextConversationID(t *testing.T) {
 	}
 }
 
-func TestConversationID_EmptyStringFallsBackToDefault(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "reply"})
+func TestConversationID_EmptyStringIsStateless(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "reply"})
 
-	store := newTestMemoryStore()
-	a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "default"))
+	store := &failingSaveConversation{loadErr: errors.New("must not load"), flushErr: errors.New("must not flush")}
+	a, err := New(sp, "sys", WithConversationStore(store), WithSyncConversation())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Empty conversation ID should fall back to the agent's default.
-	c := Background().WithConversationID("")
-	_, err = a.Invoke(c, "hello")
+	result, err := a.Invoke(Background().WithConversationID(""), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.Text != "reply" {
+		t.Fatalf("result.Text = %q, want reply", result.Text)
+	}
 
-	msgs, _ := store.Load(context.Background(), "default")
-	if len(msgs) != 2 {
-		t.Errorf("expected 2 messages in default conv, got %d", len(msgs))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.loads != 0 || store.saves != 0 || store.flushes != 0 {
+		t.Fatalf("stateless invocation touched store: loads=%d saves=%d flushes=%d", store.loads, store.saves, store.flushes)
 	}
 }
 
@@ -153,32 +153,36 @@ func TestConversationID_EmptyStringFallsBackToDefault(t *testing.T) {
 // Load so callers cannot mutate the stored history through aliasing.
 type memConversation struct {
 	mu   sync.Mutex
-	data map[string][]Message
+	data map[string]ConversationSnapshot
 }
 
 func newMemConversation() *memConversation {
-	return &memConversation{data: make(map[string][]Message)}
+	return &memConversation{data: make(map[string]ConversationSnapshot)}
 }
 
-func (m *memConversation) Save(_ context.Context, id string, msgs []Message) error {
+func (m *memConversation) Save(_ context.Context, id string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.data[id].Revision != expectedRevision {
+		return 0, ErrConversationConflict
+	}
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
-	m.data[id] = cp
-	return nil
+	next := expectedRevision + 1
+	m.data[id] = ConversationSnapshot{Messages: cp, Revision: next}
+	return next, nil
 }
 
-func (m *memConversation) Load(_ context.Context, id string) ([]Message, error) {
+func (m *memConversation) Load(_ context.Context, id string) (ConversationSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	src, ok := m.data[id]
+	snapshot, ok := m.data[id]
 	if !ok {
-		return []Message{}, nil
+		return ConversationSnapshot{Messages: []Message{}}, nil
 	}
-	cp := make([]Message, len(src))
-	copy(cp, src)
-	return cp, nil
+	cp := make([]Message, len(snapshot.Messages))
+	copy(cp, snapshot.Messages)
+	return ConversationSnapshot{Messages: cp, Revision: snapshot.Revision}, nil
 }
 
 func (m *memConversation) List(_ context.Context) ([]string, error) {
@@ -207,7 +211,7 @@ func TestForkConversation_CopiesHistoryToNewID(t *testing.T) {
 		{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "hello"}}},
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "what is 2+2?"}}},
 	}
-	if err := store.Save(ctx, "src", original); err != nil {
+	if err := testSaveLatest(ctx, store, "src", original); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -215,7 +219,7 @@ func TestForkConversation_CopiesHistoryToNewID(t *testing.T) {
 		t.Fatalf("ForkConversation: %v", err)
 	}
 
-	forked, err := store.Load(ctx, "fork")
+	forked, err := testLoadMessages(ctx, store, "fork")
 	if err != nil {
 		t.Fatalf("Load forked: %v", err)
 	}
@@ -237,7 +241,7 @@ func TestForkConversation_BranchesAreIndependent(t *testing.T) {
 		{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "shared turn"}}},
 		{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "shared reply"}}},
 	}
-	if err := store.Save(ctx, "main", base); err != nil {
+	if err := testSaveLatest(ctx, store, "main", base); err != nil {
 		t.Fatalf("Save base: %v", err)
 	}
 	if err := ForkConversation(ctx, store, "main", "branch"); err != nil {
@@ -245,27 +249,27 @@ func TestForkConversation_BranchesAreIndependent(t *testing.T) {
 	}
 
 	// Advance "main" with a new turn.
-	mainHist, _ := store.Load(ctx, "main")
+	mainHist, _ := testLoadMessages(ctx, store, "main")
 	mainHist = append(mainHist,
 		Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "main-only turn"}}},
 		Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "main-only reply"}}},
 	)
-	if err := store.Save(ctx, "main", mainHist); err != nil {
+	if err := testSaveLatest(ctx, store, "main", mainHist); err != nil {
 		t.Fatalf("Save main: %v", err)
 	}
 
 	// Advance "branch" with a different turn.
-	branchHist, _ := store.Load(ctx, "branch")
+	branchHist, _ := testLoadMessages(ctx, store, "branch")
 	branchHist = append(branchHist,
 		Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "branch-only turn"}}},
 		Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "branch-only reply"}}},
 	)
-	if err := store.Save(ctx, "branch", branchHist); err != nil {
+	if err := testSaveLatest(ctx, store, "branch", branchHist); err != nil {
 		t.Fatalf("Save branch: %v", err)
 	}
 
-	finalMain, _ := store.Load(ctx, "main")
-	finalBranch, _ := store.Load(ctx, "branch")
+	finalMain, _ := testLoadMessages(ctx, store, "main")
+	finalBranch, _ := testLoadMessages(ctx, store, "branch")
 
 	if len(finalMain) != 4 {
 		t.Errorf("main length = %d, want 4", len(finalMain))
@@ -297,7 +301,7 @@ func TestForkConversation_EmptySource(t *testing.T) {
 		t.Fatalf("ForkConversation on missing source: %v", err)
 	}
 
-	branch, err := store.Load(ctx, "branch")
+	branch, err := testLoadMessages(ctx, store, "branch")
 	if err != nil {
 		t.Fatalf("Load branch: %v", err)
 	}
@@ -329,14 +333,57 @@ type errorConversation struct {
 	saveErr error
 }
 
-func (e *errorConversation) Load(_ context.Context, _ string) ([]Message, error) {
+func (e *errorConversation) Load(_ context.Context, _ string) (ConversationSnapshot, error) {
 	if e.loadErr != nil {
-		return nil, e.loadErr
+		return ConversationSnapshot{}, e.loadErr
 	}
-	return nil, nil
+	return ConversationSnapshot{Messages: []Message{}}, nil
 }
-func (e *errorConversation) Save(_ context.Context, _ string, _ []Message) error {
-	return e.saveErr
+func (e *errorConversation) Save(_ context.Context, _ string, _ []Message, _ uint64) (uint64, error) {
+	return 0, e.saveErr
 }
 func (e *errorConversation) List(_ context.Context) ([]string, error) { return nil, nil }
 func (e *errorConversation) Delete(_ context.Context, _ string) error { return nil }
+
+type blockingCASProvider struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingCASProvider) Name() string { return "blocking-cas" }
+func (p *blockingCASProvider) Stream(context.Context, ModelRequest, func(ModelEvent)) (*ModelResponse, error) {
+	close(p.started)
+	<-p.release
+	return &ModelResponse{Text: "reply"}, nil
+}
+
+func TestInvokeReturnsConversationConflictWithoutOverwrite(t *testing.T) {
+	store := newTestMemoryStore()
+	provider := &blockingCASProvider{started: make(chan struct{}), release: make(chan struct{})}
+	a, err := New(provider, "sys", WithConversationStore(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := Background().WithConversationID("conv")
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Invoke(ctx, "agent turn")
+		done <- err
+	}()
+	<-provider.started
+	external := []Message{{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "newer turn"}}}}
+	if _, err := store.Save(context.Background(), "conv", external, 0); err != nil {
+		t.Fatal(err)
+	}
+	close(provider.release)
+	if err := <-done; !errors.Is(err, ErrConversationConflict) {
+		t.Fatalf("Invoke error = %v, want ErrConversationConflict", err)
+	}
+	snapshot, err := store.Load(context.Background(), "conv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Content[0].(TextBlock).Text != "newer turn" {
+		t.Fatalf("concurrent turn was overwritten: %#v", snapshot.Messages)
+	}
+}

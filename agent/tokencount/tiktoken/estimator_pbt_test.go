@@ -16,7 +16,7 @@ import (
 
 // **Validates: Requirements 3.3**
 
-// TestProperty_TiktokenEncodingConsistency verifies that for any ConverseParams
+// TestProperty_TiktokenEncodingConsistency verifies that for any ModelRequest
 // containing arbitrary text, the TiktokenEstimator produces a token count equal
 // to directly encoding the same concatenated text with the tiktoken library.
 func TestProperty_TiktokenEncodingConsistency(t *testing.T) {
@@ -32,16 +32,16 @@ func TestProperty_TiktokenEncodingConsistency(t *testing.T) {
 	}
 
 	rapid.Check(t, func(t *rapid.T) {
-		params := drawConverseParams(t)
+		req := drawModelRequest(t)
 
 		// --- Estimator under test ---
-		got, err := estimator.EstimateTokens(context.Background(), params)
+		got, err := estimator.EstimateTokens(context.Background(), req)
 		if err != nil {
 			t.Fatalf("EstimateTokens returned unexpected error: %v", err)
 		}
 
 		// --- Oracle: directly encode the concatenated text ---
-		text := oracleExtractText(params)
+		text := oracleExtractText(req)
 		oracleTokens := oracle.Encode(text, nil, nil)
 		expected := len(oracleTokens)
 
@@ -52,16 +52,16 @@ func TestProperty_TiktokenEncodingConsistency(t *testing.T) {
 }
 
 // oracleExtractText independently extracts and concatenates text from
-// ConverseParams using the same ordering as the estimator: system prompt,
-// message text blocks, JSON-serialized tool config specs.
-func oracleExtractText(params agent.ConverseParams) string {
+// ModelRequest using the same ordering as the estimator: system prompt,
+// message text blocks, JSON-serialized tool specs.
+func oracleExtractText(req agent.ModelRequest) string {
 	var buf []byte
 
 	// System prompt.
-	buf = append(buf, params.System...)
+	buf = append(buf, req.System...)
 
 	// All TextBlock.Text from messages.
-	for _, msg := range params.Messages {
+	for _, msg := range req.Messages {
 		for _, block := range msg.Content {
 			if tb, ok := block.(agent.TextBlock); ok {
 				buf = append(buf, tb.Text...)
@@ -69,8 +69,8 @@ func oracleExtractText(params agent.ConverseParams) string {
 		}
 	}
 
-	// JSON-serialized ToolConfig specs.
-	for _, spec := range params.ToolConfig {
+	// JSON-serialized tool specs.
+	for _, spec := range req.Tools {
 		data, err := json.Marshal(spec)
 		if err != nil {
 			continue
@@ -81,9 +81,9 @@ func oracleExtractText(params agent.ConverseParams) string {
 	return string(buf)
 }
 
-// drawConverseParams generates a random ConverseParams with ASCII/Unicode text
+// drawModelRequest generates a random ModelRequest with ASCII/Unicode text
 // for property testing the TiktokenEstimator.
-func drawConverseParams(t *rapid.T) agent.ConverseParams {
+func drawModelRequest(t *rapid.T) agent.ModelRequest {
 	// Generate system prompt with mixed ASCII/Unicode.
 	system := rapid.String().Draw(t, "system")
 
@@ -101,10 +101,10 @@ func drawConverseParams(t *rapid.T) agent.ConverseParams {
 		tools[i] = drawToolSpec(t, i)
 	}
 
-	return agent.ConverseParams{
-		Messages:   messages,
-		System:     system,
-		ToolConfig: tools,
+	return agent.ModelRequest{
+		Messages: messages,
+		System:   system,
+		Tools:    tools,
 	}
 }
 

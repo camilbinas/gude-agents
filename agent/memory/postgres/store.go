@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -19,7 +19,7 @@ import (
 // columns using `db` struct tags. The table must be created by the caller.
 type Store[T any] struct {
 	pool         *pgxpool.Pool
-	embedder     agent.Embedder
+	embedder     rag.Embedder
 	dim          int
 	tableName    string
 	embeddingCol string
@@ -66,7 +66,7 @@ func WithDistanceMetric(metric string) StoreOption {
 }
 
 // NewStore creates a Store for the given struct type T.
-func NewStore[T any](pool *pgxpool.Pool, embedder agent.Embedder, dim int, opts ...StoreOption) (*Store[T], error) {
+func NewStore[T any](pool *pgxpool.Pool, embedder rag.Embedder, dim int, opts ...StoreOption) (*Store[T], error) {
 	if pool == nil {
 		return nil, errors.New("postgres: pool is required")
 	}
@@ -89,6 +89,9 @@ func NewStore[T any](pool *pgxpool.Pool, embedder agent.Embedder, dim int, opts 
 	}
 	for _, o := range opts {
 		o(cfg)
+	}
+	if cfg.distMetric != "cosine" && cfg.distMetric != "l2" && cfg.distMetric != "inner_product" {
+		return nil, fmt.Errorf("postgres: unsupported distance metric %q", cfg.distMetric)
 	}
 
 	schema, err := parseSchema[T](cfg.embeddingCol)
@@ -170,76 +173,28 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	return nil
 }
 
-// Recall retrieves values by semantic similarity, scoped to the identifier.
-func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...memory.RecallOption) ([]memory.Entry[T], error) {
-	if identifier == "" {
-		return nil, errors.New("postgres: identifier must not be empty")
-	}
-	if limit < 1 {
-		return nil, errors.New("postgres: limit must be at least 1")
+// Recall retrieves values by semantic similarity, scoped to the identity.
+func (s *Store[T]) Recall(ctx context.Context, identity string, query memory.RecallQuery) ([]memory.Entry[T], error) {
+	if identity == "" {
+		return nil, errors.New("postgres: identity must not be empty")
 	}
 
-	// Embed the query.
-	embedding, err := s.embedder.Embed(ctx, query)
+	querySQL, queryArgs, err := s.buildRecallQuery(query)
+	if err != nil {
+		return nil, err
+	}
+
+	embedding, err := s.embedder.Embed(ctx, query.Text)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: embed query: %w", err)
 	}
 
-	// Apply options.
-	rc := &recallConfig{}
-	for _, o := range opts {
-		if ro, ok := o.(RecallOption); ok {
-			ro(rc)
-		}
-	}
+	vec := pgvector.NewVector(float64sToFloat32(embedding))
+	args := make([]any, 0, len(queryArgs)+2)
+	args = append(args, vec, identity)
+	args = append(args, queryArgs...)
 
-	// Build the query.
-	op := s.distanceOp()
-	vec := float64sToFloat32(embedding)
-
-	// Base args: embedding vector, identifier, limit
-	identifierCol := s.schema.Columns[s.schema.IdentifierIdx].Column
-	selectCols := strings.Join(s.schema.columnNames(), ", ")
-
-	// Start building query.
-	var sb strings.Builder
-	args := []any{pgvector.NewVector(vec), identifier}
-	paramIdx := 3 // next available param
-
-	sb.WriteString(fmt.Sprintf(
-		"SELECT %s, 1 - (%s %s $1) AS _similarity FROM %s WHERE %s = $2",
-		selectCols, s.embeddingCol, op, s.tableName, identifierCol,
-	))
-
-	// Min similarity filter.
-	if rc.minSimilarity != nil {
-		sb.WriteString(fmt.Sprintf(" AND 1 - (%s %s $1) >= $%d", s.embeddingCol, op, paramIdx))
-		args = append(args, *rc.minSimilarity)
-		paramIdx++
-	}
-
-	// Additional filters.
-	if len(rc.filters) > 0 {
-		whereExtra, filterArgs, nextParam := rc.buildWhereClause(paramIdx)
-		sb.WriteString(whereExtra)
-		args = append(args, filterArgs...)
-		paramIdx = nextParam
-	}
-
-	// ORDER BY.
-	orderExtra := rc.buildOrderClause()
-	if orderExtra != "" {
-		sb.WriteString(fmt.Sprintf(" ORDER BY %s", orderExtra))
-	} else {
-		sb.WriteString(fmt.Sprintf(" ORDER BY %s %s $1", s.embeddingCol, op))
-	}
-
-	// LIMIT.
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", paramIdx))
-	args = append(args, limit)
-
-	// Execute.
-	rows, err := s.pool.Query(ctx, sb.String(), args...)
+	rows, err := s.pool.Query(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: query: %w", err)
 	}

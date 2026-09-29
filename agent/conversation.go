@@ -1,36 +1,52 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+)
 
-// Conversation persists conversation history across invocations.
-type Conversation interface {
-	// Load retrieves messages for the given conversation ID.
-	Load(ctx context.Context, conversationID string) ([]Message, error)
+// ConversationSnapshot is an immutable view of persisted conversation state.
+// Revision is zero when the conversation does not exist.
+type ConversationSnapshot struct {
+	Messages []Message
+	Revision uint64
+}
 
-	// Save persists messages for the given conversation ID.
-	Save(ctx context.Context, conversationID string, messages []Message) error
+// ConversationStore persists conversation history with compare-and-swap
+// semantics. Save succeeds only when expectedRevision matches the current
+// revision and returns the newly committed revision.
+type ConversationStore interface {
+	Load(ctx context.Context, conversationID string) (ConversationSnapshot, error)
+	Save(ctx context.Context, conversationID string, messages []Message, expectedRevision uint64) (uint64, error)
+}
 
-	// List returns all conversation IDs in the store.
+// ConversationManager is a ConversationStore that can enumerate and delete
+// conversations.
+type ConversationManager interface {
+	ConversationStore
 	List(ctx context.Context) ([]string, error)
-
-	// Delete removes a conversation by ID. Returns nil if not found.
 	Delete(ctx context.Context, conversationID string) error
 }
 
-// ConversationWaiter is an optional interface that Conversation implementations
-// can satisfy to signal that they perform background work after Save. When the
-// agent option WithSyncConversation is set, the agent calls Wait after
-// each Save, blocking until all background work (e.g. summarization) is complete.
-type ConversationWaiter interface {
-	Wait()
+// Flusher is implemented by stores that perform asynchronous persistence work.
+// Flush waits until work accepted before the call has completed or ctx expires.
+type Flusher interface {
+	Flush(ctx context.Context) error
 }
 
-// ForkConversation copies a conversation's history to a new ID, creating an
-// independent branch. Both conversations continue independently after the fork.
-func ForkConversation(ctx context.Context, store Conversation, sourceID, newID string) error {
-	msgs, err := store.Load(ctx, sourceID)
+// ErrConversationConflict indicates that Save's expected revision was stale.
+var ErrConversationConflict = errors.New("conversation revision conflict")
+
+// ForkConversation copies a conversation's history to a new ID. The new ID
+// must not already exist.
+func ForkConversation(ctx context.Context, store ConversationStore, sourceID, newID string) error {
+	snapshot, err := store.Load(ctx, sourceID)
 	if err != nil {
 		return err
 	}
-	return store.Save(ctx, newID, msgs)
+	if _, err := store.Save(ctx, newID, snapshot.Messages, 0); err != nil {
+		return fmt.Errorf("fork conversation: %w", err)
+	}
+	return nil
 }

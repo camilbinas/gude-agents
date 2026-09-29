@@ -1,16 +1,31 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 )
 
-// ToolHandlerFunc is the signature of a tool handler after middleware wrapping.
-type ToolHandlerFunc func(c *Context, toolName string, input json.RawMessage) (string, error)
+// ToolCall is the canonical middleware view of a provider tool call.
+type ToolCall struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
+}
 
-// Middleware wraps a tool handler to add cross-cutting behavior.
+// ToolResult is the canonical result passed through middleware.
+type ToolResult struct {
+	Text    string
+	Images  []ImageBlock
+	IsError bool
+}
+
+// ToolHandlerFunc executes one canonical tool call.
+type ToolHandlerFunc func(context.Context, ToolCall) (ToolResult, error)
+
+// Middleware wraps canonical tool execution.
 type Middleware func(next ToolHandlerFunc) ToolHandlerFunc
 
-// ChainMiddleware composes middlewares so that the first in the slice is the outermost wrapper.
+// ChainMiddleware composes middlewares with the first middleware outermost.
 func ChainMiddleware(handler ToolHandlerFunc, mws ...Middleware) ToolHandlerFunc {
 	for i := len(mws) - 1; i >= 0; i-- {
 		handler = mws[i](handler)

@@ -2,8 +2,10 @@ package disk
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -13,6 +15,20 @@ func tempDir(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "disk-memory")
 	return dir
+}
+
+func saveLatest(ctx context.Context, store agent.ConversationStore, id string, messages []agent.Message) error {
+	snapshot, err := store.Load(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = store.Save(ctx, id, messages, snapshot.Revision)
+	return err
+}
+
+func loadMessages(ctx context.Context, store agent.ConversationStore, id string) ([]agent.Message, error) {
+	snapshot, err := store.Load(ctx, id)
+	return snapshot.Messages, err
 }
 
 func TestNew_CreatesDirectory(t *testing.T) {
@@ -52,11 +68,11 @@ func TestSaveAndLoad(t *testing.T) {
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi there"}}},
 	}
 
-	if err := m.Save(ctx, "conv-1", msgs); err != nil {
+	if err := saveLatest(ctx, m, "conv-1", msgs); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := m.Load(ctx, "conv-1")
+	loaded, err := loadMessages(ctx, m, "conv-1")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -77,7 +93,7 @@ func TestLoad_NotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msgs, err := m.Load(context.Background(), "nonexistent")
+	msgs, err := loadMessages(context.Background(), m, "nonexistent")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -97,9 +113,9 @@ func TestList(t *testing.T) {
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "x"}}},
 	}
 
-	m.Save(ctx, "alpha", msg)
-	m.Save(ctx, "beta", msg)
-	m.Save(ctx, "gamma", msg)
+	saveLatest(ctx, m, "alpha", msg)
+	saveLatest(ctx, m, "beta", msg)
+	saveLatest(ctx, m, "gamma", msg)
 
 	ids, err := m.List(ctx)
 	if err != nil {
@@ -121,10 +137,10 @@ func TestDelete(t *testing.T) {
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "x"}}},
 	}
 
-	m.Save(ctx, "to-delete", msg)
+	saveLatest(ctx, m, "to-delete", msg)
 
 	// Verify it exists.
-	loaded, _ := m.Load(ctx, "to-delete")
+	loaded, _ := loadMessages(ctx, m, "to-delete")
 	if len(loaded) == 0 {
 		t.Fatal("expected message before delete")
 	}
@@ -135,7 +151,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Verify it's gone.
-	loaded, _ = m.Load(ctx, "to-delete")
+	loaded, _ = loadMessages(ctx, m, "to-delete")
 	if len(loaded) != 0 {
 		t.Errorf("expected empty after delete, got %d", len(loaded))
 	}
@@ -168,10 +184,10 @@ func TestSave_Overwrite(t *testing.T) {
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "reply"}}},
 	}
 
-	m.Save(ctx, "conv", msgs1)
-	m.Save(ctx, "conv", msgs2)
+	saveLatest(ctx, m, "conv", msgs1)
+	saveLatest(ctx, m, "conv", msgs2)
 
-	loaded, _ := m.Load(ctx, "conv")
+	loaded, _ := loadMessages(ctx, m, "conv")
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 messages after overwrite, got %d", len(loaded))
 	}
@@ -192,12 +208,12 @@ func TestPathSanitization(t *testing.T) {
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "safe"}}},
 	}
 
-	if err := m.Save(ctx, "../../../etc/passwd", msg); err != nil {
+	if err := saveLatest(ctx, m, "../../../etc/passwd", msg); err != nil {
 		t.Fatalf("Save with traversal ID: %v", err)
 	}
 
 	// Should be stored safely in the configured directory, not at /etc/passwd.
-	loaded, err := m.Load(ctx, "../../../etc/passwd")
+	loaded, err := loadMessages(ctx, m, "../../../etc/passwd")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -223,8 +239,8 @@ func TestToolBlocks(t *testing.T) {
 		}},
 	}
 
-	m.Save(ctx, "tools", msgs)
-	loaded, _ := m.Load(ctx, "tools")
+	saveLatest(ctx, m, "tools", msgs)
+	loaded, _ := loadMessages(ctx, m, "tools")
 
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(loaded))
@@ -273,10 +289,10 @@ func TestImageBlock(t *testing.T) {
 		}},
 	}
 
-	if err := m.Save(ctx, "images", msgs); err != nil {
+	if err := saveLatest(ctx, m, "images", msgs); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	loaded, err := m.Load(ctx, "images")
+	loaded, err := loadMessages(ctx, m, "images")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -319,5 +335,71 @@ func TestImageBlock(t *testing.T) {
 	}
 	if tb.Text != "describe these" {
 		t.Errorf("text corrupted: expected %q, got %q", "describe these", tb.Text)
+	}
+}
+
+func TestCASConcurrentStoresOneWinner(t *testing.T) {
+	dir := tempDir(t)
+	first, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i, store := range []*Conversation{first, second} {
+		wg.Add(1)
+		go func(i int, store *Conversation) {
+			defer wg.Done()
+			<-start
+			_, err := store.Save(ctx, "conv", []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: string(rune('a' + i))}}}}, 0)
+			errs <- err
+		}(i, store)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	var successes, conflicts int
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, agent.ErrConversationConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
+	}
+}
+
+func TestLegacyRawMessageFileUpgradesWithCAS(t *testing.T) {
+	dir := tempDir(t)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`[{"role":"user","content":[{"type":"text","text":"legacy"}]}]`)
+	if err := os.WriteFile(m.path("legacy"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := m.Load(context.Background(), "legacy")
+	if err != nil || snapshot.Revision != 0 || len(snapshot.Messages) != 1 {
+		t.Fatalf("legacy snapshot = %+v, %v", snapshot, err)
+	}
+	if _, err := m.Save(context.Background(), "legacy", snapshot.Messages, snapshot.Revision); err != nil {
+		t.Fatalf("upgrade Save: %v", err)
+	}
+	upgraded, err := m.Load(context.Background(), "legacy")
+	if err != nil || upgraded.Revision != 1 || len(upgraded.Messages) != 1 {
+		t.Fatalf("upgraded snapshot = %+v, %v", upgraded, err)
 	}
 }

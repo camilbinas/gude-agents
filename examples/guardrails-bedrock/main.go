@@ -46,7 +46,7 @@ func main() {
 	ctx := agent.Background()
 
 	// Create a provider with the guardrail enabled.
-	// The guardrail is applied to every Converse/ConverseStream call.
+	// The guardrail is applied to every provider Stream call.
 	provider, err := bedrock.Standard(
 		bedrock.WithGuardrail(guardrailID, guardrailVersion),
 	)
@@ -54,10 +54,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
+		prompt.Text("You are a helpful assistant. Be concise.").String(),
 		agent.WithTemperature(0.3),
 		auto.WithLogging(),
 	)
@@ -71,7 +70,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 	} else {
-		fmt.Println(result)
+		fmt.Println(result.Text)
 	}
 
 	// Potentially blocked prompt — depends on your guardrail configuration.
@@ -82,6 +81,6 @@ func main() {
 	if err != nil {
 		fmt.Printf("Blocked by guardrail: %v\n", err)
 	} else {
-		fmt.Println(result)
+		fmt.Println(result.Text)
 	}
 }

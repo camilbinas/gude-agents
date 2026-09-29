@@ -124,20 +124,20 @@ func New(opts ...Option) tool.Tool {
 		format = defaultFormatter
 	}
 
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"url": map[string]any{
+				"type":        "string",
+				"description": "The URL to fetch",
+			},
+		},
+		"required": []any{"url"},
+	}
 	return tool.NewRaw(
 		"web_fetch",
 		"Fetch a web page and return its text content. "+
 			"Use after a web search to read a specific result in detail.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"url": map[string]any{
-					"type":        "string",
-					"description": "The URL to fetch",
-				},
-			},
-			"required": []any{"url"},
-		},
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var req struct {
 				URL string `json:"url"`
@@ -154,6 +154,7 @@ func New(opts ...Option) tool.Tool {
 			log.Logf("fetched %d chars", len(result))
 			return result, nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 

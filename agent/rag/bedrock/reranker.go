@@ -11,25 +11,25 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
-// Compile-time assertion that Reranker satisfies agent.Reranker.
-var _ agent.Reranker = (*Reranker)(nil)
+// Compile-time assertion that Reranker satisfies rag.Reranker.
+var _ rag.Reranker = (*Reranker)(nil)
 
-// Reranker implements agent.Reranker using the Bedrock Rerank API.
+// Reranker implements rag.Reranker using the Bedrock Rerank API.
 type Reranker struct {
-	client   *bedrockagentruntime.Client
-	modelARN string
-	topN     int
+	client     *bedrockagentruntime.Client
+	modelARN   string
+	maxResults int
 }
 
 // RerankerOption configures a Reranker.
 type RerankerOption func(*rerankerOptions)
 
 type rerankerOptions struct {
-	region string
-	topN   int
+	region     string
+	maxResults int
 }
 
 // WithRerankerRegion sets the AWS region for the Bedrock agent runtime client.
@@ -37,11 +37,11 @@ func WithRerankerRegion(region string) RerankerOption {
 	return func(o *rerankerOptions) { o.region = region }
 }
 
-// WithRerankerTopN sets the maximum number of documents to return after
+// WithRerankerMaxResults sets the maximum number of documents to return after
 // reranking. Default is 0, which means all input documents are returned
 // in reranked order.
-func WithRerankerTopN(n int) RerankerOption {
-	return func(o *rerankerOptions) { o.topN = n }
+func WithRerankerMaxResults(n int) RerankerOption {
+	return func(o *rerankerOptions) { o.maxResults = n }
 }
 
 // resolveRerankerRegion returns the effective region from options, env, or default.
@@ -88,9 +88,9 @@ func NewReranker(modelID string, opts ...RerankerOption) (*Reranker, error) {
 	}
 
 	return &Reranker{
-		client:   bedrockagentruntime.NewFromConfig(cfg),
-		modelARN: modelARN(modelID, region),
-		topN:     o.topN,
+		client:     bedrockagentruntime.NewFromConfig(cfg),
+		modelARN:   modelARN(modelID, region),
+		maxResults: o.maxResults,
 	}, nil
 }
 
@@ -118,7 +118,7 @@ func MustReranker(r *Reranker, err error) *Reranker {
 // Rerank calls the Bedrock Rerank API to re-score and reorder the given
 // documents for the query. Documents are returned in descending relevance
 // order.
-func (r *Reranker) Rerank(ctx context.Context, query string, docs []agent.Document) ([]agent.Document, error) {
+func (r *Reranker) Rerank(ctx context.Context, query string, docs []rag.Document) ([]rag.Document, error) {
 	if len(docs) == 0 {
 		return docs, nil
 	}
@@ -152,8 +152,8 @@ func (r *Reranker) Rerank(ctx context.Context, query string, docs []agent.Docume
 		},
 	}
 
-	if r.topN > 0 {
-		input.RerankingConfiguration.BedrockRerankingConfiguration.NumberOfResults = aws.Int32(int32(r.topN))
+	if r.maxResults > 0 {
+		input.RerankingConfiguration.BedrockRerankingConfiguration.NumberOfResults = aws.Int32(int32(r.maxResults))
 	}
 
 	out, err := r.client.Rerank(ctx, input)
@@ -166,7 +166,7 @@ func (r *Reranker) Rerank(ctx context.Context, query string, docs []agent.Docume
 		return aws.ToFloat32(out.Results[i].RelevanceScore) > aws.ToFloat32(out.Results[j].RelevanceScore)
 	})
 
-	reranked := make([]agent.Document, 0, len(out.Results))
+	reranked := make([]rag.Document, 0, len(out.Results))
 	for _, result := range out.Results {
 		idx := int(aws.ToInt32(result.Index))
 		if idx >= 0 && idx < len(docs) {

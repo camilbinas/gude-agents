@@ -9,7 +9,6 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
 )
@@ -34,16 +33,13 @@ func main() {
 	}
 	fmt.Printf("Ingested %d documents\n\n", len(docs))
 
-	// RAGAgent preset enforces the retriever at the call site.
 	provider := bedrock.Must(bedrock.Standard())
-
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
-	a, err := agent.RAGAgent(
+	a, err := agent.New(
 		provider,
-		prompt.Text("Answer questions using only the provided context. Be concise."),
-		retriever,
-		nil,
+		"Answer questions using only the provided context. Be concise.",
+		agent.WithRetriever(retriever),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -59,6 +55,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Q: %s\nA: %s\n\n", q, result)
+		fmt.Printf("Q: %s\nA: %s\n\n", q, result.Text)
 	}
 }

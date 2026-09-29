@@ -70,7 +70,7 @@ func WithThinkingBudget(tokens int64) Option {
 	return func(o *options) { o.thinkingBudget = tokens }
 }
 
-// WithSystemPromptCaching enables prompt caching. When set and ConverseParams.System is
+// WithSystemPromptCaching enables prompt caching. When set and ModelRequest.System is
 // non-empty, cache_control is attached to the last system TextBlockParam.
 // DocumentBlocks in messages also get cache_control attached automatically.
 func WithSystemPromptCaching() Option {
@@ -81,7 +81,8 @@ func WithSystemPromptCaching() Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	a, err := agent.Default(anthropic.Must(anthropic.Standard()), instructions, tools)
+//	provider := anthropic.Must(anthropic.Standard())
+//	a, err := agent.New(provider, instructions)
 func Must(p *AnthropicProvider, err error) *AnthropicProvider {
 	if err != nil {
 		panic("anthropic: " + err.Error())
@@ -111,6 +112,8 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 	}, nil
 }
 
+var _ agent.Provider = (*AnthropicProvider)(nil)
+
 // Name returns a human-readable identifier for this provider instance.
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
@@ -121,33 +124,12 @@ func (p *AnthropicProvider) ModelID() string { return string(p.model) }
 // not exposed through the agent.Provider interface.
 func (p *AnthropicProvider) Client() *anthropicsdk.Client { return &p.client }
 
-// ---------------------------------------------------------------------------
-// Converse (non-streaming)
-// ---------------------------------------------------------------------------
-
-func (p *AnthropicProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	input := p.buildParams(params)
-	msg, err := p.client.Messages.New(ctx, input)
-	if err != nil {
-		return nil, &agent.ProviderError{Cause: err}
-	}
-	resp := parseMessage(msg)
-	resp.Usage.InputTokens = int(msg.Usage.InputTokens)
-	resp.Usage.OutputTokens = int(msg.Usage.OutputTokens)
-	resp.Usage.CacheReadTokens = int(msg.Usage.CacheReadInputTokens)
-	resp.Usage.CacheWriteTokens = int(msg.Usage.CacheCreationInputTokens)
-	return resp, nil
-}
-
-// ---------------------------------------------------------------------------
-// ConverseStream (streaming)
-// ---------------------------------------------------------------------------
-
-func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	input := p.buildParams(params)
+// Stream sends a request to Anthropic and emits incremental text and thinking events.
+func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	input := p.buildParams(req)
 	stream := p.client.Messages.NewStreaming(ctx, input)
 
-	resp := &agent.ProviderResponse{}
+	resp := &agent.ModelResponse{}
 	var currentToolID, currentToolName, currentToolInput string
 	var currentThinking string
 	var inThinkingBlock bool
@@ -173,15 +155,15 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 			switch ev.Delta.Type {
 			case "text_delta":
 				resp.Text += ev.Delta.Text
-				if cb != nil {
-					cb(ev.Delta.Text)
+				if emit != nil {
+					emit(agent.ModelEvent{Type: agent.ModelEventText, Text: ev.Delta.Text})
 				}
 			case "input_json_delta":
 				currentToolInput += ev.Delta.PartialJSON
 			case "thinking_delta":
 				currentThinking += ev.Delta.Thinking
-				if cb != nil && params.ThinkingCallback != nil {
-					params.ThinkingCallback(ev.Delta.Thinking)
+				if emit != nil {
+					emit(agent.ModelEvent{Type: agent.ModelEventThinking, Text: ev.Delta.Thinking})
 				}
 			}
 
@@ -201,7 +183,6 @@ func (p *AnthropicProvider) ConverseStream(ctx context.Context, params agent.Con
 				currentToolInput = ""
 			}
 			if inThinkingBlock {
-				// Stash thinking text so callers can inspect it if needed.
 				if resp.Metadata == nil {
 					resp.Metadata = map[string]any{}
 				}
@@ -248,7 +229,7 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 	return 0
 }
 
-func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsdk.MessageNewParams {
+func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.MessageNewParams {
 	// Anthropic's API requires max_tokens and validates it against each model's
 	// actual output limit. The generic provider default is 128000; model
 	// constructors with lower limits configure their own defaults.
@@ -256,25 +237,25 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 	if p.maxTokens != nil {
 		maxTokens = *p.maxTokens
 	}
-	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs := toAnthropicMessages(params.Messages, cachingEnabled)
+	cachingEnabled := req.CachingEnabled || p.cachingEnabled
+	msgs := toAnthropicMessages(req.Messages, cachingEnabled)
 	input := anthropicsdk.MessageNewParams{
 		Model:     p.model,
-		MaxTokens: int64(maxTokens),
+		MaxTokens: maxTokens,
 		Messages:  msgs,
 	}
-	if params.System != "" {
-		blocks := []anthropicsdk.TextBlockParam{{Text: params.System}}
+	if req.System != "" {
+		blocks := []anthropicsdk.TextBlockParam{{Text: req.System}}
 		if cachingEnabled {
 			blocks[len(blocks)-1].CacheControl = anthropicsdk.NewCacheControlEphemeralParam()
 		}
 		input.System = blocks
 	}
-	if len(params.ToolConfig) > 0 {
-		input.Tools = toAnthropicTools(params.ToolConfig)
+	if len(req.Tools) > 0 {
+		input.Tools = toAnthropicTools(req.Tools)
 	}
-	if params.ToolChoice != nil {
-		input.ToolChoice = toAnthropicToolChoice(params.ToolChoice)
+	if req.ToolChoice != nil {
+		input.ToolChoice = toAnthropicToolChoice(req.ToolChoice)
 	}
 	if budget := p.resolveThinkingBudget(); budget > 0 {
 		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(budget)
@@ -284,7 +265,7 @@ func (p *AnthropicProvider) buildParams(params agent.ConverseParams) anthropicsd
 		input.MaxTokens = maxTokens + budget
 	}
 	// Apply inference config overrides.
-	if cfg := params.InferenceConfig; cfg != nil {
+	if cfg := req.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
 			input.Temperature = param.NewOpt(*cfg.Temperature)
 		}
@@ -315,23 +296,6 @@ func toAnthropicToolChoice(tc *tool.Choice) anthropicsdk.ToolChoiceUnionParam {
 	default:
 		return anthropicsdk.ToolChoiceUnionParam{OfAuto: &anthropicsdk.ToolChoiceAutoParam{}}
 	}
-}
-
-func parseMessage(msg *anthropicsdk.Message) *agent.ProviderResponse {
-	resp := &agent.ProviderResponse{}
-	for _, block := range msg.Content {
-		switch block.Type {
-		case "text":
-			resp.Text += block.Text
-		case "tool_use":
-			resp.ToolCalls = append(resp.ToolCalls, tool.Call{
-				ToolUseID: block.ID,
-				Name:      block.Name,
-				Input:     block.Input,
-			})
-		}
-	}
-	return resp
 }
 
 func toAnthropicMessages(msgs []agent.Message, cachingEnabled bool) []anthropicsdk.MessageParam {

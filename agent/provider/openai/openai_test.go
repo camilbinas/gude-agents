@@ -1,8 +1,12 @@
 package openai
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -270,15 +274,15 @@ func TestProperty_OpenAIStreamTextForwarding(t *testing.T) {
 		// Simulate streaming by directly testing the accumulation logic.
 		// We build the text and callback tracking manually since we can't
 		// easily mock the full streaming API.
-		var callbackChunks []string
-		cb := func(chunk string) {
-			callbackChunks = append(callbackChunks, chunk)
+		var callbackEvents []agent.ModelEvent
+		emit := func(event agent.ModelEvent) {
+			callbackEvents = append(callbackEvents, event)
 		}
 
 		var accumulatedText string
 		for _, chunk := range chunks {
 			accumulatedText += chunk
-			cb(chunk)
+			emit(agent.ModelEvent{Type: agent.ModelEventText, Text: chunk})
 		}
 
 		// Verify concatenation
@@ -286,13 +290,16 @@ func TestProperty_OpenAIStreamTextForwarding(t *testing.T) {
 			t.Fatalf("expected accumulated text %q, got %q", expectedText, accumulatedText)
 		}
 
-		// Verify callback received all chunks in order
-		if len(callbackChunks) != numChunks {
-			t.Fatalf("expected %d callback chunks, got %d", numChunks, len(callbackChunks))
+		// Verify emitter received all text events in order.
+		if len(callbackEvents) != numChunks {
+			t.Fatalf("expected %d callback events, got %d", numChunks, len(callbackEvents))
 		}
-		for i, chunk := range callbackChunks {
-			if chunk != chunks[i] {
-				t.Fatalf("callback chunk %d: expected %q, got %q", i, chunks[i], chunk)
+		for i, event := range callbackEvents {
+			if event.Type != agent.ModelEventText {
+				t.Fatalf("callback event %d: expected text type, got %q", i, event.Type)
+			}
+			if event.Text != chunks[i] {
+				t.Fatalf("callback event %d: expected %q, got %q", i, chunks[i], event.Text)
 			}
 		}
 	})
@@ -312,7 +319,7 @@ func TestProperty_OpenAIStreamToolCallAccumulation(t *testing.T) {
 			expectedArgs += frag
 		}
 
-		// Simulate the tool call accumulation logic from ConverseStream.
+		// Simulate the tool call accumulation logic from Stream.
 		type toolCallAccum struct {
 			id        string
 			name      string
@@ -423,7 +430,7 @@ func TestProperty_OpenAITokenUsagePopulation(t *testing.T) {
 		}
 
 		resp := parseCompletion(&completion)
-		// Simulate what the Converse method does after parseCompletion:
+		// Simulate what the Stream method does after parseCompletion:
 		resp.Usage.InputTokens = int(completion.Usage.PromptTokens)
 		resp.Usage.OutputTokens = int(completion.Usage.CompletionTokens)
 
@@ -445,7 +452,7 @@ func TestProperty_OpenAIStreamTokenUsageExtraction(t *testing.T) {
 		promptTokens := rapid.Int64Range(1, 1_000_000).Draw(t, "promptTokens")
 		completionTokens := rapid.Int64Range(1, 1_000_000).Draw(t, "completionTokens")
 
-		// Simulate the streaming usage extraction logic from ConverseStream.
+		// Simulate the streaming usage extraction logic from Stream.
 		// The final chunk contains usage data.
 		var inputTokens, outputTokens int
 
@@ -489,7 +496,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults_OpenAI(t *testin
 		model:     "gpt-4o",
 		maxTokens: 4096,
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -515,7 +522,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults_OpenAI(t *testin
 func TestBuildParams_TemperatureMapping_OpenAI(t *testing.T) {
 	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
 	temp := 0.7
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -538,7 +545,7 @@ func TestBuildParams_TemperatureMapping_OpenAI(t *testing.T) {
 func TestBuildParams_TopPMapping_OpenAI(t *testing.T) {
 	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
 	topP := 0.9
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -557,7 +564,7 @@ func TestBuildParams_TopPMapping_OpenAI(t *testing.T) {
 func TestBuildParams_TopKIgnored_OpenAI(t *testing.T) {
 	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
 	topK := 50
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -582,7 +589,7 @@ func TestBuildParams_TopKIgnored_OpenAI(t *testing.T) {
 func TestBuildParams_StopSequencesMapping_OpenAI(t *testing.T) {
 	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
 	stops := []string{"STOP", "END"}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -601,7 +608,7 @@ func TestBuildParams_StopSequencesMapping_OpenAI(t *testing.T) {
 func TestBuildParams_MaxTokensOverridesDefault_OpenAI(t *testing.T) {
 	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 8192}
 	maxTok := 2048
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -627,7 +634,7 @@ func TestBuildParams_AllFieldsSet_OpenAI(t *testing.T) {
 		StopSequences: []string{"<|end|>"},
 		MaxTokens:     &maxTok,
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -652,7 +659,7 @@ func TestBuildParams_AllFieldsSet_OpenAI(t *testing.T) {
 func TestBuildParams_PartialInferenceConfig_OnlyTemperature_OpenAI(t *testing.T) {
 	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 4096}
 	temp := 0.3
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -880,5 +887,47 @@ func TestValidateOpenAIDocumentSources(t *testing.T) {
 				t.Fatalf("validateOpenAIDocumentSources error = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestStream_AccumulatesTextToolCallsUsageAndEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello \"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"world\",\"tool_calls\":[{\"index\":0,\"id\":\"call_123\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\"}}]}}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"go\\\"}\"}}]}}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120,\"prompt_tokens_details\":{\"cached_tokens\":60}}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New("gpt-4o", WithAPIKey("test-key"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	var events []agent.ModelEvent
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}}},
+	}, func(event agent.ModelEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	if resp.Text != "Hello world" {
+		t.Fatalf("Text = %q, want %q", resp.Text, "Hello world")
+	}
+	if len(events) != 2 || events[0] != (agent.ModelEvent{Type: agent.ModelEventText, Text: "Hello "}) || events[1] != (agent.ModelEvent{Type: agent.ModelEventText, Text: "world"}) {
+		t.Fatalf("events = %#v, want two ordered text events", events)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %#v, want one call", resp.ToolCalls)
+	}
+	call := resp.ToolCalls[0]
+	if call.ToolUseID != "call_123" || call.Name != "lookup" || string(call.Input) != `{"q":"go"}` {
+		t.Fatalf("ToolCalls[0] = %#v, want preserved ID, name, and arguments", call)
+	}
+	if resp.Usage.InputTokens != 100 || resp.Usage.OutputTokens != 20 || resp.Usage.CacheReadTokens != 60 || resp.Usage.CacheWriteTokens != 0 {
+		t.Fatalf("Usage = %#v, want input=100 output=20 cache-read=60 cache-write=0", resp.Usage)
 	}
 }

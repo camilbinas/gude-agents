@@ -76,15 +76,15 @@ func main() {
 	// Filter 2: Role-based access — delete_account is admin-only.
 	roleFilter := func(c *agent.Context, t tool.Tool) bool {
 		if t.Spec.Name == "delete_account" {
-			role, _ := c.Value(userRoleKey{}).(string)
+			role, _ := c.Get(userRoleKey{})
 			return role == "admin"
 		}
 		return true
 	}
 
 	a, err := agent.New(provider,
-		prompt.Text("You are a shopping and account management assistant. Help users validate carts, submit orders, and manage accounts. Use available tools. Be concise."),
-		tools,
+		prompt.Text("You are a shopping and account management assistant. Help users validate carts, submit orders, and manage accounts. Use available tools. Be concise.").String(),
+		agent.WithTools(tools...),
 		agent.WithToolFilter(workflowFilter, roleFilter),
 		auto.WithLogging(),
 	)
@@ -102,7 +102,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Response:", result)
+	fmt.Println("Response:", result.Text)
 	fmt.Println()
 
 	// --- Scenario 2: Role-based access ---
@@ -112,17 +112,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Response:", result)
+	fmt.Println("Response:", result.Text)
 	fmt.Println()
 
 	// Admin user can see delete_account.
 	fmt.Println("=== Scenario 3: Admin user ===")
-	adminCtx := agent.NewContext(context.WithValue(ctx, userRoleKey{}, "admin"))
+	adminCtx := agent.Background()
+	adminCtx.Set(userRoleKey{}, "admin")
 	result, err = a.Invoke(adminCtx, "Delete account user-99.")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Response:", result)
+	fmt.Println("Response:", result.Text)
 }
 
 type userRoleKey struct{}

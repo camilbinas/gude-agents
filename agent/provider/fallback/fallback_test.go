@@ -11,108 +11,174 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── Test doubles ──────────────────────────────────────────────────────────────
-
 type stubProvider struct {
-	err  error
-	resp *agent.ProviderResponse
+	err      error
+	resp     *agent.ModelResponse
+	events   []agent.ModelEvent
+	calls    int
+	requests []agent.ModelRequest
 }
 
 func (s *stubProvider) Name() string { return "mock" }
 
-func (s *stubProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
+func (s *stubProvider) Stream(_ context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	s.calls++
+	s.requests = append(s.requests, req)
+	for _, event := range s.events {
+		if emit != nil {
+			emit(event)
+		}
+	}
 	return s.resp, s.err
 }
 
-func (s *stubProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	if cb != nil && s.resp != nil && s.resp.Text != "" {
-		cb(s.resp.Text)
-	}
-	return s.resp, nil
-}
-
 func okProvider(text string) *stubProvider {
-	return &stubProvider{resp: &agent.ProviderResponse{Text: text, Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5}}}
+	return &stubProvider{
+		resp: &agent.ModelResponse{
+			Text:  text,
+			Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+		},
+		events: []agent.ModelEvent{{Type: agent.ModelEventText, Text: text}},
+	}
 }
 
-func failProvider() *stubProvider {
-	return &stubProvider{err: errors.New("service unavailable")}
+func failProvider(err error) *stubProvider {
+	return &stubProvider{err: err}
 }
 
-// ── Converse ──────────────────────────────────────────────────────────────────
+func TestStream_PrimarySucceeds(t *testing.T) {
+	backup := failProvider(errors.New("backup should not run"))
+	p := fallback.New(okProvider("hello"), backup)
 
-func TestConverse_PrimarySucceeds(t *testing.T) {
-	p := fallback.New(okProvider("hello"), failProvider())
-	resp, err := p.Converse(context.Background(), agent.ConverseParams{})
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+
 	require.NoError(t, err)
 	assert.Equal(t, "hello", resp.Text)
+	assert.Equal(t, agent.TokenUsage{InputTokens: 10, OutputTokens: 5}, resp.Usage)
+	assert.Zero(t, backup.calls)
 }
 
-func TestConverse_FallsBackOnPrimaryError(t *testing.T) {
-	p := fallback.New(failProvider(), okProvider("from backup"))
-	resp, err := p.Converse(context.Background(), agent.ConverseParams{})
+func TestStream_FallsBackOnPreEmissionError(t *testing.T) {
+	primaryErr := errors.New("primary unavailable")
+	backup := okProvider("from backup")
+	p := fallback.New(failProvider(primaryErr), backup)
+	var events []agent.ModelEvent
+
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{}, func(event agent.ModelEvent) {
+		events = append(events, event)
+	})
+
 	require.NoError(t, err)
 	assert.Equal(t, "from backup", resp.Text)
+	assert.Equal(t, []agent.ModelEvent{{Type: agent.ModelEventText, Text: "from backup"}}, events)
+	assert.Equal(t, 1, backup.calls)
 }
 
-func TestConverse_TriesAllFallbacks(t *testing.T) {
-	p := fallback.New(failProvider(), failProvider(), okProvider("third"))
-	resp, err := p.Converse(context.Background(), agent.ConverseParams{})
+func TestStream_TriesAllProvidersInOrder(t *testing.T) {
+	first := failProvider(errors.New("first failed"))
+	second := failProvider(errors.New("second failed"))
+	third := okProvider("third")
+	request := agent.ModelRequest{System: "be concise"}
+	p := fallback.New(first, second, third)
+
+	resp, err := p.Stream(context.Background(), request, nil)
+
 	require.NoError(t, err)
 	assert.Equal(t, "third", resp.Text)
+	assert.Equal(t, 1, first.calls)
+	assert.Equal(t, 1, second.calls)
+	assert.Equal(t, 1, third.calls)
+	require.Len(t, third.requests, 1)
+	assert.Equal(t, request, third.requests[0])
 }
 
-func TestConverse_AllFail_ReturnsError(t *testing.T) {
-	p := fallback.New(failProvider(), failProvider())
-	_, err := p.Converse(context.Background(), agent.ConverseParams{})
+func TestStream_AllFail_ReturnsLastError(t *testing.T) {
+	firstErr := errors.New("first failed")
+	lastErr := errors.New("last failed")
+	p := fallback.New(failProvider(firstErr), failProvider(lastErr))
+
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+
+	assert.Nil(t, resp)
 	require.Error(t, err)
+	assert.ErrorIs(t, err, lastErr)
 	assert.Contains(t, err.Error(), "all providers failed")
+	assert.Contains(t, err.Error(), "provider[1]")
 }
 
-// ── ConverseStream ────────────────────────────────────────────────────────────
+func TestStream_ForwardsTypedEvents(t *testing.T) {
+	primary := okProvider("complete")
+	primary.events = []agent.ModelEvent{
+		{Type: agent.ModelEventThinking, Text: "reasoning"},
+		{Type: agent.ModelEventText, Text: "answer"},
+	}
+	p := fallback.New(primary)
+	var events []agent.ModelEvent
 
-func TestConverseStream_PrimarySucceeds(t *testing.T) {
-	p := fallback.New(okProvider("streamed"), failProvider())
-	var got string
-	resp, err := p.ConverseStream(context.Background(), agent.ConverseParams{}, func(chunk string) {
-		got += chunk
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{}, func(event agent.ModelEvent) {
+		events = append(events, event)
 	})
+
 	require.NoError(t, err)
-	assert.Equal(t, "streamed", got)
-	assert.Equal(t, "streamed", resp.Text)
+	assert.Equal(t, "complete", resp.Text)
+	assert.Equal(t, primary.events, events)
 }
 
-func TestConverseStream_FallsBackOnPrimaryError(t *testing.T) {
-	p := fallback.New(failProvider(), okProvider("backup stream"))
-	var got string
-	_, err := p.ConverseStream(context.Background(), agent.ConverseParams{}, func(chunk string) {
-		got += chunk
+func TestStream_DoesNotReplayAfterEventEscapes(t *testing.T) {
+	for _, eventType := range []agent.ModelEventType{agent.ModelEventText, agent.ModelEventThinking} {
+		t.Run(string(eventType), func(t *testing.T) {
+			streamErr := errors.New("stream interrupted")
+			primary := failProvider(streamErr)
+			primary.events = []agent.ModelEvent{{Type: eventType, Text: "escaped"}}
+			backup := okProvider("must not replay")
+			p := fallback.New(primary, backup)
+			var events []agent.ModelEvent
+
+			resp, err := p.Stream(context.Background(), agent.ModelRequest{}, func(event agent.ModelEvent) {
+				events = append(events, event)
+			})
+
+			assert.Nil(t, resp)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, streamErr)
+			assert.NotContains(t, err.Error(), "all providers failed")
+			assert.Equal(t, primary.events, events)
+			assert.Zero(t, backup.calls)
+		})
+	}
+}
+
+func TestStream_NilEmitterCanFallBackAfterProviderProducesEvents(t *testing.T) {
+	primary := failProvider(errors.New("stream interrupted"))
+	primary.events = []agent.ModelEvent{{Type: agent.ModelEventText, Text: "not exposed"}}
+	backup := okProvider("backup")
+	p := fallback.New(primary, backup)
+
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "backup", resp.Text)
+	assert.Equal(t, 1, backup.calls)
+}
+
+func TestStream_SingleProvider(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		p := fallback.New(okProvider("only one"))
+
+		resp, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+
+		require.NoError(t, err)
+		assert.Equal(t, "only one", resp.Text)
 	})
-	require.NoError(t, err)
-	assert.Equal(t, "backup stream", got)
-}
 
-func TestConverseStream_AllFail_ReturnsError(t *testing.T) {
-	p := fallback.New(failProvider(), failProvider())
-	_, err := p.ConverseStream(context.Background(), agent.ConverseParams{}, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "all providers failed")
-}
+	t.Run("failure", func(t *testing.T) {
+		providerErr := errors.New("service unavailable")
+		p := fallback.New(failProvider(providerErr))
 
-// ── Single provider edge case ─────────────────────────────────────────────────
+		resp, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 
-func TestSingleProvider_Success(t *testing.T) {
-	p := fallback.New(okProvider("only one"))
-	resp, err := p.Converse(context.Background(), agent.ConverseParams{})
-	require.NoError(t, err)
-	assert.Equal(t, "only one", resp.Text)
-}
-
-func TestSingleProvider_Failure(t *testing.T) {
-	p := fallback.New(failProvider())
-	_, err := p.Converse(context.Background(), agent.ConverseParams{})
-	require.Error(t, err)
+		assert.Nil(t, resp)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, providerErr)
+	})
 }

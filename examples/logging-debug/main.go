@@ -16,24 +16,21 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/debug"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
-	ctx := agent.Background()
-
+	ctx := agent.Background().WithConversationID("debug-session")
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant with access to weather and time tools. Be concise."),
-		[]tool.Tool{utils.WeatherTool(), utils.TimeTool()},
+		"You are a helpful assistant with access to weather and time tools. Be concise.",
+		agent.WithTools(utils.WeatherTool(), utils.TimeTool()),
 		debug.WithLogging(),
 		agent.WithName("friendly-agent"),
-		agent.WithConversation(conversation.NewInMemory(), "debug-session"),
+		agent.WithConversationStore(conversation.NewInMemory()),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -42,6 +39,5 @@ func main() {
 	fmt.Println("Debug logging agent ready. Type 'quit' to exit.")
 	fmt.Println()
 	fmt.Println("Try: What's the weather in Tokyo and the time in America/New_York?")
-
 	utils.Chat(ctx, a)
 }

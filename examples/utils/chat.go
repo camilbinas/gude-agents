@@ -22,10 +22,9 @@ type ChatOptions struct {
 	// If it returns a non-nil context, that context is used for the invocation.
 	BeforeInvoke func(c *agent.Context, input string) *agent.Context
 
-	// AfterInvoke is called after each agent invocation with the error (if any).
-	// Use it for post-invocation work like flushing trace exporters or logging tokens.
-	// Token usage is available via c.Usage() on the Context.
-	AfterInvoke func(c *agent.Context, err error)
+	// AfterInvoke is called after each invocation with its canonical Result and
+	// error (if any). Use Result.Usage for token accounting.
+	AfterInvoke func(c *agent.Context, result agent.Result, err error)
 }
 
 // Chat runs an interactive chat session with the given agent.
@@ -79,31 +78,45 @@ func runChatREPL(c *agent.Context, a *agent.Agent, o ChatOptions) {
 			continue
 		}
 
-		invokeCtx := c
+		invokeCtx := cloneAgentContextOrBackground(c)
 		if o.BeforeInvoke != nil {
-			if updated := o.BeforeInvoke(c, input); updated != nil {
+			if updated := o.BeforeInvoke(invokeCtx, input); updated != nil {
 				invokeCtx = updated
 			}
 		}
 
-		err := a.InvokeStream(invokeCtx, input, func(chunk string) {
-			fmt.Print(chunk)
-		})
+		var (
+			result    agent.Result
+			invokeErr error
+		)
+		for ev, streamErr := range a.Stream(invokeCtx, input) {
+			if ev.Type == agent.EventText && ev.Text != nil {
+				fmt.Print(ev.Text.Content)
+			}
+			if ev.Type == agent.EventEnd && ev.Result != nil {
+				result = *ev.Result
+			}
+			if streamErr != nil {
+				invokeErr = streamErr
+			}
+		}
 		fmt.Println()
 
 		if o.AfterInvoke != nil {
-			o.AfterInvoke(c, err)
+			o.AfterInvoke(invokeCtx, result, invokeErr)
 		}
 
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+		if invokeErr != nil {
+			fmt.Printf("Error: %v\n", invokeErr)
 			continue
 		}
 	}
 }
 
-// ClearConversation returns a ClearFunc that deletes a conversation.
-func ClearConversation(m agent.Conversation, conversationID string) func(ctx context.Context) error {
+// ClearConversation returns a ClearFunc that deletes a conversation. Deletion
+// is administrative behavior exposed by ConversationManager; normal agent
+// persistence uses ConversationStore snapshots and revision-checked saves.
+func ClearConversation(m agent.ConversationManager, conversationID string) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		return m.Delete(ctx, conversationID)
 	}
@@ -126,7 +139,7 @@ func devtoolsEnvSetting() (int, bool) {
 	}
 	v := strings.TrimSpace(os.Getenv("DEVTOOLS"))
 	if v == "" {
-		return 0, true // default: DevTools on, default port
+		return 0, true
 	}
 	switch strings.ToLower(v) {
 	case "0", "false", "no", "off":
@@ -137,7 +150,6 @@ func devtoolsEnvSetting() (int, bool) {
 	if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
 		return n, true
 	}
-	// Unrecognized value — be conservative and keep the default.
 	return 0, true
 }
 
@@ -156,13 +168,10 @@ func runChatDevTools(base *agent.Context, a *agent.Agent, o ChatOptions, port in
 	dt := NewAgentDevTools(AgentDevToolsConfig{
 		Port:  port,
 		Agent: a,
-		NewContext: func() *agent.Context {
-			// Start from the caller-provided context (so things like
-			// conversation IDs configured at the top of the example flow
-			// through), then let BeforeInvoke layer per-turn state on top.
+		NewContext: func(input string) *agent.Context {
 			c := cloneAgentContextOrBackground(base)
 			if o.BeforeInvoke != nil {
-				if updated := o.BeforeInvoke(c, ""); updated != nil {
+				if updated := o.BeforeInvoke(c, input); updated != nil {
 					c = updated
 				}
 			}

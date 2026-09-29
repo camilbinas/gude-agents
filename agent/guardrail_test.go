@@ -5,34 +5,22 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
-// capturingProvider records the ConverseParams it receives and returns scripted responses.
+// capturingProvider records the ModelRequest it receives and returns scripted responses.
 type capturingProvider struct {
-	responses []*ProviderResponse
+	responses []*ModelResponse
 	callIndex int
-	captured  []ConverseParams
+	captured  []ModelRequest
 }
 
-func newCapturingProvider(responses ...*ProviderResponse) *capturingProvider {
+func newCapturingProvider(responses ...*ModelResponse) *capturingProvider {
 	return &capturingProvider{responses: responses}
 }
 
 func (cp *capturingProvider) Name() string { return "mock" }
 
-func (cp *capturingProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
-	cp.captured = append(cp.captured, params)
-	if cp.callIndex >= len(cp.responses) {
-		return nil, fmt.Errorf("capturingProvider: no more responses")
-	}
-	resp := cp.responses[cp.callIndex]
-	cp.callIndex++
-	return resp, nil
-}
-
-func (cp *capturingProvider) ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (cp *capturingProvider) Stream(ctx context.Context, params ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 	cp.captured = append(cp.captured, params)
 	if cp.callIndex >= len(cp.responses) {
 		return nil, fmt.Errorf("capturingProvider: no more responses")
@@ -41,7 +29,7 @@ func (cp *capturingProvider) ConverseStream(ctx context.Context, params Converse
 	cp.callIndex++
 
 	if len(resp.ToolCalls) == 0 && resp.Text != "" && cb != nil {
-		cb(resp.Text)
+		cb(ModelEvent{Type: ModelEventText, Text: resp.Text})
 	}
 	return resp, nil
 }
@@ -51,13 +39,13 @@ func (cp *capturingProvider) ConverseStream(ctx context.Context, params Converse
 // ---------------------------------------------------------------------------
 
 func TestInputGuardrail_TransformsMessage(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "reply"})
+	cp := newCapturingProvider(&ModelResponse{Text: "reply"})
 
 	upperGuardrail := func(_ *Context, msg string) (string, error) {
 		return strings.ToUpper(msg), nil
 	}
 
-	a, err := New(cp, prompt.Text("sys"), nil, WithInputGuardrail(upperGuardrail))
+	a, err := New(cp, "sys", WithInputGuardrail(upperGuardrail))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +80,13 @@ func TestInputGuardrail_TransformsMessage(t *testing.T) {
 }
 
 func TestOutputGuardrail_TransformsResponse(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "raw response"})
+	sp := newScriptedProvider(&ModelResponse{Text: "raw response"})
 
 	filterGuardrail := func(_ *Context, resp string) (string, error) {
 		return resp + " [filtered]", nil
 	}
 
-	a, err := New(sp, prompt.Text("sys"), nil, WithOutputGuardrail(filterGuardrail))
+	a, err := New(sp, "sys", WithOutputGuardrail(filterGuardrail))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,19 +96,19 @@ func TestOutputGuardrail_TransformsResponse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result != "raw response [filtered]" {
-		t.Errorf("expected %q, got %q", "raw response [filtered]", result)
+	if result.Text != "raw response [filtered]" {
+		t.Errorf("expected %q, got %q", "raw response [filtered]", result.Text)
 	}
 }
 
 func TestInputGuardrail_ErrorAbortsInvocation(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "should not reach"})
+	sp := newScriptedProvider(&ModelResponse{Text: "should not reach"})
 
 	blockGuardrail := func(_ *Context, msg string) (string, error) {
 		return "", fmt.Errorf("blocked content")
 	}
 
-	a, err := New(sp, prompt.Text("sys"), nil, WithInputGuardrail(blockGuardrail))
+	a, err := New(sp, "sys", WithInputGuardrail(blockGuardrail))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,13 +123,13 @@ func TestInputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 }
 
 func TestOutputGuardrail_ErrorAbortsInvocation(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "some response"})
+	sp := newScriptedProvider(&ModelResponse{Text: "some response"})
 
 	blockGuardrail := func(_ *Context, resp string) (string, error) {
 		return "", fmt.Errorf("response policy violation")
 	}
 
-	a, err := New(sp, prompt.Text("sys"), nil, WithOutputGuardrail(blockGuardrail))
+	a, err := New(sp, "sys", WithOutputGuardrail(blockGuardrail))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +144,7 @@ func TestOutputGuardrail_ErrorAbortsInvocation(t *testing.T) {
 }
 
 func TestMultipleInputGuardrails_AppliedInOrder(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "done"})
+	cp := newCapturingProvider(&ModelResponse{Text: "done"})
 
 	appendA := func(_ *Context, msg string) (string, error) {
 		return msg + "-A", nil
@@ -165,7 +153,7 @@ func TestMultipleInputGuardrails_AppliedInOrder(t *testing.T) {
 		return msg + "-B", nil
 	}
 
-	a, err := New(cp, prompt.Text("sys"), nil,
+	a, err := New(cp, "sys",
 		WithInputGuardrail(appendA),
 		WithInputGuardrail(appendB),
 	)

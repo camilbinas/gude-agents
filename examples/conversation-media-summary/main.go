@@ -23,7 +23,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
 )
@@ -47,11 +46,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant with vision capabilities. Be concise."),
-		nil,
-		agent.WithConversation(summarized, "media-demo"),
+		"You are a helpful assistant with vision capabilities. Be concise.",
+		agent.WithConversationStore(summarized),
 		agent.WithSyncConversation(),
 		auto.WithLogging(),
 	)
@@ -59,7 +57,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Fetch a random image from picsum.photos.
 	fmt.Println("Fetching random image from picsum.photos...")
 	img, err := fetchImage("https://picsum.photos/500/350")
 	if err != nil {
@@ -68,38 +65,37 @@ func main() {
 	fmt.Printf("Got %d bytes of image data\n", len(img.Source.Data))
 	fmt.Println(strings.Repeat("─", 60))
 
-	ctx := agent.Background()
-
-	// Turn 1: send the image with a question.
-	imgCtx := agent.Background().WithImages([]agent.ImageBlock{img})
+	ctx := agent.Background().WithConversationID("media-demo")
+	imgCtx := agent.Background().WithConversationID("media-demo").WithImages([]agent.ImageBlock{img})
 	result, err := a.Invoke(imgCtx, "Describe this image in detail.")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Turn 1 (image): %s\n\n", result)
+	fmt.Printf("Turn 1 (image): %s\n\n", result.Text)
 
-	// Turn 2: follow-up about the image.
 	result, err = a.Invoke(ctx, "What mood does the image convey?")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Turn 2: %s\n\n", result)
+	fmt.Printf("Turn 2: %s\n\n", result.Text)
 
-	// Turn 3: this should trigger summarization (5+ messages).
-	// The image message will be described as text by MediaSummaryFunc.
 	result, err = a.Invoke(ctx, "What do you remember about the image I showed you?")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Turn 3: %s\n\n", result)
+	fmt.Printf("Turn 3: %s\n\n", result.Text)
 
-	// Wait for background summarization to complete, then inspect the store.
-	summarized.Wait()
+	if err := summarized.Flush(ctx); err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println(strings.Repeat("─", 60))
-	msgs, _ := store.Load(context.Background(), "media-demo")
-	fmt.Printf("Messages in store: %d\n", len(msgs))
-	for i, m := range msgs {
+	snapshot, err := store.Load(context.Background(), "media-demo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Messages in store: %d\n", len(snapshot.Messages))
+	for i, m := range snapshot.Messages {
 		hasImage := false
 		for _, b := range m.Content {
 			if _, ok := b.(agent.ImageBlock); ok {
@@ -131,9 +127,7 @@ func fetchImage(url string) (agent.ImageBlock, error) {
 	}
 	defer resp.Body.Close()
 
-	// Log the final URL after redirects (picsum redirects to the actual image).
 	fmt.Printf("Redirected to: %s\n", resp.Request.URL)
-
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return agent.ImageBlock{}, fmt.Errorf("read image: %w", err)

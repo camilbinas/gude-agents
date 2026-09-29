@@ -15,6 +15,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -26,8 +27,7 @@ type backgroundDispatch struct {
 	toolName       string
 	toolUseID      string
 	conversationID string
-	identifier     string
-	scopes         map[string]string
+	cfg            invocationConfig // originating invocation config (identity, scopes, principal, ...)
 	rawInput       json.RawMessage
 	handler        func(ctx context.Context, input json.RawMessage) (string, error)
 	ack            string
@@ -66,13 +66,18 @@ func (c completionResult) toMessage(toolUseID string) Message {
 
 // backgroundRegistry manages in-flight Background_Dispatches for a single *Agent.
 // It serializes Re_Entry_Turns per Conversation_ID via a per-conversation mutex map
-// and tracks all in-flight goroutines so Agent.Close can wait for them.
+// and tracks all in-flight goroutines so Agent.Shutdown can wait for them.
 type backgroundRegistry struct {
 	agent *Agent
 
 	// wg tracks both in-flight handler goroutines and in-flight Re_Entry_Turn
-	// goroutines so Agent.Close blocks until everything completes.
+	// goroutines so Agent.Shutdown blocks until everything completes.
 	wg sync.WaitGroup
+
+	// stateMu guards closing. dispatch adds to wg under stateMu so no new
+	// work is registered once shutdown started.
+	stateMu sync.Mutex
+	closing bool
 
 	// mu guards the locks map. It is held only during map lookup/insertion,
 	// never across the protected critical section.
@@ -82,7 +87,8 @@ type backgroundRegistry struct {
 	// notify is the Notify_Callback registered via WithBackgroundNotify, or nil.
 	notify func(conversationID, agentMessage string)
 
-	// logger is used for panic recovery and error messages when no LoggingHook is set.
+	// logger is the fallback for panic recovery and internal errors when no
+	// ToolLogObserver is configured.
 	logger Logger
 }
 
@@ -114,12 +120,42 @@ func (r *backgroundRegistry) lockFor(conversationID string) *sync.Mutex {
 	return m
 }
 
+// ErrAgentShuttingDown is returned for background dispatches after Shutdown started.
+var ErrAgentShuttingDown = errors.New("agent is shutting down")
+
 // dispatch spawns a detached goroutine to run the Background_Handler and emits
 // the dispatch log entry. The registry's WaitGroup is incremented so that
-// Agent.Close blocks until the handler (and its subsequent Re_Entry_Turn) complete.
-func (r *backgroundRegistry) dispatch(d backgroundDispatch) {
+// Agent.Shutdown waits until the handler (and its Re_Entry_Turn) complete.
+func (r *backgroundRegistry) dispatch(d backgroundDispatch) error {
+	r.stateMu.Lock()
+	if r.closing {
+		r.stateMu.Unlock()
+		return ErrAgentShuttingDown
+	}
 	r.wg.Go(func() { r.runHandler(d) })
+	r.stateMu.Unlock()
 	r.logBackgroundDispatch(d)
+	return nil
+}
+
+// shutdown rejects new dispatches and waits for in-flight handlers and
+// Re_Entry_Turns, bounded by ctx.
+func (r *backgroundRegistry) shutdown(ctx context.Context) error {
+	r.stateMu.Lock()
+	r.closing = true
+	r.stateMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // runHandler executes the Background_Handler on context.Background(), recovers
@@ -160,14 +196,12 @@ func (r *backgroundRegistry) runHandler(d backgroundDispatch) {
 // Background-specific log helpers (Requirements 6.5, 8.4, 8.5, 12.1, 12.2)
 // ---------------------------------------------------------------------------
 
-// logBackgroundDispatch emits a logging entry for a Background_Dispatch.
-// If a LoggingHook is configured on the agent, it uses OnToolLog; otherwise it
-// falls back to the registry's logger.
+// logBackgroundDispatch emits a ToolLogRecord for a Background_Dispatch and
+// falls back to the registry logger when no ToolLogObserver is configured.
 func (r *backgroundRegistry) logBackgroundDispatch(d backgroundDispatch) {
 	msg := fmt.Sprintf("background dispatch: tool=%s conv=%s toolUseID=%s",
 		d.toolName, d.conversationID, d.toolUseID)
-	if r.agent != nil && r.agent.loggingHook != nil {
-		r.agent.loggingHook.OnToolLog(d.toolName, msg)
+	if r.agent != nil && r.agent.observeBackgroundLog(d, msg, nil, time.Since(d.dispatchedAt)) {
 		return
 	}
 	if r.logger != nil {
@@ -175,9 +209,7 @@ func (r *backgroundRegistry) logBackgroundDispatch(d backgroundDispatch) {
 	}
 }
 
-// logBackgroundCompletion emits a logging entry for a Background_Handler completion.
-// If a LoggingHook is configured on the agent, it uses OnToolLog; otherwise it
-// falls back to the registry's logger.
+// logBackgroundCompletion emits a ToolLogRecord for handler completion.
 func (r *backgroundRegistry) logBackgroundCompletion(d backgroundDispatch, err error, duration time.Duration) {
 	status := "success"
 	if err != nil {
@@ -185,8 +217,7 @@ func (r *backgroundRegistry) logBackgroundCompletion(d backgroundDispatch, err e
 	}
 	msg := fmt.Sprintf("background completion: tool=%s conv=%s toolUseID=%s status=%s duration=%s",
 		d.toolName, d.conversationID, d.toolUseID, status, duration)
-	if r.agent != nil && r.agent.loggingHook != nil {
-		r.agent.loggingHook.OnToolLog(d.toolName, msg)
+	if r.agent != nil && r.agent.observeBackgroundLog(d, msg, err, duration) {
 		return
 	}
 	if r.logger != nil {
@@ -195,85 +226,67 @@ func (r *backgroundRegistry) logBackgroundCompletion(d backgroundDispatch, err e
 }
 
 // reEntryTurn runs an agent iteration in response to a Background_Completion.
-// Caller must NOT hold the Conversation_Lock; reEntryTurn acquires it itself.
+// It goes through the shared invocation lifecycle (which acquires the
+// Conversation_Lock) with the originating invocation's config.
 func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
-	// Guard: if the registry or conversation store is not wired, we cannot
-	// perform a re-entry turn. This can happen in unit tests that exercise
-	// handler dispatch in isolation without a Conversation_Store.
-	if a.backgroundRegistry == nil || a.conversation == nil {
+	// Without a registry, conversation store, or non-empty conversation ID no
+	// re-entry is possible (unit tests may exercise handler dispatch in isolation).
+	if a.backgroundRegistry == nil || a.conversation == nil || d.conversationID == "" {
 		return
 	}
 
-	// Build a fresh *Context from context.Background() with the captured identifier
-	// and scopes so memory subsystems see the same scoping identity as the
-	// originating turn (Req 3.3, 6.6).
-	ctx := NewContext(context.Background()).
-		WithConversationID(d.conversationID).
-		WithIdentifier(d.identifier)
-	for k, v := range d.scopes {
-		ctx.SetScope(k, v)
-	}
+	base := NewContext(context.Background())
+	base.cfg = d.cfg
+	base.cfg.conversationID = d.conversationID
+	c := base.forInvocation(base, &invocationRuntime{})
 
-	h := a.hooks(ctx)
-
-	// Acquire the Conversation_Lock for the originating Conversation_ID (Req 7.1, 7.2, 7.3).
-	m := a.backgroundRegistry.lockFor(d.conversationID)
-	m.Lock()
-	defer m.Unlock()
-
-	// Tracing: distinguish a Re_Entry_Turn (Req 12.3).
-	invokeParams := a.invokeParams(d.conversationID, "", ctx)
-	invokeParams.UserMessage = ""
-	ctx, finishInvoke := h.onInvokeStart(ctx, invokeParams)
-
-	// Load existing history.
-	loadC, cf := h.onConversationStart(ctx, "load", d.conversationID)
-	history, err := a.conversation.Load(loadC, d.conversationID)
-	cf.finish(err, len(history))
+	res, err := a.lifecycle(c, d.conversationID, "", func(r *run) (Result, error) {
+		loadC, cf := r.h.onConversationStart(r.c, ConversationRecord{Operation: "load", ConversationID: r.convID})
+		snapshot, err := a.conversation.Load(loadC, r.convID)
+		cf.finish(err, len(snapshot.Messages), snapshot.Revision)
+		if err != nil {
+			return Result{}, fmt.Errorf("re-entry load: %w", err)
+		}
+		r.revision = snapshot.Revision
+		// Append the synthesized completion and persist it before re-entry.
+		history := append(snapshot.Messages, completion.toMessage(d.toolUseID))
+		if _, err := r.saveConversation(history, TokenUsage{}); err != nil {
+			return Result{}, fmt.Errorf("re-entry pre-save: %w", err)
+		}
+		if a.syncConversation {
+			// A synchronous strategy may have committed a summarized snapshot
+			// during Flush. Reload both its revision and messages before the
+			// re-entry save so the next CAS neither conflicts with nor undoes it.
+			latest, err := a.conversation.Load(r.c, r.convID)
+			if err != nil {
+				return Result{}, fmt.Errorf("re-entry post-flush load: %w", err)
+			}
+			r.revision = latest.Revision
+			history = latest.Messages
+		}
+		cfg, err := r.inferenceConfig()
+		if err != nil {
+			return Result{}, err
+		}
+		return r.loop(history, -1, cfg)
+	})
 	if err != nil {
-		a.logBackgroundError(d, "re-entry load", err)
-		finishInvoke.finish(err, TokenUsage{})
+		a.logBackgroundError(d, "re-entry", err)
 		return
 	}
-
-	// Append the synthesized tool result for the Background_Completion (Req 5.1–5.5).
-	history = append(history, completion.toMessage(d.toolUseID))
-
-	// Persist before re-entry (Req 5.4).
-	if err := a.saveConversation(ctx, d.conversationID, history, TokenUsage{}, &h); err != nil {
-		a.logBackgroundError(d, "re-entry pre-save", err)
-		finishInvoke.finish(err, TokenUsage{})
+	if res.StopReason == StopInterrupt {
+		a.logBackgroundError(d, "re-entry", fmt.Errorf("re-entry turn interrupted (%s, id=%s)", res.Interrupt.Type, res.Interrupt.ID))
 		return
 	}
-
-	// Reuse the same iteration loop the user-initiated turn uses (Req 6.1, 6.2, 6.4).
-	mergedCfg := mergeInferenceConfig(a.inferenceConfig, ctx.InferenceConfig())
-	cb := func(string) {} // streaming chunks are accumulated, not streamed (Req 11.1)
-	usage, finalText, err := a.runLoop(
-		ctx, d.conversationID, history, 0,
-		a.Instructions(), mergedCfg, cb, &h, nil, a.cachingEnabled,
-	)
-	finishInvoke.finish(err, usage)
-
-	if err != nil {
-		// Req 8.5: on failure, log and skip Notify_Callback.
-		a.logBackgroundError(d, "re-entry runLoop", err)
-		return
-	}
-
-	// Req 8.2 / 8.3: invoke Notify_Callback if configured.
-	a.backgroundRegistry.notifySafely(d.conversationID, finalText)
+	a.backgroundRegistry.notifySafely(d.conversationID, res.Text)
 }
 
-// logBackgroundError emits a logging entry for a background error tagged with
-// the failure phase and the affected Conversation_ID. If a LoggingHook is
-// configured on the agent, it uses OnToolLog; otherwise it falls back to the
-// registry's logger.
+// logBackgroundError emits a structured ToolLogRecord and falls back to the
+// registry logger when no ToolLogObserver is configured.
 func (a *Agent) logBackgroundError(d backgroundDispatch, phase string, err error) {
 	msg := fmt.Sprintf("background error [%s]: conv=%s tool=%s err=%v",
 		phase, d.conversationID, d.toolName, err)
-	if a.loggingHook != nil {
-		a.loggingHook.OnToolLog(d.toolName, msg)
+	if a.observeBackgroundLog(d, msg, err, 0) {
 		return
 	}
 	if a.backgroundRegistry != nil && a.backgroundRegistry.logger != nil {
@@ -281,9 +294,25 @@ func (a *Agent) logBackgroundError(d backgroundDispatch, phase string, err error
 	}
 }
 
+func (a *Agent) observeBackgroundLog(d backgroundDispatch, message string, err error, duration time.Duration) bool {
+	base := NewContext(context.Background())
+	base.cfg = d.cfg
+	base.cfg.conversationID = d.conversationID
+	h := a.hooks(base)
+	if !h.hasToolLogObserver() {
+		return false
+	}
+	principal, _ := base.Principal()
+	h.onToolLog(base, ToolLogRecord{
+		CallID: d.toolUseID, Name: d.toolName, Message: message,
+		Principal: principal, ConversationID: d.conversationID, Err: err, Duration: duration,
+	})
+	return true
+}
+
 // notifySafely invokes the Notify_Callback if configured, recovering from panics.
 // No-op if r.notify is nil (Req 8.3). Panics inside the callback are recovered
-// and logged via the agent's LoggingHook (or the registry's fallback logger)
+// and reported through ToolLogObserver (or the registry's fallback logger)
 // without propagating to any other goroutine (Req 8.4).
 func (r *backgroundRegistry) notifySafely(convID, text string) {
 	if r.notify == nil {
@@ -298,14 +327,17 @@ func (r *backgroundRegistry) notifySafely(convID, text string) {
 	r.notify(convID, text) // Req 8.2: exactly once
 }
 
-// logNotifyPanic logs a Notify_Callback panic via the agent's LoggingHook if
-// available, otherwise falls back to the registry's logger.
+// logNotifyPanic reports a callback panic through ToolLogObserver when
+// available, otherwise through the registry logger.
 func (r *backgroundRegistry) logNotifyPanic(convID string, recovered any) {
-	if r.agent != nil && r.agent.loggingHook != nil {
-		// LoggingHook is set — use OnToolLog as the closest ad-hoc log channel.
-		r.agent.loggingHook.OnToolLog("background:notify",
-			fmt.Sprintf("notify callback panic conv=%s: %v", convID, recovered))
-		return
+	message := fmt.Sprintf("notify callback panic conv=%s: %v", convID, recovered)
+	if r.agent != nil {
+		base := Background().WithConversationID(convID)
+		h := r.agent.hooks(base)
+		if h.hasToolLogObserver() {
+			h.onToolLog(base, ToolLogRecord{Name: "background:notify", Message: message, ConversationID: convID})
+			return
+		}
 	}
 	if r.logger != nil {
 		r.logger.Printf("background notify callback panic conv=%s: %v", convID, recovered)

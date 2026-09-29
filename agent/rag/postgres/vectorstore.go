@@ -32,18 +32,18 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-// Compile-time check: VectorStore implements agent.VectorStoreManager.
-var _ agent.VectorStoreManager = (*VectorStore)(nil)
+// Compile-time check: Store implements rag.Manager.
+var _ rag.Manager = (*Store)(nil)
 
-// VectorStore implements agent.VectorStore using PostgreSQL with pgvector.
-type VectorStore struct {
+// Store implements rag.Store using PostgreSQL with pgvector.
+type Store struct {
 	pool       *pgxpool.Pool
 	tableName  string
 	colID      string
@@ -55,7 +55,7 @@ type VectorStore struct {
 }
 
 // distanceOp returns the pgvector operator for the configured distance metric.
-func (s *VectorStore) distanceOp() string {
+func (s *Store) distanceOp() string {
 	switch s.distMetric {
 	case "l2":
 		return "<->"
@@ -66,10 +66,10 @@ func (s *VectorStore) distanceOp() string {
 	}
 }
 
-// New creates a new VectorStore. The pool should be a connected pgxpool.Pool
+// New creates a new Store. The pool should be a connected pgxpool.Pool
 // and dim is the embedding dimension (e.g. 1536 for OpenAI text-embedding-3-small).
 // The table must already exist with the expected schema.
-func New(pool *pgxpool.Pool, dim int, opts ...Option) (*VectorStore, error) {
+func New(pool *pgxpool.Pool, dim int, opts ...Option) (*Store, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("postgres vectorstore: pool is required")
 	}
@@ -89,7 +89,7 @@ func New(pool *pgxpool.Pool, dim int, opts ...Option) (*VectorStore, error) {
 		o(cfg)
 	}
 
-	return &VectorStore{
+	return &Store{
 		pool:       pool,
 		tableName:  cfg.tableName,
 		colID:      cfg.colID,
@@ -105,7 +105,7 @@ func New(pool *pgxpool.Pool, dim int, opts ...Option) (*VectorStore, error) {
 // the store generates one. If a document's ID already exists, the store
 // replaces the existing content, metadata, and embedding.
 // Returns the IDs of all stored documents in input order.
-func (s *VectorStore) Upsert(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
+func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
 		return nil, fmt.Errorf("postgres vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
@@ -164,9 +164,9 @@ func (s *VectorStore) Upsert(ctx context.Context, docs []agent.Document, embeddi
 // Find retrieves documents by their IDs. Returns documents in the same order
 // as the input IDs, omitting IDs that don't exist. Returns an empty slice and
 // nil error for an empty input.
-func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document, error) {
+func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error) {
 	if len(ids) == 0 {
-		return []agent.Document{}, nil
+		return []rag.Document{}, nil
 	}
 
 	var query string
@@ -185,7 +185,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 	defer rows.Close()
 
 	// Collect results into a map for reordering.
-	found := make(map[string]agent.Document, len(ids))
+	found := make(map[string]rag.Document, len(ids))
 	for rows.Next() {
 		var id, content string
 		var metadata map[string]string
@@ -204,7 +204,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 			}
 		}
 
-		found[id] = agent.Document{
+		found[id] = rag.Document{
 			ID:       id,
 			Content:  content,
 			Metadata: metadata,
@@ -215,7 +215,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 	}
 
 	// Reorder results to match input ID order, omitting missing IDs.
-	results := make([]agent.Document, 0, len(found))
+	results := make([]rag.Document, 0, len(found))
 	for _, id := range ids {
 		if doc, ok := found[id]; ok {
 			results = append(results, doc)
@@ -226,7 +226,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 }
 
 // Search performs approximate nearest-neighbor search using pgvector.
-func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
+func (s *Store) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]rag.ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("postgres vectorstore: topK must be >= 1, got %d", topK)
 	}
@@ -257,7 +257,7 @@ func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK
 	}
 	defer rows.Close()
 
-	var results []agent.ScoredDocument
+	var results []rag.ScoredDocument
 	for rows.Next() {
 		var id string
 		var content string
@@ -278,8 +278,8 @@ func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK
 			}
 		}
 
-		results = append(results, agent.ScoredDocument{
-			Document: agent.Document{
+		results = append(results, rag.ScoredDocument{
+			Document: rag.Document{
 				ID:       id,
 				Content:  content,
 				Metadata: metadata,
@@ -296,7 +296,7 @@ func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK
 
 // DeleteByMetadata deletes all documents whose metadata contains all key-value
 // pairs in the filter (AND semantics). Returns an error if the filter is empty.
-func (s *VectorStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
+func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
 	if len(filter) == 0 {
 		return fmt.Errorf("vectorstore: filter must not be empty")
 	}
@@ -317,7 +317,7 @@ func (s *VectorStore) DeleteByMetadata(ctx context.Context, filter map[string]st
 }
 
 // Delete removes documents by their IDs.
-func (s *VectorStore) Delete(ctx context.Context, ids ...string) error {
+func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -329,7 +329,7 @@ func (s *VectorStore) Delete(ctx context.Context, ids ...string) error {
 }
 
 // Close closes the underlying connection pool.
-func (s *VectorStore) Close() {
+func (s *Store) Close() {
 	s.pool.Close()
 }
 

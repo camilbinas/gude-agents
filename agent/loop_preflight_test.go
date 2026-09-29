@@ -6,27 +6,20 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
-// countingProviderForPreflight tracks how many times ConverseStream is called.
+// countingProviderForPreflight tracks how many times Stream is called.
 type countingProviderForPreflight struct {
 	calls    atomic.Int32
-	response *ProviderResponse
+	response *ModelResponse
 }
 
 func (p *countingProviderForPreflight) Name() string { return "counting" }
 
-func (p *countingProviderForPreflight) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	p.calls.Add(1)
-	return p.response, nil
-}
-
-func (p *countingProviderForPreflight) ConverseStream(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (p *countingProviderForPreflight) Stream(_ context.Context, _ ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 	p.calls.Add(1)
 	if p.response.Text != "" && cb != nil {
-		cb(p.response.Text)
+		cb(ModelEvent{Type: ModelEventText, Text: p.response.Text})
 	}
 	return p.response, nil
 }
@@ -42,10 +35,10 @@ func TestLoopIntegration_PreFlightReject_NoProviderCall(t *testing.T) {
 	}
 
 	provider := &countingProviderForPreflight{
-		response: &ProviderResponse{Text: "should not reach here"},
+		response: &ModelResponse{Text: "should not reach here"},
 	}
 
-	a, err := New(provider, prompt.Text("sys"), nil, WithRateLimiter(rl))
+	a, err := New(provider, "sys", WithRateLimiter(rl))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -74,13 +67,13 @@ func TestLoopIntegration_PreFlightPass_NormalProviderCall(t *testing.T) {
 	}
 
 	provider := &countingProviderForPreflight{
-		response: &ProviderResponse{
+		response: &ModelResponse{
 			Text:  "hello back",
 			Usage: TokenUsage{InputTokens: 5, OutputTokens: 5},
 		},
 	}
 
-	a, err := New(provider, prompt.Text("sys"), nil, WithRateLimiter(rl))
+	a, err := New(provider, "sys", WithRateLimiter(rl))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -89,8 +82,8 @@ func TestLoopIntegration_PreFlightPass_NormalProviderCall(t *testing.T) {
 	if invokeErr != nil {
 		t.Fatalf("unexpected error: %v", invokeErr)
 	}
-	if result != "hello back" {
-		t.Errorf("expected %q, got %q", "hello back", result)
+	if result.Text != "hello back" {
+		t.Errorf("expected %q, got %q", "hello back", result.Text)
 	}
 
 	if calls := provider.calls.Load(); calls != 1 {
@@ -102,14 +95,14 @@ func TestLoopIntegration_NoRateLimiter_SkipsPreFlight(t *testing.T) {
 	// When no rate limiter is configured, the agent should skip pre-flight
 	// entirely and proceed to call the provider normally.
 	provider := &countingProviderForPreflight{
-		response: &ProviderResponse{
+		response: &ModelResponse{
 			Text:  "no limiter response",
 			Usage: TokenUsage{InputTokens: 10, OutputTokens: 10},
 		},
 	}
 
 	// No WithRateLimiter option — rateLimiter is nil.
-	a, err := New(provider, prompt.Text("sys"), nil)
+	a, err := New(provider, "sys")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -118,8 +111,8 @@ func TestLoopIntegration_NoRateLimiter_SkipsPreFlight(t *testing.T) {
 	if invokeErr != nil {
 		t.Fatalf("unexpected error: %v", invokeErr)
 	}
-	if result != "no limiter response" {
-		t.Errorf("expected %q, got %q", "no limiter response", result)
+	if result.Text != "no limiter response" {
+		t.Errorf("expected %q, got %q", "no limiter response", result.Text)
 	}
 
 	if calls := provider.calls.Load(); calls != 1 {
@@ -138,12 +131,12 @@ func TestLoopIntegration_PreFlightReject_NotRetried(t *testing.T) {
 	}
 
 	provider := &countingProviderForPreflight{
-		response: &ProviderResponse{Text: "should not reach here"},
+		response: &ModelResponse{Text: "should not reach here"},
 	}
 
-	a, err := New(provider, prompt.Text("sys"), nil,
+	a, err := New(provider, "sys",
 		WithRateLimiter(rl),
-		WithRetry(3, 10*time.Millisecond), // 3 retries configured
+		WithProviderRetry(3, 10*time.Millisecond), // 3 retries configured
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

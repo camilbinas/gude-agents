@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -30,18 +31,35 @@ func (c *MemoryCheckpointer) Save(_ context.Context, threadID string, cp Checkpo
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.saveLocked(threadID, cp, len(c.threads[threadID])+1), nil
+}
 
-	existing := c.threads[threadID]
+// SaveIfVersion atomically appends cp when the latest version equals expectedVersion.
+func (c *MemoryCheckpointer) SaveIfVersion(_ context.Context, threadID string, cp Checkpoint, expectedVersion int) (Checkpoint, error) {
+	if threadID == "" {
+		return Checkpoint{}, ErrThreadIDRequired
+	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	current := len(c.threads[threadID])
+	if expectedVersion < 0 || current != expectedVersion {
+		return Checkpoint{}, fmt.Errorf("checkpoint: save thread %q at expected version %d (current %d): %w", threadID, expectedVersion, current, ErrConflict)
+	}
+	return c.saveLocked(threadID, cp, expectedVersion+1), nil
+}
+
+func (c *MemoryCheckpointer) saveLocked(threadID string, cp Checkpoint, version int) Checkpoint {
 	saved := copyCheckpoint(cp)
 	saved.ThreadID = threadID
-	saved.Version = len(existing) + 1
+	saved.Version = version
 	if saved.Timestamp.IsZero() {
 		saved.Timestamp = time.Now()
 	}
 
-	c.threads[threadID] = append(existing, saved)
-	return copyCheckpoint(saved), nil
+	c.threads[threadID] = append(c.threads[threadID], saved)
+	return copyCheckpoint(saved)
 }
 
 // Load returns the highest-versioned checkpoint for the thread.

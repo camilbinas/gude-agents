@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	prom "github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
 	agent "github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -23,8 +23,8 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// mockTracingHook is a minimal TracingHook that records which callbacks were invoked.
-type mockTracingHook struct {
+// recordingObserver verifies that independent observers coexist with metrics.
+type recordingObserver struct {
 	mu              sync.Mutex
 	invokeCalled    bool
 	iterationCalled bool
@@ -33,78 +33,79 @@ type mockTracingHook struct {
 	guardrailCalled bool
 }
 
-func (h *mockTracingHook) OnInvokeStart(ctx context.Context, _ agent.InvokeSpanParams) (context.Context, func(error, agent.TokenUsage, string)) {
-	h.mu.Lock()
-	h.invokeCalled = true
-	h.mu.Unlock()
-	return ctx, func(_ error, _ agent.TokenUsage, _ string) {}
+func (h *recordingObserver) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.mu.Lock()
+		h.invokeCalled = true
+		h.mu.Unlock()
+	}
+	return ctx
 }
 
-func (h *mockTracingHook) OnIterationStart(ctx context.Context, _ int) (context.Context, func(int, bool)) {
-	h.mu.Lock()
-	h.iterationCalled = true
-	h.mu.Unlock()
-	return ctx, func(_ int, _ bool) {}
+func (h *recordingObserver) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.mu.Lock()
+		h.iterationCalled = true
+		h.mu.Unlock()
+	}
+	return ctx
 }
 
-func (h *mockTracingHook) OnProviderCallStart(ctx context.Context, _ agent.ProviderCallParams) (context.Context, func(error, agent.TokenUsage, int, string)) {
-	h.mu.Lock()
-	h.providerCalled = true
-	h.mu.Unlock()
-	return ctx, func(_ error, _ agent.TokenUsage, _ int, _ string) {}
+func (h *recordingObserver) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.mu.Lock()
+		h.providerCalled = true
+		h.mu.Unlock()
+	}
+	return ctx
 }
 
-func (h *mockTracingHook) OnToolStart(ctx context.Context, _ string, _ json.RawMessage) (context.Context, func(error, string)) {
-	h.mu.Lock()
-	h.toolCalled = true
-	h.mu.Unlock()
-	return ctx, func(_ error, _ string) {}
+func (h *recordingObserver) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.mu.Lock()
+		h.toolCalled = true
+		h.mu.Unlock()
+	}
+	return ctx
 }
 
-func (h *mockTracingHook) OnGuardrailStart(ctx context.Context, _ string, _ string) (context.Context, func(error, string)) {
-	h.mu.Lock()
-	h.guardrailCalled = true
-	h.mu.Unlock()
-	return ctx, func(_ error, _ string) {}
+func (h *recordingObserver) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.mu.Lock()
+		h.guardrailCalled = true
+		h.mu.Unlock()
+	}
+	return ctx
 }
-
-func (h *mockTracingHook) OnConversationStart(ctx context.Context, _ string, _ string) (context.Context, func(error)) {
-	return ctx, func(_ error) {}
-}
-
-func (h *mockTracingHook) OnRetrieverStart(ctx context.Context, _ string) (context.Context, func(error, int)) {
-	return ctx, func(_ error, _ int) {}
-}
-
-func (h *mockTracingHook) OnMaxIterationsExceeded(_ context.Context, _ int) {}
 
 // ---------------------------------------------------------------------------
 // Unit Tests
 // ---------------------------------------------------------------------------
 
-// TestWithMetrics_InstallsHook verifies that WithMetrics sets MetricsHook on the agent.
-func TestWithMetrics_InstallsHook(t *testing.T) {
+// TestWithMetrics_RegistersObserver verifies that WithMetrics installs a working observer.
+func TestWithMetrics_RegistersObserver(t *testing.T) {
 	reg := prom.NewRegistry()
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	a, err := agent.New(prov, "sys",
 		WithMetrics(WithRegisterer(reg)),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if a.MetricsHook() == nil {
-		t.Fatal("expected MetricsHook to be set after WithMetrics, got nil")
+	if a == nil {
+		t.Fatal("expected agent construction to succeed")
 	}
 }
 
 // TestWithMetrics_CustomRegisterer verifies that a custom registerer receives metrics.
 func TestWithMetrics_CustomRegisterer(t *testing.T) {
 	reg := prom.NewRegistry()
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	a, err := agent.New(prov, "sys",
+		agent.WithName("metrics-agent"),
 		WithMetrics(WithRegisterer(reg)),
 	)
 	if err != nil {
@@ -138,6 +139,12 @@ func TestWithMetrics_CustomRegisterer(t *testing.T) {
 			t.Errorf("expected %q in custom registry, got families: %v", want, names)
 		}
 	}
+
+	if got := gatherCounter(reg, "agent_invoke_total", map[string]string{
+		"agent_name": "metrics-agent", "status": "success",
+	}); got != 1 {
+		t.Errorf("named agent invoke counter = %v, want 1", got)
+	}
 }
 
 // TestHandler_ServesMetrics verifies the HTTP handler returns Prometheus exposition
@@ -152,18 +159,27 @@ func TestHandler_ServesMetrics(t *testing.T) {
 	h.register()
 
 	// Exercise every hook method so all metric families appear in the output.
-	finishInvoke := h.OnInvokeStart()
-	finishInvoke(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
+	_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+		Phase: agent.End, Duration: time.Second,
+	})
 
-	h.OnIterationStart()
+	_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
-	finishProvider := h.OnProviderCallStart("test-model")
-	finishProvider(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
+	_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+		Phase: agent.End, ModelID: "test-model", Duration: time.Second,
+		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+	})
 
-	finishTool := h.OnToolStart("my-tool")
-	finishTool(nil)
+	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+		Phase: agent.End, Name: "my-tool", Duration: time.Second,
+	})
 
-	h.OnGuardrailComplete("input", true)
+	_ = h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+		Phase: agent.End, Direction: "input", Blocked: true,
+	})
+	_ = h.ObserveAttachment(context.Background(), agent.AttachmentRecord{
+		Phase: agent.End, ImageCount: 2, DocumentCount: 3,
+	})
 
 	handler := h.Handler()
 	rec := httptest.NewRecorder()
@@ -190,6 +206,8 @@ func TestHandler_ServesMetrics(t *testing.T) {
 		"agent_tool_call_duration_seconds",
 		"agent_guardrail_block_total",
 		"agent_iteration_total",
+		"agent_images_attached_total",
+		"agent_documents_attached_total",
 	}
 
 	for _, name := range expectedMetrics {
@@ -225,14 +243,18 @@ func TestDurationRecording(t *testing.T) {
 	h.register()
 
 	// Exercise all duration-recording hooks.
-	finishInvoke := h.OnInvokeStart()
-	finishInvoke(nil, agent.TokenUsage{})
+	_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+		Phase: agent.End, Duration: 2 * time.Second,
+	})
 
-	finishProvider := h.OnProviderCallStart("test-model")
-	finishProvider(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
+	_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+		Phase: agent.End, ModelID: "test-model", Duration: 3 * time.Second,
+		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+	})
 
-	finishTool := h.OnToolStart("my-tool")
-	finishTool(nil)
+	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+		Phase: agent.End, Name: "my-tool", Duration: 4 * time.Second,
+	})
 
 	// Gather and verify all histograms have non-negative observations.
 	families, err := reg.Gather()
@@ -274,19 +296,13 @@ func TestDurationRecording(t *testing.T) {
 	}
 }
 
-// TestNilHookNoPanic verifies that an agent with nil MetricsHook doesn't panic
-// during invocation.
-func TestNilHookNoPanic(t *testing.T) {
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
+// TestNoObserverNoPanic verifies invocation works without metrics observers.
+func TestNoObserverNoPanic(t *testing.T) {
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
-	// Create agent without WithMetrics — MetricsHook should be nil.
-	a, err := agent.New(prov, prompt.Text("sys"), nil)
+	a, err := agent.New(prov, "sys")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if a.MetricsHook() != nil {
-		t.Fatal("expected MetricsHook to be nil without WithMetrics")
 	}
 
 	// This should not panic.
@@ -294,28 +310,25 @@ func TestNilHookNoPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "hello" {
-		t.Errorf("expected %q, got %q", "hello", result)
+	if result.Text != "hello" {
+		t.Errorf("expected %q, got %q", "hello", result.Text)
 	}
 }
 
 // TestCoexistenceWithTracing verifies both hooks receive callbacks when both are set.
 func TestCoexistenceWithTracing(t *testing.T) {
 	reg := prom.NewRegistry()
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
-	tracingHook := &mockTracingHook{}
+	observer := &recordingObserver{}
 
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	a, err := agent.New(prov, "sys",
 		WithMetrics(WithRegisterer(reg)),
+		agent.WithObserver(observer),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Manually set the tracing hook (since we don't want to pull in the
-	// full tracing submodule dependency).
-	a.SetTracingHook(tracingHook)
 
 	_, err = a.Invoke(agent.Background(), "hi")
 	if err != nil {
@@ -323,19 +336,19 @@ func TestCoexistenceWithTracing(t *testing.T) {
 	}
 
 	// Verify tracing hook received callbacks.
-	tracingHook.mu.Lock()
-	defer tracingHook.mu.Unlock()
-	if !tracingHook.invokeCalled {
-		t.Error("expected TracingHook.OnInvokeStart to be called")
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if !observer.invokeCalled {
+		t.Error("expected observer.OnInvokeStart to be called")
 	}
-	if !tracingHook.iterationCalled {
-		t.Error("expected TracingHook.OnIterationStart to be called")
+	if !observer.iterationCalled {
+		t.Error("expected observer.OnIterationStart to be called")
 	}
-	if !tracingHook.providerCalled {
-		t.Error("expected TracingHook.OnProviderCallStart to be called")
+	if !observer.providerCalled {
+		t.Error("expected observer.OnProviderCallStart to be called")
 	}
 
-	// Verify metrics hook also received callbacks by checking the registry.
+	// Verify metrics observer also received callbacks by checking the registry.
 	families, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -357,7 +370,7 @@ func TestCoexistenceWithTracing(t *testing.T) {
 
 	for name, found := range metricsFound {
 		if !found {
-			t.Errorf("expected metric %q to have been incremented (metrics hook active alongside tracing hook)", name)
+			t.Errorf("expected metric %q to have been incremented (metrics observer active alongside tracing hook)", name)
 		}
 	}
 }
@@ -374,33 +387,34 @@ func getCounterValue(m *dto.Metric) float64 {
 // Integration Tests
 // ---------------------------------------------------------------------------
 
-// TestAgentLoop_MetricsHookCalled runs a full agent loop with a mock provider
+// TestAgentLoop_MetricsObserverCalled runs a full agent loop with a mock provider
 // that returns a tool call followed by a text response, and verifies all
 // Prometheus metrics are recorded at the correct lifecycle points.
-func TestAgentLoop_MetricsHookCalled(t *testing.T) {
+func TestAgentLoop_MetricsObserverCalled(t *testing.T) {
 	reg := prom.NewRegistry()
 
 	// Mock provider: first response triggers a tool call, second is the final text.
 	prov := testutil.NewMockProvider(testutil.WithResponses(
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			ToolCalls: []tool.Call{
 				{ToolUseID: "call-1", Name: "my-tool", Input: json.RawMessage(`{}`)},
 			},
 			Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 		},
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			Text:  "done",
 			Usage: agent.TokenUsage{InputTokens: 20, OutputTokens: 10},
 		},
 	))
 
 	// Register a simple tool that the mock provider will invoke.
-	myTool := tool.NewRaw("my-tool", "A test tool", map[string]any{"type": "object"},
+	myTool := tool.NewRaw("my-tool", "A test tool",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "result", nil
 		})
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{myTool},
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(myTool),
 		WithMetrics(WithRegisterer(reg)),
 	)
 	if err != nil {
@@ -411,8 +425,8 @@ func TestAgentLoop_MetricsHookCalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected invoke error: %v", err)
 	}
-	if result != "done" {
-		t.Errorf("expected result %q, got %q", "done", result)
+	if result.Text != "done" {
+		t.Errorf("expected result %q, got %q", "done", result.Text)
 	}
 
 	// Gather all metrics from the registry.
@@ -500,67 +514,66 @@ func TestAgentLoop_MetricsHookCalled(t *testing.T) {
 }
 
 // TestAgentLoop_BothHooksActive verifies that both the tracing hook and the
-// metrics hook fire independently during a full agent loop.
+// metrics observer fire independently during a full agent loop.
 func TestAgentLoop_BothHooksActive(t *testing.T) {
 	reg := prom.NewRegistry()
 
 	// Mock provider: tool call then final text (exercises the full loop).
 	prov := testutil.NewMockProvider(testutil.WithResponses(
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			ToolCalls: []tool.Call{
 				{ToolUseID: "call-1", Name: "my-tool", Input: json.RawMessage(`{}`)},
 			},
 			Usage: agent.TokenUsage{InputTokens: 5, OutputTokens: 3},
 		},
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			Text:  "all done",
 			Usage: agent.TokenUsage{InputTokens: 8, OutputTokens: 4},
 		},
 	))
 
-	myTool := tool.NewRaw("my-tool", "A test tool", map[string]any{"type": "object"},
+	myTool := tool.NewRaw("my-tool", "A test tool",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "result", nil
 		})
 
-	tracingHook := &mockTracingHook{}
+	observer := &recordingObserver{}
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{myTool},
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(myTool),
 		WithMetrics(WithRegisterer(reg)),
+		agent.WithObserver(observer),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error creating agent: %v", err)
 	}
 
-	// Set the tracing hook alongside the metrics hook.
-	a.SetTracingHook(tracingHook)
-
 	result, err := a.Invoke(agent.Background(), "do something")
 	if err != nil {
 		t.Fatalf("unexpected invoke error: %v", err)
 	}
-	if result != "all done" {
-		t.Errorf("expected result %q, got %q", "all done", result)
+	if result.Text != "all done" {
+		t.Errorf("expected result %q, got %q", "all done", result.Text)
 	}
 
 	// Verify tracing hook received all expected callbacks.
-	tracingHook.mu.Lock()
-	defer tracingHook.mu.Unlock()
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
 
-	if !tracingHook.invokeCalled {
-		t.Error("expected TracingHook.OnInvokeStart to be called")
+	if !observer.invokeCalled {
+		t.Error("expected observer.OnInvokeStart to be called")
 	}
-	if !tracingHook.iterationCalled {
-		t.Error("expected TracingHook.OnIterationStart to be called")
+	if !observer.iterationCalled {
+		t.Error("expected observer.OnIterationStart to be called")
 	}
-	if !tracingHook.providerCalled {
-		t.Error("expected TracingHook.OnProviderCallStart to be called")
+	if !observer.providerCalled {
+		t.Error("expected observer.OnProviderCallStart to be called")
 	}
-	if !tracingHook.toolCalled {
-		t.Error("expected TracingHook.OnToolStart to be called")
+	if !observer.toolCalled {
+		t.Error("expected observer.OnToolStart to be called")
 	}
 
-	// Verify metrics hook also recorded data by checking the registry.
+	// Verify metrics observer also recorded data by checking the registry.
 	families, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -583,7 +596,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	for _, name := range expectedCounters {
 		f, ok := familyMap[name]
 		if !ok {
-			t.Errorf("metric %q not found — metrics hook may not have fired", name)
+			t.Errorf("metric %q not found — metrics observer may not have fired", name)
 			continue
 		}
 		var total float64
@@ -593,7 +606,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 			}
 		}
 		if total <= 0 {
-			t.Errorf("metric %q has value %v — expected > 0 (metrics hook should have incremented it)", name, total)
+			t.Errorf("metric %q has value %v — expected > 0 (metrics observer should have incremented it)", name, total)
 		}
 	}
 
@@ -607,7 +620,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	for _, name := range expectedHistograms {
 		f, ok := familyMap[name]
 		if !ok {
-			t.Errorf("histogram %q not found — metrics hook may not have fired", name)
+			t.Errorf("histogram %q not found — metrics observer may not have fired", name)
 			continue
 		}
 		var totalCount uint64

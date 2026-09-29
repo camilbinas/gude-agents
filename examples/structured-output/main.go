@@ -1,4 +1,4 @@
-// This example demonstrates InvokeStructured — forcing the LLM to return
+// This example demonstrates structured.Invoke — forcing the LLM to return
 // typed, schema-validated JSON instead of free-form text.
 //
 // Run:
@@ -16,6 +16,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/agent/structured"
 )
 
 // Recipe is the structured response we want from the LLM.
@@ -36,22 +37,22 @@ func main() {
 
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a professional chef. Provide detailed, accurate recipes."),
-		nil, // InvokeStructured handles tool setup internally — no tools needed here
+		prompt.Text("You are a professional chef. Provide detailed, accurate recipes.").String(),
 		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	recipe, err := agent.InvokeStructured[Recipe](
+	result, err := structured.Invoke[Recipe](
 		ctx, a, "Give me a classic recipe for spaghetti carbonara.",
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
+	recipe := result.Value
 
 	fmt.Printf("Recipe:     %s\n", recipe.Name)
 	fmt.Printf("Cuisine:    %s\n", recipe.Cuisine)

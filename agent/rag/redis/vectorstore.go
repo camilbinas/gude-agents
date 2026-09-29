@@ -17,13 +17,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// Compile-time check: VectorStore implements agent.VectorStoreManager.
-var _ agent.VectorStoreManager = (*VectorStore)(nil)
+// Compile-time check: Store implements rag.Manager.
+var _ rag.Manager = (*Store)(nil)
 
 // Options holds Redis connection configuration.
 type Options struct {
@@ -47,19 +47,19 @@ func newClient(opts Options) *goredis.Client {
 	})
 }
 
-// VectorStoreOption configures a VectorStore instance.
-type VectorStoreOption func(*VectorStore)
+// StoreOption configures a Store instance.
+type StoreOption func(*Store)
 
 // WithHNSWM sets the HNSW M parameter. Default: 16.
-func WithHNSWM(m int) VectorStoreOption {
-	return func(s *VectorStore) {
+func WithHNSWM(m int) StoreOption {
+	return func(s *Store) {
 		s.hnswM = m
 	}
 }
 
 // WithHNSWEFConstruction sets the HNSW EF_CONSTRUCTION parameter. Default: 200.
-func WithHNSWEFConstruction(ef int) VectorStoreOption {
-	return func(s *VectorStore) {
+func WithHNSWEFConstruction(ef int) StoreOption {
+	return func(s *Store) {
 		s.hnswEF = ef
 	}
 }
@@ -67,14 +67,14 @@ func WithHNSWEFConstruction(ef int) VectorStoreOption {
 // WithDropExisting drops the index and its documents before creating a fresh
 // one. Useful for examples and development where you want a clean slate on
 // every run. Do not use in production — it deletes all indexed data.
-func WithDropExisting() VectorStoreOption {
-	return func(s *VectorStore) {
+func WithDropExisting() StoreOption {
+	return func(s *Store) {
 		s.dropExisting = true
 	}
 }
 
-// VectorStore implements agent.VectorStore using Redis Stack (RediSearch).
-type VectorStore struct {
+// Store implements rag.Store using Redis Stack (RediSearch).
+type Store struct {
 	client       *goredis.Client
 	indexName    string
 	dim          int
@@ -83,12 +83,12 @@ type VectorStore struct {
 	dropExisting bool
 }
 
-// New creates a new VectorStore. Pings Redis, then creates the HNSW index via
+// New creates a new Store. Pings Redis, then creates the HNSW index via
 // FT.CREATE if it doesn't already exist.
-func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*VectorStore, error) {
+func New(opts Options, indexName string, dim int, vopts ...StoreOption) (*Store, error) {
 	client := newClient(opts)
 
-	s := &VectorStore{
+	s := &Store{
 		client:    client,
 		indexName: indexName,
 		dim:       dim,
@@ -132,6 +132,16 @@ func New(opts Options, indexName string, dim int, vopts ...VectorStoreOption) (*
 	return s, nil
 }
 
+// documentKey converts a public logical document ID to its Redis hash key.
+func (s *Store) documentKey(id string) string {
+	return s.indexName + ":" + id
+}
+
+// documentID converts an indexed Redis hash key back to its public logical ID.
+func (s *Store) documentID(key string) string {
+	return strings.TrimPrefix(key, s.indexName+":")
+}
+
 // float64sToFloat32Bytes converts a []float64 slice to a little-endian float32 binary blob.
 func float64sToFloat32Bytes(v []float64) []byte {
 	buf := make([]byte, len(v)*4)
@@ -147,7 +157,7 @@ func float64sToFloat32Bytes(v []float64) []byte {
 // store replaces the existing content, metadata, and embedding (HSET is
 // natively an upsert operation in Redis).
 // Returns the IDs of all stored documents in input order.
-func (s *VectorStore) Upsert(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
+func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
 		return nil, fmt.Errorf("redis vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
@@ -166,8 +176,8 @@ func (s *VectorStore) Upsert(ctx context.Context, docs []agent.Document, embeddi
 		if id == "" {
 			id = uuid.New().String()
 		}
-		key := s.indexName + ":" + id
-		ids[i] = key
+		key := s.documentKey(id)
+		ids[i] = id
 		embeddingBytes := float64sToFloat32Bytes(embeddings[i])
 
 		err = s.client.HSet(ctx, key, map[string]interface{}{
@@ -184,7 +194,7 @@ func (s *VectorStore) Upsert(ctx context.Context, docs []agent.Document, embeddi
 }
 
 // Search performs KNN similarity search using FT.SEARCH.
-func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
+func (s *Store) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]rag.ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("redis vectorstore: topK must be >= 1, got %d", topK)
 	}
@@ -222,7 +232,7 @@ func (s *VectorStore) Search(ctx context.Context, queryEmbedding []float64, topK
 //	  "total_results": int64,
 //	  "results": [ { "id": ..., "extra_attributes": { "content": ..., "score": ... } }, ... ]
 //	}
-func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredDocument, error) {
+func (s *Store) parseRESP3(m map[interface{}]interface{}) ([]rag.ScoredDocument, error) {
 	resultsRaw, ok := m["results"]
 	if !ok {
 		return nil, nil
@@ -232,7 +242,7 @@ func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredD
 		return nil, nil
 	}
 
-	var scored []agent.ScoredDocument
+	var scored []rag.ScoredDocument
 	for _, item := range items {
 		entry, ok := item.(map[interface{}]interface{})
 		if !ok {
@@ -265,9 +275,9 @@ func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredD
 			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
 		}
 
-		scored = append(scored, agent.ScoredDocument{
-			Document: agent.Document{
-				ID:       key,
+		scored = append(scored, rag.ScoredDocument{
+			Document: rag.Document{
+				ID:       s.documentID(key),
 				Content:  content,
 				Metadata: metadata,
 			},
@@ -283,12 +293,12 @@ func (s *VectorStore) parseRESP3(m map[interface{}]interface{}) ([]agent.ScoredD
 
 // parseRESP2 handles the flat array response from RESP2 connections.
 // Format: [total, key1, [field, val, ...], key2, [field, val, ...], ...]
-func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument, error) {
+func (s *Store) parseRESP2(results []interface{}) ([]rag.ScoredDocument, error) {
 	if len(results) < 1 {
 		return nil, nil
 	}
 
-	var scored []agent.ScoredDocument
+	var scored []rag.ScoredDocument
 	for i := 1; i+1 < len(results); i += 2 {
 		key, _ := results[i].(string)
 
@@ -325,9 +335,9 @@ func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument,
 			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
 		}
 
-		scored = append(scored, agent.ScoredDocument{
-			Document: agent.Document{
-				ID:       key,
+		scored = append(scored, rag.ScoredDocument{
+			Document: rag.Document{
+				ID:       s.documentID(key),
 				Content:  content,
 				Metadata: metadata,
 			},
@@ -346,16 +356,15 @@ func (s *VectorStore) parseRESP2(results []interface{}) ([]agent.ScoredDocument,
 // HGETALL calls for each requested key. Keys that don't exist are omitted from
 // the result. Returns documents in the same order as the input IDs.
 // Returns an empty slice and nil error for an empty input.
-func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document, error) {
+func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error) {
 	if len(ids) == 0 {
-		return []agent.Document{}, nil
+		return []rag.Document{}, nil
 	}
 
 	pipe := s.client.Pipeline()
 	cmds := make([]*goredis.MapStringStringCmd, len(ids))
 	for i, id := range ids {
-		key := s.indexName + ":" + id
-		cmds[i] = pipe.HGetAll(ctx, key)
+		cmds[i] = pipe.HGetAll(ctx, s.documentKey(id))
 	}
 
 	_, err := pipe.Exec(ctx)
@@ -363,7 +372,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 		return nil, fmt.Errorf("redis vectorstore: find: %w", err)
 	}
 
-	var docs []agent.Document
+	var docs []rag.Document
 	for i, cmd := range cmds {
 		result, err := cmd.Result()
 		if err != nil {
@@ -381,7 +390,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
 		}
 
-		docs = append(docs, agent.Document{
+		docs = append(docs, rag.Document{
 			ID:       ids[i],
 			Content:  content,
 			Metadata: metadata,
@@ -389,7 +398,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 	}
 
 	if docs == nil {
-		return []agent.Document{}, nil
+		return []rag.Document{}, nil
 	}
 	return docs, nil
 }
@@ -397,7 +406,7 @@ func (s *VectorStore) Find(ctx context.Context, ids ...string) ([]agent.Document
 // DeleteByMetadata deletes all documents whose metadata contains all key-value
 // pairs in the filter (AND semantics). Uses FT.SEARCH to find matching documents,
 // then DEL to remove them. Returns an error if the filter is empty.
-func (s *VectorStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
+func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
 	if len(filter) == 0 {
 		return fmt.Errorf("vectorstore: filter must not be empty")
 	}
@@ -452,7 +461,7 @@ func escapeRedisSearchTerm(s string) string {
 
 // parseSearchKeys extracts document keys from an FT.SEARCH NOCONTENT response.
 // Handles both RESP2 (flat array) and RESP3 (map) formats.
-func (s *VectorStore) parseSearchKeys(res interface{}) []string {
+func (s *Store) parseSearchKeys(res interface{}) []string {
 	switch v := res.(type) {
 	case map[interface{}]interface{}:
 		return s.parseSearchKeysRESP3(v)
@@ -465,7 +474,7 @@ func (s *VectorStore) parseSearchKeys(res interface{}) []string {
 
 // parseSearchKeysRESP3 extracts keys from a RESP3 map response.
 // Format: {"total_results": N, "results": [{"id": "key1"}, {"id": "key2"}, ...]}
-func (s *VectorStore) parseSearchKeysRESP3(m map[interface{}]interface{}) []string {
+func (s *Store) parseSearchKeysRESP3(m map[interface{}]interface{}) []string {
 	resultsRaw, ok := m["results"]
 	if !ok {
 		return nil
@@ -491,7 +500,7 @@ func (s *VectorStore) parseSearchKeysRESP3(m map[interface{}]interface{}) []stri
 
 // parseSearchKeysRESP2 extracts keys from a RESP2 flat array response.
 // NOCONTENT format: [total, key1, key2, ...]
-func (s *VectorStore) parseSearchKeysRESP2(results []interface{}) []string {
+func (s *Store) parseSearchKeysRESP2(results []interface{}) []string {
 	if len(results) < 2 {
 		return nil
 	}
@@ -507,18 +516,22 @@ func (s *VectorStore) parseSearchKeysRESP2(results []interface{}) []string {
 	return keys
 }
 
-// Delete removes documents by their Redis keys.
-func (s *VectorStore) Delete(ctx context.Context, ids ...string) error {
+// Delete removes documents by their logical IDs.
+func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := s.client.Del(ctx, ids...).Err(); err != nil {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = s.documentKey(id)
+	}
+	if err := s.client.Del(ctx, keys...).Err(); err != nil {
 		return fmt.Errorf("redis vectorstore: delete: %w", err)
 	}
 	return nil
 }
 
 // Close closes the underlying Redis client.
-func (s *VectorStore) Close() error {
+func (s *Store) Close() error {
 	return s.client.Close()
 }

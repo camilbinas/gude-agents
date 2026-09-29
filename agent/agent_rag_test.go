@@ -8,30 +8,30 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"pgregory.net/rapid"
 )
 
-// --- Unit tests for DefaultContextFormatter ---
+// --- Unit tests for rag.DefaultContextFormatter ---
 
 func TestDefaultContextFormatter_EmptySlice(t *testing.T) {
-	result := DefaultContextFormatter([]Document{})
+	result := rag.DefaultContextFormatter([]rag.Document{})
 	if result != "" {
 		t.Fatalf("expected empty string for empty slice, got %q", result)
 	}
 }
 
 func TestDefaultContextFormatter_NilSlice(t *testing.T) {
-	result := DefaultContextFormatter(nil)
+	result := rag.DefaultContextFormatter(nil)
 	if result != "" {
 		t.Fatalf("expected empty string for nil slice, got %q", result)
 	}
 }
 
 func TestDefaultContextFormatter_SingleDoc(t *testing.T) {
-	docs := []Document{{Content: "hello world"}}
-	result := DefaultContextFormatter(docs)
+	docs := []rag.Document{{Content: "hello world"}}
+	result := rag.DefaultContextFormatter(docs)
 	expected := "<retrieved_context>\n[1] hello world\n</retrieved_context>"
 	if result != expected {
 		t.Fatalf("expected %q, got %q", expected, result)
@@ -39,12 +39,12 @@ func TestDefaultContextFormatter_SingleDoc(t *testing.T) {
 }
 
 func TestDefaultContextFormatter_MultipleDocs(t *testing.T) {
-	docs := []Document{
+	docs := []rag.Document{
 		{Content: "first doc"},
 		{Content: "second doc"},
 		{Content: "third doc"},
 	}
-	result := DefaultContextFormatter(docs)
+	result := rag.DefaultContextFormatter(docs)
 	expected := "<retrieved_context>\n[1] first doc\n[2] second doc\n[3] third doc\n</retrieved_context>"
 	if result != expected {
 		t.Fatalf("expected %q, got %q", expected, result)
@@ -53,8 +53,8 @@ func TestDefaultContextFormatter_MultipleDocs(t *testing.T) {
 
 // randomDocument returns a rapid generator that produces Document values
 // with random non-empty Content and a small random Metadata map.
-func randomDocument() *rapid.Generator[Document] {
-	return rapid.Custom[Document](func(t *rapid.T) Document {
+func randomDocument() *rapid.Generator[rag.Document] {
+	return rapid.Custom[rag.Document](func(t *rapid.T) rag.Document {
 		content := rapid.StringMatching(`[a-z0-9 ]{1,50}`).Draw(t, "content")
 		numMeta := rapid.IntRange(0, 3).Draw(t, "numMeta")
 		meta := make(map[string]string, numMeta)
@@ -63,7 +63,7 @@ func randomDocument() *rapid.Generator[Document] {
 			val := rapid.StringMatching(`[a-z0-9]{1,10}`).Draw(t, fmt.Sprintf("metaVal[%d]", i))
 			meta[key] = val
 		}
-		return Document{Content: content, Metadata: meta}
+		return rag.Document{Content: content, Metadata: meta}
 	})
 }
 
@@ -71,7 +71,7 @@ func TestDefaultContextFormatter_ContainsAllDocs(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		docs := rapid.SliceOfN(randomDocument(), 1, 20).Draw(t, "docs")
 
-		result := DefaultContextFormatter(docs)
+		result := rag.DefaultContextFormatter(docs)
 
 		for i, doc := range docs {
 			// Assert output contains the 1-based index marker [i]
@@ -93,10 +93,10 @@ func TestDefaultContextFormatter_ContainsAllDocs(t *testing.T) {
 type countingRetriever struct {
 	mu    sync.Mutex
 	count int
-	docs  []Document
+	docs  []rag.Document
 }
 
-func (r *countingRetriever) Retrieve(_ context.Context, _ string) ([]Document, error) {
+func (r *countingRetriever) Retrieve(_ context.Context, _ string) ([]rag.Document, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.count++
@@ -119,17 +119,13 @@ type iteratingProvider struct {
 
 func (p *iteratingProvider) Name() string { return "mock" }
 
-func (p *iteratingProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.ConverseStream(ctx, params, nil)
-}
-
-func (p *iteratingProvider) ConverseStream(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (p *iteratingProvider) Stream(_ context.Context, _ ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.callIndex++
 
 	if p.callIndex <= p.toolIterations {
-		return &ProviderResponse{
+		return &ModelResponse{
 			ToolCalls: []tool.Call{
 				{ToolUseID: fmt.Sprintf("tc-%d", p.callIndex), Name: "noop", Input: json.RawMessage(`{}`)},
 			},
@@ -138,9 +134,9 @@ func (p *iteratingProvider) ConverseStream(_ context.Context, _ ConverseParams, 
 
 	text := "final answer"
 	if cb != nil {
-		cb(text)
+		cb(ModelEvent{Type: ModelEventText, Text: text})
 	}
-	return &ProviderResponse{Text: text}, nil
+	return &ModelResponse{Text: text}, nil
 }
 
 func TestAgent_RetrieverCalledOnce(t *testing.T) {
@@ -148,17 +144,18 @@ func TestAgent_RetrieverCalledOnce(t *testing.T) {
 		toolIterations := rapid.IntRange(1, 5).Draw(t, "toolIterations")
 
 		cr := &countingRetriever{
-			docs: []Document{{Content: "some context", Metadata: map[string]string{}}},
+			docs: []rag.Document{{Content: "some context", Metadata: map[string]string{}}},
 		}
 
 		provider := &iteratingProvider{toolIterations: toolIterations}
 
-		noopTool := tool.NewRaw("noop", "does nothing", map[string]any{"type": "object"},
+		noopTool := tool.NewRaw("noop", "does nothing",
 			func(_ context.Context, _ json.RawMessage) (string, error) {
 				return "ok", nil
 			})
 
-		a, err := New(provider, prompt.Text("system prompt"), []tool.Tool{noopTool},
+		a, err := New(provider, "system prompt",
+			WithTools(noopTool),
 			WithRetriever(cr),
 			WithMaxIterations(toolIterations+1),
 		)
@@ -170,8 +167,8 @@ func TestAgent_RetrieverCalledOnce(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "final answer" {
-			t.Fatalf("expected %q, got %q", "final answer", result)
+		if result.Text != "final answer" {
+			t.Fatalf("expected %q, got %q", "final answer", result.Text)
 		}
 
 		if count := cr.callCount(); count != 1 {
@@ -186,9 +183,9 @@ func TestAgent_RetrievedDocsInSystemPrompt(t *testing.T) {
 		docs := rapid.SliceOfN(randomDocument(), 1, 10).Draw(t, "docs")
 
 		retriever := &countingRetriever{docs: docs}
-		provider := newCapturingProvider(&ProviderResponse{Text: "ok"})
+		provider := newCapturingProvider(&ModelResponse{Text: "ok"})
 
-		a, err := New(provider, prompt.Text("base system prompt"), nil,
+		a, err := New(provider, "base system prompt",
 			WithRetriever(retriever),
 		)
 		if err != nil {
@@ -232,15 +229,15 @@ type errorRetriever struct {
 	err error
 }
 
-func (r *errorRetriever) Retrieve(_ context.Context, _ string) ([]Document, error) {
+func (r *errorRetriever) Retrieve(_ context.Context, _ string) ([]rag.Document, error) {
 	return nil, r.err
 }
 
 // emptyRetriever is a mock retriever that always returns an empty slice.
 type emptyRetriever struct{}
 
-func (r *emptyRetriever) Retrieve(_ context.Context, _ string) ([]Document, error) {
-	return []Document{}, nil
+func (r *emptyRetriever) Retrieve(_ context.Context, _ string) ([]rag.Document, error) {
+	return []rag.Document{}, nil
 }
 
 // recordingMemory records what messages are saved and returns stored history on Load.
@@ -250,25 +247,24 @@ type recordingMemory struct {
 	saveCount int
 }
 
-func (m *recordingMemory) Load(_ context.Context, _ string) ([]Message, error) {
+func (m *recordingMemory) Load(_ context.Context, _ string) (ConversationSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.saved == nil {
-		return []Message{}, nil
+		return ConversationSnapshot{Messages: []Message{}}, nil
 	}
-	// Return a copy.
 	cp := make([]Message, len(m.saved))
 	copy(cp, m.saved)
-	return cp, nil
+	return ConversationSnapshot{Messages: cp, Revision: uint64(m.saveCount)}, nil
 }
 
-func (m *recordingMemory) Save(_ context.Context, _ string, msgs []Message) error {
+func (m *recordingMemory) Save(_ context.Context, _ string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.saveCount++
 	m.saved = make([]Message, len(msgs))
 	copy(m.saved, msgs)
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (m *recordingMemory) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -280,9 +276,9 @@ func TestAgent_RetrieverErrorWrapping(t *testing.T) {
 	innerErr := fmt.Errorf("connection timeout")
 	retriever := &errorRetriever{err: innerErr}
 
-	provider := newCapturingProvider(&ProviderResponse{Text: "should not reach"})
+	provider := newCapturingProvider(&ModelResponse{Text: "should not reach"})
 
-	a, err := New(provider, prompt.Text("system prompt"), nil,
+	a, err := New(provider, "system prompt",
 		WithRetriever(retriever),
 	)
 	if err != nil {
@@ -303,10 +299,10 @@ func TestAgent_RetrieverErrorWrapping(t *testing.T) {
 // the system prompt is passed to the provider unchanged.
 func TestAgent_EmptyRetrieval(t *testing.T) {
 	retriever := &emptyRetriever{}
-	provider := newCapturingProvider(&ProviderResponse{Text: "ok"})
+	provider := newCapturingProvider(&ModelResponse{Text: "ok"})
 
 	originalSystem := "You are a helpful assistant."
-	a, err := New(provider, prompt.Text(originalSystem), nil,
+	a, err := New(provider, originalSystem,
 		WithRetriever(retriever),
 	)
 	if err != nil {
@@ -327,16 +323,16 @@ func TestAgent_EmptyRetrieval(t *testing.T) {
 }
 
 // TestAgent_CustomContextFormatter verifies that when WithContextFormatter is configured,
-// the custom formatter is used instead of DefaultContextFormatter.
+// the custom formatter is used instead of rag.DefaultContextFormatter.
 func TestAgent_CustomContextFormatter(t *testing.T) {
-	docs := []Document{
+	docs := []rag.Document{
 		{Content: "doc one", Metadata: map[string]string{}},
 		{Content: "doc two", Metadata: map[string]string{}},
 	}
 	retriever := &countingRetriever{docs: docs}
-	provider := newCapturingProvider(&ProviderResponse{Text: "ok"})
+	provider := newCapturingProvider(&ModelResponse{Text: "ok"})
 
-	customFormatter := func(docs []Document) string {
+	customFormatter := func(docs []rag.Document) string {
 		var parts []string
 		for _, d := range docs {
 			parts = append(parts, "CUSTOM:"+d.Content)
@@ -344,7 +340,7 @@ func TestAgent_CustomContextFormatter(t *testing.T) {
 		return strings.Join(parts, "|")
 	}
 
-	a, err := New(provider, prompt.Text("base system"), nil,
+	a, err := New(provider, "base system",
 		WithRetriever(retriever),
 		WithContextFormatter(customFormatter),
 	)
@@ -389,23 +385,23 @@ func TestAgent_CustomContextFormatter(t *testing.T) {
 // are configured, the RAG-augmented system prompt is NOT saved to memory — only the
 // original messages are persisted.
 func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
-	docs := []Document{
+	docs := []rag.Document{
 		{Content: "secret RAG context", Metadata: map[string]string{}},
 	}
 	retriever := &countingRetriever{docs: docs}
-	provider := newCapturingProvider(&ProviderResponse{Text: "assistant reply"})
+	provider := newCapturingProvider(&ModelResponse{Text: "assistant reply"})
 	mem := &recordingMemory{}
 
 	originalSystem := "base system prompt"
-	a, err := New(provider, prompt.Text(originalSystem), nil,
+	a, err := New(provider, originalSystem,
 		WithRetriever(retriever),
-		WithConversation(mem, "conv-1"),
+		WithConversationStore(mem),
 	)
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	_, err = a.Invoke(Background(), "user question")
+	_, err = a.Invoke(Background().WithConversationID("conv-1"), "user question")
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}
@@ -458,27 +454,28 @@ func TestAgent_RAGContextNotPersistedToMemory(t *testing.T) {
 // TestAgent_RAGAndToolsCoexistence verifies that when both a retriever and tools are
 // configured, the retriever is called exactly once and tools work across iterations.
 func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
-	docs := []Document{
+	docs := []rag.Document{
 		{Content: "retrieved context", Metadata: map[string]string{}},
 	}
 	retriever := &countingRetriever{docs: docs}
 
 	// Provider: first call returns a tool call, second call returns final text.
 	provider := newCapturingProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{toolCall("tc1", "search")},
 		},
-		&ProviderResponse{Text: "final answer with context"},
+		&ModelResponse{Text: "final answer with context"},
 	)
 
 	var toolCalled bool
-	searchTool := tool.NewRaw("search", "search tool", map[string]any{"type": "object"},
+	searchTool := tool.NewRaw("search", "search tool",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			toolCalled = true
 			return "search result", nil
 		})
 
-	a, err := New(provider, prompt.Text("system prompt"), []tool.Tool{searchTool},
+	a, err := New(provider, "system prompt",
+		WithTools(searchTool),
 		WithRetriever(retriever),
 		WithMaxIterations(5),
 	)
@@ -490,8 +487,8 @@ func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}
-	if result != "final answer with context" {
-		t.Fatalf("expected %q, got %q", "final answer with context", result)
+	if result.Text != "final answer with context" {
+		t.Fatalf("expected %q, got %q", "final answer with context", result.Text)
 	}
 
 	// Verify retriever was called exactly once.
@@ -521,7 +518,7 @@ func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 
 	// Verify both provider calls had tool specs available.
 	for i, params := range provider.captured {
-		if len(params.ToolConfig) == 0 {
+		if len(params.Tools) == 0 {
 			t.Fatalf("provider call[%d] missing tool config", i)
 		}
 	}
@@ -537,7 +534,7 @@ func TestNewRetrieverTool_HandlerFormatsResult(t *testing.T) {
 		docs := rapid.SliceOfN(randomDocument(), 1, 10).Draw(t, "docs")
 
 		retriever := &countingRetriever{docs: docs}
-		tool := NewRetrieverTool("search", "search docs", retriever)
+		tool := rag.NewRetrieverTool("search", "search docs", retriever)
 
 		input, err := json.Marshal(map[string]string{"query": query})
 		if err != nil {
@@ -549,8 +546,8 @@ func TestNewRetrieverTool_HandlerFormatsResult(t *testing.T) {
 			t.Fatalf("handler returned error: %v", err)
 		}
 
-		// The handler should return the DefaultContextFormatter output.
-		expected := DefaultContextFormatter(docs)
+		// The handler should return the rag.DefaultContextFormatter output.
+		expected := rag.DefaultContextFormatter(docs)
 		if result != expected {
 			t.Fatalf("handler output does not match formatted content\nexpected: %q\ngot:      %q", expected, result)
 		}
@@ -564,11 +561,11 @@ func TestNewRetrieverTool_HandlerFormatsResult(t *testing.T) {
 	})
 }
 
-// --- Unit tests for NewRetrieverTool ---
+// --- Unit tests for rag.NewRetrieverTool ---
 
 func TestNewRetrieverTool_SchemaShape(t *testing.T) {
 	retriever := &countingRetriever{docs: nil}
-	tool := NewRetrieverTool("search", "search docs", retriever)
+	tool := rag.NewRetrieverTool("search", "search docs", retriever)
 
 	// Verify tool name and description.
 	if tool.Spec.Name != "search" {
@@ -620,7 +617,7 @@ func TestNewRetrieverTool_SchemaShape(t *testing.T) {
 
 func TestNewRetrieverTool_EmptyRetrieval(t *testing.T) {
 	retriever := &emptyRetriever{}
-	tool := NewRetrieverTool("search", "search docs", retriever)
+	tool := rag.NewRetrieverTool("search", "search docs", retriever)
 
 	input, err := json.Marshal(map[string]string{"query": "anything"})
 	if err != nil {
@@ -641,7 +638,7 @@ func TestNewRetrieverTool_EmptyRetrieval(t *testing.T) {
 func TestNewRetrieverTool_ErrorPropagation(t *testing.T) {
 	innerErr := fmt.Errorf("retrieve: query must not be empty")
 	retriever := &errorRetriever{err: innerErr}
-	tool := NewRetrieverTool("search", "search docs", retriever)
+	tool := rag.NewRetrieverTool("search", "search docs", retriever)
 
 	input, err := json.Marshal(map[string]string{"query": "test"})
 	if err != nil {
@@ -658,13 +655,13 @@ func TestNewRetrieverTool_ErrorPropagation(t *testing.T) {
 }
 
 func TestNewRetrieverTool_CustomFormatter(t *testing.T) {
-	docs := []Document{
+	docs := []rag.Document{
 		{Content: "alpha", Metadata: map[string]string{}},
 		{Content: "beta", Metadata: map[string]string{}},
 	}
 	retriever := &countingRetriever{docs: docs}
 
-	customFormatter := func(docs []Document) string {
+	customFormatter := func(docs []rag.Document) string {
 		var parts []string
 		for _, d := range docs {
 			parts = append(parts, ">>"+d.Content+"<<")
@@ -672,7 +669,7 @@ func TestNewRetrieverTool_CustomFormatter(t *testing.T) {
 		return strings.Join(parts, " | ")
 	}
 
-	tool := NewRetrieverTool("search", "search docs", retriever, customFormatter)
+	tool := rag.NewRetrieverTool("search", "search docs", retriever, customFormatter)
 
 	input, err := json.Marshal(map[string]string{"query": "test"})
 	if err != nil {

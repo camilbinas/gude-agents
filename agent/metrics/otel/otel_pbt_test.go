@@ -80,13 +80,11 @@ func matchOTELAttrs(dp metricdata.DataPoint[int64], want map[string]string) bool
 // Property 1: OTEL invoke counter correctness with status mapping
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_OTELInvokeCounterCorrectness verifies that for any sequence of
 // N invocations with random success/error outcomes, the OTEL agent.invoke.total
 // counter with attribute status="success" equals the count of nil errors, and
 // with attribute status="error" equals the count of non-nil errors, and the
 // sum of both equals N.
-//
 func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -96,8 +94,6 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 
 		for i := range n {
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
-			finish := h.OnInvokeStart()
-
 			var err error
 			if isErr {
 				err = errors.New("fail")
@@ -105,7 +101,9 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 			} else {
 				successCount++
 			}
-			finish(err, agent.TokenUsage{})
+			_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+				Phase: agent.End, Err: err,
+			})
 		}
 
 		gotSuccess := collectCounter(reader, "agent.invoke.total", map[string]string{"status": "success"})
@@ -127,7 +125,6 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 // Property 2: OTEL provider metrics with model ID fallback
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_OTELProviderMetricsWithModelIDFallback verifies that for any
 // sequence of provider call completions with random TokenUsage values
 // (non-negative InputTokens and OutputTokens), random model ID strings
@@ -135,7 +132,6 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 //   - The provider call counter per (model_id, status) pair is correct
 //   - The token counter per (model_id, direction) pair is correct (only for successful calls)
 //   - The model_id attribute equals the input when non-empty, "unknown" when empty
-//
 func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -164,9 +160,9 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 
 			inputTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("input_tokens_%d", i))
 			outputTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("output_tokens_%d", i))
+			cacheReadTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("cache_read_tokens_%d", i))
+			cacheWriteTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("cache_write_tokens_%d", i))
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
-
-			finish := h.OnProviderCallStart(modelID)
 
 			// Determine effective model ID (the fallback logic).
 			effectiveModelID := modelID
@@ -182,10 +178,14 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 			}
 
 			usage := agent.TokenUsage{
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
+				InputTokens:      inputTokens,
+				OutputTokens:     outputTokens,
+				CacheReadTokens:  cacheReadTokens,
+				CacheWriteTokens: cacheWriteTokens,
 			}
-			finish(err, usage)
+			_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+				Phase: agent.End, ModelID: modelID, Usage: usage, Err: err,
+			})
 
 			// Update expected call counter.
 			expectedCalls[callKey{effectiveModelID, status}]++
@@ -194,6 +194,12 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 			if err == nil {
 				expectedTokens[tokenKey{effectiveModelID, "input"}] += int64(inputTokens)
 				expectedTokens[tokenKey{effectiveModelID, "output"}] += int64(outputTokens)
+				if cacheReadTokens > 0 {
+					expectedTokens[tokenKey{effectiveModelID, "cache_read"}] += int64(cacheReadTokens)
+				}
+				if cacheWriteTokens > 0 {
+					expectedTokens[tokenKey{effectiveModelID, "cache_write"}] += int64(cacheWriteTokens)
+				}
 			}
 		}
 
@@ -227,13 +233,11 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 // Property 3: OTEL tool call counter correctness
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_OTELToolCallCounterCorrectness verifies that for any sequence
 // of tool executions with random tool names (from a fixed set) and random
 // success/error outcomes, the OTEL agent.tool.call.total counter for each
 // (tool_name, status) pair equals the count of calls with that tool name and
 // outcome.
-//
 func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -252,15 +256,15 @@ func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 			toolName := rapid.SampledFrom(toolNames).Draw(rt, fmt.Sprintf("tool_%d", i))
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
 
-			finish := h.OnToolStart(toolName)
-
 			var err error
 			status := "success"
 			if isErr {
 				err = errors.New("fail")
 				status = "error"
 			}
-			finish(err)
+			_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+				Phase: agent.End, Name: toolName, Err: err,
+			})
 
 			expected[toolKey{toolName, status}]++
 		}
@@ -292,13 +296,11 @@ func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 // Property 4: OTEL guardrail block counter selectivity
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_OTELGuardrailBlockSelectivity verifies that for any sequence of
 // guardrail completions with random direction ("input"/"output") and random
 // blocked (true/false) values, the OTEL agent.guardrail.block.total counter
 // for each direction SHALL equal the count of calls where blocked was true for
 // that direction. Calls with blocked=false SHALL NOT increment the counter.
-//
 func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -315,7 +317,9 @@ func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 			direction := rapid.SampledFrom([]string{"input", "output"}).Draw(rt, fmt.Sprintf("dir_%d", i))
 			blocked := rapid.Bool().Draw(rt, fmt.Sprintf("blocked_%d", i))
 
-			h.OnGuardrailComplete(direction, blocked)
+			_ = h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+				Phase: agent.End, Direction: direction, Blocked: blocked,
+			})
 
 			if blocked {
 				expectedBlocked[direction]++
@@ -347,11 +351,9 @@ func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 // Property 5: OTEL iteration counter monotonicity
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_OTELIterationCounterMonotonicity verifies that for any
-// non-negative integer N, calling OnIterationStart exactly N times results in
+// non-negative integer N, calling ObserveIteration with Start records exactly N times results in
 // the OTEL agent.iteration.total counter having value N.
-//
 func TestProperty_OTELIterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		h, reader := newTestHookPBT()
@@ -359,7 +361,7 @@ func TestProperty_OTELIterationCounterMonotonicity(t *testing.T) {
 		n := rapid.IntRange(0, 100).Draw(rt, "n")
 
 		for range n {
-			h.OnIterationStart()
+			_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 		}
 
 		got := collectCounter(reader, "agent.iteration.total", map[string]string{})

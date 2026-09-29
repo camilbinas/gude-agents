@@ -12,7 +12,7 @@ import (
 
 func TestCharEstimator_EmptyParams(t *testing.T) {
 	est := CharEstimator{}
-	got, err := est.EstimateTokens(context.Background(), ConverseParams{})
+	got, err := est.EstimateTokens(context.Background(), ModelRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestCharEstimator_EmptyParams(t *testing.T) {
 func TestCharEstimator_SystemPromptOnly(t *testing.T) {
 	est := CharEstimator{}
 	// "hello" is 5 chars → ceil(5/4) = 2
-	got, err := est.EstimateTokens(context.Background(), ConverseParams{
+	got, err := est.EstimateTokens(context.Background(), ModelRequest{
 		System: "hello",
 	})
 	if err != nil {
@@ -38,7 +38,7 @@ func TestCharEstimator_SystemPromptOnly(t *testing.T) {
 func TestCharEstimator_MessagesOnly(t *testing.T) {
 	est := CharEstimator{}
 	// "abcdefgh" is 8 chars → ceil(8/4) = 2
-	got, err := est.EstimateTokens(context.Background(), ConverseParams{
+	got, err := est.EstimateTokens(context.Background(), ModelRequest{
 		Messages: []Message{
 			{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "abcdefgh"}}},
 		},
@@ -54,13 +54,13 @@ func TestCharEstimator_MessagesOnly(t *testing.T) {
 func TestCharEstimator_Combined(t *testing.T) {
 	est := CharEstimator{}
 
-	params := ConverseParams{
+	params := ModelRequest{
 		System: "sys", // 3 chars
 		Messages: []Message{
 			{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "hi"}}},       // 2 chars
 			{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "bye"}}}, // 3 chars
 		},
-		ToolConfig: []tool.Spec{
+		Tools: []tool.Spec{
 			{Name: "t", Description: "d", InputSchema: map[string]any{"type": "object"}},
 		},
 	}
@@ -71,7 +71,7 @@ func TestCharEstimator_Combined(t *testing.T) {
 	}
 
 	// Text chars: 3 (system) + 2 (hi) + 3 (bye) = 8
-	// ToolConfig is JSON-serialized; compute manually for the expected value.
+	// Tools is JSON-serialized; compute manually for the expected value.
 	// The tool spec JSON: {"Name":"t","Description":"d","InputSchema":{"type":"object"}}
 	// We don't hard-code the exact JSON length since marshal order may vary,
 	// but we verify the total is > text-only and consistent with ceil/4.
@@ -109,7 +109,7 @@ func TestCharEstimator_CeilRounding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := est.EstimateTokens(context.Background(), ConverseParams{System: tt.system})
+			got, err := est.EstimateTokens(context.Background(), ModelRequest{System: tt.system})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -124,7 +124,7 @@ func TestCharEstimator_MultipleMessages(t *testing.T) {
 	est := CharEstimator{}
 
 	// 3 messages with TextBlock text: "aaa" + "bb" + "c" = 6 chars → ceil(6/4) = 2
-	params := ConverseParams{
+	params := ModelRequest{
 		Messages: []Message{
 			{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "aaa"}}},
 			{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "bb"}}},
@@ -145,7 +145,7 @@ func TestCharEstimator_IgnoresNonTextBlocks(t *testing.T) {
 	est := CharEstimator{}
 
 	// ToolUseBlock and ToolResultBlock should not contribute to char count.
-	params := ConverseParams{
+	params := ModelRequest{
 		Messages: []Message{
 			{Role: RoleAssistant, Content: []ContentBlock{
 				ToolUseBlock{ToolUseID: "1", Name: "search", Input: []byte(`{"q":"test"}`)},
@@ -169,7 +169,7 @@ func BenchmarkCharEstimator_100KChars(b *testing.B) {
 	est := CharEstimator{}
 	// Create a 100,000-character string.
 	bigText := strings.Repeat("x", 100_000)
-	params := ConverseParams{
+	params := ModelRequest{
 		System: bigText,
 	}
 
@@ -182,7 +182,7 @@ func BenchmarkCharEstimator_100KChars(b *testing.B) {
 func TestCharEstimator_100KCharsUnder1ms(t *testing.T) {
 	est := CharEstimator{}
 	bigText := strings.Repeat("x", 100_000)
-	params := ConverseParams{
+	params := ModelRequest{
 		System: bigText,
 	}
 

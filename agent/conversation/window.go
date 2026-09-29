@@ -2,51 +2,43 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// compile-time check
-var _ agent.Conversation = (*Window)(nil)
+var _ agent.ConversationStore = (*Window)(nil)
 
-// Window wraps a Conversation and returns only the last N messages on Load.
+// Window wraps a ConversationStore and returns only the last N messages on Load.
 type Window struct {
-	inner agent.Conversation
+	inner agent.ConversationStore
 	n     int
 }
 
-// NewWindow creates a Window that retains the last n messages on Load.
-func NewWindow(inner agent.Conversation, n int) *Window {
+func NewWindow(inner agent.ConversationStore, n int) *Window {
 	if n < 1 {
 		panic("conversation: window size must be >= 1")
 	}
 	return &Window{inner: inner, n: n}
 }
 
-// Load retrieves messages from the inner store and returns only the last n,
-// adjusted forward to a safe boundary so that no tool_result block in the
-// returned slice references a tool_use block that was truncated away.
-func (w *Window) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
-	msgs, err := w.inner.Load(ctx, conversationID)
+func (w *Window) Load(ctx context.Context, conversationID string) (agent.ConversationSnapshot, error) {
+	snapshot, err := w.inner.Load(ctx, conversationID)
 	if err != nil {
-		return nil, err
+		return agent.ConversationSnapshot{}, err
 	}
-	if start := len(msgs) - w.n; start > 0 {
-		msgs = safeTruncate(msgs, start)
+	if start := len(snapshot.Messages) - w.n; start > 0 {
+		snapshot.Messages = safeTruncate(snapshot.Messages, start)
 	}
-	return msgs, nil
+	return snapshot, nil
 }
 
-// Save delegates directly to the inner store without modification.
-func (w *Window) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
-	return w.inner.Save(ctx, conversationID, messages)
+func (w *Window) Save(ctx context.Context, conversationID string, messages []agent.Message, expectedRevision uint64) (uint64, error) {
+	return w.inner.Save(ctx, conversationID, messages, expectedRevision)
 }
 
-// safeTruncate returns msgs[start:] adjusted forward so that no tool_result
-// in the slice references a tool_use that was cut off before start.
 func safeTruncate(msgs []agent.Message, start int) []agent.Message {
 	for start < len(msgs) {
-		// Collect all tool_use IDs present in msgs[start:].
 		present := make(map[string]bool)
 		for _, m := range msgs[start:] {
 			for _, b := range m.Content {
@@ -55,15 +47,12 @@ func safeTruncate(msgs []agent.Message, start int) []agent.Message {
 				}
 			}
 		}
-		// Check whether any tool_result in msgs[start:] is orphaned.
 		orphaned := false
 		for _, m := range msgs[start:] {
 			for _, b := range m.Content {
-				if tr, ok := b.(agent.ToolResultBlock); ok {
-					if !present[tr.ToolUseID] {
-						orphaned = true
-						break
-					}
+				if tr, ok := b.(agent.ToolResultBlock); ok && !present[tr.ToolUseID] {
+					orphaned = true
+					break
 				}
 			}
 			if orphaned {
@@ -73,7 +62,6 @@ func safeTruncate(msgs []agent.Message, start int) []agent.Message {
 		if !orphaned {
 			break
 		}
-		// Advance past the current message and try again.
 		start++
 	}
 	if start >= len(msgs) {
@@ -82,12 +70,25 @@ func safeTruncate(msgs []agent.Message, start int) []agent.Message {
 	return msgs[start:]
 }
 
-// List delegates to the inner store.
 func (w *Window) List(ctx context.Context) ([]string, error) {
-	return w.inner.List(ctx)
+	manager, ok := w.inner.(agent.ConversationManager)
+	if !ok {
+		return nil, fmt.Errorf("conversation: inner store does not support List")
+	}
+	return manager.List(ctx)
 }
 
-// Delete delegates to the inner store.
 func (w *Window) Delete(ctx context.Context, conversationID string) error {
-	return w.inner.Delete(ctx, conversationID)
+	manager, ok := w.inner.(agent.ConversationManager)
+	if !ok {
+		return fmt.Errorf("conversation: inner store does not support Delete")
+	}
+	return manager.Delete(ctx, conversationID)
+}
+
+func (w *Window) Flush(ctx context.Context) error {
+	if flusher, ok := w.inner.(agent.Flusher); ok {
+		return flusher.Flush(ctx)
+	}
+	return nil
 }

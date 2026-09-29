@@ -2,301 +2,159 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// Agent orchestrates LLM calls and tool execution.
+// Agent is long-lived, immutable invocation configuration. A configured
+// tool.Registry is the sole intentionally dynamic component.
 type Agent struct {
-	name     string
-	provider Provider
+	name         string
+	provider     Provider
+	instructions string
+	toolRegistry *tool.Registry
 
-	// instructions is the agent's system prompt. Stored behind an atomic
-	// pointer so SetInstructions can update it concurrently with in-flight
-	// invocations without locking the hot path. Always non-nil after New.
-	instructions atomic.Pointer[string]
-
-	// Tools
-	toolsMu   sync.RWMutex // protects tools and toolSpecs for runtime registration
-	tools     map[string]tool.Tool
-	toolSpecs []tool.Spec
-
-	// Inference
-	inferenceConfig *InferenceConfig // nil = use provider defaults
+	inferenceConfig *InferenceConfig
 	maxIterations   int
 	parallelTools   bool
-	tokenBudget     int // 0 = no budget
+	tokenBudget     int
 
-	// Conversation
-	conversation     Conversation
-	conversationID   string
-	syncConversation bool          // call Wait() on conversation after each Save
-	normStrategy     *NormStrategy // nil = default (Merge); pointer distinguishes "not set" from "set to Merge"
+	conversation     ConversationStore
+	syncConversation bool
+	normStrategy     *NormStrategy
 	normDisabled     bool
 
-	// RAG
-	retriever        Retriever        // nil = no RAG
-	contextFormatter ContextFormatter // nil = use DefaultContextFormatter
+	retriever        rag.Retriever
+	contextFormatter rag.ContextFormatter
 
-	// Pipeline
 	middlewares      []Middleware
 	inputGuardrails  []InputGuardrail
 	outputGuardrails []OutputGuardrail
 	toolFilters      []ToolFilter
 
-	// Rate limiting
-	rateLimiter *RateLimiter // nil = no rate limiting
+	rateLimiter *RateLimiter
 
-	// Resilience
-	providerTimeout time.Duration // 0 = no timeout
-	retryMax        int           // 0 = no retry
+	providerTimeout time.Duration
+	retryMax        int
 	retryBaseDelay  time.Duration
 
-	// Caching
 	cachingEnabled bool
 
-	// Observability
-	tracingHook         TracingHook // nil = no tracing
-	metricsHook         MetricsHook // nil = no metrics
-	loggingHook         LoggingHook // nil = no logging
-	auditHook           AuditHook   // nil = no audit
-	auditCaptureContent bool
+	observers []Observer
 
-	// Handoff
-	handoffStore HandoffStore // nil = caller manages HandoffRequest persistence
+	interruptStore           InterruptStore
+	interruptStoreConfigured bool
 
-	// Background tools
-	// backgroundRegistry is created whenever a conversation store is configured.
-	// It manages background dispatch, per-conversation locks, and shutdown.
 	backgroundRegistry *backgroundRegistry
-	bgNotify           func(conversationID, agentMessage string) // Notify_Callback set via WithBackgroundNotify; wired onto the registry at construction
+	bgNotify           func(conversationID, agentMessage string)
 }
 
-// New creates a new Agent. Returns an error if tool validation fails or an option errors.
-func New(provider Provider, instructions prompt.Instructions, tools []tool.Tool, opts ...Option) (*Agent, error) {
+// New creates an Agent with immutable instructions and construction options.
+func New(provider Provider, instructions string, opts ...Option) (*Agent, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("provider is required")
 	}
 	a := &Agent{
-		provider:      provider,
-		tools:         make(map[string]tool.Tool),
-		maxIterations: 10,
+		provider:       provider,
+		instructions:   instructions,
+		toolRegistry:   &tool.Registry{},
+		maxIterations:  10,
+		interruptStore: newMemoryInterruptStore(),
 	}
-	initial := instructions.String()
-	a.instructions.Store(&initial)
-
-	// Register and validate tools.
-	for _, t := range tools {
-		if t.Spec.Name == "" || t.Spec.Description == "" || (t.Handler == nil && t.RichHandler == nil) {
-			return nil, fmt.Errorf("tool %q: name, description, and handler are required", t.Spec.Name)
-		}
-		if t.IsBackground() {
-			if t.Ack() == "" {
-				return nil, fmt.Errorf("tool %q: background tools require a non-empty ack string", t.Spec.Name)
-			}
-			if t.Handler == nil {
-				return nil, fmt.Errorf("tool %q: background tools require a handler", t.Spec.Name)
-			}
-		}
-		if _, exists := a.tools[t.Spec.Name]; exists {
-			return nil, fmt.Errorf("duplicate tool name: %q", t.Spec.Name)
-		}
-		a.tools[t.Spec.Name] = t
-		a.toolSpecs = append(a.toolSpecs, t.Spec)
-	}
-
-	// Apply options.
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		if err := opt(a); err != nil {
 			return nil, err
 		}
 	}
-
-	// Validate that Background_Tools have a conversation store configured.
-	// This check runs after options are applied because WithConversation /
-	// WithSharedConversation set a.conversation.
-	for _, t := range a.tools {
+	if a.toolRegistry == nil {
+		return nil, fmt.Errorf("tool registry must not be nil")
+	}
+	for _, t := range a.toolRegistry.List() {
+		if err := t.Validate(); err != nil {
+			return nil, err
+		}
 		if t.IsBackground() && a.conversation == nil {
-			return nil, fmt.Errorf("tool %q: background tools require a conversation store; use WithConversation or WithSharedConversation", t.Spec.Name)
+			return nil, fmt.Errorf("tool %q: background and detached tools require a conversation store; use WithConversationStore", t.Spec.Name)
 		}
 	}
-
-	// Construct the backgroundRegistry whenever a conversation store is
-	// configured. We do this eagerly even when no Background_Tool is registered
-	// yet so that tools added later via RegisterTool can dispatch without
-	// introducing a data race on a.backgroundRegistry (loop.go reads the field
-	// without holding toolsMu). The registry is also the holder of the
-	// per-conversation lock map, which serializes same-conversation user turns
-	// even without Background_Tools — a desirable invariant for any agent
-	// configured with a conversation store. When no conversation store is
-	// configured, no Background_Tool can be registered (validated here and in
-	// RegisterTool), so the registry is not needed.
 	if a.conversation != nil {
 		a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
 	}
-
 	return a, nil
 }
 
-// ---------------------------------------------------------------------------
-// Accessor methods for subpackages that need read access to agent internals.
-// ---------------------------------------------------------------------------
-
-// Name returns the agent's name, or empty if not set.
+// Name returns the configured agent name.
 func (a *Agent) Name() string { return a.name }
 
-// Provider returns the agent's LLM provider.
+// Provider returns the configured model provider.
 func (a *Agent) Provider() Provider { return a.provider }
 
-// CallProvider calls the agent's provider with timeout and retry applied.
-// Useful for subpackages that need to invoke the provider with the agent's
-// retry and timeout settings without duplicating the logic.
-func (a *Agent) CallProvider(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
-	return a.callProviderWithRetry(ctx, "", params, cb)
+// CallProvider calls the provider with the Agent's timeout and retry policy.
+func (a *Agent) CallProvider(ctx context.Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
+	return a.callProviderWithRetry(ctx, "", req, emit)
 }
 
-// Instructions returns the agent's system prompt string.
-func (a *Agent) Instructions() string {
-	if p := a.instructions.Load(); p != nil {
-		return *p
-	}
-	return ""
-}
+// Instructions returns the configured system instructions.
+func (a *Agent) Instructions() string { return a.instructions }
 
-// instructionsFor returns the system prompt to use for the given invocation
-// context. If the context carries a non-empty system prompt override (set via
-// Context.WithSystemPromptOverride), that takes precedence over the agent's
-// configured instructions. This is the entry point used by the agent loop and
-// supports per-request prompt selection for A/B testing.
 func (a *Agent) instructionsFor(c *Context) string {
 	if c != nil {
-		if override := c.SystemPromptOverride(); override != "" {
+		if override := c.Instructions(); override != "" {
 			return override
 		}
 	}
-	return a.Instructions()
+	return a.instructions
 }
 
-// SetInstructions atomically updates the agent's system prompt. Subsequent
-// invocations use the new value; in-flight invocations continue with the
-// value they read at start. Safe for concurrent use.
-func (a *Agent) SetInstructions(s string) {
-	a.instructions.Store(&s)
-}
-
-// Close performs graceful cleanup. If the agent has in-flight Background_Handlers or
-// Re_Entry_Turns, Close blocks until they all complete. Then, if the agent's conversation
-// implements ConversationWaiter (e.g. the Summary strategy), Close blocks until all
-// background summarisation work is complete.
-// Safe to call multiple times. No-op if no cleanup is needed.
-func (a *Agent) Close() {
+// Shutdown waits for background tools, re-entry turns, and conversation flushes.
+func (a *Agent) Shutdown(ctx context.Context) error {
+	var err error
 	if a.backgroundRegistry != nil {
-		a.backgroundRegistry.wg.Wait()
+		err = errors.Join(err, a.backgroundRegistry.shutdown(ctx))
 	}
-	if a.conversation != nil {
-		if w, ok := a.conversation.(ConversationWaiter); ok {
-			w.Wait()
-		}
+	if flusher, ok := a.conversation.(Flusher); ok {
+		err = errors.Join(err, flusher.Flush(ctx))
 	}
+	return err
 }
 
-// ToolSpecs returns a snapshot of the tool specifications registered on this agent.
+// ToolSpecs returns a current snapshot of provider-facing tool specifications.
 func (a *Agent) ToolSpecs() []tool.Spec {
-	a.toolsMu.RLock()
-	defer a.toolsMu.RUnlock()
-	cp := make([]tool.Spec, len(a.toolSpecs))
-	copy(cp, a.toolSpecs)
-	return cp
+	tools := a.toolRegistry.List()
+	specs := make([]tool.Spec, len(tools))
+	for i := range tools {
+		specs[i] = tools[i].Spec
+	}
+	return specs
 }
 
-// HasTool reports whether a tool with the given name is registered.
+// HasTool reports whether the current registry contains name.
 func (a *Agent) HasTool(name string) bool {
-	a.toolsMu.RLock()
-	defer a.toolsMu.RUnlock()
-	_, ok := a.tools[name]
+	_, ok := a.toolRegistry.Lookup(name)
 	return ok
 }
 
-// LookupTool returns the tool with the given name and true, or a zero Tool and false.
-func (a *Agent) LookupTool(name string) (tool.Tool, bool) {
-	a.toolsMu.RLock()
-	defer a.toolsMu.RUnlock()
-	t, ok := a.tools[name]
-	return t, ok
-}
+// LookupTool returns a tool from the current registry snapshot.
+func (a *Agent) LookupTool(name string) (tool.Tool, bool) { return a.toolRegistry.Lookup(name) }
 
-// RegisterTool adds a tool to the agent. Returns an error if a tool with the
-// same name is already registered or if Background_Tool prerequisites are not met.
-func (a *Agent) RegisterTool(t tool.Tool) error {
-	a.toolsMu.Lock()
-	defer a.toolsMu.Unlock()
-
-	if t.IsBackground() {
-		if t.Ack() == "" {
-			return fmt.Errorf("tool %q: background tools require a non-empty ack string", t.Spec.Name)
-		}
-		if t.Handler == nil {
-			return fmt.Errorf("tool %q: background tools require a handler", t.Spec.Name)
-		}
-		if a.conversation == nil {
-			return fmt.Errorf("tool %q: background tools require a conversation store; use WithConversation or WithSharedConversation", t.Spec.Name)
-		}
-		// SetConversation may attach a store after New. Keep registration
-		// self-contained so a background tool can never reach dispatch with a
-		// nil registry.
-		if a.backgroundRegistry == nil {
-			a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
-		}
-	}
-
-	if _, exists := a.tools[t.Spec.Name]; exists {
-		return fmt.Errorf("duplicate tool name: %q", t.Spec.Name)
-	}
-	a.tools[t.Spec.Name] = t
-	a.toolSpecs = append(a.toolSpecs, t.Spec)
-	return nil
-}
-
-// HasConversation reports whether the agent has a conversation store configured.
+// HasConversation reports whether a conversation store is configured.
 func (a *Agent) HasConversation() bool { return a.conversation != nil }
 
-// SetConversation sets the agent's conversation store after construction. It
-// operates as a shared conversation (no default ID) and prepares the registry
-// required for background tools and per-conversation serialization. Configure
-// the conversation before invoking the agent; runtime reconfiguration is not
-// safe to perform concurrently with invocations.
-func (a *Agent) SetConversation(c Conversation) {
-	a.toolsMu.Lock()
-	defer a.toolsMu.Unlock()
-
-	a.conversation = c
-	if c != nil && a.backgroundRegistry == nil {
-		a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
-	}
-}
-
-// InferenceConfig returns the agent's inference config, or nil if none is set.
 func (a *Agent) InferenceConfig() *InferenceConfig { return a.inferenceConfig }
-
-// MaxIterations returns the configured maximum iterations per invocation.
-func (a *Agent) MaxIterations() int { return a.maxIterations }
-
-// ParallelTools returns whether parallel tool execution is enabled.
-func (a *Agent) ParallelTools() bool { return a.parallelTools }
-
-// TokenBudget returns the configured token budget (0 = no budget).
-func (a *Agent) TokenBudget() int { return a.tokenBudget }
-
-// Middlewares returns the agent's middleware chain.
-func (a *Agent) Middlewares() []Middleware { return a.middlewares }
-
-// InputGuardrails returns the agent's input guardrails.
-func (a *Agent) InputGuardrails() []InputGuardrail { return a.inputGuardrails }
-
-// OutputGuardrails returns the agent's output guardrails.
-func (a *Agent) OutputGuardrails() []OutputGuardrail { return a.outputGuardrails }
+func (a *Agent) MaxIterations() int                { return a.maxIterations }
+func (a *Agent) ParallelTools() bool               { return a.parallelTools }
+func (a *Agent) TokenBudget() int                  { return a.tokenBudget }
+func (a *Agent) Middlewares() []Middleware         { return append([]Middleware(nil), a.middlewares...) }
+func (a *Agent) InputGuardrails() []InputGuardrail {
+	return append([]InputGuardrail(nil), a.inputGuardrails...)
+}
+func (a *Agent) OutputGuardrails() []OutputGuardrail {
+	return append([]OutputGuardrail(nil), a.outputGuardrails...)
+}

@@ -13,20 +13,6 @@ var ErrRateLimitExceeded = errors.New("rate limit exceeded")
 // ErrTokenBudgetExceeded is returned when cumulative token usage exceeds the configured budget.
 var ErrTokenBudgetExceeded = errors.New("token budget exceeded")
 
-// ErrHandoffRequested is returned when an agent calls the handoff tool.
-// The caller should inspect the HandoffRequest via GetHandoffRequest,
-// collect the needed input, then call Agent.Resume to continue.
-var ErrHandoffRequested = errors.New("handoff requested")
-
-// ErrToolApprovalRequired is returned when a tool marked with RequiresApproval is
-// called by the LLM. The caller should inspect the ApprovalRequest via
-// GetApprovalRequest, collect the human decision, then call
-// Agent.ResumeWithApproval to either run the tool or inject a denial.
-var ErrToolApprovalRequired = errors.New("tool approval required")
-
-// ErrLoopStopped is returned by RunLoop when a ToolResultInterceptor signals stop.
-var ErrLoopStopped = errors.New("loop stopped by interceptor")
-
 // ErrMaxIterationsExceeded is returned when the agent loop exhausts its iteration limit
 // without producing a final text response.
 var ErrMaxIterationsExceeded = errors.New("max iterations exceeded")
@@ -107,10 +93,10 @@ func (e *MaxIterationsError) Is(target error) bool {
 	return target == ErrMaxIterationsExceeded
 }
 
-// StructuredOutputError is returned when InvokeStructured fails to produce
+// StructuredOutputError is returned when structured output fails to produce
 // a valid typed response. Reason indicates what went wrong.
 type StructuredOutputError struct {
-	Reason string // "no_tool_call", "wrong_tool", "deserialize"
+	Reason string // "nil_agent", "no_tool_call", "wrong_tool", "deserialize"
 	Cause  error  // underlying error (nil for no_tool_call/wrong_tool)
 }
 

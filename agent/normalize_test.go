@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 // TestNormalize_NilInput verifies that nil input returns nil.
@@ -374,9 +372,9 @@ func TestNormalize_OriginalSliceNotMutated(t *testing.T) {
 // Agent option integration tests
 // ---------------------------------------------------------------------------
 
-// TestWithMessageNormalizer_ValidStrategies verifies that WithMessageNormalizer
+// TestWithNormalization_ValidStrategies verifies that WithNormalization
 // with each valid strategy sets the normStrategy field correctly on the agent.
-func TestWithMessageNormalizer_ValidStrategies(t *testing.T) {
+func TestWithNormalization_ValidStrategies(t *testing.T) {
 	strategies := []struct {
 		name     string
 		strategy NormStrategy
@@ -388,7 +386,7 @@ func TestWithMessageNormalizer_ValidStrategies(t *testing.T) {
 
 	for _, s := range strategies {
 		t.Run(s.name, func(t *testing.T) {
-			a, err := New(mockProvider{}, prompt.Text("sys"), nil, WithMessageNormalizer(s.strategy))
+			a, err := New(mockProvider{}, "sys", WithNormalization(s.strategy))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -405,19 +403,19 @@ func TestWithMessageNormalizer_ValidStrategies(t *testing.T) {
 	}
 }
 
-// TestWithMessageNormalizer_InvalidStrategy verifies that WithMessageNormalizer
+// TestWithNormalization_InvalidStrategy verifies that WithNormalization
 // with an invalid strategy value returns an error from New.
-func TestWithMessageNormalizer_InvalidStrategy(t *testing.T) {
-	_, err := New(mockProvider{}, prompt.Text("sys"), nil, WithMessageNormalizer(NormStrategy(99)))
+func TestWithNormalization_InvalidStrategy(t *testing.T) {
+	_, err := New(mockProvider{}, "sys", WithNormalization(NormStrategy(99)))
 	if err == nil {
 		t.Fatal("expected error for invalid strategy, got nil")
 	}
 }
 
-// TestWithoutMessageNormalizer_SetsDisabled verifies that WithoutMessageNormalizer
+// TestWithoutNormalization_SetsDisabled verifies that WithoutNormalization
 // sets normDisabled to true on the agent.
-func TestWithoutMessageNormalizer_SetsDisabled(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("sys"), nil, WithoutMessageNormalizer())
+func TestWithoutNormalization_SetsDisabled(t *testing.T) {
+	a, err := New(mockProvider{}, "sys", WithoutNormalization())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,7 +428,7 @@ func TestWithoutMessageNormalizer_SetsDisabled(t *testing.T) {
 // (no normalizer option) will apply Merge strategy. When no option is set,
 // normStrategy is nil and normDisabled is false, so runLoop defaults to NormMerge.
 func TestNormalize_DefaultBehaviorAppliesMerge(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("sys"), nil)
+	a, err := New(mockProvider{}, "sys")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -445,14 +443,14 @@ func TestNormalize_DefaultBehaviorAppliesMerge(t *testing.T) {
 }
 
 // TestNormalize_WithoutNormalizerPassesRawMessages verifies that
-// WithoutMessageNormalizer causes normDisabled to be true, meaning
+// WithoutNormalization causes normDisabled to be true, meaning
 // raw messages pass through to the provider without normalization.
 func TestNormalize_WithoutNormalizerPassesRawMessages(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("sys"), nil, WithoutMessageNormalizer())
+	a, err := New(mockProvider{}, "sys", WithoutNormalization())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !a.normDisabled {
-		t.Error("expected normDisabled to be true with WithoutMessageNormalizer")
+		t.Error("expected normDisabled to be true with WithoutNormalization")
 	}
 }

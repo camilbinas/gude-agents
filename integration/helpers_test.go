@@ -34,18 +34,8 @@ type trackingProvider struct {
 
 func (tp *trackingProvider) Name() string { return tp.inner.Name() }
 
-func (tp *trackingProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	resp, err := tp.inner.Converse(ctx, params)
-	if resp != nil {
-		totalInputTokens.Add(int64(resp.Usage.InputTokens))
-		totalOutputTokens.Add(int64(resp.Usage.OutputTokens))
-		totalLLMCalls.Add(1)
-	}
-	return resp, err
-}
-
-func (tp *trackingProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	resp, err := tp.inner.ConverseStream(ctx, params, cb)
+func (tp *trackingProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	resp, err := tp.inner.Stream(ctx, req, emit)
 	if resp != nil {
 		totalInputTokens.Add(int64(resp.Usage.InputTokens))
 		totalOutputTokens.Add(int64(resp.Usage.OutputTokens))

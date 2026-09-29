@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"pgregory.net/rapid"
 )
 
@@ -63,16 +64,16 @@ func TestProperty_ContextPrecisionAP(t *testing.T) {
 		}
 
 		provider := newScriptedProvider(
-			[]*agent.ProviderResponse{{Text: string(respJSON)}},
+			[]*agent.ModelResponse{{Text: string(respJSON)}},
 			[]error{nil},
 		)
 
 		cp := NewContextPrecision(provider)
 
 		// Build retrieved context with numDocs documents.
-		docs := make([]agent.Document, numDocs)
+		docs := make([]rag.Document, numDocs)
 		for i := 0; i < numDocs; i++ {
-			docs[i] = agent.Document{Content: fmt.Sprintf("document_%d", i)}
+			docs[i] = rag.Document{Content: fmt.Sprintf("document_%d", i)}
 		}
 
 		result, err := cp.Evaluate(context.Background(), EvalCase{

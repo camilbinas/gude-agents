@@ -8,11 +8,12 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 func TestContextPrecision_AllDocumentsRelevant(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"judgments": [{"document_index": 0, "relevant": true}, {"document_index": 1, "relevant": true}, {"document_index": 2, "relevant": true}]}`},
 		},
 		[]error{nil},
@@ -22,7 +23,7 @@ func TestContextPrecision_AllDocumentsRelevant(t *testing.T) {
 	result, err := cp.Evaluate(context.Background(), EvalCase{
 		Query:           "What is Go?",
 		ReferenceAnswer: "Go is a programming language created at Google.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go is a statically typed language."},
 			{Content: "Go was created at Google in 2009."},
 			{Content: "Go has built-in concurrency support."},
@@ -42,7 +43,7 @@ func TestContextPrecision_AllDocumentsRelevant(t *testing.T) {
 
 func TestContextPrecision_NoDocumentsRelevant(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"judgments": [{"document_index": 0, "relevant": false}, {"document_index": 1, "relevant": false}]}`},
 		},
 		[]error{nil},
@@ -52,7 +53,7 @@ func TestContextPrecision_NoDocumentsRelevant(t *testing.T) {
 	result, err := cp.Evaluate(context.Background(), EvalCase{
 		Query:           "What is Go?",
 		ReferenceAnswer: "Go is a programming language.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Python is a dynamic language."},
 			{Content: "Java runs on the JVM."},
 		},
@@ -73,7 +74,7 @@ func TestContextPrecision_MixedRelevance(t *testing.T) {
 	// k=2: relevant, relevantSoFar=2, P@2 = 2/3 ≈ 0.6667
 	// R=2, AP = (1.0 + 0.6667) / 2 ≈ 0.8333
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"judgments": [{"document_index": 0, "relevant": true}, {"document_index": 1, "relevant": false}, {"document_index": 2, "relevant": true}]}`},
 		},
 		[]error{nil},
@@ -83,7 +84,7 @@ func TestContextPrecision_MixedRelevance(t *testing.T) {
 	result, err := cp.Evaluate(context.Background(), EvalCase{
 		Query:           "What is Go?",
 		ReferenceAnswer: "Go is a programming language created at Google.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go is a statically typed language."},
 			{Content: "Python is interpreted."},
 			{Content: "Go was created at Google."},
@@ -102,7 +103,7 @@ func TestContextPrecision_MixedRelevance(t *testing.T) {
 
 func TestContextPrecision_PerDocumentJudgmentsInExplanation(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"judgments": [{"document_index": 0, "relevant": true}, {"document_index": 1, "relevant": false}, {"document_index": 2, "relevant": true}]}`},
 		},
 		[]error{nil},
@@ -112,7 +113,7 @@ func TestContextPrecision_PerDocumentJudgmentsInExplanation(t *testing.T) {
 	result, err := cp.Evaluate(context.Background(), EvalCase{
 		Query:           "What is Go?",
 		ReferenceAnswer: "Go is a programming language.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go is statically typed."},
 			{Content: "Python is dynamic."},
 			{Content: "Go was created at Google."},
@@ -136,7 +137,7 @@ func TestContextPrecision_PerDocumentJudgmentsInExplanation(t *testing.T) {
 func TestContextPrecision_ProviderError(t *testing.T) {
 	providerErr := errors.New("service unavailable")
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{nil},
+		[]*agent.ModelResponse{nil},
 		[]error{providerErr},
 	)
 
@@ -144,7 +145,7 @@ func TestContextPrecision_ProviderError(t *testing.T) {
 	_, err := cp.Evaluate(context.Background(), EvalCase{
 		Query:           "What is Go?",
 		ReferenceAnswer: "Go is a programming language.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go is a language."},
 		},
 	})

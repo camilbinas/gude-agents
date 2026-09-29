@@ -36,6 +36,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -44,8 +45,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
+	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/memory/postgres"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -64,6 +65,11 @@ type EpisodicMemory struct {
 	Outcome    string    `json:"outcome" db:"outcome" description:"Result of the event"`
 	Importance float64   `json:"importance" db:"importance" description:"Importance score 0.0-1.0" required:"true"`
 	ObservedAt time.Time `json:"observed_at" db:"observed_at,noinput"`
+}
+
+type recallInput struct {
+	Query string `json:"query" description:"A natural-language query describing what to recall." required:"true"`
+	Limit int    `json:"limit" description:"Maximum number of results to return. Defaults to 5."`
 }
 
 func main() {
@@ -91,7 +97,6 @@ func main() {
 		log.Fatalf("typed store: %v", err)
 	}
 
-	// Create tools — recall defaults to filtering by importance and sorting by time.
 	rememberTool := postgres.NewRememberTool(mem,
 		postgres.WithToolName("remember_event"),
 		postgres.WithToolDescription("Store an observed event as an episodic memory."),
@@ -100,12 +105,7 @@ func main() {
 		postgres.WithToolName("update_event"),
 		postgres.WithToolDescription("Update an existing episodic memory by its ID."),
 	)
-	recallTool := postgres.NewRecallTool(mem,
-		postgres.WithToolName("recall_events"),
-		postgres.WithToolDescription("Recall relevant past events by semantic similarity, sorted by most recent."),
-		postgres.WithFieldGT("importance", 0.3),
-		postgres.WithOrderBy("observed_at", postgres.Desc),
-	)
+	recallTool := newRecallTool(mem)
 	forgetTool := postgres.NewForgetTool(mem,
 		postgres.WithToolName("forget_event"),
 		postgres.WithToolDescription("Remove a specific event from memory by its ID."),
@@ -113,25 +113,19 @@ func main() {
 
 	store := conversation.NewWindow(conversation.NewInMemory(), 20)
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text(
-			"You are a monitoring assistant that tracks system events. "+
-				"Use remember_event to store incidents, recoveries, and deployments. "+
-				"Use update_event to correct or enrich an existing event by its ID. "+
-				"Use recall_events to retrieve relevant past events when asked. "+
-				"Always recall before answering questions about past events.",
-		),
-		[]tool.Tool{rememberTool, updateTool, recallTool, forgetTool},
-		agent.WithConversation(store, "monitoring-session"),
+		"You are a monitoring assistant that tracks system events. Use remember_event to store incidents, recoveries, and deployments. Use update_event to correct or enrich an existing event by its ID. Use recall_events to retrieve relevant past events when asked. Always recall before answering questions about past events.",
+		agent.WithTools(rememberTool, updateTool, recallTool, forgetTool),
+		agent.WithConversationStore(store),
 		auto.WithLogging(),
-		agent.WithParallelToolExecution(),
+		agent.WithParallelTools(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := agent.Background().WithIdentifier("user-123")
+	ctx := agent.Background().WithIdentity("user-123").WithConversationID("monitoring-session")
 
 	fmt.Println()
 	fmt.Println("Monitoring assistant with typed episodic memory. Type 'quit' to exit, 'clear' to forget all.")
@@ -143,8 +137,43 @@ func main() {
 			if err := store.Delete(ctx, "monitoring-session"); err != nil {
 				return err
 			}
-
 			return mem.ForgetAll(ctx, "user-123")
 		},
 	})
+}
+
+func newRecallTool(mem *postgres.Store[EpisodicMemory]) tool.Tool {
+	return tool.New("recall_events", "Recall relevant past events by semantic similarity, sorted by most recent.",
+		func(ctx context.Context, input recallInput) (string, error) {
+			identity, err := memory.ResolveIdentity(ctx, "")
+			if err != nil {
+				return "", err
+			}
+			limit := input.Limit
+			if limit == 0 {
+				limit = 5
+			}
+			results, err := mem.Recall(ctx, identity, memory.RecallQuery{
+				Text:  input.Query,
+				Limit: limit,
+				Filters: []memory.Filter{{
+					Field: "importance", Operator: memory.FilterGreaterThan, Value: 0.3,
+				}},
+				Order: []memory.Order{{
+					Field: "observed_at", Direction: memory.OrderDescending,
+				}},
+			})
+			if err != nil {
+				return "", err
+			}
+			if len(results) == 0 {
+				return "No relevant memories found.", nil
+			}
+			data, err := json.Marshal(results)
+			if err != nil {
+				return "", fmt.Errorf("marshal recalled events: %w", err)
+			}
+			return string(data), nil
+		},
+	)
 }

@@ -9,11 +9,9 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 	ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"
-	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // RAG integration tests that call real embedding and LLM APIs.
@@ -28,7 +26,7 @@ import (
 //   AWS_REGION       - AWS region (default: eu-central-1)
 //   OPENAI_API_KEY   - Required when EMBEDDER=openai
 
-func newTestEmbedder(t *testing.T) agent.Embedder {
+func newTestEmbedder(t *testing.T) rag.Embedder {
 	t.Helper()
 	name := os.Getenv("EMBEDDER")
 	if name == "" {
@@ -217,7 +215,7 @@ func TestIntegration_RAG_IngestAndRetrieve(t *testing.T) {
 	}
 
 	// Build a retriever and query for Go-related content.
-	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
+	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
 	docs, err := retriever.Retrieve(ctx, "Which language has good concurrency support and is compiled?")
 	if err != nil {
@@ -267,11 +265,11 @@ func TestIntegration_RAG_AgentWithRetriever(t *testing.T) {
 		t.Fatalf("Ingest error: %v", err)
 	}
 
-	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
+	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
-	a, err := agent.New(provider,
-		prompt.Text("You are a helpful internal assistant. Answer questions based only on the provided context. Be brief."),
-		nil,
+	a, err := agent.New(
+		provider,
+		"You are a helpful internal assistant. Answer questions based only on the provided context. Be brief.",
 		agent.WithRetriever(retriever),
 	)
 	if err != nil {
@@ -284,11 +282,11 @@ func TestIntegration_RAG_AgentWithRetriever(t *testing.T) {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
-	t.Logf("Agent response: %s", result)
+	t.Logf("Agent response: %s", result.Text)
 
-	lower := strings.ToLower(result)
+	lower := strings.ToLower(result.Text)
 	if !strings.Contains(lower, "billing") && !strings.Contains(lower, "aurora") {
-		t.Errorf("expected response to mention billing or Aurora, got: %s", result)
+		t.Errorf("expected response to mention billing or Aurora, got: %s", result.Text)
 	}
 }
 
@@ -319,12 +317,13 @@ func TestIntegration_RAG_RetrieverTool(t *testing.T) {
 		t.Fatalf("Ingest error: %v", err)
 	}
 
-	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(2))
-	searchTool := agent.NewRetrieverTool("search_docs", "Search internal company documents", retriever)
+	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
+	searchTool := rag.NewRetrieverTool("search_docs", "Search internal company documents", retriever)
 
-	a, err := agent.New(provider,
-		prompt.Text("You are a company assistant. Use the search_docs tool to find answers. Be brief."),
-		[]tool.Tool{searchTool},
+	a, err := agent.New(
+		provider,
+		"You are a company assistant. Use the search_docs tool to find answers. Be brief.",
+		agent.WithTools(searchTool),
 	)
 	if err != nil {
 		t.Fatalf("agent creation error: %v", err)
@@ -336,11 +335,11 @@ func TestIntegration_RAG_RetrieverTool(t *testing.T) {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
-	t.Logf("Agent response: %s", result)
+	t.Logf("Agent response: %s", result.Text)
 
-	lower := strings.ToLower(result)
+	lower := strings.ToLower(result.Text)
 	if !strings.Contains(lower, "11") && !strings.Contains(lower, "lunch") {
-		t.Errorf("expected response to mention lunch hours, got: %s", result)
+		t.Errorf("expected response to mention lunch hours, got: %s", result.Text)
 	}
 }
 

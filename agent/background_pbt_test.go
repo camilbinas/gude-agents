@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"pgregory.net/rapid"
 )
 
-// contextKey is a custom key type for context.Value entries used in property tests.
-type contextKey struct {
+// pbtCtxKey is a custom key type for context.Value entries used in property tests.
+type pbtCtxKey struct {
 	name string
 }
 
@@ -31,13 +31,13 @@ func TestProperty_P4_DetachedHandlerContext(t *testing.T) {
 		numKVs := rapid.IntRange(1, 10).Draw(rt, "numKVs")
 
 		type kvPair struct {
-			key   contextKey
+			key   pbtCtxKey
 			value string
 		}
 		pairs := make([]kvPair, numKVs)
 		for i := range pairs {
 			pairs[i] = kvPair{
-				key:   contextKey{name: rapid.StringMatching(`[a-z]{1,8}`).Draw(rt, "keyName")},
+				key:   pbtCtxKey{name: rapid.StringMatching(`[a-z]{1,8}`).Draw(rt, "keyName")},
 				value: rapid.String().Draw(rt, "value"),
 			}
 		}
@@ -65,9 +65,9 @@ func TestProperty_P4_DetachedHandlerContext(t *testing.T) {
 
 		// Channels to capture what the handler observes.
 		type handlerObservation struct {
-			values    map[contextKey]any // what ctx.Value returned for each key
-			cancelled bool               // whether ctx was cancelled at handler entry
-			err       error              // ctx.Err() at handler entry
+			values    map[pbtCtxKey]any // what ctx.Value returned for each key
+			cancelled bool              // whether ctx was cancelled at handler entry
+			err       error             // ctx.Err() at handler entry
 		}
 		obsCh := make(chan handlerObservation, 1)
 
@@ -76,11 +76,11 @@ func TestProperty_P4_DetachedHandlerContext(t *testing.T) {
 			toolName:       "test-tool",
 			toolUseID:      "tuid-1",
 			conversationID: "conv-1",
-			identifier:     "ident-1",
+			cfg:            invocationConfig{identity: "ident-1"},
 			rawInput:       json.RawMessage(`{}`),
 			handler: func(handlerCtx context.Context, input json.RawMessage) (string, error) {
 				obs := handlerObservation{
-					values: make(map[contextKey]any),
+					values: make(map[pbtCtxKey]any),
 				}
 				// Check each originating key-value pair.
 				for _, p := range pairs {
@@ -143,7 +143,7 @@ func TestProperty_P4_DetachedHandlerContext_CancelTiming(t *testing.T) {
 		cancelDelayMicros := rapid.IntRange(0, 1000).Draw(rt, "cancelDelayMicros")
 
 		// Build an originating context with a value.
-		key := contextKey{name: "timing-key"}
+		key := pbtCtxKey{name: "timing-key"}
 		value := rapid.String().Draw(rt, "value")
 
 		origCtx, origCancel := context.WithCancel(context.Background())
@@ -171,7 +171,7 @@ func TestProperty_P4_DetachedHandlerContext_CancelTiming(t *testing.T) {
 			toolName:       "timing-tool",
 			toolUseID:      "tuid-timing",
 			conversationID: "conv-timing",
-			identifier:     "ident-timing",
+			cfg:            invocationConfig{identity: "ident-timing"},
 			rawInput:       json.RawMessage(`{}`),
 			handler: func(handlerCtx context.Context, input json.RawMessage) (string, error) {
 				// Signal that handler has started.
@@ -277,7 +277,7 @@ func TestProperty_P5_PanicSafety(t *testing.T) {
 			toolName:       toolName,
 			toolUseID:      "tuid-panic",
 			conversationID: "conv-panic",
-			identifier:     "ident-panic",
+			cfg:            invocationConfig{identity: "ident-panic"},
 			rawInput:       json.RawMessage(`{}`),
 			handler: func(ctx context.Context, input json.RawMessage) (string, error) {
 				panic(panicValue)
@@ -310,7 +310,7 @@ func TestProperty_P5_PanicSafety(t *testing.T) {
 			toolName:       "follow-up-tool",
 			toolUseID:      "tuid-followup",
 			conversationID: "conv-panic", // same conversation
-			identifier:     "ident-followup",
+			cfg:            invocationConfig{identity: "ident-followup"},
 			rawInput:       json.RawMessage(`{"key":"value"}`),
 			handler: func(ctx context.Context, input json.RawMessage) (string, error) {
 				followUpResult <- "success"
@@ -488,7 +488,7 @@ func TestProperty_P1_OriginatingTurnAckInvariant(t *testing.T) {
 		inputJSON := json.RawMessage(fmt.Sprintf(`{%q:%q}`, inputKey, inputVal))
 
 		// Create a Background_Tool with the generated ack.
-		bgTool := tool.NewBackgroundRaw(
+		bgTool := newTestBackgroundRaw(
 			toolName,
 			"a background tool for testing",
 			ack,
@@ -510,7 +510,7 @@ func TestProperty_P1_OriginatingTurnAckInvariant(t *testing.T) {
 		// 2nd call: returns a final assistant text (after seeing the ack in the tool result).
 		finalText := "turn complete"
 		sp := &scriptedProvider{
-			responses: []*ProviderResponse{
+			responses: []*ModelResponse{
 				{
 					ToolCalls: []tool.Call{
 						{ToolUseID: toolUseID, Name: toolName, Input: inputJSON},
@@ -521,8 +521,8 @@ func TestProperty_P1_OriginatingTurnAckInvariant(t *testing.T) {
 		}
 
 		// Create the agent with the background tool and conversation store.
-		a, err := New(sp, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, "conv-p1"),
+		a, err := New(sp, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -537,8 +537,8 @@ func TestProperty_P1_OriginatingTurnAckInvariant(t *testing.T) {
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != finalText {
-			rt.Fatalf("expected final text %q, got %q", finalText, result)
+		if result.Text != finalText {
+			rt.Fatalf("expected final text %q, got %q", finalText, result.Text)
 		}
 
 		// Wait for background handler goroutines to finish (they don't affect
@@ -629,17 +629,17 @@ type p1TrackingConversation struct {
 	saved [][]Message
 }
 
-func (t *p1TrackingConversation) Load(_ context.Context, _ string) ([]Message, error) {
-	return nil, nil
+func (t *p1TrackingConversation) Load(_ context.Context, _ string) (ConversationSnapshot, error) {
+	return ConversationSnapshot{Messages: []Message{}}, nil
 }
 
-func (t *p1TrackingConversation) Save(_ context.Context, _ string, msgs []Message) error {
+func (t *p1TrackingConversation) Save(_ context.Context, _ string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
 	t.saved = append(t.saved, cp)
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (t *p1TrackingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -715,7 +715,7 @@ func TestProperty_P2_SchemaValidationGatesDispatch(t *testing.T) {
 		var handlerCallCount atomic.Int32
 
 		// Create the Background_Tool.
-		bgTool := tool.NewBackgroundRaw(
+		bgTool := newTestBackgroundRaw(
 			toolName,
 			"a background tool with strict schema",
 			ack,
@@ -734,7 +734,7 @@ func TestProperty_P2_SchemaValidationGatesDispatch(t *testing.T) {
 		// 2nd call: returns final text (the agent continues after the error result).
 		finalText := "done after error"
 		sp := &scriptedProvider{
-			responses: []*ProviderResponse{
+			responses: []*ModelResponse{
 				{
 					ToolCalls: []tool.Call{
 						{ToolUseID: toolUseID, Name: toolName, Input: invalidInput},
@@ -745,8 +745,8 @@ func TestProperty_P2_SchemaValidationGatesDispatch(t *testing.T) {
 		}
 
 		// Create the agent with the background tool and conversation store.
-		a, err := New(sp, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, "conv-p2"),
+		a, err := New(sp, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -761,8 +761,8 @@ func TestProperty_P2_SchemaValidationGatesDispatch(t *testing.T) {
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != finalText {
-			rt.Fatalf("expected final text %q, got %q", finalText, result)
+		if result.Text != finalText {
+			rt.Fatalf("expected final text %q, got %q", finalText, result.Text)
 		}
 
 		// Wait for any background goroutines (there should be none, but be safe).
@@ -850,12 +850,12 @@ func TestProperty_P3_DispatchMetadataFidelity(t *testing.T) {
 		// from its *Context.
 		var capturedIdentifier atomic.Value // stores string
 
-		checkTool := tool.NewRaw(checkToolName, "checks identifier from context",
+		checkTool := newTestRaw(checkToolName, "checks identifier from context",
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				c := FromContext(ctx)
 				if c != nil {
-					capturedIdentifier.Store(c.Identifier())
+					capturedIdentifier.Store(c.Identity())
 				} else {
 					capturedIdentifier.Store("")
 				}
@@ -864,7 +864,7 @@ func TestProperty_P3_DispatchMetadataFidelity(t *testing.T) {
 		)
 
 		// --- Background tool ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return handlerResult, nil
@@ -882,7 +882,7 @@ func TestProperty_P3_DispatchMetadataFidelity(t *testing.T) {
 		var callMu sync.Mutex
 		callCount := 0
 		provider := &p3SequenceProvider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -891,33 +891,33 @@ func TestProperty_P3_DispatchMetadataFidelity(t *testing.T) {
 				switch n {
 				case 1:
 					// Originating turn: call the background tool.
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
 					// Originating turn: final text.
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				case 3:
 					// Re-entry turn: call the check-identifier tool.
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: checkToolUseID, Name: checkToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 4:
 					// Re-entry turn: final text.
-					return &ProviderResponse{Text: "re-entry done"}, nil
+					return &ModelResponse{Text: "re-entry done"}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool, checkTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool, checkTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -929,14 +929,14 @@ func TestProperty_P3_DispatchMetadataFidelity(t *testing.T) {
 		// --- Invoke the agent with the generated metadata ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger background tool")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "originating done" {
-			rt.Fatalf("expected originating result %q, got %q", "originating done", result)
+		if result.Text != "originating done" {
+			rt.Fatalf("expected originating result %q, got %q", "originating done", result.Text)
 		}
 
 		// Wait for the background handler and re-entry turn to complete.
@@ -1033,7 +1033,7 @@ type p3SaveRecord struct {
 	messages []Message
 }
 
-func (t *p3TrackingConversation) Load(_ context.Context, convID string) ([]Message, error) {
+func (t *p3TrackingConversation) Load(_ context.Context, convID string) (ConversationSnapshot, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.loadIDs = append(t.loadIDs, convID)
@@ -1041,17 +1041,17 @@ func (t *p3TrackingConversation) Load(_ context.Context, convID string) ([]Messa
 	// Return a copy to avoid mutation.
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
-	return cp, nil
+	return ConversationSnapshot{Messages: cp}, nil
 }
 
-func (t *p3TrackingConversation) Save(_ context.Context, convID string, msgs []Message) error {
+func (t *p3TrackingConversation) Save(_ context.Context, convID string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
 	t.data[convID] = cp
 	t.saves = append(t.saves, p3SaveRecord{convID: convID, messages: cp})
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (t *p3TrackingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -1060,16 +1060,12 @@ func (t *p3TrackingConversation) Delete(_ context.Context, _ string) error { ret
 // p3SequenceProvider is a Provider that delegates to a callback function,
 // allowing tests to control provider behavior across originating and re-entry turns.
 type p3SequenceProvider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p3SequenceProvider) Name() string { return "p3-sequence" }
 
-func (p *p3SequenceProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p3SequenceProvider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p3SequenceProvider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
@@ -1101,7 +1097,7 @@ func TestProperty_P6_ResultInjectionShape(t *testing.T) {
 		identifier := rapid.StringMatching(`[a-zA-Z0-9_]{1,20}`).Draw(rt, "identifier")
 
 		// --- Background tool whose handler returns the generated outcome ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				if isSuccess {
@@ -1125,7 +1121,7 @@ func TestProperty_P6_ResultInjectionShape(t *testing.T) {
 		var callMu sync.Mutex
 		callCount := 0
 		provider := &p3SequenceProvider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -1133,24 +1129,24 @@ func TestProperty_P6_ResultInjectionShape(t *testing.T) {
 
 				switch n {
 				case 1:
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				case 3:
-					return &ProviderResponse{Text: "re-entry done"}, nil
+					return &ModelResponse{Text: "re-entry done"}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -1162,14 +1158,14 @@ func TestProperty_P6_ResultInjectionShape(t *testing.T) {
 		// --- Invoke the agent ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger background tool")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "originating done" {
-			rt.Fatalf("expected originating result %q, got %q", "originating done", result)
+		if result.Text != "originating done" {
+			rt.Fatalf("expected originating result %q, got %q", "originating done", result.Text)
 		}
 
 		// Wait for the background handler and re-entry turn to complete.
@@ -1298,24 +1294,24 @@ func newP7RecordingConversation() *p7RecordingConversation {
 	}
 }
 
-func (c *p7RecordingConversation) Load(_ context.Context, convID string) ([]Message, error) {
+func (c *p7RecordingConversation) Load(_ context.Context, convID string) (ConversationSnapshot, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ops = append(c.ops, p7Op{kind: p7OpLoad, convID: convID})
 	msgs := c.data[convID]
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
-	return cp, nil
+	return ConversationSnapshot{Messages: cp}, nil
 }
 
-func (c *p7RecordingConversation) Save(_ context.Context, convID string, msgs []Message) error {
+func (c *p7RecordingConversation) Save(_ context.Context, convID string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
 	c.data[convID] = cp
 	c.ops = append(c.ops, p7Op{kind: p7OpSave, convID: convID, messages: cp})
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (c *p7RecordingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -1358,7 +1354,7 @@ func TestProperty_P7_SaveOrdering(t *testing.T) {
 		reEntryFinalText := "re-entry-" + rapid.StringMatching(`[a-zA-Z0-9]{1,20}`).Draw(rt, "reEntryText")
 
 		// --- Background tool ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return handlerResult, nil
@@ -1377,7 +1373,7 @@ func TestProperty_P7_SaveOrdering(t *testing.T) {
 		var callMu sync.Mutex
 		callCount := 0
 		provider := &p3SequenceProvider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -1385,24 +1381,24 @@ func TestProperty_P7_SaveOrdering(t *testing.T) {
 
 				switch n {
 				case 1:
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				case 3:
-					return &ProviderResponse{Text: reEntryFinalText}, nil
+					return &ModelResponse{Text: reEntryFinalText}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -1414,14 +1410,14 @@ func TestProperty_P7_SaveOrdering(t *testing.T) {
 		// --- Invoke the agent (originating turn) ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger background tool")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "originating done" {
-			rt.Fatalf("expected originating result %q, got %q", "originating done", result)
+		if result.Text != "originating done" {
+			rt.Fatalf("expected originating result %q, got %q", "originating done", result.Text)
 		}
 
 		// Wait for the background handler and re-entry turn to complete.
@@ -1572,12 +1568,12 @@ func joinStrings(ss []string, sep string) string {
 }
 
 // TestProperty_P8_ReEntryTurnIterationParity verifies that every
-// Provider.ConverseStream call during a Re_Entry_Turn sees identical System,
-// ToolConfig (after filtering), and merged InferenceConfig as the originating
+// Provider.Stream call during a Re_Entry_Turn sees identical System,
+// Tools (after filtering), and merged InferenceConfig as the originating
 // user-initiated turn. This confirms that reEntryTurn reuses the same agent
 // configuration (instructions, tools, inference config) as a normal invocation.
 //
-// The test uses a recording provider that captures ConverseParams from both the
+// The test uses a recording provider that captures ModelRequest from both the
 // originating turn and the re-entry turn, then asserts parity on the three
 // configuration axes. It also verifies that termination conditions match (the
 // re-entry turn produces a final text response just like the originating turn).
@@ -1610,7 +1606,7 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 		}
 		if hasMaxTokens {
 			maxTok := rapid.IntRange(1, 4096).Draw(rt, "maxTokens")
-			inferenceOpts = append(inferenceOpts, WithMaxTokens(maxTok))
+			inferenceOpts = append(inferenceOpts, WithMaxOutputTokens(maxTok))
 			expectedMaxTokens = &maxTok
 		}
 
@@ -1629,7 +1625,7 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 		reEntryFinalText := "reentry-" + rapid.StringMatching(`[a-zA-Z0-9]{1,15}`).Draw(rt, "reentryText")
 
 		// --- Background tool ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool for P8", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool for P8", ack,
 			map[string]any{"type": "object", "properties": map[string]any{
 				"task": map[string]any{"type": "string"},
 			}},
@@ -1638,9 +1634,9 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 			},
 		)
 
-		// --- Also add a sync tool to verify ToolConfig parity ---
+		// --- Also add a sync tool to verify Tools parity ---
 		syncToolName := "sync_" + rapid.StringMatching(`[a-z]{3,8}`).Draw(rt, "syncToolName")
-		syncTool := tool.NewRaw(syncToolName, "a sync tool for P8",
+		syncTool := newTestRaw(syncToolName, "a sync tool for P8",
 			map[string]any{"type": "object", "properties": map[string]any{
 				"query": map[string]any{"type": "string"},
 			}},
@@ -1649,7 +1645,7 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 			},
 		)
 
-		// --- Recording provider that captures ConverseParams ---
+		// --- Recording provider that captures ModelRequest ---
 		type recordedParams struct {
 			system          string
 			toolConfig      []tool.Spec
@@ -1660,13 +1656,13 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 		callCount := 0
 
 		recordingProvider := &p8RecordingProvider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				recordMu.Lock()
 				defer recordMu.Unlock()
 
 				// Deep-copy the tool config to avoid mutation.
-				specsCopy := make([]tool.Spec, len(params.ToolConfig))
-				copy(specsCopy, params.ToolConfig)
+				specsCopy := make([]tool.Spec, len(params.Tools))
+				copy(specsCopy, params.Tools)
 
 				// Copy inference config.
 				var cfgCopy *InferenceConfig
@@ -1687,19 +1683,19 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 				switch n {
 				case 1:
 					// Originating turn call 1: LLM calls the background tool.
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{"task":"run"}`)},
 						},
 					}, nil
 				case 2:
 					// Originating turn call 2: LLM returns final text.
-					return &ProviderResponse{Text: originatingFinalText}, nil
+					return &ModelResponse{Text: originatingFinalText}, nil
 				case 3:
 					// Re-entry turn call 1: LLM returns final text.
-					return &ProviderResponse{Text: reEntryFinalText}, nil
+					return &ModelResponse{Text: reEntryFinalText}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected-call"}, nil
+					return &ModelResponse{Text: "unexpected-call"}, nil
 				}
 			},
 		}
@@ -1711,11 +1707,12 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 
 		// --- Create the agent with inference config options ---
 		agentOpts := []Option{
-			WithConversation(store, convID),
+			WithTools(bgTool, syncTool),
+			WithConversationStore(store),
 		}
 		agentOpts = append(agentOpts, inferenceOpts...)
 
-		a, err := New(recordingProvider, prompt.Text(systemPrompt), []tool.Tool{bgTool, syncTool}, agentOpts...)
+		a, err := New(recordingProvider, systemPrompt, agentOpts...)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
@@ -1726,14 +1723,14 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 		// --- Invoke the agent (originating turn) ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger background tool for parity check")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != originatingFinalText {
-			rt.Fatalf("expected originating result %q, got %q", originatingFinalText, result)
+		if result.Text != originatingFinalText {
+			rt.Fatalf("expected originating result %q, got %q", originatingFinalText, result.Text)
 		}
 
 		// Wait for the background handler and re-entry turn to complete.
@@ -1767,10 +1764,10 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 				systemPrompt, originatingParams.system)
 		}
 
-		// --- Assert ToolConfig parity ---
+		// --- Assert Tools parity ---
 		// Both turns should see the same set of tool specs (same names, descriptions, schemas).
 		if len(originatingParams.toolConfig) != len(reEntryParams.toolConfig) {
-			rt.Fatalf("ToolConfig length mismatch: originating=%d, re-entry=%d",
+			rt.Fatalf("Tools length mismatch: originating=%d, re-entry=%d",
 				len(originatingParams.toolConfig), len(reEntryParams.toolConfig))
 		}
 
@@ -1788,23 +1785,23 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 		for name, origSpec := range originatingToolMap {
 			reSpec, ok := reEntryToolMap[name]
 			if !ok {
-				rt.Fatalf("ToolConfig: tool %q present in originating turn but missing in re-entry turn", name)
+				rt.Fatalf("Tools: tool %q present in originating turn but missing in re-entry turn", name)
 			}
 			if origSpec.Description != reSpec.Description {
-				rt.Fatalf("ToolConfig: tool %q description mismatch:\n  originating: %q\n  re-entry:   %q",
+				rt.Fatalf("Tools: tool %q description mismatch:\n  originating: %q\n  re-entry:   %q",
 					name, origSpec.Description, reSpec.Description)
 			}
 			// Compare InputSchema by serializing to JSON.
 			origSchema, _ := json.Marshal(origSpec.InputSchema)
 			reSchema, _ := json.Marshal(reSpec.InputSchema)
 			if string(origSchema) != string(reSchema) {
-				rt.Fatalf("ToolConfig: tool %q InputSchema mismatch:\n  originating: %s\n  re-entry:   %s",
+				rt.Fatalf("Tools: tool %q InputSchema mismatch:\n  originating: %s\n  re-entry:   %s",
 					name, origSchema, reSchema)
 			}
 		}
 		for name := range reEntryToolMap {
 			if _, ok := originatingToolMap[name]; !ok {
-				rt.Fatalf("ToolConfig: tool %q present in re-entry turn but missing in originating turn", name)
+				rt.Fatalf("Tools: tool %q present in re-entry turn but missing in originating turn", name)
 			}
 		}
 
@@ -1913,18 +1910,14 @@ func TestProperty_P8_ReEntryTurnIterationParity(t *testing.T) {
 }
 
 // p8RecordingProvider is a Provider that delegates to a callback function,
-// recording ConverseParams for each call to verify configuration parity.
+// recording ModelRequest for each call to verify configuration parity.
 type p8RecordingProvider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p8RecordingProvider) Name() string { return "p8-recording" }
 
-func (p *p8RecordingProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p8RecordingProvider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p8RecordingProvider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
@@ -1932,7 +1925,7 @@ func (p *p8RecordingProvider) ConverseStream(_ context.Context, params ConverseP
 // Re_Entry_Turn fails at any of the following injection points:
 //   - Conversation.Load error
 //   - Conversation.Save error (pre-save)
-//   - Provider.ConverseStream error
+//   - Provider.Stream error
 //
 // the Notify_Callback is NOT called and the fallback logger records an entry
 // containing the affected Conversation_ID.
@@ -1957,7 +1950,7 @@ func TestProperty_P9_ReEntryTurnFailureSkipsNotify(t *testing.T) {
 		injectedErrMsg := rapid.StringMatching(`[a-z]{3,15}`).Draw(rt, "injectedErrMsg")
 
 		// --- Background tool ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool for P9", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool for P9", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return handlerResult, nil
@@ -1983,7 +1976,7 @@ func TestProperty_P9_ReEntryTurnFailureSkipsNotify(t *testing.T) {
 		var callMu sync.Mutex
 		callCount := 0
 		provider := &p9FailingProvider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -1991,19 +1984,19 @@ func TestProperty_P9_ReEntryTurnFailureSkipsNotify(t *testing.T) {
 
 				switch n {
 				case 1:
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				default:
 					// Re-entry turn provider call.
 					if failureKind == 2 {
 						return nil, fmt.Errorf("injected: %s", injectedErrMsg)
 					}
-					return &ProviderResponse{Text: "re-entry done"}, nil
+					return &ModelResponse{Text: "re-entry done"}, nil
 				}
 			},
 		}
@@ -2018,8 +2011,8 @@ func TestProperty_P9_ReEntryTurnFailureSkipsNotify(t *testing.T) {
 		logger := &p9CapturingLogger{}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -2031,14 +2024,14 @@ func TestProperty_P9_ReEntryTurnFailureSkipsNotify(t *testing.T) {
 		// --- Invoke the agent (originating turn) ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger background tool")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "originating done" {
-			rt.Fatalf("expected originating result %q, got %q", "originating done", result)
+		if result.Text != "originating done" {
+			rt.Fatalf("expected originating result %q, got %q", "originating done", result.Text)
 		}
 
 		// Wait for the background handler and re-entry turn to complete.
@@ -2080,7 +2073,7 @@ type p9FailingConversation struct {
 	saveCount int
 }
 
-func (c *p9FailingConversation) Load(_ context.Context, convID string) ([]Message, error) {
+func (c *p9FailingConversation) Load(_ context.Context, convID string) (ConversationSnapshot, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.loadCount++
@@ -2088,16 +2081,16 @@ func (c *p9FailingConversation) Load(_ context.Context, convID string) ([]Messag
 	// The originating turn does 1 Load. The re-entry turn does the 2nd Load.
 	// Fail on the 2nd Load if failureKind == 0.
 	if c.failureKind == 0 && c.loadCount >= 2 {
-		return nil, c.injectedErr
+		return ConversationSnapshot{}, c.injectedErr
 	}
 
 	msgs := c.data[convID]
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
-	return cp, nil
+	return ConversationSnapshot{Messages: cp}, nil
 }
 
-func (c *p9FailingConversation) Save(_ context.Context, convID string, msgs []Message) error {
+func (c *p9FailingConversation) Save(_ context.Context, convID string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.saveCount++
@@ -2105,13 +2098,13 @@ func (c *p9FailingConversation) Save(_ context.Context, convID string, msgs []Me
 	// The originating turn does 1 Save. The re-entry turn's pre-save is the 2nd Save.
 	// Fail on the 2nd Save if failureKind == 1.
 	if c.failureKind == 1 && c.saveCount >= 2 {
-		return c.injectedErr
+		return 0, c.injectedErr
 	}
 
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
 	c.data[convID] = cp
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (c *p9FailingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -2119,16 +2112,12 @@ func (c *p9FailingConversation) Delete(_ context.Context, _ string) error { retu
 
 // p9FailingProvider is a Provider that delegates to a callback function.
 type p9FailingProvider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p9FailingProvider) Name() string { return "p9-failing" }
 
-func (p *p9FailingProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p9FailingProvider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p9FailingProvider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
@@ -2230,7 +2219,7 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 
 		// --- Background tool with a small delay to increase contention ---
 		handlerDelay := time.Duration(rapid.IntRange(1, 5).Draw(rt, "handlerDelayMs")) * time.Millisecond
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool for P10", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool for P10", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				time.Sleep(handlerDelay)
@@ -2246,7 +2235,7 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 		providerCallCount := 0
 
 		provider := &p10Provider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				providerMu.Lock()
 				providerCallCount++
 				n := providerCallCount
@@ -2272,7 +2261,7 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 
 				if isReEntry {
 					// Re-entry turn: return final text.
-					return &ProviderResponse{Text: fmt.Sprintf("re-entry-done-%d", n)}, nil
+					return &ModelResponse{Text: fmt.Sprintf("re-entry-done-%d", n)}, nil
 				}
 
 				// Originating turn: alternate between tool call and final text.
@@ -2293,12 +2282,12 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 
 				if hasToolResult {
 					// Second call in originating turn: return final text.
-					return &ProviderResponse{Text: fmt.Sprintf("orig-done-%d", n)}, nil
+					return &ModelResponse{Text: fmt.Sprintf("orig-done-%d", n)}, nil
 				}
 
 				// First call in originating turn: call the background tool.
 				toolUseID := fmt.Sprintf("tuid-p10-%d", n)
-				return &ProviderResponse{
+				return &ModelResponse{
 					ToolCalls: []tool.Call{
 						{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 					},
@@ -2307,8 +2296,8 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -2326,7 +2315,7 @@ func TestProperty_P10_ConversationLockMutualExclusion(t *testing.T) {
 				defer wg.Done()
 				ctx := Background().
 					WithConversationID(convID).
-					WithIdentifier(fmt.Sprintf("user-%d", idx))
+					WithIdentity(fmt.Sprintf("user-%d", idx))
 				_, _ = a.Invoke(ctx, fmt.Sprintf("trigger-%d", idx))
 			}(i)
 		}
@@ -2370,7 +2359,7 @@ type p10InstrumentedConversation struct {
 	totalEnters atomic.Int32
 }
 
-func (c *p10InstrumentedConversation) Load(_ context.Context, convID string) ([]Message, error) {
+func (c *p10InstrumentedConversation) Load(_ context.Context, convID string) (ConversationSnapshot, error) {
 	// Enter the critical section.
 	cur := c.current.Add(1)
 	c.totalEnters.Add(1)
@@ -2394,10 +2383,10 @@ func (c *p10InstrumentedConversation) Load(_ context.Context, convID string) ([]
 	copy(cp, msgs)
 	c.mu.Unlock()
 
-	return cp, nil
+	return ConversationSnapshot{Messages: cp}, nil
 }
 
-func (c *p10InstrumentedConversation) Save(_ context.Context, convID string, msgs []Message) error {
+func (c *p10InstrumentedConversation) Save(_ context.Context, convID string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	// Small sleep to widen the detection window.
 	time.Sleep(500 * time.Microsecond)
 
@@ -2410,7 +2399,7 @@ func (c *p10InstrumentedConversation) Save(_ context.Context, convID string, msg
 	// Exit the critical section.
 	c.current.Add(-1)
 
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (c *p10InstrumentedConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -2418,16 +2407,12 @@ func (c *p10InstrumentedConversation) Delete(_ context.Context, _ string) error 
 
 // p10Provider is a Provider that delegates to a callback function for the P10 test.
 type p10Provider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p10Provider) Name() string { return "p10-provider" }
 
-func (p *p10Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p10Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p10Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
@@ -2449,7 +2434,7 @@ func TestProperty_P12_NotifyCallbackExactlyOnce(t *testing.T) {
 		finalText := rapid.StringMatching(`[a-zA-Z0-9_ ]{1,50}`).Draw(rt, "finalText")
 
 		// --- Background tool ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return handlerResult, nil
@@ -2470,7 +2455,7 @@ func TestProperty_P12_NotifyCallbackExactlyOnce(t *testing.T) {
 		var callMu sync.Mutex
 		callCount := 0
 		provider := &p12Provider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -2478,18 +2463,18 @@ func TestProperty_P12_NotifyCallbackExactlyOnce(t *testing.T) {
 
 				switch n {
 				case 1:
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				case 3:
 					// Re-entry turn: return the generated final text.
-					return &ProviderResponse{Text: finalText}, nil
+					return &ModelResponse{Text: finalText}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
@@ -2512,8 +2497,8 @@ func TestProperty_P12_NotifyCallbackExactlyOnce(t *testing.T) {
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -2525,14 +2510,14 @@ func TestProperty_P12_NotifyCallbackExactlyOnce(t *testing.T) {
 		// --- Invoke the agent ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger background tool")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "originating done" {
-			rt.Fatalf("expected originating result %q, got %q", "originating done", result)
+		if result.Text != "originating done" {
+			rt.Fatalf("expected originating result %q, got %q", "originating done", result.Text)
 		}
 
 		// Wait for the background handler and re-entry turn to complete.
@@ -2608,21 +2593,17 @@ func TestProperty_P12_NotifyCallbackExactlyOnce(t *testing.T) {
 
 // p12Provider is a Provider that delegates to a callback function for the P12 test.
 type p12Provider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p12Provider) Name() string { return "p12-provider" }
 
-func (p *p12Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p12Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p12Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
 // TestProperty_P13_NotifyCallbackPanicIsolation verifies that when a registered
-// Notify_Callback panics, the panic does not propagate, the LoggingHook records
+// Notify_Callback panics, the panic does not propagate, the ToolLogObserver records
 // it, and a subsequent Background_Completion still injects its result and still
 // invokes the (next) callback successfully.
 //
@@ -2659,7 +2640,7 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 
 		// --- Background tool: uses an atomic counter to return different results ---
 		var handlerCallCount atomic.Int32
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				n := handlerCallCount.Add(1)
@@ -2690,7 +2671,7 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 		var providerMu sync.Mutex
 		providerCallCount := 0
 		provider := &p13Provider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				providerMu.Lock()
 				providerCallCount++
 				n := providerCallCount
@@ -2698,33 +2679,33 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 
 				switch n {
 				case 1:
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID1, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
-					return &ProviderResponse{Text: "originating done 1"}, nil
+					return &ModelResponse{Text: "originating done 1"}, nil
 				case 3:
-					return &ProviderResponse{Text: finalText1}, nil
+					return &ModelResponse{Text: finalText1}, nil
 				case 4:
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID2, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 5:
-					return &ProviderResponse{Text: "originating done 2"}, nil
+					return &ModelResponse{Text: "originating done 2"}, nil
 				case 6:
-					return &ProviderResponse{Text: finalText2}, nil
+					return &ModelResponse{Text: finalText2}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
 
-		// --- Capturing LoggingHook to verify panic is recorded ---
-		capturingLogger := &p13CapturingLoggingHook{}
+		// --- Capturing ToolLogObserver to verify panic is recorded ---
+		capturingObserver := &p13CapturingObserver{}
 
 		// --- Notify callback: panics on first call, succeeds on second ---
 		var notifyCallCount atomic.Int32
@@ -2751,8 +2732,8 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -2760,20 +2741,20 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 
 		// Wire up the backgroundRegistry with the notify callback.
 		a.backgroundRegistry = newBackgroundRegistry(a, notifyCallback, nil)
-		// Set the capturing logging hook on the agent so logNotifyPanic uses it.
-		a.loggingHook = capturingLogger
+		// Register the capturing observer for notify panic logs.
+		a.observers = append(a.observers, capturingObserver)
 
 		// --- First dispatch: triggers the panicking callback ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result1, err := a.Invoke(ctx, "trigger first background tool")
 		if err != nil {
 			rt.Fatalf("first Invoke failed: %v", err)
 		}
-		if result1 != "originating done 1" {
-			rt.Fatalf("expected first originating result %q, got %q", "originating done 1", result1)
+		if result1.Text != "originating done 1" {
+			rt.Fatalf("expected first originating result %q, got %q", "originating done 1", result1.Text)
 		}
 
 		// Wait for the first background handler and re-entry turn to complete.
@@ -2782,11 +2763,11 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 		// --- Assert: panic did NOT propagate (we're still alive) ---
 		// (If the panic had propagated, the test goroutine would have crashed.)
 
-		// --- Assert: LoggingHook recorded the panic ---
-		capturingLogger.mu.Lock()
-		toolLogs := make([]p13ToolLogEntry, len(capturingLogger.toolLogs))
-		copy(toolLogs, capturingLogger.toolLogs)
-		capturingLogger.mu.Unlock()
+		// --- Assert: ToolLogObserver recorded the panic ---
+		capturingObserver.mu.Lock()
+		toolLogs := make([]p13ToolLogEntry, len(capturingObserver.toolLogs))
+		copy(toolLogs, capturingObserver.toolLogs)
+		capturingObserver.mu.Unlock()
 
 		panicLogged := false
 		panicStr := fmt.Sprintf("%v", panicValue)
@@ -2797,7 +2778,7 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 			}
 		}
 		if !panicLogged {
-			rt.Fatalf("expected LoggingHook to record notify callback panic for conv=%q with value %v; got logs: %+v",
+			rt.Fatalf("expected ToolLogObserver to record notify callback panic for conv=%q with value %v; got logs: %+v",
 				convID, panicValue, toolLogs)
 		}
 		_ = panicStr // used indirectly via contains check
@@ -2805,14 +2786,14 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 		// --- Second dispatch: triggers the succeeding callback ---
 		ctx2 := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result2, err := a.Invoke(ctx2, "trigger second background tool")
 		if err != nil {
 			rt.Fatalf("second Invoke failed: %v", err)
 		}
-		if result2 != "originating done 2" {
-			rt.Fatalf("expected second originating result %q, got %q", "originating done 2", result2)
+		if result2.Text != "originating done 2" {
+			rt.Fatalf("expected second originating result %q, got %q", "originating done 2", result2.Text)
 		}
 
 		// Wait for the second background handler and re-entry turn to complete.
@@ -2903,21 +2884,17 @@ func TestProperty_P13_NotifyCallbackPanicIsolation(t *testing.T) {
 
 // p13Provider is a Provider that delegates to a callback function for the P13 test.
 type p13Provider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p13Provider) Name() string { return "p13-provider" }
 
-func (p *p13Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
+func (p *p13Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
-func (p *p13Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-// p13CapturingLoggingHook captures OnToolLog calls for verifying panic logging.
-type p13CapturingLoggingHook struct {
+// p13CapturingObserver captures ObserveToolLog calls for verifying panic logging.
+type p13CapturingObserver struct {
 	mu       sync.Mutex
 	toolLogs []p13ToolLogEntry
 }
@@ -2927,35 +2904,12 @@ type p13ToolLogEntry struct {
 	msg      string
 }
 
-func (h *p13CapturingLoggingHook) OnToolLog(toolName string, msg string) {
+func (h *p13CapturingObserver) ObserveToolLog(ctx context.Context, record ToolLogRecord) context.Context {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.toolLogs = append(h.toolLogs, p13ToolLogEntry{toolName: toolName, msg: msg})
+	h.toolLogs = append(h.toolLogs, p13ToolLogEntry{toolName: record.Name, msg: record.Message})
+	return ctx
 }
-
-// Implement remaining LoggingHook methods as no-ops.
-func (h *p13CapturingLoggingHook) OnInvokeStart(params InvokeSpanParams) {}
-func (h *p13CapturingLoggingHook) OnInvokeEnd(err error, usage TokenUsage, duration time.Duration) {
-}
-func (h *p13CapturingLoggingHook) OnIterationStart(iteration int) {}
-func (h *p13CapturingLoggingHook) OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration) {
-}
-func (h *p13CapturingLoggingHook) OnProviderCallStart(modelID string) {}
-func (h *p13CapturingLoggingHook) OnProviderCallEnd(err error, usage TokenUsage, toolCallCount int, duration time.Duration) {
-}
-func (h *p13CapturingLoggingHook) OnToolStart(toolName string)                                   {}
-func (h *p13CapturingLoggingHook) OnToolEnd(toolName string, err error, duration time.Duration)  {}
-func (h *p13CapturingLoggingHook) OnGuardrailComplete(direction string, blocked bool, err error) {}
-func (h *p13CapturingLoggingHook) OnConversationStart(operation string, conversationID string)   {}
-func (h *p13CapturingLoggingHook) OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
-}
-func (h *p13CapturingLoggingHook) OnRetrieverStart(query string)                                  {}
-func (h *p13CapturingLoggingHook) OnRetrieverEnd(err error, docCount int, duration time.Duration) {}
-func (h *p13CapturingLoggingHook) OnImagesAttached(imageCount int)                                {}
-func (h *p13CapturingLoggingHook) OnDocumentsAttached(docCount int)                               {}
-func (h *p13CapturingLoggingHook) OnMaxIterationsExceeded(limit int)                              {}
-func (h *p13CapturingLoggingHook) OnStreamChunk(text string)                                      {}
-func (h *p13CapturingLoggingHook) OnResponse(text string)                                         {}
 
 // TestProperty_P14_MultiDispatchFanOut verifies that for N ≥ 1 Background_Tool
 // calls in one originating iteration with distinct Tool_Use_IDs and any release
@@ -3011,7 +2965,7 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 
 		// We need to pass the Tool_Use_ID to the handler. Since the handler only
 		// receives the input JSON, we encode the index in the input.
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object", "properties": map[string]any{
 				"idx": map[string]any{"type": "number"},
 			}},
@@ -3046,7 +3000,7 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 		reEntryCallCount := 0
 
 		provider := &p14Provider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				providerMu.Lock()
 				providerCallCount++
 				callNum := providerCallCount
@@ -3062,11 +3016,11 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 							Input:     json.RawMessage(fmt.Sprintf(`{"idx":%d}`, i)),
 						}
 					}
-					return &ProviderResponse{ToolCalls: calls}, nil
+					return &ModelResponse{ToolCalls: calls}, nil
 				}
 				if callNum == 2 {
 					// Second call: originating turn finishes.
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				}
 				// Re-entry turn calls (3..2+N): each returns the finalText
 				// for the re-entry turn in the order they execute.
@@ -3076,9 +3030,9 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 				providerMu.Unlock()
 
 				if reIdx < n {
-					return &ProviderResponse{Text: finalTexts[releaseOrder[reIdx]]}, nil
+					return &ModelResponse{Text: finalTexts[releaseOrder[reIdx]]}, nil
 				}
-				return &ProviderResponse{Text: "unexpected"}, nil
+				return &ModelResponse{Text: "unexpected"}, nil
 			},
 		}
 
@@ -3100,8 +3054,8 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 		}
 
 		// --- Create the agent ---
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
@@ -3113,14 +3067,14 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 		// --- Invoke the agent (originating turn dispatches N background tools) ---
 		ctx := Background().
 			WithConversationID(convID).
-			WithIdentifier(identifier)
+			WithIdentity(identifier)
 
 		result, err := a.Invoke(ctx, "trigger multiple background tools")
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != "originating done" {
-			rt.Fatalf("expected originating result %q, got %q", "originating done", result)
+		if result.Text != "originating done" {
+			rt.Fatalf("expected originating result %q, got %q", "originating done", result.Text)
 		}
 
 		// --- Release handlers in the permutation order π ---
@@ -3233,24 +3187,20 @@ func TestProperty_P14_MultiDispatchFanOut(t *testing.T) {
 
 // p14Provider is a Provider that delegates to a callback function for the P14 test.
 type p14Provider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p14Provider) Name() string { return "p14-provider" }
 
-func (p *p14Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p14Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p14Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
 // TestIntegration_MissingConversationID verifies that when the LLM invokes a
-// Background_Tool but neither the *Context override nor the agent's default
-// supplies a Conversation_ID, the originating turn returns a ToolResultBlock
-// with IsError: true for that Tool_Use_ID, no handler is dispatched, and no
-// Re_Entry_Turn runs.
+// Background_Tool but the invocation has no Conversation_ID, the originating
+// turn returns a ToolResultBlock with IsError: true for that Tool_Use_ID, no
+// conversation is persisted, no handler is dispatched, and no Re_Entry_Turn
+// runs.
 //
 // **Validates: Requirements 3.4**
 func TestIntegration_MissingConversationID(t *testing.T) {
@@ -3262,7 +3212,7 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 	bgAck := "task started"
 
 	// Create a Background_Tool whose handler increments the counter.
-	bgTool := tool.NewBackgroundRaw(
+	bgTool := newTestBackgroundRaw(
 		bgToolName,
 		"a background tool that should not run without a conversation id",
 		bgAck,
@@ -3277,21 +3227,21 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 	// 1st call: returns a ToolUseBlock calling the background tool.
 	// 2nd call: returns a final assistant text (the turn should still complete).
 	finalText := "acknowledged"
-	sp := newScriptedProvider(
-		&ProviderResponse{
+	sp := &approvalBatchProvider{responses: []*ModelResponse{
+		{
 			ToolCalls: []tool.Call{
 				{ToolUseID: bgToolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 			},
 		},
-		&ProviderResponse{Text: finalText},
-	)
+		{Text: finalText},
+	}}
 
-	// Create a conversation store with an EMPTY default conversation ID.
-	// This means resolveConversationID will return "" unless the *Context overrides it.
+	// Create a conversation store. The empty invocation ID keeps this call
+	// stateless, so the store must remain untouched.
 	store := newTestMemoryStore()
 
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{bgTool},
-		WithConversation(store, ""), // empty default conversation ID
+	a, err := New(sp, "sys", WithTools(bgTool),
+		WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatalf("agent.New failed: %v", err)
@@ -3300,15 +3250,15 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 	// Override the backgroundRegistry with a clean instance for the test.
 	a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
-	// Invoke the agent with a *Context that has NO conversation ID override.
-	// Background() returns a fresh context with no conversation ID set.
+	// Invoke the agent with no conversation ID. Background() returns a fresh
+	// stateless context.
 	ctx := Background()
 	result, err := a.Invoke(ctx, "run the background task")
 	if err != nil {
 		t.Fatalf("Invoke failed: %v", err)
 	}
-	if result != finalText {
-		t.Fatalf("expected final text %q, got %q", finalText, result)
+	if result.Text != finalText {
+		t.Fatalf("expected final text %q, got %q", finalText, result.Text)
 	}
 
 	// Wait for any background goroutines (there should be none, but be safe).
@@ -3322,37 +3272,25 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 	// Assert 2: The provider was called exactly 2 times (originating turn only,
 	// no additional Re_Entry_Turn provider calls).
 	sp.mu.Lock()
-	providerCalls := sp.callIndex
+	providerCalls := len(sp.params)
 	sp.mu.Unlock()
 	if providerCalls != 2 {
 		t.Fatalf("expected exactly 2 provider calls (originating turn), got %d — indicates a spurious Re_Entry_Turn", providerCalls)
 	}
 
-	// Assert 3: The saved conversation contains a ToolResultBlock with IsError: true
-	// and content mentioning "conversation id" for the background tool's Tool_Use_ID.
-	//
-	// Since the conversation ID is empty, saveConversation is called with convID=""
-	// which means the store saves under the "" key.
-	store.mu.RLock()
-	saved := store.data[""]
-	store.mu.RUnlock()
-
-	if saved == nil {
-		t.Fatalf("no conversation was saved")
-	}
-
-	// Search for the ToolResultBlock with IsError: true for our tool use ID.
+	// Assert 3: The second provider call receives an error result for the
+	// background tool, while the stateless invocation never touches the store.
+	sp.mu.Lock()
+	secondMessages := append([]Message(nil), sp.params[1].Messages...)
+	sp.mu.Unlock()
 	foundErrorResult := false
-	for _, msg := range saved {
+	for _, msg := range secondMessages {
 		if msg.Role != RoleUser {
 			continue
 		}
 		for _, block := range msg.Content {
 			trb, ok := block.(ToolResultBlock)
-			if !ok {
-				continue
-			}
-			if trb.ToolUseID != bgToolUseID {
+			if !ok || trb.ToolUseID != bgToolUseID {
 				continue
 			}
 			if !trb.IsError {
@@ -3365,7 +3303,12 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 		}
 	}
 	if !foundErrorResult {
-		t.Fatalf("no ToolResultBlock{IsError: true} found for Tool_Use_ID %q in saved conversation", bgToolUseID)
+		t.Fatalf("no ToolResultBlock{IsError: true} found for Tool_Use_ID %q in provider request", bgToolUseID)
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if len(store.data) != 0 {
+		t.Fatalf("stateless background invocation persisted conversations: %#v", store.data)
 	}
 }
 
@@ -3410,7 +3353,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	// A custom context key to plant on the originating context.
 	type happyKey struct{}
 
-	bgTool := tool.NewBackgroundRaw(
+	bgTool := newTestBackgroundRaw(
 		bgToolName,
 		"a long-running background task",
 		bgAck,
@@ -3449,7 +3392,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	var callMu sync.Mutex
 	callCount := 0
 	provider := &happyPathProvider{
-		onCall: func(params ConverseParams) (*ProviderResponse, error) {
+		onCall: func(params ModelRequest) (*ModelResponse, error) {
 			callMu.Lock()
 			callCount++
 			n := callCount
@@ -3457,17 +3400,17 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 			switch n {
 			case 1:
-				return &ProviderResponse{
+				return &ModelResponse{
 					ToolCalls: []tool.Call{
 						{ToolUseID: bgToolUseID, Name: bgToolName, Input: json.RawMessage(`{"query":"compute"}`)},
 					},
 				}, nil
 			case 2:
-				return &ProviderResponse{Text: originatingTxt}, nil
+				return &ModelResponse{Text: originatingTxt}, nil
 			case 3:
-				return &ProviderResponse{Text: reEntryTxt}, nil
+				return &ModelResponse{Text: reEntryTxt}, nil
 			default:
-				return &ProviderResponse{Text: "unexpected call"}, nil
+				return &ModelResponse{Text: "unexpected call"}, nil
 			}
 		},
 	}
@@ -3490,8 +3433,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 	}
 
 	// --- Create the agent ---
-	a, err := New(provider, prompt.Text("system prompt"), []tool.Tool{bgTool},
-		WithConversation(store, convID),
+	a, err := New(provider, "system prompt", WithTools(bgTool),
+		WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatalf("agent.New failed: %v", err)
@@ -3504,7 +3447,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	// Plant a value on the originating context to verify it does NOT leak to the handler.
 	ctx := Background().
 		WithConversationID(convID).
-		WithIdentifier(identifier)
+		WithIdentity(identifier)
 	// We can't directly add a value to *Context, but the handler receives
 	// context.Background() from the registry, so any value on the originating
 	// *Context (which is a context.Context) would not propagate. The handler
@@ -3516,8 +3459,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 	}
 
 	// Assert: originating turn returned the expected text.
-	if result != originatingTxt {
-		t.Fatalf("originating turn result = %q, want %q", result, originatingTxt)
+	if result.Text != originatingTxt {
+		t.Fatalf("originating turn result = %q, want %q", result.Text, originatingTxt)
 	}
 
 	// Assert: ack was persisted in the originating turn's conversation.
@@ -3653,18 +3596,17 @@ func TestIntegration_HappyPath(t *testing.T) {
 	}
 }
 
-// TestProperty_P15_EventHookParity verifies that a Re_Entry_Turn produces the
-// same shape of EventHook events (OnModelStart → OnModelEnd per provider call,
-// and matched OnToolCallStart / OnToolCallEnd pairs) as a user-initiated turn
+// TestProperty_P15_EventTypeParity verifies that a Re_Entry_Turn produces the
+// same shape of EventType values (EventModelStart → EventModelEnd per provider call,
+// and matched EventToolStart / EventToolEnd pairs) as a user-initiated turn
 // driven by the same provider script.
 //
-// Since the Re_Entry_Turn reuses runLoop (which dispatches EventHook events
-// through the hooks struct), this test drives the same fake-provider script
-// through (a) a user-initiated turn and (b) a Re_Entry_Turn, then asserts
-// the EventHook receives the same event shape in both cases.
+// Since the Re_Entry_Turn reuses runLoop, this test drives the same fake-provider
+// script through (a) a user-initiated turn and (b) a Re_Entry_Turn, then asserts
+// that both produce the same event shape.
 //
 // **Validates: Requirements 11.2**
-func TestProperty_P15_EventHookParity(t *testing.T) {
+func TestProperty_P15_EventTypeParity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate arbitrary metadata.
 		convID := rapid.StringMatching(`[a-z0-9\-]{4,16}`).Draw(rt, "convID")
@@ -3675,26 +3617,26 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 		originatingText := "orig-" + rapid.StringMatching(`[a-zA-Z0-9]{1,10}`).Draw(rt, "origText")
 		reEntryText := "reentry-" + rapid.StringMatching(`[a-zA-Z0-9]{1,10}`).Draw(rt, "reentryText")
 
-		// --- Part A: Run a user-initiated turn with an EventHook ---
+		// --- Part A: Run a user-initiated turn with detailed EventType values ---
 		// This turn uses a simple provider script: one provider call → final text.
-		// We record the EventHook events to establish the expected shape.
-		userHook := &p15EventRecorder{}
+		// We record the stream EventTypes to establish the expected shape.
+		userRecorder := &p15EventRecorder{}
 		userProvider := &p15Provider{
-			onCall: func(callNum int, params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(callNum int, params ModelRequest) (*ModelResponse, error) {
 				// Single provider call returning final text.
-				return &ProviderResponse{Text: "user-turn-result"}, nil
+				return &ModelResponse{Text: "user-turn-result"}, nil
 			},
 		}
 
-		userTool := tool.NewRaw("user_dummy", "dummy tool", map[string]any{"type": "object"},
+		userTool := newTestRaw("user_dummy", "dummy tool", map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return "ok", nil
 			},
 		)
 
 		userStore := &p1TrackingConversation{}
-		userAgent, err := New(userProvider, prompt.Text("sys"), []tool.Tool{userTool},
-			WithConversation(userStore, "user-conv"),
+		userAgent, err := New(userProvider, "sys", WithTools(userTool),
+			WithConversationStore(userStore),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New (user turn) failed: %v", err)
@@ -3702,27 +3644,27 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 
 		userCtx := Background().
 			WithConversationID("user-conv").
-			WithEventHook(userHook)
+			WithDetailedEvents()
 
-		_, err = userAgent.Invoke(userCtx, "hello")
+		err = userRecorder.drain(userAgent.Stream(userCtx, "hello"))
 		if err != nil {
 			rt.Fatalf("user-initiated Invoke failed: %v", err)
 		}
 
 		// Record the user-initiated turn's event shape.
-		userEvents := userHook.events()
+		userEvents := userRecorder.events()
 
 		// --- Part B: Run a full originating + re-entry turn flow ---
 		// The re-entry turn will make one provider call (returning final text),
 		// which is the same pattern as Part A's single provider call.
-		// We verify the re-entry turn produces at least one OnModelStart and
-		// one OnModelEnd event by intercepting at the provider level.
+		// We verify the re-entry turn produces at least one EventModelStart and
+		// one EventModelEnd event by intercepting at the provider level.
 		var reEntryProviderCalls atomic.Int32
 		callCount := 0
 		var callMu sync.Mutex
 
 		bgProvider := &p15Provider{
-			onCall: func(callNum int, params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(callNum int, params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -3731,25 +3673,25 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 				switch n {
 				case 1:
 					// Originating turn call 1: LLM calls the background tool.
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
 					}, nil
 				case 2:
 					// Originating turn call 2: LLM returns final text.
-					return &ProviderResponse{Text: originatingText}, nil
+					return &ModelResponse{Text: originatingText}, nil
 				case 3:
 					// Re-entry turn call 1: LLM returns final text.
 					reEntryProviderCalls.Add(1)
-					return &ProviderResponse{Text: reEntryText}, nil
+					return &ModelResponse{Text: reEntryText}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
 
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				return handlerResult, nil
@@ -3757,8 +3699,8 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 		)
 
 		bgStore := &p1TrackingConversation{}
-		bgAgent, err := New(bgProvider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(bgStore, convID),
+		bgAgent, err := New(bgProvider, "sys", WithTools(bgTool),
+			WithConversationStore(bgStore),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New (bg turn) failed: %v", err)
@@ -3770,8 +3712,8 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 		if err != nil {
 			rt.Fatalf("originating Invoke failed: %v", err)
 		}
-		if result != originatingText {
-			rt.Fatalf("expected originating result %q, got %q", originatingText, result)
+		if result.Text != originatingText {
+			rt.Fatalf("expected originating result %q, got %q", originatingText, result.Text)
 		}
 
 		// Wait for the re-entry turn to complete.
@@ -3784,47 +3726,47 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 			rt.Fatalf("expected 1 re-entry provider call, got %d", reEntryProviderCalls.Load())
 		}
 
-		// Assert the user-initiated turn's EventHook received the expected shape:
-		// At least one OnModelStart followed by one OnModelEnd per provider call.
+		// Assert the user-initiated turn's EventType received the expected shape:
+		// At least one EventModelStart followed by one EventModelEnd per provider call.
 		if len(userEvents) == 0 {
-			rt.Fatalf("user-initiated turn produced no EventHook events")
+			rt.Fatalf("user-initiated turn produced no EventType events")
 		}
 
-		// Verify the user-initiated turn has at least one OnModelStart and one OnModelEnd.
+		// Verify the user-initiated turn has at least one EventModelStart and one EventModelEnd.
 		userModelStarts := 0
 		userModelEnds := 0
 		for _, e := range userEvents {
 			switch e {
-			case "OnModelStart":
+			case string(EventModelStart):
 				userModelStarts++
-			case "OnModelEnd":
+			case string(EventModelEnd):
 				userModelEnds++
 			}
 		}
 		if userModelStarts < 1 {
-			rt.Fatalf("user-initiated turn: expected at least 1 OnModelStart, got %d", userModelStarts)
+			rt.Fatalf("user-initiated turn: expected at least 1 EventModelStart, got %d", userModelStarts)
 		}
 		if userModelEnds < 1 {
-			rt.Fatalf("user-initiated turn: expected at least 1 OnModelEnd, got %d", userModelEnds)
+			rt.Fatalf("user-initiated turn: expected at least 1 EventModelEnd, got %d", userModelEnds)
 		}
 		if userModelStarts != userModelEnds {
-			rt.Fatalf("user-initiated turn: OnModelStart count (%d) != OnModelEnd count (%d)",
+			rt.Fatalf("user-initiated turn: EventModelStart count (%d) != EventModelEnd count (%d)",
 				userModelStarts, userModelEnds)
 		}
 
 		// Now run Part C: a user-initiated turn that simulates the re-entry turn's
-		// provider interaction (single call → final text) with an EventHook attached.
+		// provider interaction (single call → final text) with detailed events enabled.
 		// This proves that the same runLoop path produces the same event shape.
-		reEntrySimHook := &p15EventRecorder{}
+		reEntrySimRecorder := &p15EventRecorder{}
 		reEntrySimProvider := &p15Provider{
-			onCall: func(callNum int, params ConverseParams) (*ProviderResponse, error) {
-				return &ProviderResponse{Text: reEntryText}, nil
+			onCall: func(callNum int, params ModelRequest) (*ModelResponse, error) {
+				return &ModelResponse{Text: reEntryText}, nil
 			},
 		}
 
 		reEntrySimStore := &p1TrackingConversation{}
-		reEntrySimAgent, err := New(reEntrySimProvider, prompt.Text("sys"), []tool.Tool{userTool},
-			WithConversation(reEntrySimStore, "sim-conv"),
+		reEntrySimAgent, err := New(reEntrySimProvider, "sys", WithTools(userTool),
+			WithConversationStore(reEntrySimStore),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New (re-entry sim) failed: %v", err)
@@ -3832,47 +3774,47 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 
 		reEntrySimCtx := Background().
 			WithConversationID("sim-conv").
-			WithEventHook(reEntrySimHook)
+			WithDetailedEvents()
 
-		_, err = reEntrySimAgent.Invoke(reEntrySimCtx, "simulate re-entry")
+		err = reEntrySimRecorder.drain(reEntrySimAgent.Stream(reEntrySimCtx, "simulate re-entry"))
 		if err != nil {
 			rt.Fatalf("re-entry simulation Invoke failed: %v", err)
 		}
 
-		reEntrySimEvents := reEntrySimHook.events()
+		reEntrySimEvents := reEntrySimRecorder.events()
 
 		// Assert the re-entry simulation produces the same event shape as the
 		// user-initiated turn (both use a single provider call → final text).
-		// The key assertion: same OnModelStart → OnModelEnd pattern.
+		// The key assertion: same EventModelStart → EventModelEnd pattern.
 		simModelStarts := 0
 		simModelEnds := 0
 		for _, e := range reEntrySimEvents {
 			switch e {
-			case "OnModelStart":
+			case string(EventModelStart):
 				simModelStarts++
-			case "OnModelEnd":
+			case string(EventModelEnd):
 				simModelEnds++
 			}
 		}
 
-		// Both should have exactly 1 OnModelStart and 1 OnModelEnd (single provider call).
+		// Both should have exactly 1 EventModelStart and 1 EventModelEnd (single provider call).
 		if simModelStarts != userModelStarts {
-			rt.Fatalf("event shape mismatch: user-initiated OnModelStart=%d, re-entry sim OnModelStart=%d",
+			rt.Fatalf("event shape mismatch: user-initiated EventModelStart=%d, re-entry sim EventModelStart=%d",
 				userModelStarts, simModelStarts)
 		}
 		if simModelEnds != userModelEnds {
-			rt.Fatalf("event shape mismatch: user-initiated OnModelEnd=%d, re-entry sim OnModelEnd=%d",
+			rt.Fatalf("event shape mismatch: user-initiated EventModelEnd=%d, re-entry sim EventModelEnd=%d",
 				userModelEnds, simModelEnds)
 		}
 
-		// Verify matched OnToolCallStart / OnToolCallEnd pairs in both turns.
+		// Verify matched EventToolStart / EventToolEnd pairs in both turns.
 		userToolStarts := 0
 		userToolEnds := 0
 		for _, e := range userEvents {
 			switch e {
-			case "OnToolCallStart":
+			case string(EventToolStart):
 				userToolStarts++
-			case "OnToolCallEnd":
+			case string(EventToolEnd):
 				userToolEnds++
 			}
 		}
@@ -3885,9 +3827,9 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 		simToolEnds := 0
 		for _, e := range reEntrySimEvents {
 			switch e {
-			case "OnToolCallStart":
+			case string(EventToolStart):
 				simToolStarts++
-			case "OnToolCallEnd":
+			case string(EventToolEnd):
 				simToolEnds++
 			}
 		}
@@ -3899,64 +3841,41 @@ func TestProperty_P15_EventHookParity(t *testing.T) {
 		// Both turns used the same provider script (single call → final text, no tool calls),
 		// so both should have 0 tool call events.
 		if userToolStarts != simToolStarts {
-			rt.Fatalf("event shape mismatch: user-initiated OnToolCallStart=%d, re-entry sim OnToolCallStart=%d",
+			rt.Fatalf("event shape mismatch: user-initiated EventToolStart=%d, re-entry sim EventToolStart=%d",
 				userToolStarts, simToolStarts)
 		}
 	})
 }
 
-// p15EventRecorder is a thread-safe EventHook that records event names in order.
+// p15EventRecorder records the Stream event shape using canonical EventType labels.
 type p15EventRecorder struct {
 	mu       sync.Mutex
 	recorded []string
 }
 
-func (r *p15EventRecorder) OnToolCallStart(_ *Context, _ string, _ json.RawMessage) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnToolCallStart")
-}
-
-func (r *p15EventRecorder) OnToolCallEnd(_ *Context, _ string, _ string, _ error, _ time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnToolCallEnd")
-}
-
-func (r *p15EventRecorder) OnThinking(_ *Context, _ string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnThinking")
-}
-
-func (r *p15EventRecorder) OnModelStart(_ *Context) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnModelStart")
-}
-
-func (r *p15EventRecorder) OnModelEnd(_ *Context, _ string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnModelEnd")
-}
-
-func (r *p15EventRecorder) OnIterationStart(_ *Context, _ int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnIterationStart")
-}
-
-func (r *p15EventRecorder) OnIterationEnd(_ *Context, _ int, _ int, _ bool, _ time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnIterationEnd")
-}
-
-func (r *p15EventRecorder) OnMaxIterationsExceeded(_ *Context, _ int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.recorded = append(r.recorded, "OnMaxIterationsExceeded")
+// drain consumes seq and records model/tool/iteration events.
+func (r *p15EventRecorder) drain(seq iter.Seq2[Event, error]) error {
+	names := map[EventType]string{
+		EventToolStart:      string(EventToolStart),
+		EventToolEnd:        string(EventToolEnd),
+		EventThinking:       string(EventThinking),
+		EventModelStart:     string(EventModelStart),
+		EventModelEnd:       string(EventModelEnd),
+		EventIterationStart: string(EventIterationStart),
+		EventIterationEnd:   string(EventIterationEnd),
+		EventMaxIterations:  string(EventMaxIterations),
+	}
+	for ev, err := range seq {
+		if err != nil {
+			return err
+		}
+		if n, ok := names[ev.Type]; ok {
+			r.mu.Lock()
+			r.recorded = append(r.recorded, n)
+			r.mu.Unlock()
+		}
+	}
+	return nil
 }
 
 func (r *p15EventRecorder) events() []string {
@@ -3971,20 +3890,12 @@ func (r *p15EventRecorder) events() []string {
 type p15Provider struct {
 	mu      sync.Mutex
 	callNum int
-	onCall  func(callNum int, params ConverseParams) (*ProviderResponse, error)
+	onCall  func(callNum int, params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p15Provider) Name() string { return "p15-provider" }
 
-func (p *p15Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	p.mu.Lock()
-	p.callNum++
-	n := p.callNum
-	p.mu.Unlock()
-	return p.onCall(n, params)
-}
-
-func (p *p15Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p15Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	p.mu.Lock()
 	p.callNum++
 	n := p.callNum
@@ -3995,25 +3906,20 @@ func (p *p15Provider) ConverseStream(_ context.Context, params ConverseParams, _
 // happyPathProvider is a Provider that delegates to a callback function for the
 // happy-path integration test.
 type happyPathProvider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *happyPathProvider) Name() string { return "happy-path-provider" }
 
-func (p *happyPathProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
+func (p *happyPathProvider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
-func (p *happyPathProvider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-// TestProperty_P16_ObservabilityEmission verifies that for every dispatch the
-// LoggingHook records (toolName, Conversation_ID, Tool_Use_ID); for every
-// completion an entry with (toolName, Conversation_ID, Tool_Use_ID, success|error,
-// duration); for every Re_Entry_Turn TracingHook.OnInvokeStart is invoked with
-// InvokeSpanParams.ConversationID == convID and empty UserMessage; and the
-// MetricsHook receives the turn's cumulative TokenUsage.
+// TestProperty_P16_ObservabilityEmission verifies that dispatch and completion
+// ToolLogRecords carry the tool name, conversation ID, tool-use ID, status, and
+// duration; each Re_Entry_Turn emits an InvokeObserver start record with the
+// conversation ID and empty user message; and its end record carries cumulative
+// token usage.
 //
 // **Validates: Requirements 12.1, 12.2, 12.3, 12.4**
 func TestProperty_P16_ObservabilityEmission(t *testing.T) {
@@ -4035,23 +3941,15 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 		reEntryInputTokens := rapid.IntRange(1, 5000).Draw(rt, "reEntryInputTokens")
 		reEntryOutputTokens := rapid.IntRange(1, 5000).Draw(rt, "reEntryOutputTokens")
 
-		// --- Set up recording hooks ---
-
-		// LoggingHook: captures OnToolLog calls.
-		loggingHook := &p16CapturingLoggingHook{}
-
-		// TracingHook: captures OnInvokeStart params.
-		tracingHook := &p16CapturingTracingHook{}
-
-		// MetricsHook: captures OnInvokeStart finish calls with TokenUsage.
-		metricsHook := &p16CapturingMetricsHook{}
+		// --- Set up recording observer ---
+		observer := &p16CapturingObserver{}
 
 		// --- Set up provider ---
 		var callCount int
 		var callMu sync.Mutex
 
 		provider := &p16Provider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				callMu.Lock()
 				callCount++
 				n := callCount
@@ -4060,7 +3958,7 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 				switch n {
 				case 1:
 					// Originating turn call 1: LLM calls the background tool.
-					return &ProviderResponse{
+					return &ModelResponse{
 						ToolCalls: []tool.Call{
 							{ToolUseID: toolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
 						},
@@ -4068,24 +3966,24 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 					}, nil
 				case 2:
 					// Originating turn call 2: LLM returns final text.
-					return &ProviderResponse{
+					return &ModelResponse{
 						Text:  originatingText,
 						Usage: TokenUsage{InputTokens: 20, OutputTokens: 10},
 					}, nil
 				case 3:
 					// Re-entry turn call: LLM returns final text with generated token usage.
-					return &ProviderResponse{
+					return &ModelResponse{
 						Text:  reEntryText,
 						Usage: TokenUsage{InputTokens: reEntryInputTokens, OutputTokens: reEntryOutputTokens},
 					}, nil
 				default:
-					return &ProviderResponse{Text: "unexpected"}, nil
+					return &ModelResponse{Text: "unexpected"}, nil
 				}
 			},
 		}
 
 		// --- Set up background tool ---
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a background tool", ack,
 			map[string]any{"type": "object"},
 			func(ctx context.Context, input json.RawMessage) (string, error) {
 				if handlerShouldFail {
@@ -4097,17 +3995,13 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 
 		// --- Set up agent ---
 		store := &p1TrackingConversation{}
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
+			WithObserver(observer),
 		)
 		if err != nil {
 			rt.Fatalf("agent.New failed: %v", err)
 		}
-
-		// Set the hooks on the agent so they're picked up by a.hooks(ctx).
-		a.SetLoggingHook(loggingHook)
-		a.SetTracingHook(tracingHook)
-		a.SetMetricsHook(metricsHook)
 
 		// Set up the backgroundRegistry.
 		a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
@@ -4118,16 +4012,16 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 		if err != nil {
 			rt.Fatalf("Invoke failed: %v", err)
 		}
-		if result != originatingText {
-			rt.Fatalf("expected originating result %q, got %q", originatingText, result)
+		if result.Text != originatingText {
+			rt.Fatalf("expected originating result %q, got %q", originatingText, result.Text)
 		}
 
 		// Wait for the re-entry turn to complete.
 		a.backgroundRegistry.wg.Wait()
 
-		// --- Assert LoggingHook received dispatch entry ---
+		// --- Assert ToolLogObserver received dispatch entry ---
 		// The dispatch log entry should contain toolName, conversationID, toolUseID.
-		toolLogs := loggingHook.getToolLogs()
+		toolLogs := observer.getToolLogs()
 
 		dispatchFound := false
 		for _, entry := range toolLogs {
@@ -4140,11 +4034,11 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 			}
 		}
 		if !dispatchFound {
-			rt.Fatalf("LoggingHook did not receive a dispatch entry containing toolName=%q, convID=%q, toolUseID=%q.\nGot tool logs: %v",
+			rt.Fatalf("ToolLogObserver did not receive a dispatch entry containing toolName=%q, convID=%q, toolUseID=%q.\nGot tool logs: %v",
 				bgToolName, convID, toolUseID, toolLogs)
 		}
 
-		// --- Assert LoggingHook received completion entry ---
+		// --- Assert ToolLogObserver received completion entry ---
 		// The completion log entry should contain toolName, conversationID, toolUseID,
 		// success/error status, and duration.
 		completionFound := false
@@ -4164,35 +4058,35 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 			}
 		}
 		if !completionFound {
-			rt.Fatalf("LoggingHook did not receive a completion entry containing toolName=%q, convID=%q, toolUseID=%q, status=%q, duration.\nGot tool logs: %v",
+			rt.Fatalf("ToolLogObserver did not receive a completion entry containing toolName=%q, convID=%q, toolUseID=%q, status=%q, duration.\nGot tool logs: %v",
 				bgToolName, convID, toolUseID, expectedStatus, toolLogs)
 		}
 
-		// --- Assert TracingHook.OnInvokeStart was called for the Re_Entry_Turn ---
+		// --- Assert an InvokeObserver start record exists for the Re_Entry_Turn ---
 		// The re-entry turn should have ConversationID == convID and UserMessage == "".
-		invokeParams := tracingHook.getInvokeStartParams()
+		invokeStarts := observer.getInvokeStarts()
 
 		reEntryInvokeFound := false
-		for _, p := range invokeParams {
-			if p.ConversationID == convID && p.UserMessage == "" {
+		for _, record := range invokeStarts {
+			if record.ConversationID == convID && record.UserMessage == "" {
 				reEntryInvokeFound = true
 				break
 			}
 		}
 		if !reEntryInvokeFound {
-			rt.Fatalf("TracingHook.OnInvokeStart was not called with ConversationID=%q and UserMessage=\"\" for the Re_Entry_Turn.\nGot invoke params: %+v",
-				convID, invokeParams)
+			rt.Fatalf("InvokeObserver start record not found with ConversationID=%q and UserMessage=\"\" for the Re_Entry_Turn.\nGot invoke starts: %+v",
+				convID, invokeStarts)
 		}
 
-		// --- Assert MetricsHook received cumulative TokenUsage for the Re_Entry_Turn ---
-		// The MetricsHook's OnInvokeStart finish function should have been called
-		// with the cumulative TokenUsage from the re-entry turn's provider calls.
-		invokeFinishes := metricsHook.getInvokeFinishes()
+		// --- Assert an InvokeObserver end record carries cumulative TokenUsage ---
+		// The end record should contain cumulative usage from the re-entry turn's
+		// provider calls.
+		invokeFinishes := observer.getInvokeFinishes()
 
 		// There should be at least 2 invoke finishes: one for the originating turn
 		// and one for the re-entry turn.
 		if len(invokeFinishes) < 2 {
-			rt.Fatalf("MetricsHook received %d invoke finishes, expected at least 2 (originating + re-entry)",
+			rt.Fatalf("InvokeObserver received %d invoke finishes, expected at least 2 (originating + re-entry)",
 				len(invokeFinishes))
 		}
 
@@ -4200,11 +4094,11 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 		// It should have the token usage from the re-entry provider call.
 		lastFinish := invokeFinishes[len(invokeFinishes)-1]
 		if lastFinish.usage.InputTokens != reEntryInputTokens {
-			rt.Fatalf("MetricsHook re-entry turn InputTokens: got %d, want %d",
+			rt.Fatalf("InvokeObserver re-entry turn InputTokens: got %d, want %d",
 				lastFinish.usage.InputTokens, reEntryInputTokens)
 		}
 		if lastFinish.usage.OutputTokens != reEntryOutputTokens {
-			rt.Fatalf("MetricsHook re-entry turn OutputTokens: got %d, want %d",
+			rt.Fatalf("InvokeObserver re-entry turn OutputTokens: got %d, want %d",
 				lastFinish.usage.OutputTokens, reEntryOutputTokens)
 		}
 	})
@@ -4214,25 +4108,39 @@ func TestProperty_P16_ObservabilityEmission(t *testing.T) {
 // P16 helper types
 // ---------------------------------------------------------------------------
 
-// p16ToolLogEntry records a single OnToolLog call.
+// p16ToolLogEntry records a single ObserveToolLog call.
 type p16ToolLogEntry struct {
 	toolName string
 	msg      string
 }
 
-// p16CapturingLoggingHook captures OnToolLog calls for the P16 property test.
-type p16CapturingLoggingHook struct {
-	mu       sync.Mutex
-	toolLogs []p16ToolLogEntry
+// p16CapturingObserver captures tool-log and invoke records for the P16 property test.
+type p16CapturingObserver struct {
+	mu             sync.Mutex
+	toolLogs       []p16ToolLogEntry
+	invokeStarts   []InvokeRecord
+	invokeFinishes []p16InvokeFinishEntry
 }
 
-func (h *p16CapturingLoggingHook) OnToolLog(toolName string, msg string) {
+func (h *p16CapturingObserver) ObserveToolLog(ctx context.Context, record ToolLogRecord) context.Context {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.toolLogs = append(h.toolLogs, p16ToolLogEntry{toolName: toolName, msg: msg})
+	h.toolLogs = append(h.toolLogs, p16ToolLogEntry{toolName: record.Name, msg: record.Message})
+	return ctx
 }
 
-func (h *p16CapturingLoggingHook) getToolLogs() []p16ToolLogEntry {
+func (h *p16CapturingObserver) ObserveInvoke(ctx context.Context, record InvokeRecord) context.Context {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if record.Phase == Start {
+		h.invokeStarts = append(h.invokeStarts, record)
+	} else {
+		h.invokeFinishes = append(h.invokeFinishes, p16InvokeFinishEntry{err: record.Err, usage: record.Usage})
+	}
+	return ctx
+}
+
+func (h *p16CapturingObserver) getToolLogs() []p16ToolLogEntry {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	cp := make([]p16ToolLogEntry, len(h.toolLogs))
@@ -4240,141 +4148,36 @@ func (h *p16CapturingLoggingHook) getToolLogs() []p16ToolLogEntry {
 	return cp
 }
 
-// Implement remaining LoggingHook methods as no-ops.
-func (h *p16CapturingLoggingHook) OnInvokeStart(params InvokeSpanParams)                           {}
-func (h *p16CapturingLoggingHook) OnInvokeEnd(err error, usage TokenUsage, duration time.Duration) {}
-func (h *p16CapturingLoggingHook) OnIterationStart(iteration int)                                  {}
-func (h *p16CapturingLoggingHook) OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration) {
-}
-func (h *p16CapturingLoggingHook) OnProviderCallStart(modelID string) {}
-func (h *p16CapturingLoggingHook) OnProviderCallEnd(err error, usage TokenUsage, toolCallCount int, duration time.Duration) {
-}
-func (h *p16CapturingLoggingHook) OnToolStart(toolName string)                                   {}
-func (h *p16CapturingLoggingHook) OnToolEnd(toolName string, err error, duration time.Duration)  {}
-func (h *p16CapturingLoggingHook) OnGuardrailComplete(direction string, blocked bool, err error) {}
-func (h *p16CapturingLoggingHook) OnConversationStart(operation string, conversationID string)   {}
-func (h *p16CapturingLoggingHook) OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
-}
-func (h *p16CapturingLoggingHook) OnRetrieverStart(query string)                                  {}
-func (h *p16CapturingLoggingHook) OnRetrieverEnd(err error, docCount int, duration time.Duration) {}
-func (h *p16CapturingLoggingHook) OnImagesAttached(imageCount int)                                {}
-func (h *p16CapturingLoggingHook) OnDocumentsAttached(docCount int)                               {}
-func (h *p16CapturingLoggingHook) OnMaxIterationsExceeded(limit int)                              {}
-func (h *p16CapturingLoggingHook) OnStreamChunk(text string)                                      {}
-func (h *p16CapturingLoggingHook) OnResponse(text string)                                         {}
-
-// p16InvokeStartEntry records a single OnInvokeStart call.
-type p16InvokeStartEntry struct {
-	params InvokeSpanParams
-}
-
-// p16CapturingTracingHook captures OnInvokeStart params for the P16 property test.
-type p16CapturingTracingHook struct {
-	mu           sync.Mutex
-	invokeStarts []p16InvokeStartEntry
-}
-
-func (h *p16CapturingTracingHook) OnInvokeStart(ctx context.Context, params InvokeSpanParams) (context.Context, func(err error, usage TokenUsage, response string)) {
+func (h *p16CapturingObserver) getInvokeStarts() []InvokeRecord {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.invokeStarts = append(h.invokeStarts, p16InvokeStartEntry{params: params})
-	return ctx, func(err error, usage TokenUsage, response string) {}
+	return append([]InvokeRecord(nil), h.invokeStarts...)
 }
 
-func (h *p16CapturingTracingHook) getInvokeStartParams() []InvokeSpanParams {
+func (h *p16CapturingObserver) getInvokeFinishes() []p16InvokeFinishEntry {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	result := make([]InvokeSpanParams, len(h.invokeStarts))
-	for i, e := range h.invokeStarts {
-		result[i] = e.params
-	}
-	return result
+	return append([]p16InvokeFinishEntry(nil), h.invokeFinishes...)
 }
 
-// Implement remaining TracingHook methods as no-ops.
-func (h *p16CapturingTracingHook) OnIterationStart(ctx context.Context, iteration int) (context.Context, func(toolCount int, isFinal bool)) {
-	return ctx, func(toolCount int, isFinal bool) {}
-}
-
-func (h *p16CapturingTracingHook) OnProviderCallStart(ctx context.Context, params ProviderCallParams) (context.Context, func(err error, usage TokenUsage, toolCallCount int, responseText string)) {
-	return ctx, func(err error, usage TokenUsage, toolCallCount int, responseText string) {}
-}
-
-func (h *p16CapturingTracingHook) OnToolStart(ctx context.Context, toolName string, input json.RawMessage) (context.Context, func(err error, output string)) {
-	return ctx, func(err error, output string) {}
-}
-
-func (h *p16CapturingTracingHook) OnGuardrailStart(ctx context.Context, direction string, input string) (context.Context, func(err error, output string)) {
-	return ctx, func(err error, output string) {}
-}
-
-func (h *p16CapturingTracingHook) OnConversationStart(ctx context.Context, operation string, conversationID string) (context.Context, func(err error)) {
-	return ctx, func(err error) {}
-}
-
-func (h *p16CapturingTracingHook) OnRetrieverStart(ctx context.Context, query string) (context.Context, func(err error, docCount int)) {
-	return ctx, func(err error, docCount int) {}
-}
-
-func (h *p16CapturingTracingHook) OnMaxIterationsExceeded(ctx context.Context, limit int) {}
-
-// p16InvokeFinishEntry records a single MetricsHook OnInvokeStart finish call.
+// p16InvokeFinishEntry records a normalized invocation end.
 type p16InvokeFinishEntry struct {
 	err   error
 	usage TokenUsage
 }
 
-// p16CapturingMetricsHook captures OnInvokeStart finish calls for the P16 property test.
-type p16CapturingMetricsHook struct {
-	mu             sync.Mutex
-	invokeFinishes []p16InvokeFinishEntry
-}
-
-func (h *p16CapturingMetricsHook) OnInvokeStart() func(err error, usage TokenUsage) {
-	return func(err error, usage TokenUsage) {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		h.invokeFinishes = append(h.invokeFinishes, p16InvokeFinishEntry{err: err, usage: usage})
-	}
-}
-
-func (h *p16CapturingMetricsHook) getInvokeFinishes() []p16InvokeFinishEntry {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	cp := make([]p16InvokeFinishEntry, len(h.invokeFinishes))
-	copy(cp, h.invokeFinishes)
-	return cp
-}
-
-// Implement remaining MetricsHook methods as no-ops.
-func (h *p16CapturingMetricsHook) OnIterationStart()                          {}
-func (h *p16CapturingMetricsHook) OnIterationEnd(toolCount int, isFinal bool) {}
-func (h *p16CapturingMetricsHook) OnProviderCallStart(modelID string) func(err error, usage TokenUsage) {
-	return func(err error, usage TokenUsage) {}
-}
-func (h *p16CapturingMetricsHook) OnToolStart(toolName string) func(err error) {
-	return func(err error) {}
-}
-func (h *p16CapturingMetricsHook) OnGuardrailComplete(direction string, blocked bool) {}
-func (h *p16CapturingMetricsHook) OnImagesAttached(imageCount int)                    {}
-func (h *p16CapturingMetricsHook) OnDocumentsAttached(docCount int)                   {}
-
 // p16Provider is a Provider that delegates to a callback function.
 type p16Provider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p16Provider) Name() string { return "p16-provider" }
 
-func (p *p16Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
+func (p *p16Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }
 
-func (p *p16Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-// TestProperty_P17_ShutdownCompleteness verifies that Agent.Close blocks until
+// TestProperty_P17_ShutdownCompleteness verifies that Agent.Shutdown blocks until
 // every in-flight Background_Handler has returned (or panicked-and-recovered)
 // and every triggered Re_Entry_Turn has completed its final Save.
 //
@@ -4404,7 +4207,7 @@ func TestProperty_P17_ShutdownCompleteness(t *testing.T) {
 
 		// Background tool: handler parses an index from input, waits on its channel,
 		// then increments the completion counter.
-		bgTool := tool.NewBackgroundRaw(bgToolName, "a controllable background tool", ack,
+		bgTool := newTestBackgroundRaw(bgToolName, "a controllable background tool", ack,
 			map[string]any{"type": "object", "properties": map[string]any{
 				"idx": map[string]any{"type": "number"},
 			}},
@@ -4439,7 +4242,7 @@ func TestProperty_P17_ShutdownCompleteness(t *testing.T) {
 		reEntryCallCount := 0
 
 		provider := &p17Provider{
-			onCall: func(params ConverseParams) (*ProviderResponse, error) {
+			onCall: func(params ModelRequest) (*ModelResponse, error) {
 				providerMu.Lock()
 				providerCallCount++
 				callNum := providerCallCount
@@ -4448,7 +4251,7 @@ func TestProperty_P17_ShutdownCompleteness(t *testing.T) {
 				if callNum == 1 {
 					// First call: return N ToolUseBlocks (or just final text if N=0).
 					if n == 0 {
-						return &ProviderResponse{Text: "no background work"}, nil
+						return &ModelResponse{Text: "no background work"}, nil
 					}
 					calls := make([]tool.Call, n)
 					for i := 0; i < n; i++ {
@@ -4458,24 +4261,24 @@ func TestProperty_P17_ShutdownCompleteness(t *testing.T) {
 							Input:     json.RawMessage(fmt.Sprintf(`{"idx":%d}`, i)),
 						}
 					}
-					return &ProviderResponse{ToolCalls: calls}, nil
+					return &ModelResponse{ToolCalls: calls}, nil
 				}
 				if callNum == 2 && n > 0 {
 					// Second call: originating turn finishes after seeing acks.
-					return &ProviderResponse{Text: "originating done"}, nil
+					return &ModelResponse{Text: "originating done"}, nil
 				}
 				// Re-entry turn calls: each returns a final text.
 				providerMu.Lock()
 				reEntryCallCount++
 				reIdx := reEntryCallCount
 				providerMu.Unlock()
-				return &ProviderResponse{Text: fmt.Sprintf("re-entry-%d-done", reIdx)}, nil
+				return &ModelResponse{Text: fmt.Sprintf("re-entry-%d-done", reIdx)}, nil
 			},
 		}
 
 		// Create the agent.
-		a, err := New(provider, prompt.Text("sys"), []tool.Tool{bgTool},
-			WithConversation(store, convID),
+		a, err := New(provider, "sys", WithTools(bgTool),
+			WithConversationStore(store),
 			WithBackgroundNotify(func(cID, msg string) {
 				// No-op notify callback — we only care about shutdown timing.
 			}),
@@ -4503,7 +4306,7 @@ func TestProperty_P17_ShutdownCompleteness(t *testing.T) {
 		closeStarted := make(chan struct{})
 		go func() {
 			close(closeStarted)
-			a.Close()
+			_ = a.Shutdown(context.Background())
 			close(closeDone)
 		}()
 
@@ -4596,16 +4399,16 @@ type p17SaveRecord struct {
 	messages []Message
 }
 
-func (t *p17TrackingConversation) Load(_ context.Context, convID string) ([]Message, error) {
+func (t *p17TrackingConversation) Load(_ context.Context, convID string) (ConversationSnapshot, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	msgs := t.data[convID]
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
-	return cp, nil
+	return ConversationSnapshot{Messages: cp}, nil
 }
 
-func (t *p17TrackingConversation) Save(_ context.Context, convID string, msgs []Message) error {
+func (t *p17TrackingConversation) Save(_ context.Context, convID string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cp := make([]Message, len(msgs))
@@ -4615,29 +4418,23 @@ func (t *p17TrackingConversation) Save(_ context.Context, convID string, msgs []
 
 	// Detect a re-entry turn's final save: it contains an assistant message
 	// as the last message (the re-entry turn's response).
-	// A re-entry final save has: ... → user(TextBlock "[Background tool ... completed: ...]") → assistant(text)
 	if len(cp) >= 2 {
 		lastMsg := cp[len(cp)-1]
 		if lastMsg.Role == RoleAssistant && len(lastMsg.Content) > 0 {
-			// Check if there's a preceding user message with the injected
-			// background completion TextBlock.
 			for i := len(cp) - 2; i >= 0; i-- {
 				if cp[i].Role == RoleUser {
 					for _, block := range cp[i].Content {
 						tb, ok := block.(TextBlock)
-						if !ok {
-							continue
-						}
-						if strings.HasPrefix(tb.Text, "[Background tool ") {
+						if ok && strings.HasPrefix(tb.Text, "[Background tool ") {
 							t.reEntrySavesCompleted.Add(1)
-							return nil
+							return expectedRevision + 1, nil
 						}
 					}
 				}
 			}
 		}
 	}
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (t *p17TrackingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -4645,15 +4442,11 @@ func (t *p17TrackingConversation) Delete(_ context.Context, _ string) error { re
 
 // p17Provider is a Provider that delegates to a callback function for the P17 test.
 type p17Provider struct {
-	onCall func(params ConverseParams) (*ProviderResponse, error)
+	onCall func(params ModelRequest) (*ModelResponse, error)
 }
 
 func (p *p17Provider) Name() string { return "p17-provider" }
 
-func (p *p17Provider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return p.onCall(params)
-}
-
-func (p *p17Provider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *p17Provider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return p.onCall(params)
 }

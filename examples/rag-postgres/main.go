@@ -26,7 +26,6 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	ragpg "github.com/camilbinas/gude-agents/agent/rag/postgres"
@@ -76,13 +75,11 @@ func main() {
 	fmt.Println("Done.")
 
 	provider := bedrock.Must(bedrock.Standard())
-
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("Answer questions using only the provided context. Be concise."),
-		nil,
+		"Answer questions using only the provided context. Be concise.",
 		agent.WithRetriever(retriever),
 	)
 	if err != nil {

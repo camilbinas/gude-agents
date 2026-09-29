@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -387,33 +386,29 @@ func TestProperty_GeminiStreamTextForwarding(t *testing.T) {
 			chunks[i] = rapid.StringMatching(`[a-zA-Z0-9 ]{1,30}`).Draw(t, "chunk")
 		}
 
-		// Simulate the streaming accumulation logic from ConverseStream.
+		// Simulate the streaming accumulation and event emission contract.
 		var accumulated string
-		var mu sync.Mutex
-		var received []string
+		var received []agent.ModelEvent
 
-		cb := agent.StreamCallback(func(chunk string) {
-			mu.Lock()
-			defer mu.Unlock()
-			received = append(received, chunk)
-		})
+		emit := func(event agent.ModelEvent) {
+			received = append(received, event)
+		}
 
 		for _, chunk := range chunks {
 			accumulated += chunk
-			if cb != nil {
-				cb(chunk)
-			}
+			emit(agent.ModelEvent{Type: agent.ModelEventText, Text: chunk})
 		}
 
-		// Verify: callback received each chunk in order.
-		mu.Lock()
-		defer mu.Unlock()
+		// Verify: emitter received each text event in order.
 		if len(received) != n {
-			t.Fatalf("callback received %d chunks, want %d", len(received), n)
+			t.Fatalf("emitter received %d events, want %d", len(received), n)
 		}
-		for i, got := range received {
-			if got != chunks[i] {
-				t.Fatalf("chunk %d = %q, want %q", i, got, chunks[i])
+		for i, event := range received {
+			if event.Type != agent.ModelEventText {
+				t.Fatalf("event %d type = %q, want %q", i, event.Type, agent.ModelEventText)
+			}
+			if event.Text != chunks[i] {
+				t.Fatalf("event %d text = %q, want %q", i, event.Text, chunks[i])
 			}
 		}
 
@@ -448,7 +443,11 @@ func TestProperty_GeminiThinkingTextStorage(t *testing.T) {
 			},
 		}
 
-		result := parseResponse(resp)
+		result := &agent.ModelResponse{}
+		var events []agent.ModelEvent
+		appendResponse(result, resp, func(event agent.ModelEvent) {
+			events = append(events, event)
+		})
 		if result.Metadata == nil {
 			t.Fatal("Metadata is nil, expected thinking text")
 		}
@@ -461,6 +460,17 @@ func TestProperty_GeminiThinkingTextStorage(t *testing.T) {
 		want := strings.Join(thoughts, "")
 		if got != want {
 			t.Fatalf("thinking = %q, want %q", got, want)
+		}
+		if result.Text != "" {
+			t.Fatalf("response text = %q, want empty for thinking parts", result.Text)
+		}
+		if len(events) != n {
+			t.Fatalf("emitted %d thinking events, want %d", len(events), n)
+		}
+		for i, event := range events {
+			if event.Type != agent.ModelEventThinking || event.Text != thoughts[i] {
+				t.Fatalf("event %d = %#v, want thinking text %q", i, event, thoughts[i])
+			}
 		}
 	})
 }

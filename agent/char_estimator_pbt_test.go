@@ -11,13 +11,13 @@ import (
 // Feature: token-estimation, Property 2: CharEstimator formula correctness
 // **Validates: Requirements 2.2, 2.3**
 
-// TestProperty_CharEstimatorFormula verifies that for any ConverseParams the
+// TestProperty_CharEstimatorFormula verifies that for any ModelRequest the
 // CharEstimator returns ceil(totalCharCount / 4) where totalCharCount is
 // the sum of: all TextBlock.Text characters, System string characters, and
-// JSON-serialized ToolConfig characters.
+// JSON-serialized Tools characters.
 func TestProperty_CharEstimatorFormula(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		params := drawConverseParams(t)
+		params := drawModelRequest(t)
 
 		// --- Oracle: independently compute the expected result ---
 		totalChars := 0
@@ -34,8 +34,8 @@ func TestProperty_CharEstimatorFormula(t *testing.T) {
 			}
 		}
 
-		// JSON-serialized ToolConfig spec characters.
-		for _, spec := range params.ToolConfig {
+		// JSON-serialized Tools spec characters.
+		for _, spec := range params.Tools {
 			data, err := json.Marshal(spec)
 			if err != nil {
 				continue

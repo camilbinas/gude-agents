@@ -2,368 +2,327 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 )
 
-// hooks is a composite that dispatches to tracing, metrics, and logging hooks.
-// All methods are safe to call regardless of which hooks are configured —
-// nil hooks are skipped internally. This eliminates the 3-way nil-check
-// pattern that otherwise clutters the agent loop.
+// hooks is the invocation-local lifecycle dispatcher. It is immutable after
+// construction and therefore safe for concurrent tool calls.
 type hooks struct {
-	tracing TracingHook
-	metrics MetricsHook
-	logging LoggingHook
-	event   EventHook
+	observers []Observer
 }
 
-// invokeFinisher is returned by onInvokeStart and called when the invocation ends.
+func preserveContext(current, next context.Context) context.Context {
+	if next == nil {
+		return current
+	}
+	return next
+}
+
 type invokeFinisher struct {
-	finishTracing func(error, TokenUsage, string)
-	finishMetrics func(error, TokenUsage)
-	logging       LoggingHook
-	start         time.Time
+	ctx       context.Context
+	observers []InvokeObserver
+	record    InvokeRecord
 }
 
-func (f *invokeFinisher) finish(err error, usage TokenUsage) {
-	if f.finishTracing != nil {
-		f.finishTracing(err, usage, "")
+func (f *invokeFinisher) finish(res Result, err error) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase = End
+	r.Response = res.Text
+	r.Usage = res.Usage
+	r.StopReason = res.StopReason
+	r.Interrupt = res.Interrupt
+	r.Err = err
+	r.Timestamp = now
+	r.Duration = now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveInvoke(ctx, r))
 	}
-	if f.finishMetrics != nil {
-		f.finishMetrics(err, usage)
-	}
-	if f.logging != nil {
-		f.logging.OnInvokeEnd(err, usage, time.Since(f.start))
-	}
+	return ctx
 }
 
-func (h *hooks) onInvokeStart(c *Context, params InvokeSpanParams) (*Context, *invokeFinisher) {
-	f := &invokeFinisher{start: time.Now()}
+func (h *hooks) onInvokeStart(c *Context, record InvokeRecord) (*Context, *invokeFinisher) {
+	record.Phase = Start
+	record.Timestamp = time.Now()
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnInvokeStart(ctx, params)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
+	var observers []InvokeObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(InvokeObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveInvoke(ctx, record))
 		}
 	}
-	if h.metrics != nil {
-		f.finishMetrics = h.metrics.OnInvokeStart()
-	}
-	if h.logging != nil {
-		h.logging.OnInvokeStart(params)
-		f.logging = h.logging
-	}
-	return c, f
+	return c.withContext(ctx), &invokeFinisher{ctx: ctx, observers: observers, record: record}
 }
 
-// iterationFinisher is returned by onIterationStart.
 type iterationFinisher struct {
-	finishTracing func(toolCount int, isFinal bool)
-	metrics       MetricsHook
-	logging       LoggingHook
-	event         EventHook
-	c             *Context
-	iteration     int
-	start         time.Time
+	ctx       context.Context
+	observers []IterationObserver
+	record    IterationRecord
 }
 
-func (f *iterationFinisher) finish(toolCount int, isFinal bool) {
-	if f.finishTracing != nil {
-		f.finishTracing(toolCount, isFinal)
+func (f *iterationFinisher) finish(toolCount int, isFinal bool, err error) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase, r.ToolCount, r.IsFinal, r.Err = End, toolCount, isFinal, err
+	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveIteration(ctx, r))
 	}
-	if f.metrics != nil {
-		f.metrics.OnIterationEnd(toolCount, isFinal)
-	}
-	if f.logging != nil {
-		f.logging.OnIterationEnd(f.iteration, toolCount, isFinal, time.Since(f.start))
-	}
-	if f.event != nil {
-		f.event.OnIterationEnd(f.c, f.iteration, toolCount, isFinal, time.Since(f.start))
-	}
+	return ctx
 }
 
 func (h *hooks) onIterationStart(c *Context, iteration int) (*Context, *iterationFinisher) {
-	f := &iterationFinisher{iteration: iteration, start: time.Now(), c: c}
+	record := IterationRecord{Phase: Start, Iteration: iteration, Timestamp: time.Now()}
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnIterationStart(ctx, iteration)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
-			f.c = c
+	var observers []IterationObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(IterationObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveIteration(ctx, record))
 		}
 	}
-	if h.metrics != nil {
-		h.metrics.OnIterationStart()
-		f.metrics = h.metrics
-	}
-	if h.logging != nil {
-		h.logging.OnIterationStart(iteration)
-		f.logging = h.logging
-	}
-	if h.event != nil {
-		h.event.OnIterationStart(c, iteration)
-		f.event = h.event
-		f.c = c
-	}
-	return c, f
+	return c.withContext(ctx), &iterationFinisher{ctx: ctx, observers: observers, record: record}
 }
 
-// providerFinisher is returned by onProviderCallStart.
-type providerFinisher struct {
-	finishTracing func(err error, usage TokenUsage, toolCallCount int, responseText string)
-	finishMetrics func(err error, usage TokenUsage)
-	logging       LoggingHook
-	event         EventHook
-	c             *Context
-	start         time.Time
+type modelFinisher struct {
+	ctx       context.Context
+	observers []ModelObserver
+	record    ModelCallRecord
 }
 
-func (f *providerFinisher) finish(err error, usage TokenUsage, toolCallCount int, responseText string) {
-	if f.finishTracing != nil {
-		f.finishTracing(err, usage, toolCallCount, responseText)
+func (f *modelFinisher) finish(err error, usage TokenUsage, toolCallCount int, responseText string) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase, r.Err, r.Usage = End, err, usage
+	r.ToolCallCount, r.ResponseText = toolCallCount, responseText
+	r.StopReason = deriveStopReason(toolCallCount, err)
+	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveModel(ctx, r))
 	}
-	if f.finishMetrics != nil {
-		f.finishMetrics(err, usage)
-	}
-	if f.logging != nil {
-		f.logging.OnProviderCallEnd(err, usage, toolCallCount, time.Since(f.start))
-	}
-	if f.event != nil {
-		f.event.OnModelEnd(f.c, deriveStopReason(toolCallCount, err))
-	}
+	return ctx
 }
 
-func (h *hooks) onProviderCallStart(c *Context, params ProviderCallParams, modelID string) (*Context, *providerFinisher) {
-	f := &providerFinisher{start: time.Now(), c: c}
+func (h *hooks) onModelStart(c *Context, record ModelCallRecord) (*Context, *modelFinisher) {
+	record.Phase, record.Timestamp = Start, time.Now()
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnProviderCallStart(ctx, params)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
-			f.c = c
+	var observers []ModelObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(ModelObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveModel(ctx, record))
 		}
 	}
-	if h.metrics != nil {
-		f.finishMetrics = h.metrics.OnProviderCallStart(modelID)
-	}
-	if h.logging != nil {
-		h.logging.OnProviderCallStart(modelID)
-		f.logging = h.logging
-	}
-	if h.event != nil {
-		h.event.OnModelStart(c)
-		f.event = h.event
-		f.c = c
-	}
-	return c, f
+	return c.withContext(ctx), &modelFinisher{ctx: ctx, observers: observers, record: record}
 }
 
-// toolFinisher is returned by onToolStart.
 type toolFinisher struct {
-	finishTracing func(err error, output string)
-	finishMetrics func(err error)
-	logging       LoggingHook
-	event         EventHook
-	c             *Context
-	toolName      string
-	start         time.Time
+	ctx       context.Context
+	observers []ToolObserver
+	record    ToolCallRecord
 }
 
-func (f *toolFinisher) finish(err error, output string) {
-	if f.finishTracing != nil {
-		f.finishTracing(err, output)
+func (f *toolFinisher) finish(err error, output string, resultIsError, allowed bool, denialReason string) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase, r.Err, r.Output = End, err, output
+	r.ResultIsError, r.Allowed, r.DenialReason = resultIsError, allowed, denialReason
+	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveTool(ctx, r))
 	}
-	if f.finishMetrics != nil {
-		f.finishMetrics(err)
-	}
-	if f.logging != nil {
-		f.logging.OnToolEnd(f.toolName, err, time.Since(f.start))
-	}
-	if f.event != nil {
-		f.event.OnToolCallEnd(f.c, f.toolName, output, err, time.Since(f.start))
-	}
+	return ctx
 }
 
-func (h *hooks) onToolStart(c *Context, toolName string, input json.RawMessage) (*Context, *toolFinisher) {
-	f := &toolFinisher{toolName: toolName, start: time.Now(), c: c}
+func (h *hooks) onToolStart(c *Context, record ToolCallRecord) (*Context, *toolFinisher) {
+	record.Phase, record.Timestamp = Start, time.Now()
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnToolStart(ctx, toolName, input)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
-			f.c = c
+	var observers []ToolObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(ToolObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveTool(ctx, record))
 		}
 	}
-	if h.metrics != nil {
-		f.finishMetrics = h.metrics.OnToolStart(toolName)
-	}
-	if h.logging != nil {
-		h.logging.OnToolStart(toolName)
-		f.logging = h.logging
-
-		// Inject a ToolLogger into the context so tools can emit log messages.
-		c = c.withContext(withToolLogger(c.Context, &hookToolLogger{
-			hook:     h.logging,
-			toolName: toolName,
+	c = c.withContext(ctx)
+	if h.hasToolLogObserver() {
+		c = c.withContext(withToolLogger(c.Context, &observerToolLogger{
+			hooks: h,
+			ctx:   c.Context,
+			base: ToolLogRecord{CallID: record.CallID, Name: record.Name,
+				Principal: record.Principal, ConversationID: record.ConversationID},
 		}))
-		f.c = c
 	}
-	if h.event != nil {
-		h.event.OnToolCallStart(c, toolName, input)
-		f.event = h.event
-		f.c = c
-	}
-	return c, f
+	return c, &toolFinisher{ctx: c.Context, observers: observers, record: record}
 }
 
-// guardrailFinisher is returned by onGuardrailStart.
 type guardrailFinisher struct {
-	finishTracing func(err error, output string)
-	metrics       MetricsHook
-	logging       LoggingHook
-	direction     string
+	ctx       context.Context
+	observers []GuardrailObserver
+	record    GuardrailRecord
 }
 
-func (f *guardrailFinisher) finish(err error, output string) {
-	if f.finishTracing != nil {
-		f.finishTracing(err, output)
+func (f *guardrailFinisher) finish(err error, output string) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase, r.Err, r.Output, r.Blocked = End, err, output, err != nil
+	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveGuardrail(ctx, r))
 	}
-	if f.metrics != nil {
-		f.metrics.OnGuardrailComplete(f.direction, err != nil)
-	}
-	if f.logging != nil {
-		f.logging.OnGuardrailComplete(f.direction, err != nil, err)
-	}
+	return ctx
 }
 
-func (h *hooks) onGuardrailStart(c *Context, direction string, input string) (*Context, *guardrailFinisher) {
-	f := &guardrailFinisher{direction: direction, metrics: h.metrics, logging: h.logging}
+func (h *hooks) onGuardrailStart(c *Context, direction, input string) (*Context, *guardrailFinisher) {
+	record := GuardrailRecord{Phase: Start, Direction: direction, Input: input, Timestamp: time.Now()}
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnGuardrailStart(ctx, direction, input)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
+	var observers []GuardrailObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(GuardrailObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveGuardrail(ctx, record))
 		}
 	}
-	return c, f
+	return c.withContext(ctx), &guardrailFinisher{ctx: ctx, observers: observers, record: record}
 }
 
-// conversationFinisher is returned by onConversationStart.
 type conversationFinisher struct {
-	finishTracing func(err error)
-	logging       LoggingHook
-	operation     string
-	convID        string
-	start         time.Time
+	ctx       context.Context
+	observers []ConversationObserver
+	record    ConversationRecord
 }
 
-func (f *conversationFinisher) finish(err error, messageCount int) {
-	if f.finishTracing != nil {
-		f.finishTracing(err)
+func (f *conversationFinisher) finish(err error, messageCount int, revision uint64) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase, r.Err, r.MessageCount, r.Revision = End, err, messageCount, revision
+	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveConversation(ctx, r))
 	}
-	if f.logging != nil {
-		f.logging.OnConversationEnd(f.operation, f.convID, err, messageCount, time.Since(f.start))
-	}
+	return ctx
 }
 
-func (h *hooks) onConversationStart(c *Context, operation string, convID string) (*Context, *conversationFinisher) {
-	f := &conversationFinisher{operation: operation, convID: convID, logging: h.logging, start: time.Now()}
+func (h *hooks) onConversationStart(c *Context, record ConversationRecord) (*Context, *conversationFinisher) {
+	record.Phase, record.Timestamp = Start, time.Now()
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnConversationStart(ctx, operation, convID)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
+	var observers []ConversationObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(ConversationObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveConversation(ctx, record))
 		}
 	}
-	if h.logging != nil {
-		h.logging.OnConversationStart(operation, convID)
-	}
-	return c, f
+	return c.withContext(ctx), &conversationFinisher{ctx: ctx, observers: observers, record: record}
 }
 
-// retrieverFinisher is returned by onRetrieverStart.
-type retrieverFinisher struct {
-	finishTracing func(err error, docCount int)
-	logging       LoggingHook
-	start         time.Time
+type retrievalFinisher struct {
+	ctx       context.Context
+	observers []RetrievalObserver
+	record    RetrievalRecord
 }
 
-func (f *retrieverFinisher) finish(err error, docCount int) {
-	if f.finishTracing != nil {
-		f.finishTracing(err, docCount)
+func (f *retrievalFinisher) finish(err error, documentCount int) context.Context {
+	now := time.Now()
+	r := f.record
+	r.Phase, r.Err, r.DocumentCount = End, err, documentCount
+	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
+	ctx := f.ctx
+	for i := len(f.observers) - 1; i >= 0; i-- {
+		ctx = preserveContext(ctx, f.observers[i].ObserveRetrieval(ctx, r))
 	}
-	if f.logging != nil {
-		f.logging.OnRetrieverEnd(err, docCount, time.Since(f.start))
-	}
+	return ctx
 }
 
-func (h *hooks) onRetrieverStart(c *Context, query string) (*Context, *retrieverFinisher) {
-	f := &retrieverFinisher{logging: h.logging, start: time.Now()}
+func (h *hooks) onRetrievalStart(c *Context, query string) (*Context, *retrievalFinisher) {
+	record := RetrievalRecord{Phase: Start, Query: query, Timestamp: time.Now()}
 	ctx := context.Context(c)
-	if h.tracing != nil {
-		newCtx, finish := h.tracing.OnRetrieverStart(ctx, query)
-		f.finishTracing = finish
-		if newCtx != ctx {
-			c = c.withContext(newCtx)
+	var observers []RetrievalObserver
+	for _, candidate := range h.observers {
+		if observer, ok := candidate.(RetrievalObserver); ok {
+			observers = append(observers, observer)
+			ctx = preserveContext(ctx, observer.ObserveRetrieval(ctx, record))
 		}
 	}
-	if h.logging != nil {
-		h.logging.OnRetrieverStart(query)
-	}
-	return c, f
+	return c.withContext(ctx), &retrievalFinisher{ctx: ctx, observers: observers, record: record}
 }
 
-func (h *hooks) onImagesAttached(count int) {
-	if h.metrics != nil {
-		h.metrics.OnImagesAttached(count)
+func (h *hooks) onAttachment(c *Context, imageCount, documentCount int) context.Context {
+	record := AttachmentRecord{Phase: End, ImageCount: imageCount, DocumentCount: documentCount, Timestamp: time.Now()}
+	ctx := context.Context(c)
+	for i := len(h.observers) - 1; i >= 0; i-- {
+		if observer, ok := h.observers[i].(AttachmentObserver); ok {
+			ctx = preserveContext(ctx, observer.ObserveAttachment(ctx, record))
+		}
 	}
-	if h.logging != nil {
-		h.logging.OnImagesAttached(count)
-	}
+	return ctx
 }
 
-func (h *hooks) onDocumentsAttached(count int) {
-	if h.metrics != nil {
-		h.metrics.OnDocumentsAttached(count)
+func (h *hooks) onLimit(c *Context, name string, limit int, err error) context.Context {
+	record := LimitRecord{Phase: End, Name: name, Limit: limit, Err: err, Timestamp: time.Now()}
+	ctx := context.Context(c)
+	for i := len(h.observers) - 1; i >= 0; i-- {
+		if observer, ok := h.observers[i].(LimitObserver); ok {
+			ctx = preserveContext(ctx, observer.ObserveLimit(ctx, record))
+		}
 	}
-	if h.logging != nil {
-		h.logging.OnDocumentsAttached(count)
-	}
+	return ctx
 }
 
-func (h *hooks) onMaxIterationsExceeded(c *Context, limit int) {
-	if h.tracing != nil {
-		h.tracing.OnMaxIterationsExceeded(c, limit)
+func (h *hooks) onToolLog(ctx context.Context, record ToolLogRecord) context.Context {
+	record.Phase, record.Timestamp = End, time.Now()
+	for i := len(h.observers) - 1; i >= 0; i-- {
+		if observer, ok := h.observers[i].(ToolLogObserver); ok {
+			ctx = preserveContext(ctx, observer.ObserveToolLog(ctx, record))
+		}
 	}
-	if h.logging != nil {
-		h.logging.OnMaxIterationsExceeded(limit)
-	}
-	if h.event != nil {
-		h.event.OnMaxIterationsExceeded(c, limit)
-	}
+	return ctx
 }
 
-func (h *hooks) onStreamChunk(text string) {
-	if h.logging != nil {
-		h.logging.OnStreamChunk(text)
+func (h *hooks) onInterrupt(c *Context, in *Interrupt) context.Context {
+	principal, _ := c.Principal()
+	record := InterruptRecord{
+		Phase: End, InterruptID: in.ID, Type: in.Type, Principal: principal,
+		ConversationID: in.ConversationID, Timestamp: time.Now(),
 	}
+	if in.Approval != nil {
+		record.ApprovalCalls = append([]ApprovalCall(nil), in.Approval.Calls...)
+	}
+	if in.Input != nil {
+		record.Reason, record.Question = in.Input.Reason, in.Input.Question
+	}
+	ctx := context.Context(c)
+	for i := len(h.observers) - 1; i >= 0; i-- {
+		if observer, ok := h.observers[i].(InterruptObserver); ok {
+			ctx = preserveContext(ctx, observer.ObserveInterrupt(ctx, record))
+		}
+	}
+	return ctx
 }
 
-func (h *hooks) onResponse(text string) {
-	if h.logging != nil {
-		h.logging.OnResponse(text)
+func (h *hooks) hasToolLogObserver() bool {
+	for _, candidate := range h.observers {
+		if _, ok := candidate.(ToolLogObserver); ok {
+			return true
+		}
 	}
+	return false
 }
 
-// deriveStopReason returns the stop reason string for OnModelEnd based on the
-// provider call outcome. If err is non-nil, it returns "error". If tool calls
-// were present (toolCallCount > 0), it returns "tool_use". Otherwise "end_turn".
+// Model stop reasons reported in EventModelEnd lifecycle events.
+const (
+	StopReasonEndTurn = "end_turn"
+	StopReasonToolUse = "tool_use"
+	StopReasonError   = "error"
+)
+
 func deriveStopReason(toolCallCount int, err error) string {
 	if err != nil {
 		return StopReasonError

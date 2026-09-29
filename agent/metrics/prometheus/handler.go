@@ -34,9 +34,5 @@ func NewHandler(opts ...Option) (agent.Option, http.Handler) {
 	}
 	hook.register()
 
-	opt := func(a *agent.Agent) error {
-		a.SetMetricsHook(hook)
-		return nil
-	}
-	return agent.Option(opt), hook.Handler()
+	return agent.WithObserver(hook), hook.Handler()
 }

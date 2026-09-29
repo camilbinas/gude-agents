@@ -1,7 +1,6 @@
 // Example: agent-devtools — open a web UI to chat with an agent and watch
 // every iteration, tool call, and streamed token in real time. The DevTools
-// server consumes Agent.InvokeEventStream so the UI gets a faithful trace of
-// the agent loop.
+// server consumes Agent.Stream so the UI gets a faithful trace of the agent loop.
 //
 // Run:
 //
@@ -17,13 +16,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
@@ -38,32 +37,38 @@ func main() {
 	store := conversation.NewInMemory()
 	const conversationID = "agent-devtools-session"
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a concise, helpful assistant. Use the available tools when they help."),
-		[]tool.Tool{
+		"You are a concise, helpful assistant. Use the available tools when they help.",
+		agent.WithTools(
 			utils.WeatherTool(),
 			utils.TimeTool(),
 			utils.CalculateTool(),
-		},
-		agent.WithConversation(store, conversationID),
+		),
+		agent.WithConversationStore(store),
 		agent.WithMaxIterations(8),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer a.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := a.Shutdown(ctx); err != nil {
+			log.Printf("shut down agent: %v", err)
+		}
+	}()
 
 	dt := utils.NewAgentDevTools(utils.AgentDevToolsConfig{
 		Port:      4041,
 		Agent:     a,
 		AgentName: "weather-bot",
-		NewContext: func() *agent.Context {
+		NewContext: func(_ string) *agent.Context {
 			return agent.Background().WithConversationID(conversationID)
 		},
 	})
 
 	if err := dt.ListenAndServe(); err != nil {
-		log.Fatal(err)
+		log.Printf("serve devtools: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // extractJSON strips optional markdown code fences from an LLM response
@@ -144,7 +145,7 @@ Return ONLY the JSON object, no other text.`
 
 	userMsg := fmt.Sprintf("Extract all factual claims from the following text:\n\n%s", text)
 
-	resp, err := f.provider.Converse(ctx, agent.ConverseParams{
+	resp, err := f.provider.Stream(ctx, agent.ModelRequest{
 		System: system,
 		Messages: []agent.Message{
 			{
@@ -152,7 +153,7 @@ Return ONLY the JSON object, no other text.`
 				Content: []agent.ContentBlock{agent.TextBlock{Text: userMsg}},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("faithfulness: claims extraction failed: %w", err)
 	}
@@ -166,7 +167,7 @@ Return ONLY the JSON object, no other text.`
 }
 
 // judgeClaims prompts the LLM to judge each claim against the retrieved context.
-func (f *Faithfulness) judgeClaims(ctx context.Context, claims []string, docs []agent.Document) ([]verdict, error) {
+func (f *Faithfulness) judgeClaims(ctx context.Context, claims []string, docs []rag.Document) ([]verdict, error) {
 	// Format retrieved context.
 	var contextParts []string
 	for i, doc := range docs {
@@ -186,7 +187,7 @@ Return ONLY the JSON object, no other text.`
 
 	userMsg := fmt.Sprintf("Context:\n%s\n\nClaims:\n%s\n\nJudge each claim as \"supported\" or \"unsupported\" based on the context.", contextStr, string(claimsJSON))
 
-	resp, err := f.provider.Converse(ctx, agent.ConverseParams{
+	resp, err := f.provider.Stream(ctx, agent.ModelRequest{
 		System: system,
 		Messages: []agent.Message{
 			{
@@ -194,7 +195,7 @@ Return ONLY the JSON object, no other text.`
 				Content: []agent.ContentBlock{agent.TextBlock{Text: userMsg}},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("faithfulness: verdict judgment failed: %w", err)
 	}

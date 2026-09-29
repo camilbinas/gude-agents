@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -191,7 +192,7 @@ func TestTierAliases(t *testing.T) {
 // 5.4 — Error wrapping
 // ---------------------------------------------------------------------------
 
-func TestConverse_ErrorWrappedInProviderError(t *testing.T) {
+func TestStream_ErrorWrappedInProviderError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, `{"error": {"message": "internal server error", "code": 500}}`)
@@ -199,38 +200,13 @@ func TestConverse_ErrorWrappedInProviderError(t *testing.T) {
 	defer srv.Close()
 
 	p := newTestProvider(t, srv.URL)
-	params := agent.ConverseParams{
+	req := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
 		},
 	}
 
-	_, err := p.Converse(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	var providerErr *agent.ProviderError
-	if !errors.As(err, &providerErr) {
-		t.Fatalf("expected error to be wrapped in agent.ProviderError, got %T: %v", err, err)
-	}
-}
-
-func TestConverseStream_ErrorWrappedInProviderError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error": {"message": "internal server error", "code": 500}}`)
-	}))
-	defer srv.Close()
-
-	p := newTestProvider(t, srv.URL)
-	params := agent.ConverseParams{
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-		},
-	}
-
-	_, err := p.ConverseStream(context.Background(), params, nil)
+	_, err := p.Stream(context.Background(), req, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -242,10 +218,10 @@ func TestConverseStream_ErrorWrappedInProviderError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5.5 — Nil StreamCallback (no panic, text still accumulated)
+// 5.5 — Nil emitter (no panic, text still accumulated)
 // ---------------------------------------------------------------------------
 
-func TestConverseStream_NilCallback_NoPanic(t *testing.T) {
+func TestStream_NilEmitter_NoPanic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -255,14 +231,14 @@ func TestConverseStream_NilCallback_NoPanic(t *testing.T) {
 	defer srv.Close()
 
 	p := newTestProvider(t, srv.URL)
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
 		},
 	}
 
-	// Should not panic with nil callback.
-	resp, err := p.ConverseStream(context.Background(), params, nil)
+	// Should not panic with a nil emitter.
+	resp, err := p.Stream(context.Background(), params, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -345,7 +321,7 @@ func TestBuildConfig_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 		model:     "gemini-2.5-flash",
 		maxTokens: ptr(int32(4096)),
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -372,7 +348,7 @@ func TestBuildConfig_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 func TestBuildConfig_TemperatureMapping(t *testing.T) {
 	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	temp := 0.7
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -395,7 +371,7 @@ func TestBuildConfig_TemperatureMapping(t *testing.T) {
 func TestBuildConfig_TopPMapping(t *testing.T) {
 	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	topP := 0.9
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -414,7 +390,7 @@ func TestBuildConfig_TopPMapping(t *testing.T) {
 func TestBuildConfig_TopKMapping(t *testing.T) {
 	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	topK := 50
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -433,7 +409,7 @@ func TestBuildConfig_TopKMapping(t *testing.T) {
 func TestBuildConfig_StopSequencesMapping(t *testing.T) {
 	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	stops := []string{"STOP", "END"}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -452,7 +428,7 @@ func TestBuildConfig_StopSequencesMapping(t *testing.T) {
 func TestBuildConfig_MaxTokensOverridesDefault(t *testing.T) {
 	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(8192))}
 	maxTok := 2048
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -478,7 +454,7 @@ func TestBuildConfig_AllFieldsSet(t *testing.T) {
 		StopSequences: []string{"<|end|>"},
 		MaxTokens:     &maxTok,
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -506,7 +482,7 @@ func TestBuildConfig_AllFieldsSet(t *testing.T) {
 func TestBuildConfig_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
 	p := &GeminiProvider{model: "gemini-2.5-flash", maxTokens: ptr(int32(4096))}
 	temp := 0.3
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -683,5 +659,40 @@ func TestToGeminiParts_ImageBlock_UserAndModelRoles(t *testing.T) {
 	}
 	if modelContent.Parts[0].InlineData == nil {
 		t.Error("expected first part of model message to be InlineData (image)")
+	}
+}
+
+func TestStream_EmitsTextAndThinkingEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"plan\",\"thought\":true},{\"text\":\"answer\"}],\"role\":\"model\"}}],\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":7,\"cachedContentTokenCount\":5}}\n\n")
+	}))
+	defer srv.Close()
+
+	p := newTestProvider(t, srv.URL)
+	var events []agent.ModelEvent
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}}},
+	}, func(event agent.ModelEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	if resp.Text != "answer" {
+		t.Fatalf("Text = %q, want %q", resp.Text, "answer")
+	}
+	if thinking, _ := resp.Metadata["thinking"].(string); thinking != "plan" {
+		t.Fatalf("Metadata[thinking] = %q, want %q", thinking, "plan")
+	}
+	wantEvents := []agent.ModelEvent{
+		{Type: agent.ModelEventThinking, Text: "plan"},
+		{Type: agent.ModelEventText, Text: "answer"},
+	}
+	if !reflect.DeepEqual(events, wantEvents) {
+		t.Fatalf("events = %#v, want %#v", events, wantEvents)
+	}
+	if resp.Usage.InputTokens != 12 || resp.Usage.OutputTokens != 7 || resp.Usage.CacheReadTokens != 5 || resp.Usage.CacheWriteTokens != 0 {
+		t.Fatalf("Usage = %#v, want input=12 output=7 cache-read=5 cache-write=0", resp.Usage)
 	}
 }

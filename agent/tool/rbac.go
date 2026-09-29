@@ -60,7 +60,7 @@ func (p *rolePolicy) allowedWithAttrs(roles []string, attrs map[string]string) b
 // a structured denial result to the LLM without invoking the handler.
 //
 //	tool.NewRaw("delete_order", "...", schema, handler, tool.AllowRoles("admin", "manager"))
-func AllowRoles(roles ...string) func(*Tool) {
+func AllowRoles(roles ...string) Option {
 	return func(t *Tool) {
 		if t.rolePolicy == nil {
 			t.rolePolicy = &rolePolicy{}
@@ -78,7 +78,7 @@ func AllowRoles(roles ...string) func(*Tool) {
 // other allow rules. Evaluated before Guard and RequiresApproval.
 //
 //	tool.NewRaw("view_logs", "...", schema, handler, tool.DenyRoles("guest"))
-func DenyRoles(roles ...string) func(*Tool) {
+func DenyRoles(roles ...string) Option {
 	return func(t *Tool) {
 		if t.rolePolicy == nil {
 			t.rolePolicy = &rolePolicy{}
@@ -95,7 +95,7 @@ func DenyRoles(roles ...string) func(*Tool) {
 // AllowWhen adds an attribute-based condition. The condition receives the
 // principal's Attrs map and returns true to allow. Multiple AllowWhen
 // conditions are ANDed. Evaluated after role checks pass.
-func AllowWhen(cond func(attrs map[string]string) bool) func(*Tool) {
+func AllowWhen(cond func(attrs map[string]string) bool) Option {
 	return func(t *Tool) {
 		if t.rolePolicy == nil {
 			t.rolePolicy = &rolePolicy{}
@@ -114,7 +114,7 @@ func AllowWhen(cond func(attrs map[string]string) bool) func(*Tool) {
 //	        return attrs["region"] == "restricted"
 //	    }),
 //	)
-func DenyWhen(cond func(attrs map[string]string) bool) func(*Tool) {
+func DenyWhen(cond func(attrs map[string]string) bool) Option {
 	return func(t *Tool) {
 		if t.rolePolicy == nil {
 			t.rolePolicy = &rolePolicy{}

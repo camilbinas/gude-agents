@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"pgregory.net/rapid"
 )
 
-// adversarialProvider returns randomized ProviderResponses designed to stress
+// adversarialProvider returns randomized ModelResponses designed to stress
 // conversation persistence invariants. It can return:
 // - Empty text with no tool calls
 // - Text-only responses (normal)
@@ -19,30 +18,26 @@ import (
 // - Tool calls with non-empty text (normal)
 // - Whitespace-only text
 type adversarialProvider struct {
-	responses []*ProviderResponse
+	responses []*ModelResponse
 	idx       int
 }
 
 func (p *adversarialProvider) Name() string { return "adversarial" }
 
-func (p *adversarialProvider) next() *ProviderResponse {
+func (p *adversarialProvider) next() *ModelResponse {
 	if p.idx >= len(p.responses) {
 		// Fallback: return text to terminate the loop.
-		return &ProviderResponse{Text: "fallback"}
+		return &ModelResponse{Text: "fallback"}
 	}
 	r := p.responses[p.idx]
 	p.idx++
 	return r
 }
 
-func (p *adversarialProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	return p.next(), nil
-}
-
-func (p *adversarialProvider) ConverseStream(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (p *adversarialProvider) Stream(_ context.Context, _ ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 	r := p.next()
 	if cb != nil && r.Text != "" && len(r.ToolCalls) == 0 {
-		cb(r.Text)
+		cb(ModelEvent{Type: ModelEventText, Text: r.Text})
 	}
 	return r, nil
 }
@@ -52,15 +47,15 @@ type trackingConversation struct {
 	saved [][]Message
 }
 
-func (t *trackingConversation) Load(_ context.Context, _ string) ([]Message, error) {
-	return nil, nil
+func (t *trackingConversation) Load(_ context.Context, _ string) (ConversationSnapshot, error) {
+	return ConversationSnapshot{Messages: []Message{}}, nil
 }
 
-func (t *trackingConversation) Save(_ context.Context, _ string, msgs []Message) error {
+func (t *trackingConversation) Save(_ context.Context, _ string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
 	t.saved = append(t.saved, cp)
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (t *trackingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -73,13 +68,13 @@ func (t *trackingConversation) lastSaved() []Message {
 	return t.saved[len(t.saved)-1]
 }
 
-// genAdversarialResponses generates a sequence of ProviderResponses that
+// genAdversarialResponses generates a sequence of ModelResponses that
 // exercises edge cases: empty text, whitespace text, tool calls with/without
 // text, and eventually a terminating response.
-func genAdversarialResponses(rt *rapid.T, toolNames []string) []*ProviderResponse {
+func genAdversarialResponses(rt *rapid.T, toolNames []string) []*ModelResponse {
 	// Generate 1-4 tool-call iterations followed by a final response.
 	numToolIters := rapid.IntRange(0, 4).Draw(rt, "numToolIters")
-	responses := make([]*ProviderResponse, 0, numToolIters+1)
+	responses := make([]*ModelResponse, 0, numToolIters+1)
 
 	for i := range numToolIters {
 		numCalls := rapid.IntRange(1, 3).Draw(rt, fmt.Sprintf("numCalls_%d", i))
@@ -101,7 +96,7 @@ func genAdversarialResponses(rt *rapid.T, toolNames []string) []*ProviderRespons
 				rapid.StringMatching(`[a-zA-Z ]{1,30}`),
 			).Draw(rt, fmt.Sprintf("toolText_%d", i))
 		}
-		responses = append(responses, &ProviderResponse{
+		responses = append(responses, &ModelResponse{
 			Text:      text,
 			ToolCalls: calls,
 			Usage:     TokenUsage{InputTokens: 10, OutputTokens: 5},
@@ -115,7 +110,7 @@ func genAdversarialResponses(rt *rapid.T, toolNames []string) []*ProviderRespons
 		rapid.Just("\t\n"),
 		rapid.StringMatching(`[a-zA-Z0-9 .,!?]{1,100}`),
 	).Draw(rt, "finalText")
-	responses = append(responses, &ProviderResponse{
+	responses = append(responses, &ModelResponse{
 		Text:  finalText,
 		Usage: TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
@@ -131,7 +126,7 @@ func TestProperty_ConversationNoEmptyTextBlocks(t *testing.T) {
 		toolNames := []string{"tool_a", "tool_b", "tool_c"}
 		tools := make([]tool.Tool, len(toolNames))
 		for i, name := range toolNames {
-			tools[i] = tool.NewRaw(name, name+" desc", map[string]any{"type": "object"},
+			tools[i] = newTestRaw(name, name+" desc", map[string]any{"type": "object"},
 				func(_ context.Context, _ json.RawMessage) (string, error) {
 					return "result", nil
 				})
@@ -141,8 +136,8 @@ func TestProperty_ConversationNoEmptyTextBlocks(t *testing.T) {
 		provider := &adversarialProvider{responses: responses}
 		store := &trackingConversation{}
 
-		a, err := New(provider, prompt.Text("test"), tools,
-			WithConversation(store, "test-conv"),
+		a, err := New(provider, "test", WithTools(tools...),
+			WithConversationStore(store),
 			WithMaxIterations(10),
 		)
 		if err != nil {
@@ -150,7 +145,7 @@ func TestProperty_ConversationNoEmptyTextBlocks(t *testing.T) {
 		}
 
 		// Run the agent — we don't care about the result, only the saved conversation.
-		a.Invoke(Background(), "hello")
+		a.Invoke(Background().WithConversationID("test-conv"), "hello")
 
 		msgs := store.lastSaved()
 		for i, msg := range msgs {
@@ -170,7 +165,7 @@ func TestProperty_ConversationNoEmptyContentMessages(t *testing.T) {
 		toolNames := []string{"tool_a", "tool_b"}
 		tools := make([]tool.Tool, len(toolNames))
 		for i, name := range toolNames {
-			tools[i] = tool.NewRaw(name, name+" desc", map[string]any{"type": "object"},
+			tools[i] = newTestRaw(name, name+" desc", map[string]any{"type": "object"},
 				func(_ context.Context, _ json.RawMessage) (string, error) {
 					return "result", nil
 				})
@@ -180,15 +175,15 @@ func TestProperty_ConversationNoEmptyContentMessages(t *testing.T) {
 		provider := &adversarialProvider{responses: responses}
 		store := &trackingConversation{}
 
-		a, err := New(provider, prompt.Text("test"), tools,
-			WithConversation(store, "test-conv"),
+		a, err := New(provider, "test", WithTools(tools...),
+			WithConversationStore(store),
 			WithMaxIterations(10),
 		)
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}
 
-		a.Invoke(Background(), "hello")
+		a.Invoke(Background().WithConversationID("test-conv"), "hello")
 
 		msgs := store.lastSaved()
 		for i, msg := range msgs {
@@ -207,7 +202,7 @@ func TestProperty_ConversationToolResultsHaveMatchingToolUse(t *testing.T) {
 		toolNames := []string{"tool_a", "tool_b", "tool_c"}
 		tools := make([]tool.Tool, len(toolNames))
 		for i, name := range toolNames {
-			tools[i] = tool.NewRaw(name, name+" desc", map[string]any{"type": "object"},
+			tools[i] = newTestRaw(name, name+" desc", map[string]any{"type": "object"},
 				func(_ context.Context, _ json.RawMessage) (string, error) {
 					return "result", nil
 				})
@@ -217,15 +212,15 @@ func TestProperty_ConversationToolResultsHaveMatchingToolUse(t *testing.T) {
 		provider := &adversarialProvider{responses: responses}
 		store := &trackingConversation{}
 
-		a, err := New(provider, prompt.Text("test"), tools,
-			WithConversation(store, "test-conv"),
+		a, err := New(provider, "test", WithTools(tools...),
+			WithConversationStore(store),
 			WithMaxIterations(10),
 		)
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}
 
-		a.Invoke(Background(), "hello")
+		a.Invoke(Background().WithConversationID("test-conv"), "hello")
 
 		msgs := store.lastSaved()
 
@@ -260,7 +255,7 @@ func TestProperty_ConversationRolesAlternate(t *testing.T) {
 		toolNames := []string{"tool_a"}
 		tools := make([]tool.Tool, len(toolNames))
 		for i, name := range toolNames {
-			tools[i] = tool.NewRaw(name, name+" desc", map[string]any{"type": "object"},
+			tools[i] = newTestRaw(name, name+" desc", map[string]any{"type": "object"},
 				func(_ context.Context, _ json.RawMessage) (string, error) {
 					return "result", nil
 				})
@@ -270,15 +265,15 @@ func TestProperty_ConversationRolesAlternate(t *testing.T) {
 		provider := &adversarialProvider{responses: responses}
 		store := &trackingConversation{}
 
-		a, err := New(provider, prompt.Text("test"), tools,
-			WithConversation(store, "test-conv"),
+		a, err := New(provider, "test", WithTools(tools...),
+			WithConversationStore(store),
 			WithMaxIterations(10),
 		)
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}
 
-		a.Invoke(Background(), "hello")
+		a.Invoke(Background().WithConversationID("test-conv"), "hello")
 
 		msgs := store.lastSaved()
 		if len(msgs) < 2 {

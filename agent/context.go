@@ -3,33 +3,125 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"maps"
 	"sync"
 )
 
-// Context carries both stdlib context semantics and invocation-scoped state.
-// It embeds context.Context so *Context satisfies the context.Context interface.
+// Context carries stdlib context semantics plus the configuration of one agent
+// invocation. It embeds context.Context, so *Context satisfies
+// context.Context and can be passed to tools, middleware and providers.
+//
+// A Context has three layers:
+//
+//   - invocation config (conversation ID, identity, scopes, principal,
+//     attachments, inference overrides, instructions, observability hooks).
+//     Configure it with the WithX methods before invoking the agent. WithX
+//     methods mutate the receiver and return the same pointer for chaining.
+//   - a user key/value store (Set / Get / GetTyped). It is invocation-scoped,
+//     safe for concurrent use and shared by the invocation and all of its tool
+//     calls, so a tool can Set a value that a later ToolFilter or tool reads.
+//   - framework runtime state (usage, event emitter, per-tool-call scratch
+//     state). It is internal and never stored in the user key/value store.
+//
+// Each tool call receives a child Context that shares the config values, the
+// user key/value store, cancellation, tracing and the event emitter, but has
+// isolated per-call runtime state (call ID, widget accumulator, guard state).
 type Context struct {
 	context.Context
 
-	// mu is shared by Context views that share the invocation-scoped maps.
-	mu              *sync.RWMutex
-	data            map[any]any
-	usage           TokenUsage
+	cfg  invocationConfig
+	kv   *kvStore
+	rt   *invocationRuntime // nil outside a running invocation
+	call *toolCallRuntime   // nil outside a tool call
+}
+
+// invocationConfig is the invocation-scoped configuration. It is copied by
+// value into derived contexts; scopes is treated as copy-on-write.
+type invocationConfig struct {
 	conversationID  string
 	images          []ImageBlock
 	documents       []DocumentBlock
 	inferenceConfig *InferenceConfig
-	eventHook       EventHook
-	identifier      string
+	identity        string
 	scopes          map[string]string
-	tracingHook     TracingHook
-	metricsHook     MetricsHook
-	loggingHook     LoggingHook
-
-	// systemPromptOverride, when non-empty, replaces the agent's configured
-	// instructions for this invocation only.
-	systemPromptOverride string
+	principal       *Principal
+	instructions    string
+	detailedEvents  bool
+	observers       []Observer
+	observersSet    bool
 }
+
+// kvStore is the user key/value store shared by an invocation and its tool calls.
+type kvStore struct {
+	mu   sync.RWMutex
+	data map[any]any
+}
+
+// invocationRuntime holds framework-internal state for one running invocation.
+type invocationRuntime struct {
+	mu    sync.Mutex
+	usage TokenUsage
+	sink  *eventSink // nil = events are discarded
+}
+
+func (r *invocationRuntime) addUsage(u TokenUsage) TokenUsage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.usage.InputTokens += u.InputTokens
+	r.usage.OutputTokens += u.OutputTokens
+	r.usage.CacheReadTokens += u.CacheReadTokens
+	r.usage.CacheWriteTokens += u.CacheWriteTokens
+	return r.usage
+}
+
+func (r *invocationRuntime) totalUsage() TokenUsage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.usage
+}
+
+// toolCallRuntime holds isolated scratch state for a single tool call.
+type toolCallRuntime struct {
+	id    string
+	name  string
+	async bool // true when the call runs on a worker goroutine (parallel tools)
+
+	mu         sync.Mutex
+	widgets    []WidgetBlock
+	humanInput *InputInterrupt
+}
+
+func (r *toolCallRuntime) appendWidget(w WidgetBlock) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.widgets = append(r.widgets, w)
+}
+
+func (r *toolCallRuntime) drainWidgets() []WidgetBlock {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.widgets
+	r.widgets = nil
+	return out
+}
+
+func (r *toolCallRuntime) setHumanInput(in *InputInterrupt) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.humanInput = in
+}
+
+func (r *toolCallRuntime) takeHumanInput() *InputInterrupt {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	in := r.humanInput
+	r.humanInput = nil
+	return in
+}
+
+// contextKey lets FromContext find a *Context through derived stdlib contexts.
+type contextKey struct{}
 
 // NewContext creates a new *Context wrapping the given parent.
 // It panics if parent is nil.
@@ -39,8 +131,7 @@ func NewContext(parent context.Context) *Context {
 	}
 	return &Context{
 		Context: parent,
-		mu:      &sync.RWMutex{},
-		data:    make(map[any]any),
+		kv:      &kvStore{data: make(map[any]any)},
 	}
 }
 
@@ -49,255 +140,40 @@ func Background() *Context {
 	return NewContext(context.Background())
 }
 
-// Set stores a value in the invocation-scoped key-value store.
-// Safe for concurrent use.
-func (c *Context) Set(key, value any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.data[key] = value
+// Value implements context.Context. It additionally resolves the *Context
+// itself so FromContext works through contexts derived with the stdlib
+// helpers (context.WithValue, context.WithTimeout, ...).
+func (c *Context) Value(key any) any {
+	if _, ok := key.(contextKey); ok {
+		return c
+	}
+	return c.Context.Value(key)
 }
 
-// Get retrieves a value from the invocation-scoped key-value store.
+// ---------------------------------------------------------------------------
+// User key/value store
+// ---------------------------------------------------------------------------
+
+// Set stores a value in the invocation-scoped key/value store. The store is
+// shared by the invocation and all of its tool calls. Safe for concurrent use.
+func (c *Context) Set(key, value any) {
+	c.kv.mu.Lock()
+	defer c.kv.mu.Unlock()
+	c.kv.data[key] = value
+}
+
+// Get retrieves a value from the invocation-scoped key/value store.
 // Safe for concurrent use.
 func (c *Context) Get(key any) (any, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	v, ok := c.data[key]
+	c.kv.mu.RLock()
+	defer c.kv.mu.RUnlock()
+	v, ok := c.kv.data[key]
 	return v, ok
 }
 
-// Usage returns the cumulative token usage for the invocation.
-func (c *Context) Usage() TokenUsage {
-	return c.usage
-}
-
-// ConversationID returns the conversation ID for the invocation.
-func (c *Context) ConversationID() string {
-	return c.conversationID
-}
-
-// Images returns the attached images for the invocation.
-func (c *Context) Images() []ImageBlock {
-	return c.images
-}
-
-// Documents returns the attached documents for the invocation.
-func (c *Context) Documents() []DocumentBlock {
-	return c.documents
-}
-
-// InferenceConfig returns the per-invocation inference config override.
-func (c *Context) InferenceConfig() *InferenceConfig {
-	return c.inferenceConfig
-}
-
-// EventHook returns the per-invocation event hook.
-func (c *Context) EventHook() EventHook {
-	return c.eventHook
-}
-
-// Identifier returns the scoping identity for memory operations.
-func (c *Context) Identifier() string {
-	return c.identifier
-}
-
-// WithConversationID sets the conversation ID and returns the same *Context for chaining.
-func (c *Context) WithConversationID(id string) *Context {
-	c.conversationID = id
-	return c
-}
-
-// WithImages sets the attached images and returns the same *Context for chaining.
-func (c *Context) WithImages(imgs []ImageBlock) *Context {
-	c.images = imgs
-	return c
-}
-
-// WithDocuments sets the attached documents and returns the same *Context for chaining.
-func (c *Context) WithDocuments(docs []DocumentBlock) *Context {
-	c.documents = docs
-	return c
-}
-
-// WithInferenceConfig sets the per-invocation inference config and returns the same *Context for chaining.
-func (c *Context) WithInferenceConfig(cfg *InferenceConfig) *Context {
-	c.inferenceConfig = cfg
-	return c
-}
-
-// WithEventHook sets the per-invocation event hook and returns the same *Context for chaining.
-func (c *Context) WithEventHook(h EventHook) *Context {
-	c.eventHook = h
-	return c
-}
-
-// EmitEvent emits a user-defined event onto the active InvokeEventStream
-// channel (if any). When no event stream is active — i.e. the context has
-// no EventHook, or the hook does not implement CustomEventEmitter — the
-// call is a no-op. Use it from inside tool handlers or middleware to surface
-// domain progress (e.g. "rag.retrieved", "score.computed") to UIs without
-// inventing parallel channels.
-//
-// name should be a short, dot-namespaced tag chosen by the emitter.
-// payload is JSON-marshalled; pass any value json.Marshal can handle.
-// Marshal failures silently drop the event so EmitEvent never disturbs the
-// agent loop.
-//
-// Custom events are delivered on the same channel as the agent's built-in
-// events (Type=EventCustom) and obey the same back-pressure semantics.
-// Safe for concurrent use.
-func (c *Context) EmitEvent(name string, payload any) {
-	hook := c.EventHook()
-	if hook == nil {
-		return
-	}
-	emitter, ok := hook.(CustomEventEmitter)
-	if !ok {
-		return
-	}
-	var raw json.RawMessage
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return
-		}
-		raw = b
-	}
-	emitter.OnCustomEvent(c, name, raw)
-}
-
-// WithIdentifier sets the scoping identity and returns the same *Context for chaining.
-func (c *Context) WithIdentifier(id string) *Context {
-	c.identifier = id
-	return c
-}
-
-// WithScope sets a named scope value for multi-scope memory operations.
-// Use this when an agent needs multiple independent memory scopes (e.g. user
-// preferences scoped by user ID and project notes scoped by project ID).
-func (c *Context) WithScope(key, value string) *Context {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.scopes == nil {
-		c.scopes = make(map[string]string)
-	}
-	c.scopes[key] = value
-	return c
-}
-
-// Scope returns the value for a named scope, or empty string if not set.
-func (c *Context) Scope(key string) string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.scopes == nil {
-		return ""
-	}
-	return c.scopes[key]
-}
-
-// SetScope updates a named scope value. Same as WithScope but doesn't return
-// the context — use in tool handlers where chaining isn't needed.
-func (c *Context) SetScope(key, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.scopes == nil {
-		c.scopes = make(map[string]string)
-	}
-	c.scopes[key] = value
-}
-
-// allScopes returns a copy of all scope key-value pairs.
-// Used internally by Background_Tool dispatch to capture the originating
-// *Context's scoping identity for the eventual Re_Entry_Turn.
-func (c *Context) allScopes() map[string]string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if len(c.scopes) == 0 {
-		return nil
-	}
-	cp := make(map[string]string, len(c.scopes))
-	for k, v := range c.scopes {
-		cp[k] = v
-	}
-	return cp
-}
-
-// TracingHook returns the per-invocation tracing hook, or nil if none is set.
-func (c *Context) TracingHook() TracingHook {
-	return c.tracingHook
-}
-
-// WithTracingHook sets the per-invocation tracing hook and returns the same *Context for chaining.
-func (c *Context) WithTracingHook(h TracingHook) *Context {
-	c.tracingHook = h
-	return c
-}
-
-// MetricsHook returns the per-invocation metrics hook, or nil if none is set.
-func (c *Context) MetricsHook() MetricsHook {
-	return c.metricsHook
-}
-
-// WithMetricsHook sets the per-invocation metrics hook and returns the same *Context for chaining.
-func (c *Context) WithMetricsHook(h MetricsHook) *Context {
-	c.metricsHook = h
-	return c
-}
-
-// LoggingHook returns the per-invocation logging hook, or nil if none is set.
-func (c *Context) LoggingHook() LoggingHook {
-	return c.loggingHook
-}
-
-// WithLoggingHook sets the per-invocation logging hook and returns the same *Context for chaining.
-func (c *Context) WithLoggingHook(h LoggingHook) *Context {
-	c.loggingHook = h
-	return c
-}
-
-// SystemPromptOverride returns the per-invocation system prompt override, or
-// empty string if none was set. The agent uses this in preference to its
-// configured instructions when non-empty.
-func (c *Context) SystemPromptOverride() string {
-	return c.systemPromptOverride
-}
-
-// WithSystemPromptOverride sets a per-invocation system prompt that overrides
-// the agent's configured instructions for this invocation only. Use this for
-// A/B testing or other per-request prompt selection. Pass empty string to
-// clear the override (the agent's instructions are used as before).
-func (c *Context) WithSystemPromptOverride(s string) *Context {
-	c.systemPromptOverride = s
-	return c
-}
-
-// FromContext extracts a *Context from a context.Context.
-// Returns nil if ctx is not a *Context. Use this in tool handlers that need
-// access to invocation state without risking a panic from a direct type assertion.
-func FromContext(ctx context.Context) *Context {
-	c, _ := ctx.(*Context)
-	return c
-}
-
-// ScopeFrom extracts a named scope value from a context.Context.
-// If the scope key is set, returns its value. Otherwise falls back to
-// Identifier(). Returns empty string if neither is set.
-func ScopeFrom(ctx context.Context, key string) string {
-	c := FromContext(ctx)
-	if c == nil {
-		return ""
-	}
-	if key != "" {
-		if v := c.Scope(key); v != "" {
-			return v
-		}
-	}
-	return c.Identifier()
-}
-
-// GetTyped retrieves a typed value from the invocation-scoped key-value store.
-// Returns the zero value and false if the key doesn't exist or the value is not
-// assignable to T. Eliminates the need for manual type assertions on Get results.
+// GetTyped retrieves a typed value from the invocation-scoped key/value store.
+// Returns the zero value and false if the key doesn't exist or the value is
+// not assignable to T.
 func GetTyped[T any](c *Context, key any) (T, bool) {
 	v, ok := c.Get(key)
 	if !ok {
@@ -308,106 +184,232 @@ func GetTyped[T any](c *Context, key any) (T, bool) {
 	return t, ok
 }
 
-// EmitWidget emits a WidgetBlock from inside a tool handler or middleware.
-// It validates the block, appends it to the per-call widget accumulator (thread-safe), and delivers an EventWidget event to the active
-// InvokeEventStream channel (if any).
-//
-// Returns a non-nil error if block.Type is empty; in that case no event is
-// emitted and the accumulator is unchanged.
-//
-// Safe for concurrent use when parallelTools is enabled. All synchronization
-// is internal to the agent package.
-func (c *Context) EmitWidget(block WidgetBlock) error {
-	if err := block.Validate(); err != nil {
-		return err
+// ---------------------------------------------------------------------------
+// Invocation config
+// ---------------------------------------------------------------------------
+
+// ConversationID returns the conversation ID for the invocation.
+func (c *Context) ConversationID() string { return c.cfg.conversationID }
+
+// WithConversationID sets the conversation ID. An empty ID selects stateless
+// execution even when the Agent has a ConversationStore.
+func (c *Context) WithConversationID(id string) *Context {
+	c.cfg.conversationID = id
+	return c
+}
+
+// Images returns the images attached to the invocation.
+func (c *Context) Images() []ImageBlock { return c.cfg.images }
+
+// WithImages attaches images to the user message of the invocation.
+func (c *Context) WithImages(imgs []ImageBlock) *Context {
+	c.cfg.images = imgs
+	return c
+}
+
+// Documents returns the documents attached to the invocation.
+func (c *Context) Documents() []DocumentBlock { return c.cfg.documents }
+
+// WithDocuments attaches documents to the user message of the invocation.
+func (c *Context) WithDocuments(docs []DocumentBlock) *Context {
+	c.cfg.documents = docs
+	return c
+}
+
+// InferenceConfig returns the per-invocation inference config override.
+func (c *Context) InferenceConfig() *InferenceConfig { return c.cfg.inferenceConfig }
+
+// WithInferenceConfig sets the per-invocation inference config override.
+func (c *Context) WithInferenceConfig(cfg *InferenceConfig) *Context {
+	c.cfg.inferenceConfig = cfg
+	return c
+}
+
+// Identity returns the identity used to scope per-user state such as memory.
+func (c *Context) Identity() string { return c.cfg.identity }
+
+// WithIdentity sets the identity used to scope per-user state such as memory.
+func (c *Context) WithIdentity(id string) *Context {
+	c.cfg.identity = id
+	return c
+}
+
+// WithScope sets a named scope value. Use named scopes when an agent needs
+// several independent scopes (e.g. user preferences keyed by user ID and
+// project notes keyed by project ID). Scopes never fall back to Identity.
+func (c *Context) WithScope(key, value string) *Context {
+	scopes := make(map[string]string, len(c.cfg.scopes)+1)
+	maps.Copy(scopes, c.cfg.scopes)
+	scopes[key] = value
+	c.cfg.scopes = scopes // copy-on-write: derived contexts keep their snapshot
+	return c
+}
+
+// Scope returns the value of a named scope and whether it was set.
+func (c *Context) Scope(key string) (string, bool) {
+	v, ok := c.cfg.scopes[key]
+	return v, ok
+}
+
+// Instructions returns the per-invocation instructions override, or "".
+func (c *Context) Instructions() string { return c.cfg.instructions }
+
+// WithInstructions replaces the agent's configured instructions (system
+// prompt) for this invocation only. Pass "" to use the agent's instructions.
+func (c *Context) WithInstructions(s string) *Context {
+	c.cfg.instructions = s
+	return c
+}
+
+// WithDetailedEvents enables detailed lifecycle events (iteration, model and
+// max-iterations events) in Stream for this invocation.
+func (c *Context) WithDetailedEvents() *Context {
+	c.cfg.detailedEvents = true
+	return c
+}
+
+// WithObservers replaces the Agent's observers for this invocation. Passing no
+// observers disables observation for the invocation.
+func (c *Context) WithObservers(observers ...Observer) *Context {
+	c.cfg.observers = append([]Observer(nil), observers...)
+	c.cfg.observersSet = true
+	return c
+}
+
+// Clone returns a new *Context with a copy of the invocation config, the same
+// parent context.Context, an empty independent key/value store and no
+// runtime state. Use it to fork independent sub-invocations.
+func (c *Context) Clone() *Context {
+	return &Context{
+		Context: c.Context,
+		cfg:     c.cfg,
+		kv:      &kvStore{data: make(map[any]any)},
 	}
-	// Append to the per-call accumulator (see widgetAccumulatorKey).
-	if acc, ok := GetTyped[*widgetAccumulator](c, widgetAccumulatorKey{}); ok {
-		acc.append(block)
+}
+
+// ---------------------------------------------------------------------------
+// Internal derivation
+// ---------------------------------------------------------------------------
+
+// withContext returns a shallow copy of c with a different embedded
+// context.Context. Config values, key/value store and runtime are shared.
+func (c *Context) withContext(ctx context.Context) *Context {
+	cp := *c
+	cp.Context = ctx
+	return &cp
+}
+
+// forInvocation derives the internal Context for one invocation: same config
+// values and user key/value store, fresh runtime, no tool-call state.
+func (c *Context) forInvocation(ctx context.Context, rt *invocationRuntime) *Context {
+	return &Context{Context: ctx, cfg: c.cfg, kv: c.kv, rt: rt}
+}
+
+// forToolCall derives the child Context for one tool call.
+func (c *Context) forToolCall(call *toolCallRuntime) *Context {
+	cp := *c
+	cp.call = call
+	return &cp
+}
+
+// emit delivers an event for this context's invocation, if a stream consumer
+// is attached. Tool calls running on worker goroutines enqueue the event so
+// that it is yielded from the consumer's goroutine.
+func (c *Context) emit(ev Event) bool {
+	if c.rt == nil || c.rt.sink == nil {
+		return true
 	}
-	// Deliver the event to the stream hook if present.
-	hook := c.EventHook()
-	if hook == nil {
+	if c.call != nil && c.call.async {
+		c.rt.sink.enqueue(ev)
+		return true
+	}
+	return c.rt.sink.emit(ev)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// FromContext extracts the *Context from a context.Context, including stdlib
+// contexts derived from a *Context. Returns nil if none is found.
+func FromContext(ctx context.Context) *Context {
+	if ctx == nil {
 		return nil
 	}
-	if emitter, ok := hook.(WidgetEmitter); ok {
-		emitter.OnWidget(c, block)
+	if c, ok := ctx.(*Context); ok {
+		return c
 	}
+	c, _ := ctx.Value(contextKey{}).(*Context)
+	return c
+}
+
+// IdentityFrom returns the invocation identity carried by ctx, or "".
+func IdentityFrom(ctx context.Context) string {
+	if c := FromContext(ctx); c != nil {
+		return c.Identity()
+	}
+	return ""
+}
+
+// ScopeFrom returns the named scope value carried by ctx and whether it was
+// set. It never falls back to the identity.
+func ScopeFrom(ctx context.Context, key string) (string, bool) {
+	if c := FromContext(ctx); c != nil {
+		return c.Scope(key)
+	}
+	return "", false
+}
+
+// ErrNoToolCall is returned by EmitWidget when called outside a tool call.
+var ErrNoToolCall = errors.New("agent: not inside a tool call")
+
+// EmitWidget emits a WidgetBlock from inside a tool handler or middleware.
+// The widget is attached to the current tool call (persisted after its
+// ToolUseBlock) and delivered as an EventWidget carrying the call ID.
+// Returns an error if the block is invalid or ctx is not a tool-call context.
+func EmitWidget(ctx context.Context, w WidgetBlock) error {
+	if err := w.Validate(); err != nil {
+		return err
+	}
+	c := FromContext(ctx)
+	if c == nil || c.call == nil {
+		return ErrNoToolCall
+	}
+	c.call.appendWidget(w)
+	c.emit(Event{Type: EventWidget, Widget: &WidgetEvent{
+		CallID:  c.call.id,
+		Type:    w.Type,
+		Payload: cloneRaw(w.Payload),
+	}})
 	return nil
 }
 
-// WithValue returns a new *Context that carries the given key-value pair in the
-// embedded context.Context. Use this to pass values that downstream libraries
-// read via ctx.Value (e.g. request IDs, trace baggage).
-func (c *Context) WithValue(key, val any) *Context {
-	return c.withContext(context.WithValue(c.Context, key, val))
-}
-
-// Clone returns a new *Context that shares the parent context.Context and typed
-// fields (conversation ID, images, documents, inference config, event hook,
-// identifier) but has an independent key-value store. Use this when forking
-// parallel sub-invocations that should not share mutable KV state.
-func (c *Context) Clone() *Context {
-	c.mu.RLock()
-	var scopesCopy map[string]string
-	if c.scopes != nil {
-		scopesCopy = make(map[string]string, len(c.scopes))
-		for k, v := range c.scopes {
-			scopesCopy[k] = v
+// EmitEvent emits a user-defined event onto the invocation's Stream. It is a
+// no-op when ctx carries no running invocation. name should be a short,
+// dot-namespaced tag (e.g. "rag.retrieved"); payload is JSON-encoded.
+// Safe for concurrent use.
+func EmitEvent(ctx context.Context, name string, payload any) error {
+	c := FromContext(ctx)
+	if c == nil || c.rt == nil {
+		return nil
+	}
+	var raw json.RawMessage
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return err
 		}
+		raw = b
 	}
-	// Copy principal if set, so it's available in the clone's independent KV store.
-	var principalCopy map[any]any
-	if p, ok := c.data[principalKey{}]; ok {
-		principalCopy = map[any]any{principalKey{}: p}
-	}
-	c.mu.RUnlock()
-	clone := &Context{
-		Context:              c.Context,
-		mu:                   &sync.RWMutex{},
-		data:                 make(map[any]any),
-		conversationID:       c.conversationID,
-		images:               c.images,
-		documents:            c.documents,
-		inferenceConfig:      c.inferenceConfig,
-		eventHook:            c.eventHook,
-		identifier:           c.identifier,
-		scopes:               scopesCopy,
-		tracingHook:          c.tracingHook,
-		metricsHook:          c.metricsHook,
-		loggingHook:          c.loggingHook,
-		systemPromptOverride: c.systemPromptOverride,
-	}
-	for k, v := range principalCopy {
-		clone.data[k] = v
-	}
-	return clone
+	c.emit(Event{Type: EventCustom, Custom: &CustomEvent{Name: name, Payload: raw}})
+	return nil
 }
 
-// setUsage sets the cumulative token usage. This is internal to the agent loop.
-func (c *Context) setUsage(u TokenUsage) {
-	c.usage = u
-}
-
-// withContext returns a shallow copy of c with a different embedded context.Context.
-func (c *Context) withContext(ctx context.Context) *Context {
-	return &Context{
-		Context:              ctx,
-		mu:                   c.mu,
-		data:                 c.data,
-		usage:                c.usage,
-		conversationID:       c.conversationID,
-		images:               c.images,
-		documents:            c.documents,
-		inferenceConfig:      c.inferenceConfig,
-		eventHook:            c.eventHook,
-		identifier:           c.identifier,
-		scopes:               c.scopes,
-		tracingHook:          c.tracingHook,
-		metricsHook:          c.metricsHook,
-		loggingHook:          c.loggingHook,
-		systemPromptOverride: c.systemPromptOverride,
+func cloneRaw(b json.RawMessage) json.RawMessage {
+	if b == nil {
+		return nil
 	}
+	return append(json.RawMessage(nil), b...)
 }
 
 // tokenUsageKey is the context key for cumulative token usage.
@@ -415,15 +417,13 @@ type tokenUsageKey struct{}
 
 // WithTokenUsage attaches cumulative TokenUsage to the context. The agent loop
 // sets this before calling Conversation.Save so that conversation strategies
-// (e.g. token-aware summarization) can use actual provider-reported token counts
-// to decide when to trigger compaction.
+// (e.g. token-aware summarization) can use provider-reported token counts.
 func WithTokenUsage(ctx context.Context, usage TokenUsage) context.Context {
 	return context.WithValue(ctx, tokenUsageKey{}, &usage)
 }
 
 // GetTokenUsage retrieves the cumulative TokenUsage from the context.
-// Returns zero value and false if none is attached (e.g. Save called outside
-// the agent loop).
+// Returns zero value and false if none is attached.
 func GetTokenUsage(ctx context.Context) (TokenUsage, bool) {
 	u, ok := ctx.Value(tokenUsageKey{}).(*TokenUsage)
 	if !ok || u == nil {

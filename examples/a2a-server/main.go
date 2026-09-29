@@ -2,7 +2,7 @@
 //
 // Starts an HTTP server that speaks the Google A2A protocol (JSON-RPC + SSE).
 // Any A2A-compliant client can discover the agent via /.well-known/agent-card.json
-// and interact with it via tasks/send or tasks/sendSubscribe.
+// and interact with it via message/send.
 //
 // Test with curl:
 //
@@ -30,7 +30,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/a2a"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -38,26 +37,31 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful travel assistant. Provide concise, accurate travel advice."),
-		[]tool.Tool{
-			tool.NewRaw("get_weather", "Get current weather for a city",
-				map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"city": map[string]any{"type": "string", "description": "City name"},
-					},
-					"required": []string{"city"},
-				},
-				func(ctx context.Context, input json.RawMessage) (string, error) {
-					var params struct {
-						City string `json:"city"`
-					}
-					json.Unmarshal(input, &params)
-					return fmt.Sprintf("Weather in %s: 22°C, partly cloudy", params.City), nil
-				}),
+	weather := tool.NewRaw(
+		"get_weather",
+		"Get current weather for a city",
+		func(_ context.Context, input json.RawMessage) (string, error) {
+			var params struct {
+				City string `json:"city"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", fmt.Errorf("decode weather input: %w", err)
+			}
+			return fmt.Sprintf("Weather in %s: 22°C, partly cloudy", params.City), nil
 		},
+		tool.WithSchema(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"city": map[string]any{"type": "string", "description": "City name"},
+			},
+			"required": []string{"city"},
+		}),
+	)
+
+	a, err := agent.New(
+		provider,
+		"You are a helpful travel assistant. Provide concise, accurate travel advice.",
+		agent.WithTools(weather),
 		agent.WithName("travel-assistant"),
 	)
 	if err != nil {

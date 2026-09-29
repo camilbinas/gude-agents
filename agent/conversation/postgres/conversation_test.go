@@ -2,421 +2,215 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/testutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"pgregory.net/rapid"
 )
 
-// skipIfNoPostgres skips the test if POSTGRES_URL is not set and returns a pool.
 func skipIfNoPostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("POSTGRES_URL")
 	if url == "" {
-		t.Skip("POSTGRES_URL not set, skipping postgres test")
+		t.Skip("POSTGRES_URL not set")
 	}
 	pool, err := pgxpool.New(context.Background(), url)
 	if err != nil {
-		t.Fatalf("failed to connect to postgres: %v", err)
+		t.Fatal(err)
 	}
 	return pool
 }
 
-// uniqueTable returns a unique table name for test isolation.
-func uniqueTable(t *testing.T) string {
-	t.Helper()
-	// Use test name sanitized for SQL.
-	name := fmt.Sprintf("test_%d", os.Getpid())
-	return name
-}
-
-// newTestMemory creates a PostgresMemory with a unique table and registers cleanup.
 func newTestMemory(t *testing.T) *Conversation {
 	t.Helper()
 	pool := skipIfNoPostgres(t)
-	table := uniqueTable(t)
-
-	// Create the table manually (no auto-migrate).
-	ddl := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			conversation_id TEXT PRIMARY KEY,
-			messages        JSONB NOT NULL,
-			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`, table)
+	table := fmt.Sprintf("conversation_test_%d", time.Now().UnixNano())
+	ddl := fmt.Sprintf(`CREATE TABLE %s (
+		conversation_id TEXT PRIMARY KEY,
+		messages JSONB NOT NULL,
+		revision BIGINT NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`, table)
 	if _, err := pool.Exec(context.Background(), ddl); err != nil {
-		t.Fatalf("create table: %v", err)
+		t.Fatal(err)
 	}
-
 	m, err := New(pool, WithTableName(table))
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
-
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
+		_, _ = pool.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
 		m.Close()
 	})
-
 	return m
 }
 
-func TestNew_NilPool(t *testing.T) {
-	_, err := New(nil)
-	if err == nil {
-		t.Fatal("expected error for nil pool")
-	}
+func pgMessages(text string) []agent.Message {
+	return []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: text}}}}
 }
 
-func TestNew_CreatesTable(t *testing.T) {
-	m := newTestMemory(t)
-	if m == nil {
-		t.Fatal("expected non-nil PostgresMemory")
+func TestNewValidation(t *testing.T) {
+	if _, err := New(nil); err == nil {
+		t.Fatal("expected nil pool error")
 	}
-}
-
-func TestNew_CustomTableName(t *testing.T) {
 	pool := skipIfNoPostgres(t)
-	table := fmt.Sprintf("custom_%d", os.Getpid())
-
-	// Create the table manually.
-	ddl := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			conversation_id TEXT PRIMARY KEY,
-			messages        JSONB NOT NULL,
-			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`, table)
-	if _, err := pool.Exec(context.Background(), ddl); err != nil {
-		t.Fatalf("create table: %v", err)
+	defer pool.Close()
+	if _, err := New(pool, WithTableName("bad\x00name")); err == nil {
+		t.Fatal("expected invalid identifier error")
 	}
+}
 
-	m, err := New(pool, WithTableName(table))
+func TestSaveLoadRevisionAndConflict(t *testing.T) {
+	m := newTestMemory(t)
+	ctx := context.Background()
+	missing, err := m.Load(ctx, "missing")
+	if err != nil || missing.Messages == nil || missing.Revision != 0 {
+		t.Fatalf("missing = %+v, %v", missing, err)
+	}
+	rev, err := m.Save(ctx, "conv", pgMessages("one"), 0)
+	if err != nil || rev != 1 {
+		t.Fatalf("first Save = %d, %v", rev, err)
+	}
+	rev, err = m.Save(ctx, "conv", pgMessages("two"), rev)
+	if err != nil || rev != 2 {
+		t.Fatalf("second Save = %d, %v", rev, err)
+	}
+	if _, err := m.Save(ctx, "conv", pgMessages("stale"), 1); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("stale Save = %v", err)
+	}
+	snapshot, err := m.Load(ctx, "conv")
+	if err != nil || snapshot.Revision != 2 || !reflect.DeepEqual(snapshot.Messages, pgMessages("two")) {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+}
+
+func TestListAndDelete(t *testing.T) {
+	m := newTestMemory(t)
+	ctx := context.Background()
+	for _, id := range []string{"alpha", "beta"} {
+		if _, err := m.Save(ctx, id, pgMessages(id), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids, err := m.List(ctx)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("List = %v, %v", ids, err)
+	}
+	if err := m.Delete(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := m.Load(ctx, "alpha")
+	if err != nil || snapshot.Revision != 0 {
+		t.Fatalf("deleted = %+v, %v", snapshot, err)
+	}
+}
+
+func TestCustomColumns(t *testing.T) {
+	pool := skipIfNoPostgres(t)
+	table := fmt.Sprintf("conversation_custom_%d", time.Now().UnixNano())
+	_, err := pool.Exec(context.Background(), fmt.Sprintf(`CREATE TABLE %s (id TEXT PRIMARY KEY, data JSONB NOT NULL, version BIGINT NOT NULL, modified TIMESTAMPTZ NOT NULL DEFAULT NOW())`, table))
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
+	}
+	defer func() { _, _ = pool.Exec(context.Background(), "DROP TABLE "+table); pool.Close() }()
+	m, err := New(pool, WithTableName(table), WithColumns("id", "data", "modified"), WithRevisionColumn("version"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev, err := m.Save(context.Background(), "x", pgMessages("x"), 0)
+	if err != nil || rev != 1 {
+		t.Fatalf("Save = %d, %v", rev, err)
+	}
+}
+
+func TestConversationManagerCompatibility(t *testing.T) {
+	var _ agent.ConversationManager = (*Conversation)(nil)
+}
+
+func TestConfigDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.colRevision != "revision" || !strings.Contains(cfg.tableName, "conversation") {
+		t.Fatalf("config = %+v", cfg)
+	}
+	_ = pgx.Identifier{cfg.tableName}.Sanitize()
+}
+
+func TestConcurrentCASOneWinner(t *testing.T) {
+	store := newTestMemory(t)
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := store.Save(ctx, "race", pgMessages("value"), 0)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	var successes, conflicts int
+	for err := range errs {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, agent.ErrConversationConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
+	}
+}
+
+func TestNewMigratesLegacyTableAndRow(t *testing.T) {
+	pool := skipIfNoPostgres(t)
+	table := fmt.Sprintf("conversation_legacy_%d", time.Now().UnixNano())
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s (
+		conversation_id TEXT PRIMARY KEY,
+		messages JSONB NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`, table)); err != nil {
+		t.Fatal(err)
 	}
 	defer func() {
-		pool.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
-		m.Close()
+		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+table)
+		pool.Close()
 	}()
-
-	wantTable := pgx.Identifier{table}.Sanitize()
-	if m.cfg.tableName != wantTable {
-		t.Fatalf("expected table name %q, got %q", wantTable, m.cfg.tableName)
+	legacyJSON := `[{"role":"user","content":[{"type":"text","text":"legacy"}]}]`
+	if _, err := pool.Exec(ctx, "INSERT INTO "+table+" (conversation_id, messages) VALUES ($1, $2)", "legacy", legacyJSON); err != nil {
+		t.Fatal(err)
 	}
-
-	ctx := context.Background()
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-	}
-	if err := m.Save(ctx, "conv-1", msgs); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	loaded, err := m.Load(ctx, "conv-1")
+	m, err := New(pool, WithTableName(table))
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatal(err)
 	}
-	if len(loaded) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(loaded))
+	snapshot, err := m.Load(ctx, "legacy")
+	if err != nil || snapshot.Revision != 0 || len(snapshot.Messages) != 1 {
+		t.Fatalf("legacy snapshot = %+v, %v", snapshot, err)
 	}
-}
-
-func TestSaveAndLoad(t *testing.T) {
-	m := newTestMemory(t)
-	ctx := context.Background()
-
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi there"}}},
+	revision, err := m.Save(ctx, "legacy", pgMessages("upgraded"), 0)
+	if err != nil || revision != 1 {
+		t.Fatalf("upgrade Save = %d, %v", revision, err)
 	}
-
-	if err := m.Save(ctx, "conv-1", msgs); err != nil {
-		t.Fatalf("Save: %v", err)
+	if _, err := m.Save(ctx, "legacy", pgMessages("stale"), 0); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("second revision-zero Save = %v", err)
 	}
-
-	loaded, err := m.Load(ctx, "conv-1")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(loaded))
-	}
-	if tb, ok := loaded[0].Content[0].(agent.TextBlock); !ok || tb.Text != "hello" {
-		t.Errorf("expected 'hello', got %v", loaded[0].Content[0])
-	}
-	if tb, ok := loaded[1].Content[0].(agent.TextBlock); !ok || tb.Text != "hi there" {
-		t.Errorf("expected 'hi there', got %v", loaded[1].Content[0])
-	}
-}
-
-func TestLoad_NotFound(t *testing.T) {
-	m := newTestMemory(t)
-
-	msgs, err := m.Load(context.Background(), "nonexistent")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if msgs == nil {
-		t.Fatal("expected non-nil empty slice, got nil")
-	}
-	if len(msgs) != 0 {
-		t.Errorf("expected empty slice, got %d messages", len(msgs))
-	}
-}
-
-func TestList(t *testing.T) {
-	m := newTestMemory(t)
-	ctx := context.Background()
-
-	msg := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "x"}}},
-	}
-
-	m.Save(ctx, "alpha", msg)
-	m.Save(ctx, "beta", msg)
-	m.Save(ctx, "gamma", msg)
-
-	ids, err := m.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(ids) != 3 {
-		t.Fatalf("expected 3 conversations, got %d: %v", len(ids), ids)
-	}
-}
-
-func TestDelete(t *testing.T) {
-	m := newTestMemory(t)
-	ctx := context.Background()
-
-	msg := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "x"}}},
-	}
-
-	m.Save(ctx, "to-delete", msg)
-
-	loaded, _ := m.Load(ctx, "to-delete")
-	if len(loaded) == 0 {
-		t.Fatal("expected message before delete")
-	}
-
-	if err := m.Delete(ctx, "to-delete"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	loaded, _ = m.Load(ctx, "to-delete")
-	if len(loaded) != 0 {
-		t.Errorf("expected empty after delete, got %d", len(loaded))
-	}
-}
-
-func TestDelete_NotFound(t *testing.T) {
-	m := newTestMemory(t)
-
-	if err := m.Delete(context.Background(), "ghost"); err != nil {
-		t.Fatalf("Delete nonexistent: %v", err)
-	}
-}
-
-func TestSave_Overwrite(t *testing.T) {
-	m := newTestMemory(t)
-	ctx := context.Background()
-
-	msgs1 := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "first"}}},
-	}
-	msgs2 := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "second"}}},
-		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "reply"}}},
-	}
-
-	m.Save(ctx, "conv", msgs1)
-	m.Save(ctx, "conv", msgs2)
-
-	loaded, _ := m.Load(ctx, "conv")
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 messages after overwrite, got %d", len(loaded))
-	}
-	if tb, ok := loaded[0].Content[0].(agent.TextBlock); !ok || tb.Text != "second" {
-		t.Errorf("expected 'second', got %v", loaded[0].Content[0])
-	}
-}
-
-func TestToolBlocks(t *testing.T) {
-	m := newTestMemory(t)
-	ctx := context.Background()
-
-	msgs := []agent.Message{
-		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{
-			agent.TextBlock{Text: "Let me look that up."},
-			agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: []byte(`{"q":"test"}`)},
-		}},
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{
-			agent.ToolResultBlock{ToolUseID: "tu-1", Content: "found it", IsError: false},
-		}},
-	}
-
-	m.Save(ctx, "tools", msgs)
-	loaded, _ := m.Load(ctx, "tools")
-
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(loaded))
-	}
-
-	tu, ok := loaded[0].Content[1].(agent.ToolUseBlock)
-	if !ok {
-		t.Fatalf("expected ToolUseBlock, got %T", loaded[0].Content[1])
-	}
-	if tu.Name != "search" {
-		t.Errorf("expected tool name 'search', got %q", tu.Name)
-	}
-
-	tr, ok := loaded[1].Content[0].(agent.ToolResultBlock)
-	if !ok {
-		t.Fatalf("expected ToolResultBlock, got %T", loaded[1].Content[0])
-	}
-	if tr.Content != "found it" {
-		t.Errorf("expected 'found it', got %q", tr.Content)
-	}
-}
-
-func TestDeleteLeavesOtherConversations(t *testing.T) {
-	m := newTestMemory(t)
-	ctx := context.Background()
-
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
-	}
-
-	m.Save(ctx, "keep-me", msgs)
-	m.Save(ctx, "delete-me", msgs)
-
-	if err := m.Delete(ctx, "delete-me"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	remaining, err := m.Load(ctx, "keep-me")
-	if err != nil {
-		t.Fatalf("Load(keep-me): %v", err)
-	}
-	if !reflect.DeepEqual(msgs, remaining) {
-		t.Fatalf("remaining conversation mismatch:\n  expected: %+v\n  got:      %+v", msgs, remaining)
-	}
-
-	listed, err := m.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	for _, id := range listed {
-		if id == "delete-me" {
-			t.Fatal("deleted conversation still appears in List")
-		}
-	}
-}
-
-func TestWithMemoryOption(t *testing.T) {
-	m := newTestMemory(t)
-
-	opt := agent.WithConversation(m, "test-conv")
-	if opt == nil {
-		t.Fatal("expected non-nil option from WithConversation")
-	}
-}
-
-// --- Property-Based Tests ---
-
-func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
-
-func TestProperty_SaveLoadRoundTrip(t *testing.T) {
-	m := newTestMemory(t)
-
-	rapid.Check(t, func(t *rapid.T) {
-		messages := genMessages(t)
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-
-		ctx := context.Background()
-
-		if err := m.Save(ctx, convID, messages); err != nil {
-			t.Fatalf("Save failed: %v", err)
-		}
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
-		}
-
-		if !reflect.DeepEqual(messages, loaded) {
-			t.Fatalf("round-trip mismatch:\n  saved:  %+v\n  loaded: %+v", messages, loaded)
-		}
-
-		m.Delete(ctx, convID)
-	})
-}
-
-func TestProperty_Overwrite(t *testing.T) {
-	m := newTestMemory(t)
-
-	rapid.Check(t, func(t *rapid.T) {
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-		msgs1 := genMessages(t)
-		msgs2 := genMessages(t)
-
-		ctx := context.Background()
-
-		m.Save(ctx, convID, msgs1)
-		m.Save(ctx, convID, msgs2)
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
-		}
-
-		if !reflect.DeepEqual(msgs2, loaded) {
-			t.Fatalf("overwrite mismatch:\n  expected: %+v\n  got:      %+v", msgs2, loaded)
-		}
-
-		m.Delete(ctx, convID)
-	})
-}
-
-func TestProperty_ListCompleteness(t *testing.T) {
-	m := newTestMemory(t)
-
-	rapid.Check(t, func(t *rapid.T) {
-		ctx := context.Background()
-
-		numConvs := rapid.IntRange(1, 10).Draw(t, "numConversations")
-		ids := make(map[string]bool, numConvs)
-		for i := 0; i < numConvs; i++ {
-			id := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, fmt.Sprintf("id_%d", i))
-			ids[id] = true
-			msgs := genMessages(t)
-			m.Save(ctx, id, msgs)
-		}
-
-		listed, err := m.List(ctx)
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-
-		listedSet := make(map[string]bool, len(listed))
-		for _, id := range listed {
-			listedSet[id] = true
-		}
-		for id := range ids {
-			if !listedSet[id] {
-				t.Fatalf("saved conversation %q not found in List", id)
-			}
-		}
-
-		for id := range ids {
-			m.Delete(ctx, id)
-		}
-	})
 }

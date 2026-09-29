@@ -31,7 +31,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/a2a"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
@@ -39,20 +38,18 @@ func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
 	// Create two agents with different capabilities.
-	summarizer, err := agent.Default(
+	summarizer, err := agent.New(
 		provider,
-		prompt.Text("You are a summarization expert. Produce concise summaries."),
-		nil,
+		"You are a summarization expert. Produce concise summaries.",
 		agent.WithName("summarizer"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	translator, err := agent.Default(
+	translator, err := agent.New(
 		provider,
-		prompt.Text("You are a translator. Translate text to the requested language."),
-		nil,
+		"You are a translator. Translate text to the requested language.",
 		agent.WithName("translator"),
 	)
 	if err != nil {

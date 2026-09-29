@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -19,22 +18,18 @@ import (
 // Unlike scriptedProvider, it has no mutex, no slice popping, and no per-call
 // allocation. It returns the same response on every call.
 type benchProvider struct {
-	resp *ProviderResponse
-	// streamChunks, when non-nil, are emitted via cb during ConverseStream
+	resp *ModelResponse
+	// streamChunks, when non-nil, are emitted via cb during Stream
 	// so we exercise the streaming path. Each string becomes a single chunk.
 	streamChunks []string
 }
 
 func (benchProvider) Name() string { return "bench" }
 
-func (p *benchProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	return p.resp, nil
-}
-
-func (p *benchProvider) ConverseStream(_ context.Context, _ ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (p *benchProvider) Stream(_ context.Context, _ ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 	if cb != nil {
 		for _, c := range p.streamChunks {
-			cb(c)
+			cb(ModelEvent{Type: ModelEventText, Text: c})
 		}
 	}
 	return p.resp, nil
@@ -43,7 +38,7 @@ func (p *benchProvider) ConverseStream(_ context.Context, _ ConverseParams, cb S
 // fixedTextProvider yields a single text response with no streaming.
 func fixedTextProvider(text string) *benchProvider {
 	return &benchProvider{
-		resp: &ProviderResponse{Text: text},
+		resp: &ModelResponse{Text: text},
 	}
 }
 
@@ -66,27 +61,10 @@ func streamingTextProvider(text string, chunks int) *benchProvider {
 		pieces = append(pieces, text[i:end])
 	}
 	return &benchProvider{
-		resp:         &ProviderResponse{Text: text},
+		resp:         &ModelResponse{Text: text},
 		streamChunks: pieces,
 	}
 }
-
-// noopHook is a recording-free EventHook that does nothing on every callback.
-// Useful for measuring "hook installed but does no work" overhead.
-type noopHook struct {
-	BaseEventHook
-}
-
-// countingHook records nothing but increments an atomic counter so the
-// compiler can't optimize the call away. Used to measure realistic hook
-// dispatch cost.
-type countingHook struct {
-	BaseEventHook
-	calls atomic.Uint64
-}
-
-func (h *countingHook) OnModelStart(_ *Context)         { h.calls.Add(1) }
-func (h *countingHook) OnModelEnd(_ *Context, _ string) { h.calls.Add(1) }
 
 // ---------------------------------------------------------------------------
 // Agent loop overhead — the cheapest happy path.
@@ -94,7 +72,7 @@ func (h *countingHook) OnModelEnd(_ *Context, _ string) { h.calls.Add(1) }
 
 func BenchmarkInvoke_NoTools_NoHooks(b *testing.B) {
 	p := fixedTextProvider("ok")
-	a, err := New(p, prompt.Text("sys"), nil)
+	a, err := New(p, "sys")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -107,106 +85,59 @@ func BenchmarkInvoke_NoTools_NoHooks(b *testing.B) {
 	}
 }
 
-func BenchmarkInvokeStream_NoTools_NoHooks(b *testing.B) {
+func BenchmarkTextStream_NoTools_NoHooks(b *testing.B) {
 	p := streamingTextProvider("the quick brown fox jumps over the lazy dog", 8)
-	a, err := New(p, prompt.Text("sys"), nil)
+	a, err := New(p, "sys")
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := a.InvokeStream(Background(), "hi", func(_ string) {}); err != nil {
-			b.Fatal(err)
+		for _, err := range a.TextStream(Background(), "hi") {
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }
 
-// BenchmarkInvokeEventStream_NoTools_NoHooks measures the per-invocation
-// overhead of the channel-based event stream against the same workload as
-// BenchmarkInvokeStream. Subtract the two to get the channel + clone + hook
-// fan-out cost.
-func BenchmarkInvokeEventStream_NoTools_NoHooks(b *testing.B) {
+// BenchmarkStream_NoTools_NoHooks measures the per-invocation overhead of the
+// full event stream against the same workload as BenchmarkTextStream.
+func BenchmarkStream_NoTools_NoHooks(b *testing.B) {
 	p := streamingTextProvider("the quick brown fox jumps over the lazy dog", 8)
-	a, err := New(p, prompt.Text("sys"), nil)
+	a, err := New(p, "sys")
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events := a.InvokeEventStream(Background(), "hi")
 		var last EventType
-		for ev := range events {
+		for ev, err := range a.Stream(Background(), "hi") {
+			if err != nil {
+				b.Fatal(err)
+			}
 			last = ev.Type
 		}
-		if last != EventInvokeEnd {
+		if last != EventEnd {
 			b.Fatalf("missing terminal event, got %s", last)
 		}
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Hook overhead — the "zero overhead when nil" claim, pinned.
-// ---------------------------------------------------------------------------
-
-// BenchmarkAgent_HookOverhead_None is the baseline: no EventHook on the
-// context. Should be identical to BenchmarkInvokeStream_NoTools_NoHooks.
-func BenchmarkAgent_HookOverhead_None(b *testing.B) {
+// BenchmarkStream_DetailedEvents measures the cost of detailed lifecycle events.
+func BenchmarkStream_DetailedEvents(b *testing.B) {
 	p := fixedTextProvider("ok")
-	a, err := New(p, prompt.Text("sys"), nil)
+	a, err := New(p, "sys")
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := a.InvokeStream(Background(), "hi", nil); err != nil {
-			b.Fatal(err)
+		for range a.Stream(Background().WithDetailedEvents(), "hi") {
 		}
-	}
-}
-
-// BenchmarkAgent_HookOverhead_Base measures cost when an EventHook is set
-// but every callback is a no-op (BaseEventHook). Difference vs None pins the
-// dispatch overhead.
-func BenchmarkAgent_HookOverhead_Base(b *testing.B) {
-	p := fixedTextProvider("ok")
-	a, err := New(p, prompt.Text("sys"), nil)
-	if err != nil {
-		b.Fatal(err)
-	}
-	hook := noopHook{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		c := Background().WithEventHook(hook)
-		if err := a.InvokeStream(c, "hi", nil); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-// BenchmarkAgent_HookOverhead_Counting puts a tiny atomic increment in the
-// hottest two callbacks (OnModelStart, OnModelEnd). Realistic floor for any
-// hook that does actual work.
-func BenchmarkAgent_HookOverhead_Counting(b *testing.B) {
-	p := fixedTextProvider("ok")
-	a, err := New(p, prompt.Text("sys"), nil)
-	if err != nil {
-		b.Fatal(err)
-	}
-	hook := &countingHook{}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		c := Background().WithEventHook(hook)
-		if err := a.InvokeStream(c, "hi", nil); err != nil {
-			b.Fatal(err)
-		}
-	}
-	if hook.calls.Load() == 0 {
-		b.Fatal("hook never fired — OnModelStart/End wiring may have regressed")
 	}
 }
 
@@ -222,22 +153,17 @@ type benchToolProvider struct {
 
 func (*benchToolProvider) Name() string { return "bench-tool" }
 
-func (p *benchToolProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
+func (p *benchToolProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	if p.calls.Add(1) == 1 {
-		return &ProviderResponse{
+		return &ModelResponse{
 			ToolCalls: []tool.Call{{ToolUseID: "t1", Name: "echo", Input: json.RawMessage(`{}`)}},
 		}, nil
 	}
-	return &ProviderResponse{Text: "done"}, nil
-}
-
-func (p *benchToolProvider) ConverseStream(_ context.Context, _ ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	return p.Converse(context.Background(), ConverseParams{})
+	return &ModelResponse{Text: "done"}, nil
 }
 
 func newEchoTool() tool.Tool {
 	return tool.NewRaw("echo", "echo",
-		map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
 	)
 }
@@ -250,7 +176,7 @@ func BenchmarkInvoke_OneToolCall_NoMiddleware(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		p := &benchToolProvider{}
-		a, err := New(p, prompt.Text("sys"), []tool.Tool{echo})
+		a, err := New(p, "sys", WithTools(echo))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -262,8 +188,8 @@ func BenchmarkInvoke_OneToolCall_NoMiddleware(b *testing.B) {
 
 // noopMW is a middleware that does nothing but call next.
 func noopMW(next ToolHandlerFunc) ToolHandlerFunc {
-	return func(c *Context, name string, input json.RawMessage) (string, error) {
-		return next(c, name, input)
+	return func(ctx context.Context, call ToolCall) (ToolResult, error) {
+		return next(ctx, call)
 	}
 }
 
@@ -273,7 +199,7 @@ func BenchmarkInvoke_OneToolCall_ThreeMiddlewares(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		p := &benchToolProvider{}
-		a, err := New(p, prompt.Text("sys"), []tool.Tool{echo},
+		a, err := New(p, "sys", WithTools(echo),
 			WithMiddleware(noopMW, noopMW, noopMW),
 		)
 		if err != nil {
@@ -289,12 +215,9 @@ func BenchmarkInvoke_OneToolCall_ThreeMiddlewares(b *testing.B) {
 // Event-stream throughput — fast vs. slow consumer.
 // ---------------------------------------------------------------------------
 
-// BenchmarkInvokeEventStream_FastConsumer drains the channel as fast as
-// possible. Combined with BenchmarkInvokeStream_NoTools_NoHooks this gives
-// a clean number for stream overhead vs. callback streaming.
-func BenchmarkInvokeEventStream_FastConsumer(b *testing.B) {
+func BenchmarkStream_FastConsumer(b *testing.B) {
 	p := streamingTextProvider("the quick brown fox", 16)
-	a, err := New(p, prompt.Text("sys"), nil)
+	a, err := New(p, "sys")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -302,7 +225,7 @@ func BenchmarkInvokeEventStream_FastConsumer(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var n int
-		for range a.InvokeEventStream(Background(), "hi") {
+		for range a.Stream(Background(), "hi") {
 			n++
 		}
 		if n == 0 {
@@ -311,20 +234,19 @@ func BenchmarkInvokeEventStream_FastConsumer(b *testing.B) {
 	}
 }
 
-// BenchmarkInvokeEventStream_SlowConsumer simulates a UI consumer that takes
-// 100µs per event. With the default buffer of 64 the engine should make
-// progress until the buffer fills, then back-pressure cleanly. The benchmark
-// is mostly checking we don't pathologically burn CPU under back-pressure.
-func BenchmarkInvokeEventStream_SlowConsumer(b *testing.B) {
+// BenchmarkStream_SlowConsumer simulates a UI consumer that takes 100µs per
+// event. The engine runs on the consumer's goroutine, so a slow consumer
+// applies back-pressure directly.
+func BenchmarkStream_SlowConsumer(b *testing.B) {
 	p := streamingTextProvider("the quick brown fox jumps over the lazy dog", 32)
-	a, err := New(p, prompt.Text("sys"), nil)
+	a, err := New(p, "sys")
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for range a.InvokeEventStream(Background(), "hi") {
+		for range a.Stream(Background(), "hi") {
 			time.Sleep(100 * time.Microsecond)
 		}
 	}

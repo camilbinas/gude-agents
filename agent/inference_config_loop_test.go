@@ -3,14 +3,12 @@ package agent
 import (
 	"strings"
 	"testing"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 func TestInvoke_AgentLevelInferenceConfigForwarded(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
+	cp := newCapturingProvider(&ModelResponse{Text: "ok"})
 
-	a, err := New(cp, prompt.Text("sys"), nil,
+	a, err := New(cp, "sys",
 		WithTemperature(0.7),
 		WithTopP(0.9),
 		WithTopK(50),
@@ -48,9 +46,9 @@ func TestInvoke_AgentLevelInferenceConfigForwarded(t *testing.T) {
 }
 
 func TestInvoke_PerInvocationOverridesAgentLevel(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
+	cp := newCapturingProvider(&ModelResponse{Text: "ok"})
 
-	a, err := New(cp, prompt.Text("sys"), nil,
+	a, err := New(cp, "sys",
 		WithTemperature(0.3),
 		WithTopP(0.5),
 	)
@@ -85,9 +83,9 @@ func TestInvoke_PerInvocationOverridesAgentLevel(t *testing.T) {
 }
 
 func TestInvoke_NilInferenceConfigWhenNoneSet(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
+	cp := newCapturingProvider(&ModelResponse{Text: "ok"})
 
-	a, err := New(cp, prompt.Text("sys"), nil)
+	a, err := New(cp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,9 +105,9 @@ func TestInvoke_NilInferenceConfigWhenNoneSet(t *testing.T) {
 }
 
 func TestInvoke_InvalidPerInvocationConfigReturnsError(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "should not reach"})
+	cp := newCapturingProvider(&ModelResponse{Text: "should not reach"})
 
-	a, err := New(cp, prompt.Text("sys"), nil)
+	a, err := New(cp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}

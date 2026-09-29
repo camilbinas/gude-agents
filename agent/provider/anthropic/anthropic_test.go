@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -60,41 +61,6 @@ func TestProperty_AnthropicToolChoiceMapping(t *testing.T) {
 	})
 }
 
-func TestProperty_AnthropicTokenUsagePopulation(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		inputTokens := rapid.Int64Range(0, 1_000_000).Draw(t, "inputTokens")
-		outputTokens := rapid.Int64Range(0, 1_000_000).Draw(t, "outputTokens")
-
-		// Test non-streaming: parseMessage + Usage field
-		msg := &anthropicsdk.Message{
-			Content: []anthropicsdk.ContentBlockUnion{
-				{Type: "text", Text: "hello"},
-			},
-			Usage: anthropicsdk.Usage{
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
-			},
-		}
-
-		resp := parseMessage(msg)
-		// parseMessage doesn't read Usage — the Converse method does.
-		// Simulate what the Converse method does after parseMessage:
-		resp.Usage.InputTokens = int(msg.Usage.InputTokens)
-		resp.Usage.OutputTokens = int(msg.Usage.OutputTokens)
-
-		if resp.Usage.InputTokens != int(inputTokens) {
-			t.Fatalf("expected InputTokens %d, got %d", inputTokens, resp.Usage.InputTokens)
-		}
-		if resp.Usage.OutputTokens != int(outputTokens) {
-			t.Fatalf("expected OutputTokens %d, got %d", outputTokens, resp.Usage.OutputTokens)
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Helpers for streaming token tests
-// ---------------------------------------------------------------------------
-
 // ptr returns a pointer to the given int64 value. Used in tests to set *int64 fields inline.
 func ptr(v int64) *int64 { return &v }
 
@@ -121,139 +87,131 @@ func newTestProvider(serverURL string) *AnthropicProvider {
 	}
 }
 
-// TestConverseStream_TokenCounts verifies that InputTokens comes from message_start
-// and OutputTokens comes from message_delta.
-func TestConverseStream_TokenCounts(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestStream_EmitsEventsAndReturnsFullResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		body := sseBody([][2]string{
-			{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-haiku-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":42,"output_tokens":0}}}`},
-			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
-			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`},
+		fmt.Fprint(w, sseBody([][2]string{
+			{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-haiku-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":42,"output_tokens":0,"cache_read_input_tokens":8,"cache_creation_input_tokens":3}}}`},
+			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Consider "}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"tools"}}`},
 			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
-			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":7}}`},
+			{"content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello, "}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"world"}}`},
+			{"content_block_stop", `{"type":"content_block_stop","index":1}`},
+			{"content_block_start", `{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\""}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"Paris\"}"}}`},
+			{"content_block_stop", `{"type":"content_block_stop","index":2}`},
+			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":17}}`},
 			{"message_stop", `{"type":"message_stop"}`},
-		})
-		fmt.Fprint(w, body)
+		}))
 	}))
 	defer srv.Close()
 
-	p := newTestProvider(srv.URL)
-	params := agent.ConverseParams{
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
-		},
-	}
-
-	resp, err := p.ConverseStream(context.Background(), params, nil)
+	var events []agent.ModelEvent
+	resp, err := newTestProvider(srv.URL).Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}}},
+	}, func(event agent.ModelEvent) {
+		events = append(events, event)
+	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Stream error: %v", err)
 	}
-	if resp.Usage.InputTokens <= 0 {
-		t.Errorf("expected InputTokens > 0, got %d", resp.Usage.InputTokens)
+
+	wantEvents := []agent.ModelEvent{
+		{Type: agent.ModelEventThinking, Text: "Consider "},
+		{Type: agent.ModelEventThinking, Text: "tools"},
+		{Type: agent.ModelEventText, Text: "Hello, "},
+		{Type: agent.ModelEventText, Text: "world"},
 	}
-	if resp.Usage.OutputTokens <= 0 {
-		t.Errorf("expected OutputTokens > 0, got %d", resp.Usage.OutputTokens)
+	if len(events) != len(wantEvents) {
+		t.Fatalf("events = %#v, want %#v", events, wantEvents)
+	}
+	for i := range wantEvents {
+		if events[i] != wantEvents[i] {
+			t.Errorf("event %d = %#v, want %#v", i, events[i], wantEvents[i])
+		}
+	}
+	if resp.Text != "Hello, world" {
+		t.Errorf("Text = %q, want %q", resp.Text, "Hello, world")
+	}
+	if got := resp.Metadata["thinking"]; got != "Consider tools" {
+		t.Errorf("Metadata[thinking] = %#v, want %q", got, "Consider tools")
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %#v, want one call", resp.ToolCalls)
+	}
+	call := resp.ToolCalls[0]
+	if call.ToolUseID != "toolu_1" || call.Name != "get_weather" || string(call.Input) != `{"city":"Paris"}` {
+		t.Errorf("ToolCalls[0] = %#v", call)
+	}
+	wantUsage := (agent.TokenUsage{InputTokens: 42, OutputTokens: 17, CacheReadTokens: 8, CacheWriteTokens: 3})
+	if resp.Usage != wantUsage {
+		t.Errorf("Usage = %#v, want %#v", resp.Usage, wantUsage)
 	}
 }
 
-func TestProperty_StreamingTokenCountsNonZero(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		prompt := rapid.StringOf(rapid.RuneFrom([]rune("abcdefghijklmnopqrstuvwxyz"))).Filter(func(s string) bool {
-			return len(s) > 0
-		}).Draw(t, "prompt")
-
-		inputTokens := len(prompt) // deterministic mock: 1 token per byte
-
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(http.StatusOK)
-			body := sseBody([][2]string{
-				{"message_start", fmt.Sprintf(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-haiku-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":%d,"output_tokens":0}}}`, inputTokens)},
-				{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
-				{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`},
-				{"content_block_stop", `{"type":"content_block_stop","index":0}`},
-				{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`},
-				{"message_stop", `{"type":"message_stop"}`},
-			})
-			fmt.Fprint(w, body)
+func TestStream_NilEmitStillReturnsResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseBody([][2]string{
+			{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-haiku-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":0}}}`},
+			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`},
+			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`},
+			{"message_stop", `{"type":"message_stop"}`},
 		}))
-		defer srv.Close()
+	}))
+	defer srv.Close()
 
-		p := newTestProvider(srv.URL)
-		params := agent.ConverseParams{
-			Messages: []agent.Message{
-				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: prompt}}},
-			},
-		}
-
-		resp, err := p.ConverseStream(context.Background(), params, nil)
-		if err != nil {
-			t.Fatalf("ConverseStream error: %v", err)
-		}
-		if resp.Usage.InputTokens <= 0 {
-			t.Fatalf("expected InputTokens > 0 for prompt %q, got %d", prompt, resp.Usage.InputTokens)
-		}
-	})
+	resp, err := newTestProvider(srv.URL).Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if resp.Text != "ok" || resp.Usage.InputTokens != 2 || resp.Usage.OutputTokens != 1 {
+		t.Errorf("response = %#v", resp)
+	}
 }
 
-func TestProperty_StreamingNonStreamingTokenConsistency(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		inputTokens := rapid.IntRange(1, 1000).Draw(t, "inputTokens")
-		outputTokens := rapid.IntRange(1, 1000).Draw(t, "outputTokens")
+func TestStream_WrapsProviderError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed"}}`, http.StatusInternalServerError)
+	}))
+	defer srv.Close()
 
-		// Non-streaming server
-		nonStreamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"claude-3-5-haiku-20241022","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":%d,"output_tokens":%d}}`, inputTokens, outputTokens)
-		}))
-		defer nonStreamSrv.Close()
+	resp, err := newTestProvider(srv.URL).Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+	}, nil)
+	if resp != nil {
+		t.Errorf("response = %#v, want nil", resp)
+	}
+	var providerErr *agent.ProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("error = %v, want *agent.ProviderError", err)
+	}
+}
 
-		// Streaming server
-		streamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(http.StatusOK)
-			body := sseBody([][2]string{
-				{"message_start", fmt.Sprintf(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-haiku-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":%d,"output_tokens":0}}}`, inputTokens)},
-				{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
-				{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`},
-				{"content_block_stop", `{"type":"content_block_stop","index":0}`},
-				{"message_delta", fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":%d}}`, outputTokens)},
-				{"message_stop", `{"type":"message_stop"}`},
-			})
-			fmt.Fprint(w, body)
-		}))
-		defer streamSrv.Close()
-
-		params := agent.ConverseParams{
-			Messages: []agent.Message{
-				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-			},
-		}
-
-		nonStreamProvider := newTestProvider(nonStreamSrv.URL)
-		nonStreamResp, err := nonStreamProvider.Converse(context.Background(), params)
-		if err != nil {
-			t.Fatalf("Converse error: %v", err)
-		}
-
-		streamProvider := newTestProvider(streamSrv.URL)
-		streamResp, err := streamProvider.ConverseStream(context.Background(), params, nil)
-		if err != nil {
-			t.Fatalf("ConverseStream error: %v", err)
-		}
-
-		nonStreamTotal := nonStreamResp.Usage.InputTokens + nonStreamResp.Usage.OutputTokens
-		streamTotal := streamResp.Usage.InputTokens + streamResp.Usage.OutputTokens
-
-		if nonStreamTotal != streamTotal {
-			t.Fatalf("token totals differ: non-streaming=%d (in=%d, out=%d), streaming=%d (in=%d, out=%d)",
-				nonStreamTotal, nonStreamResp.Usage.InputTokens, nonStreamResp.Usage.OutputTokens,
-				streamTotal, streamResp.Usage.InputTokens, streamResp.Usage.OutputTokens)
-		}
-	})
+func TestBuildParams_ToolsMapping(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022"}
+	result := p.buildParams(agent.ModelRequest{Tools: []tool.Spec{{
+		Name:        "get_weather",
+		Description: "Get weather",
+		InputSchema: map[string]any{
+			"properties": map[string]any{"city": map[string]any{"type": "string"}},
+			"required":   []string{"city"},
+		},
+	}}})
+	if len(result.Tools) != 1 || result.Tools[0].OfTool == nil {
+		t.Fatalf("Tools = %#v, want one tool", result.Tools)
+	}
+	if result.Tools[0].OfTool.Name != "get_weather" {
+		t.Errorf("tool name = %q, want get_weather", result.Tools[0].OfTool.Name)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +223,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 		model:     "claude-3-5-haiku-20241022",
 		maxTokens: ptr(4096),
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -292,7 +250,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 func TestBuildParams_TemperatureMapping(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	temp := 0.7
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -315,7 +273,7 @@ func TestBuildParams_TemperatureMapping(t *testing.T) {
 func TestBuildParams_TopPMapping(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	topP := 0.9
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -334,7 +292,7 @@ func TestBuildParams_TopPMapping(t *testing.T) {
 func TestBuildParams_TopKMapping(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	topK := 50
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -353,7 +311,7 @@ func TestBuildParams_TopKMapping(t *testing.T) {
 func TestBuildParams_StopSequencesMapping(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	stops := []string{"STOP", "END"}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -372,7 +330,7 @@ func TestBuildParams_StopSequencesMapping(t *testing.T) {
 func TestBuildParams_MaxTokensOverridesDefault(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(8192)}
 	maxTok := 2048
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -398,7 +356,7 @@ func TestBuildParams_AllFieldsSet(t *testing.T) {
 		StopSequences: []string{"<|end|>"},
 		MaxTokens:     &maxTok,
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -426,7 +384,7 @@ func TestBuildParams_AllFieldsSet(t *testing.T) {
 func TestBuildParams_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022", maxTokens: ptr(4096)}
 	temp := 0.3
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
@@ -610,7 +568,7 @@ func TestClaudeHaiku45DefaultMaxTokens(t *testing.T) {
 		},
 	}
 
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{{
 			Role:    agent.RoleUser,
 			Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}},
@@ -634,7 +592,7 @@ func TestClaudeHaiku45MaxTokenOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{{
 			Role:    agent.RoleUser,
 			Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}},

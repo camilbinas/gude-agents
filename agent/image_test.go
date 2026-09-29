@@ -5,8 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 // TestImageSourceValidate_ValidMIMETypes verifies that each of the four
@@ -62,8 +60,8 @@ func TestImageSourceValidate_InvalidMIMEType(t *testing.T) {
 // TestLoop_NoImages_SingleTextBlock verifies that when no images are attached,
 // the first user message contains exactly one TextBlock (backward compatibility).
 func TestLoop_NoImages_SingleTextBlock(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
-	a, err := New(cp, prompt.Text("sys"), nil)
+	cp := newCapturingProvider(&ModelResponse{Text: "ok"})
+	a, err := New(cp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +92,8 @@ func TestLoop_NoImages_SingleTextBlock(t *testing.T) {
 // attached via WithImages, the first user message content is [ImageBlock,
 // ImageBlock, TextBlock].
 func TestLoop_WithImages_PrependsImagesThenText(t *testing.T) {
-	cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
-	a, err := New(cp, prompt.Text("sys"), nil)
+	cp := newCapturingProvider(&ModelResponse{Text: "ok"})
+	a, err := New(cp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,19 +150,15 @@ type panicProvider struct{}
 
 func (panicProvider) Name() string { return "mock" }
 
-func (panicProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	panic("panicProvider.Converse called — should not have reached provider")
-}
-
-func (panicProvider) ConverseStream(_ context.Context, _ ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	panic("panicProvider.ConverseStream called — should not have reached provider")
+func (panicProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+	panic("panicProvider.Stream called — should not have reached provider")
 }
 
 // TestLoop_InvalidMIMEType_ReturnsErrorBeforeProvider verifies that when an
 // ImageBlock with an invalid MIME type is attached, the loop returns an error
 // before calling the provider.
 func TestLoop_InvalidMIMEType_ReturnsErrorBeforeProvider(t *testing.T) {
-	a, err := New(panicProvider{}, prompt.Text("sys"), nil)
+	a, err := New(panicProvider{}, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}

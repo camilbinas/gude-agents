@@ -104,9 +104,20 @@
         const ws = new WebSocket(`ws://${location.host}/ws`);
         wsRef.current = ws;
 
+        const markDisconnected = (message) => {
+          setConnected(false);
+          setRunning(false);
+          updateCurrentTurn(t => {
+            if (t.done) return;
+            t.done = true;
+            t.error = message;
+            t.events = [...t.events, { kind: 'disconnect', err: message, ts: Date.now() }];
+          });
+        };
+
         ws.onopen = () => setConnected(true);
-        ws.onclose = () => { setConnected(false); setRunning(false); };
-        ws.onerror = () => setConnected(false);
+        ws.onclose = () => markDisconnected('DevTools connection closed');
+        ws.onerror = () => markDisconnected('DevTools connection error');
 
         ws.onmessage = (e) => {
           let msg;
@@ -135,6 +146,8 @@
                 stopReason: '',
                 error: '',
                 usage: null,
+                widgets: [],
+                interrupt: null,
                 done: false,
                 events: [],
               }]);
@@ -151,6 +164,7 @@
                   n: msg.iteration,
                   toolCalls: [],
                   custom: [],
+                  widgets: [],
                   thinking: '',
                   stopReason: '',
                   durationMs: 0,
@@ -174,9 +188,8 @@
               break;
 
             case 'text_chunk':
-              // Text chunks are only ever emitted by the agent on the final
-              // iteration (per event_stream.go contract), so we route them
-              // exclusively to the consolidated turn response bubble. The
+              // Text chunks are only emitted for the final answer by the
+              // Agent.Stream contract, so we route them exclusively to the consolidated turn response bubble. The
               // iteration card stays focused on trace metadata — tools,
               // thinking, stop reason, duration — and never duplicates the
               // assistant message.
@@ -201,6 +214,7 @@
                 if (t.iterations.length === 0) return;
                 const it = { ...t.iterations[t.iterations.length - 1] };
                 it.toolCalls = [...it.toolCalls, {
+                  callID: msg.call_id,
                   name: msg.tool_name,
                   input: msg.input || '',
                   output: '',
@@ -210,7 +224,7 @@
                   startedAt: Date.now(),
                 }];
                 t.iterations[t.iterations.length - 1] = it;
-                t.events = [...t.events, { kind: 'tool_start', name: msg.tool_name, ts: Date.now() }];
+                t.events = [...t.events, { kind: 'tool_start', callID: msg.call_id, name: msg.tool_name, ts: Date.now() }];
               });
               break;
 
@@ -218,23 +232,21 @@
               updateCurrentTurn(t => {
                 if (t.iterations.length === 0) return;
                 const it = { ...t.iterations[t.iterations.length - 1] };
-                // Find the most recent unfinished call with this name.
-                for (let i = it.toolCalls.length - 1; i >= 0; i--) {
-                  if (!it.toolCalls[i].done && it.toolCalls[i].name === msg.tool_name) {
-                    it.toolCalls[i] = {
-                      ...it.toolCalls[i],
-                      output: msg.output || '',
-                      durationMs: msg.duration_ms || 0,
-                      error: msg.error || '',
-                      done: true,
-                    };
-                    break;
-                  }
+                const index = it.toolCalls.findIndex(tc => tc.callID === msg.call_id);
+                if (index >= 0) {
+                  it.toolCalls[index] = {
+                    ...it.toolCalls[index],
+                    output: msg.output || '',
+                    durationMs: msg.duration_ms || 0,
+                    error: msg.error || '',
+                    errorInfo: msg.error_info || null,
+                    done: true,
+                  };
                 }
                 t.iterations[t.iterations.length - 1] = it;
                 t.events = [...t.events, {
-                  kind: 'tool_end', name: msg.tool_name, ms: msg.duration_ms || 0,
-                  error: msg.error || '', ts: Date.now(),
+                  kind: 'tool_end', callID: msg.call_id, name: msg.tool_name,
+                  ms: msg.duration_ms || 0, error: msg.error || '', ts: Date.now(),
                 }];
               });
               break;
@@ -268,17 +280,48 @@
 
             case 'max_iterations':
               updateCurrentTurn(t => {
-                t.error = `max iterations exceeded (limit=${msg.iteration_limit})`;
-                t.events = [...t.events, { kind: 'max_iter', limit: msg.iteration_limit, ts: Date.now() }];
+                t.error = `max iterations exceeded (limit=${msg.limit})`;
+                t.events = [...t.events, { kind: 'max_iter', limit: msg.limit, ts: Date.now() }];
+              });
+              break;
+
+            case 'widget':
+              updateCurrentTurn(t => {
+                const widget = {
+                  callID: msg.call_id,
+                  type: msg.widget_type,
+                  payload: msg.payload,
+                  ts: Date.now(),
+                };
+                t.widgets = [...(t.widgets || []), widget];
+                if (t.iterations.length > 0) {
+                  const it = { ...t.iterations[t.iterations.length - 1] };
+                  it.widgets = [...(it.widgets || []), widget];
+                  t.iterations[t.iterations.length - 1] = it;
+                }
+                t.events = [...t.events, { kind: 'widget', name: msg.widget_type, callID: msg.call_id, ts: Date.now() }];
+              });
+              break;
+
+            case 'interrupt':
+              updateCurrentTurn(t => {
+                t.interrupt = msg.interrupt || null;
+                t.stopReason = 'interrupt';
+                t.events = [...t.events, {
+                  kind: 'interrupt', interruptType: msg.interrupt?.type || '', ts: Date.now(),
+                }];
               });
               break;
 
             case 'invoke_end':
               updateCurrentTurn(t => {
                 t.done = true;
+                t.stopReason = msg.stop_reason || '';
+                t.interrupt = msg.interrupt || t.interrupt;
                 if (msg.error) t.error = msg.error;
+                t.errorInfo = msg.error_info || null;
                 t.usage = { input: msg.input_tokens || 0, output: msg.output_tokens || 0, cacheRead: msg.cache_read_tokens || 0, cacheWrite: msg.cache_write_tokens || 0 };
-                t.events = [...t.events, { kind: 'invoke_end', err: msg.error || '', ts: Date.now() }];
+                t.events = [...t.events, { kind: 'invoke_end', err: msg.error || '', stop: msg.stop_reason || '', ts: Date.now() }];
               });
               setRunning(false);
               setTotalUsage(u => ({
@@ -302,7 +345,7 @@
 
             case 'custom':
               // User-defined event from a tool or middleware via
-              // Context.EmitEvent. Attach it to the current iteration if there is one, plus the timeline.
+              // agent.EmitEvent. Attach it to the current iteration if there is one, plus the timeline.
               updateCurrentTurn(t => {
                 if (t.iterations.length > 0) {
                   const it = { ...t.iterations[t.iterations.length - 1] };
@@ -516,7 +559,9 @@
                   <div class="flex items-center justify-between mb-1">
                     <span class="font-mono text-[10px] text-muted2">turn ${i + 1}</span>
                     <span class=${cx('h-1.5 w-1.5 rounded-full',
-                      t.done ? (t.error ? 'bg-bad' : 'bg-good') : 'bg-accent running-dot')}></span>
+                      t.done
+                        ? (t.error ? 'bg-bad' : (t.stopReason === 'interrupt' ? 'bg-warn' : 'bg-good'))
+                        : 'bg-accent running-dot')}></span>
                   </div>
                   <p class="text-xs text-slate-200 line-clamp-2">${t.user}</p>
                   <div class="mt-1 flex items-center gap-2 text-[10px] text-muted">
@@ -597,9 +642,20 @@
             </div>
           `}
 
+          ${turn.interrupt && html`
+            <div class="mt-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs">
+              <div class="font-mono text-warn">⏸ ${turn.interrupt.type === 'approval' ? 'approval required' : 'human input required'}</div>
+              ${turn.interrupt.input?.question && html`<p class="mt-1 text-slate-200">${turn.interrupt.input.question}</p>`}
+              ${turn.interrupt.approval?.calls?.length && html`
+                <p class="mt-1 text-slate-200">${turn.interrupt.approval.calls.map(call => `${call.name} (${call.call_id})`).join(', ')}</p>
+              `}
+            </div>
+          `}
+
           <!-- Footer: usage / errors -->
           <div class="mt-3 flex items-center gap-3 text-[10px] font-mono text-muted">
-            ${turn.done && !turn.error && html`<span class="text-good">✓ done</span>`}
+            ${turn.done && !turn.error && turn.stopReason !== 'interrupt' && html`<span class="text-good">✓ done</span>`}
+            ${turn.done && !turn.error && turn.stopReason === 'interrupt' && html`<span class="text-warn">⏸ paused</span>`}
             ${!turn.done && html`<span class="text-accent running-dot">● running</span>`}
             ${turn.error && html`<span class="text-bad">✗ ${turn.error}</span>`}
             ${turn.usage && (turn.usage.input || turn.usage.output) && html`
@@ -614,8 +670,9 @@
     function IterationView({ iter }) {
       const finished = iter.durationMs > 0 || iter.isFinal;
       const customs = iter.custom || [];
-      const hasDetails = iter.thinking || iter.toolCalls.length > 0 || customs.length > 0;
-      // Collapse trivial iterations (no tools, no thinking, no custom events)
+      const widgets = iter.widgets || [];
+      const hasDetails = iter.thinking || iter.toolCalls.length > 0 || customs.length > 0 || widgets.length > 0;
+      // Collapse trivial iterations (no tools, thinking, widgets, or custom events)
       // into a single compact row. The assistant bubble carries the actual
       // content, so an empty card would just be visual noise.
       if (!hasDetails) {
@@ -657,6 +714,12 @@
           ${iter.toolCalls.length > 0 && html`
             <div class="px-3 py-2 space-y-1.5">
               ${iter.toolCalls.map((tc, i) => html`<${ToolCallView} key=${i} tc=${tc} />`)}
+            </div>
+          `}
+
+          ${widgets.length > 0 && html`
+            <div class="border-t border-line2/60 px-3 py-2 space-y-1">
+              ${widgets.map((widget, i) => html`<${CustomEventView} key=${i} ev=${{ name: `widget:${widget.type}`, payload: widget.payload }} />`)}
             </div>
           `}
 
@@ -777,10 +840,13 @@
         iter_end:   { c: 'good',   label: `■ iteration ${ev.n} (${ev.ms}ms${ev.final ? ', final' : ''}, ${ev.tools} tools)` },
         model_start:{ c: 'accent', label: '🧠 model start' },
         model_end:  { c: 'cyan',   label: '🧠 model end · ' + (ev.stop || '') },
-        tool_start: { c: 'cyan',   label: '🔧 ' + ev.name + ' start' },
+        tool_start: { c: 'cyan',   label: '🔧 ' + ev.name + ' start' + (ev.callID ? ' · ' + ev.callID : '') },
         tool_end:   { c: ev.error ? 'bad' : 'good', label: '🔧 ' + ev.name + (ev.error ? ' err: ' + ev.error : ' ok ' + ev.ms + 'ms') },
+        widget:     { c: 'cyan',   label: '▣ widget · ' + (ev.name || '') },
+        interrupt:  { c: 'warn',   label: '⏸ interrupt · ' + (ev.interruptType || '') },
         max_iter:   { c: 'warn',   label: '⚠ max iterations (' + ev.limit + ')' },
-        invoke_end: { c: ev.err ? 'bad' : 'good', label: ev.err ? '✗ ' + ev.err : '✓ invoke end' },
+        invoke_end: { c: ev.err ? 'bad' : (ev.stop === 'interrupt' ? 'warn' : 'good'), label: ev.err ? '✗ ' + ev.err : (ev.stop === 'interrupt' ? '⏸ paused' : '✓ invoke end') },
+        disconnect: { c: 'bad',    label: '✗ ' + (ev.err || 'disconnected') },
         custom:     { c: 'cyan',   label: '✦ ' + (ev.name || 'custom') },
       };
       const info = map[ev.kind] || { c: 'muted', label: ev.kind };

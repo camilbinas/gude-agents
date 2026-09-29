@@ -5,13 +5,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
@@ -19,7 +17,6 @@ func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
 	// Token threshold of 600 — summarization triggers at 80% (480 input tokens).
-	// This triggers after roughly 7-8 exchanges as the conversation context grows.
 	store := conversation.NewInMemory()
 	summarized, err := conversation.NewTokenSummary(
 		store, 600, conversation.DefaultSummaryFunc(provider),
@@ -31,11 +28,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithConversation(summarized, "token-summary-demo"),
+		"You are a helpful assistant. Be concise.",
+		agent.WithConversationStore(summarized),
 		agent.WithSyncConversation(),
 	)
 	if err != nil {
@@ -53,29 +49,27 @@ func main() {
 		"What do you know about me so far?",
 	}
 
-	c := agent.Background()
-
+	ctx := agent.Background().WithConversationID("token-summary-demo")
 	for i, q := range questions {
-		result, err := a.Invoke(c, q)
+		result, err := a.Invoke(ctx, q)
 		if err != nil {
 			log.Fatal(err)
 		}
-		usage := c.Usage()
-		fmt.Printf("Turn %d [%d input tokens]: %s\n", i+1, usage.InputTokens, result)
+		fmt.Printf("Turn %d [%d input tokens]: %s\n", i+1, result.Usage.InputTokens, result.Text)
 	}
 
-	// Final check — the agent should still know everything despite summarization.
-	result, err := a.Invoke(c, "What are my cats' names?")
+	result, err := a.Invoke(ctx, "What are my cats' names?")
 	if err != nil {
 		log.Fatal(err)
 	}
-	usage := c.Usage()
-	fmt.Printf("Turn %d [%d input tokens]: %s\n", len(questions)+1, usage.InputTokens, result)
+	fmt.Printf("Turn %d [%d input tokens]: %s\n", len(questions)+1, result.Usage.InputTokens, result.Text)
 
-	// Inspect the store.
-	msgs, _ := store.Load(context.Background(), "token-summary-demo")
-	fmt.Printf("\nMessages in store after Turn %d: %d\n", len(questions)+1, len(msgs))
-	for i, m := range msgs {
+	snapshot, err := store.Load(ctx, "token-summary-demo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("\nMessages in store after Turn %d: %d\n", len(questions)+1, len(snapshot.Messages))
+	for i, m := range snapshot.Messages {
 		for _, b := range m.Content {
 			if tb, ok := b.(agent.TextBlock); ok {
 				preview := tb.Text

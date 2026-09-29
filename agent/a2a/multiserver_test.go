@@ -11,15 +11,13 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 func newNamedAgent(t *testing.T, name string) *agent.Agent {
 	t.Helper()
 	a, err := agent.New(
 		&fakeProvider{response: "ok from " + name},
-		prompt.Text("You are "+name),
-		nil,
+		"You are "+name,
 		agent.WithName(name),
 	)
 	if err != nil {

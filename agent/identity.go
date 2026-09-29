@@ -50,15 +50,19 @@ func (p Principal) Credential(key string) string {
 	return p.Credentials[key]
 }
 
-// principalKey is the *Context KV key for the Principal.
-type principalKey struct{}
-
-// WithPrincipal attaches a Principal to the context for the duration of the
-// invocation. Tool role policies, ToolFilters, and middleware can retrieve it
-// via PrincipalFrom.
+// WithPrincipal attaches a Principal to the invocation. Tool role policies,
+// ToolFilters, and middleware can retrieve it via PrincipalFrom.
 func (c *Context) WithPrincipal(p Principal) *Context {
-	c.Set(principalKey{}, p)
+	c.cfg.principal = &p
 	return c
+}
+
+// Principal returns the invocation's Principal and whether one was set.
+func (c *Context) Principal() (Principal, bool) {
+	if c.cfg.principal == nil {
+		return Principal{}, false
+	}
+	return *c.cfg.principal, true
 }
 
 // PrincipalFrom extracts the Principal from a context.
@@ -68,7 +72,7 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	if c == nil {
 		return Principal{}, false
 	}
-	return GetTyped[Principal](c, principalKey{})
+	return c.Principal()
 }
 
 // --- Agent-level RBAC helpers ---
@@ -84,7 +88,7 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 //	agent.New(provider, instructions, tools, agent.WithToolFilter(agent.RoleFilter()))
 func RoleFilter() ToolFilter {
 	return func(c *Context, t tool.Tool) bool {
-		p, ok := GetTyped[Principal](c, principalKey{})
+		p, ok := c.Principal()
 		if !ok {
 			return t.RolesAllowed(nil)
 		}
@@ -108,7 +112,7 @@ func WithRoleEnforcement() Option {
 // authenticated before tools can run.
 func RequirePrincipal() ToolFilter {
 	return func(c *Context, _ tool.Tool) bool {
-		_, ok := GetTyped[Principal](c, principalKey{})
+		_, ok := c.Principal()
 		return ok
 	}
 }
@@ -136,12 +140,12 @@ func WithPolicy(fn PolicyFunc) Option {
 	return WithToolFilter(ToolFilter(fn))
 }
 
-// WithNarrowedRoles returns a new *Context with the principal's roles replaced
-// by the intersection of the current roles and the allowed set. Use this to
+// WithNarrowedRoles returns a new *Context (see Clone) whose principal's roles
+// are the intersection of the current roles and the allowed set. Use this to
 // reduce permissions for a sub-task without creating a new principal.
 // If no principal is set, returns c unchanged.
 func (c *Context) WithNarrowedRoles(allowed ...string) *Context {
-	p, ok := GetTyped[Principal](c, principalKey{})
+	p, ok := c.Principal()
 	if !ok {
 		return c
 	}
@@ -156,7 +160,5 @@ func (c *Context) WithNarrowedRoles(allowed ...string) *Context {
 		}
 	}
 	p.Roles = narrowed
-	clone := c.Clone()
-	clone.Set(principalKey{}, p)
-	return clone
+	return c.Clone().WithPrincipal(p)
 }

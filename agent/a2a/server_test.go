@@ -10,14 +10,12 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 func TestNewServer(t *testing.T) {
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("Test agent"),
-		nil,
+		"Test agent",
 		agent.WithName("test-agent"),
 	)
 	if err != nil {
@@ -44,8 +42,7 @@ func TestNewServer_NilAgent(t *testing.T) {
 func TestServer_AgentCardEndpoint(t *testing.T) {
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("Test agent"),
-		nil,
+		"Test agent",
 		agent.WithName("card-test-agent"),
 	)
 	if err != nil {
@@ -93,8 +90,7 @@ func TestServer_AgentCardEndpoint(t *testing.T) {
 func TestServer_ListenAndServe_Shutdown(t *testing.T) {
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("Test agent"),
-		nil,
+		"Test agent",
 		agent.WithName("shutdown-test"),
 	)
 	if err != nil {

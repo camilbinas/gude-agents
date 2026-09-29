@@ -1,32 +1,17 @@
 // Example: Sentry integration with agent tracing.
 //
-// Demonstrates the full Sentry integration:
-//   - OTLP traces exported to Sentry Performance (full span tree)
-//   - Agent errors captured as Sentry Issues linked to the active trace
-//   - Breadcrumbs for every tool call (visible in Issue detail)
-//   - Error classification by type (provider, tool, guardrail)
-//
 // Prerequisites:
-//
 //   - A Sentry account with a Go project.
 //   - Set SENTRY_DSN (find it in Project Settings > Client Keys).
 //
 // Run:
 //
-//	SENTRY_DSN=https://key@o123.ingest.us.sentry.io/456 \
-//	go run ./tracing-sentry
-//
-// Then check:
-//   - Sentry Performance → Traces for the full span tree
-//   - Sentry Issues for captured errors with breadcrumb trail
-//
-// Try asking about "error-test" to trigger a tool error and see it in Sentry.
+//	SENTRY_DSN=https://key@o123.ingest.us.sentry.io/456 go run ./tracing-sentry
 
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -35,7 +20,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/agent/tracing"
@@ -45,9 +29,6 @@ import (
 
 func main() {
 	ctx := context.Background()
-
-	// 1. Set up Sentry — initializes SDK + OTLP trace export.
-	//    Only the DSN is needed — the OTLP endpoint is derived automatically.
 	shutdown, err := sentrytrace.Setup(ctx, sentrytrace.Config{
 		DSN:         requireEnv("SENTRY_DSN"),
 		Environment: envOr("SENTRY_ENVIRONMENT", "local"),
@@ -62,51 +43,26 @@ func main() {
 		}
 	}()
 
-	// 2. Create a provider.
-	provider := bedrock.Must(bedrock.Standard())
+	type weatherInput struct {
+		City string `json:"city" description:"City name" required:"true"`
+	}
+	weatherTool := tool.New("get_weather", "Get the current weather for a city", func(_ context.Context, input weatherInput) (string, error) {
+		if strings.EqualFold(input.City, "error-test") {
+			return "", fmt.Errorf("weather service unavailable for: %s", input.City)
+		}
+		time.Sleep(time.Duration(50+rand.IntN(450)) * time.Millisecond)
+		temp := 15 + rand.IntN(20)
+		return fmt.Sprintf(`{"city": %q, "temp_c": %d, "condition": "partly cloudy"}`, input.City, temp), nil
+	})
 
-	// 3. Define tools — "error-test" triggers an error for demo purposes.
-	weatherTool := tool.NewRaw(
-		"get_weather",
-		"Get the current weather for a city",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"city": map[string]any{
-					"type":        "string",
-					"description": "City name",
-				},
-			},
-			"required": []any{"city"},
-		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var req struct {
-				City string `json:"city"`
-			}
-			if err := json.Unmarshal(input, &req); err != nil {
-				return "", err
-			}
-			if strings.EqualFold(req.City, "error-test") {
-				return "", fmt.Errorf("weather service unavailable for: %s", req.City)
-			}
-			time.Sleep(time.Duration(50+rand.IntN(450)) * time.Millisecond)
-			temp := 15 + rand.IntN(20)
-			return fmt.Sprintf(`{"city": %q, "temp_c": %d, "condition": "partly cloudy"}`, req.City, temp), nil
-		},
-	)
-
-	// 4. Create the agent with Sentry tracing + middleware.
-	//    Inference parameters (temperature, top_p) are set at the agent level
-	//    and will appear as span attributes on every agent.invoke trace in Sentry:
-	//      gen_ai.request.temperature, gen_ai.request.top_p
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant with access to a weather tool. Be concise."),
-		[]tool.Tool{weatherTool},
-		agent.WithParallelToolExecution(),
+	a, err := agent.New(
+		bedrock.Must(bedrock.Standard()),
+		"You are a helpful assistant with access to a weather tool. Be concise.",
+		agent.WithTools(weatherTool),
+		agent.WithParallelTools(),
 		agent.WithTemperature(0.3),
 		agent.WithTopP(0.9),
-		sentrytrace.WithSentry(tracing.WithContentCapture()), // captures prompts/responses — don't use in production
+		sentrytrace.WithSentry(tracing.WithContentCapture()),
 		agent.WithMiddleware(
 			sentrytrace.BreadcrumbMiddleware(),
 			sentrytrace.ErrorCaptureMiddleware(),
@@ -116,9 +72,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 5. Interactive loop — utils.Chat runs the stdin REPL by default and
-	//    automatically switches to the web-based Agent DevTools when the
-	//    DEVTOOLS env var is set (e.g. DEVTOOLS=1 or DEVTOOLS=4041).
 	fmt.Println("Sentry-traced agent ready. Type 'quit' to exit.")
 	fmt.Println("Try: What's the weather in Tokyo?")
 	fmt.Println("Try: What's the weather in error-test?  (triggers error → Sentry Issue)")
@@ -126,22 +79,16 @@ func main() {
 	fmt.Println()
 
 	utils.Chat(agent.Background(), a, utils.ChatOptions{
-		// Per-invocation override: prefix "creative:" bumps temperature to 0.95.
-		// The overridden value appears on the agent.invoke span in Sentry as
-		// gen_ai.request.temperature=0.95 instead of the agent-level 0.3.
 		BeforeInvoke: func(c *agent.Context, input string) *agent.Context {
 			if strings.HasPrefix(input, "creative:") {
 				temp := 0.95
-				return c.WithInferenceConfig(&agent.InferenceConfig{
-					Temperature: &temp,
-				})
+				return c.WithInferenceConfig(&agent.InferenceConfig{Temperature: &temp})
 			}
 			return nil
 		},
-		AfterInvoke: func(c *agent.Context, err error) {
-			usage := c.Usage()
+		AfterInvoke: func(_ *agent.Context, result agent.Result, err error) {
+			usage := result.Usage
 			if err != nil {
-				// Capture invocation-level errors in Sentry with full context.
 				sentrytrace.CaptureAgentError(ctx, err, "", usage)
 				log.Printf("Error (sent to Sentry): %v", err)
 			}

@@ -27,7 +27,7 @@ func Denyf(format string, a ...any) Decision {
 // The guard receives the deserialized input T and decides whether the call
 // should proceed. If the guard denies, the tool handler is not invoked and
 // the LLM receives a structured denial result.
-func WithGuard[T any](guard func(ctx context.Context, input T) (Decision, error)) func(*Tool) {
+func WithGuard[T any](guard func(ctx context.Context, input T) (Decision, error)) Option {
 	return func(t *Tool) {
 		t.Guard = func(ctx context.Context, raw json.RawMessage) (Decision, error) {
 			var v T

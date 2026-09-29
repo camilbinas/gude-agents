@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"pgregory.net/rapid"
 )
@@ -50,23 +49,23 @@ func newRecordingConversation() *recordingConversation {
 	return &recordingConversation{history: make(map[string][]Message)}
 }
 
-func (r *recordingConversation) Load(_ context.Context, id string) ([]Message, error) {
+func (r *recordingConversation) Load(_ context.Context, id string) (ConversationSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	msgs := r.history[id]
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
-	return cp, nil
+	return ConversationSnapshot{Messages: cp}, nil
 }
 
-func (r *recordingConversation) Save(_ context.Context, id string, msgs []Message) error {
+func (r *recordingConversation) Save(_ context.Context, id string, msgs []Message, expectedRevision uint64) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := make([]Message, len(msgs))
 	copy(cp, msgs)
 	r.saved = append(r.saved, cp)
 	r.history[id] = cp
-	return nil
+	return expectedRevision + 1, nil
 }
 
 func (r *recordingConversation) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -86,8 +85,8 @@ func (r *recordingConversation) lastSaved() []Message {
 // Property 2: EventWidget ordering
 //
 // For any tool handler that calls EmitWidget, the EventWidget event must
-// appear before EventToolCallEnd for the same tool call in the
-// InvokeEventStream channel.
+// appear before EventToolEnd for the same tool call in the
+// Stream sequence.
 // ---------------------------------------------------------------------------
 
 // TestProperty_Loop_EventWidgetOrdering verifies Property 2.
@@ -98,42 +97,38 @@ func TestProperty_Loop_EventWidgetOrdering(t *testing.T) {
 		// Provider: first call returns a single tool call; second call returns
 		// a final text answer so the loop terminates.
 		sp := newScriptedProvider(
-			&ProviderResponse{ToolCalls: []tool.Call{
+			&ModelResponse{ToolCalls: []tool.Call{
 				{ToolUseID: "tc-order-1", Name: "widget_tool", Input: json.RawMessage(`{}`)},
 			}},
-			&ProviderResponse{Text: "done"},
+			&ModelResponse{Text: "done"},
 		)
 
 		// Tool handler emits the widget then returns.
-		widgetTool := tool.NewRaw(
+		widgetTool := newTestRaw(
 			"widget_tool",
 			"emits a widget",
 			map[string]any{"type": "object"},
 			func(ctx context.Context, _ json.RawMessage) (string, error) {
-				c := FromContext(ctx)
-				if c != nil {
-					_ = c.EmitWidget(block)
-				}
+				_ = EmitWidget(ctx, block)
 				return "result", nil
 			},
 		)
 
-		a, err := New(sp, prompt.Text("sys"), []tool.Tool{widgetTool})
+		a, err := New(sp, "sys", WithTools(widgetTool))
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
 
-		ch := a.InvokeEventStream(Background(), "go")
-		events := drainEvents(ch)
+		events, _ := collectStream(a.Stream(Background(), "go"))
 
-		// Find the index of EventWidget and EventToolCallEnd for our tool call.
+		// Find the index of EventWidget and EventToolEnd for our tool call.
 		widgetIdx := -1
 		toolEndIdx := -1
 		for i, e := range events {
 			if e.Type == EventWidget && widgetIdx == -1 {
 				widgetIdx = i
 			}
-			if e.Type == EventToolCallEnd && e.ToolName == "widget_tool" {
+			if e.Type == EventToolEnd && e.Tool.Name == "widget_tool" {
 				toolEndIdx = i
 			}
 		}
@@ -142,10 +137,10 @@ func TestProperty_Loop_EventWidgetOrdering(t *testing.T) {
 			t.Fatalf("no EventWidget event found in stream; events: %v", eventTypes(events))
 		}
 		if toolEndIdx == -1 {
-			t.Fatalf("no EventToolCallEnd event found for widget_tool; events: %v", eventTypes(events))
+			t.Fatalf("no EventToolEnd event found for widget_tool; events: %v", eventTypes(events))
 		}
 		if widgetIdx >= toolEndIdx {
-			t.Fatalf("EventWidget (index %d) must appear before EventToolCallEnd (index %d); events: %v",
+			t.Fatalf("EventWidget (index %d) must appear before EventToolEnd (index %d); events: %v",
 				widgetIdx, toolEndIdx, eventTypes(events))
 		}
 	})
@@ -163,14 +158,14 @@ func TestProperty_Loop_NoSpuriousWidgetEvents(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Provider: first call returns a tool call; second returns final text.
 		sp := newScriptedProvider(
-			&ProviderResponse{ToolCalls: []tool.Call{
+			&ModelResponse{ToolCalls: []tool.Call{
 				{ToolUseID: "tc-nospurious-1", Name: "plain_tool", Input: json.RawMessage(`{}`)},
 			}},
-			&ProviderResponse{Text: "done"},
+			&ModelResponse{Text: "done"},
 		)
 
 		// Tool handler does NOT call EmitWidget.
-		plainTool := tool.NewRaw(
+		plainTool := newTestRaw(
 			"plain_tool",
 			"does not emit widgets",
 			map[string]any{"type": "object"},
@@ -179,13 +174,12 @@ func TestProperty_Loop_NoSpuriousWidgetEvents(t *testing.T) {
 			},
 		)
 
-		a, err := New(sp, prompt.Text("sys"), []tool.Tool{plainTool})
+		a, err := New(sp, "sys", WithTools(plainTool))
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
 
-		ch := a.InvokeEventStream(Background(), "go")
-		events := drainEvents(ch)
+		events, _ := collectStream(a.Stream(Background(), "go"))
 
 		for _, e := range events {
 			if e.Type == EventWidget {
@@ -209,35 +203,32 @@ func TestProperty_Loop_WidgetPersistenceInConversation(t *testing.T) {
 
 		// Provider: first call returns a tool call; second returns final text.
 		sp := newScriptedProvider(
-			&ProviderResponse{ToolCalls: []tool.Call{
+			&ModelResponse{ToolCalls: []tool.Call{
 				{ToolUseID: "tc-persist-1", Name: "persist_tool", Input: json.RawMessage(`{}`)},
 			}},
-			&ProviderResponse{Text: "done"},
+			&ModelResponse{Text: "done"},
 		)
 
 		// Tool handler emits the widget.
-		persistTool := tool.NewRaw(
+		persistTool := newTestRaw(
 			"persist_tool",
 			"emits a widget for persistence test",
 			map[string]any{"type": "object"},
 			func(ctx context.Context, _ json.RawMessage) (string, error) {
-				c := FromContext(ctx)
-				if c != nil {
-					_ = c.EmitWidget(block)
-				}
+				_ = EmitWidget(ctx, block)
 				return "persisted", nil
 			},
 		)
 
 		conv := newRecordingConversation()
-		a, err := New(sp, prompt.Text("sys"), []tool.Tool{persistTool},
-			WithConversation(conv, "conv-persist-1"),
+		a, err := New(sp, "sys", WithTools(persistTool),
+			WithConversationStore(conv),
 		)
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
 
-		_, invokeErr := a.Invoke(Background(), "go")
+		_, invokeErr := a.Invoke(Background().WithConversationID("conv-persist-1"), "go")
 		if invokeErr != nil {
 			t.Fatalf("Invoke: %v", invokeErr)
 		}
@@ -289,10 +280,8 @@ func TestProperty_Loop_ConcurrentEmitWidgetIsRaceFree(t *testing.T) {
 			blocks[i] = loopValidWidgetBlockGen(t)
 		}
 
-		// Create a fresh accumulator and inject it into a Context.
-		acc := &widgetAccumulator{}
-		c := Background()
-		c.Set(widgetAccumulatorKey{}, acc)
+		// Create an isolated tool-call Context.
+		c, acc := toolCallContext("tc-concurrent")
 
 		// Spawn N goroutines all calling EmitWidget concurrently.
 		var wg sync.WaitGroup
@@ -300,13 +289,13 @@ func TestProperty_Loop_ConcurrentEmitWidgetIsRaceFree(t *testing.T) {
 		for i := range n {
 			go func(idx int) {
 				defer wg.Done()
-				_ = c.EmitWidget(blocks[idx])
+				_ = EmitWidget(c, blocks[idx])
 			}(i)
 		}
 		wg.Wait()
 
 		// Drain the accumulator and verify all N blocks were stored.
-		drained := acc.drain()
+		drained := acc.drainWidgets()
 		if len(drained) != n {
 			t.Fatalf("expected %d blocks in accumulator after concurrent EmitWidget, got %d", n, len(drained))
 		}

@@ -10,17 +10,14 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
 func main() {
 	provider := bedrock.Must(bedrock.Cheapest())
-
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
+		"You are a helpful assistant. Be concise.",
 		agent.WithName("helpful-assistant"),
 		auto.WithLogging(),
 	)
@@ -32,5 +29,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(result)
+	fmt.Println(result.Text)
 }

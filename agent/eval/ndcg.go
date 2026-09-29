@@ -6,7 +6,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // RetrievalOrdering is a rule-based evaluator that compares the order of
@@ -16,16 +16,16 @@ import (
 // documents appear in the retrieved context.
 type RetrievalOrdering struct {
 	expectedIDs []string
-	idExtractor func(agent.Document) string
+	idExtractor func(rag.Document) string
 	cfg         evaluatorConfig
 }
 
 // NewRetrievalOrdering creates a RetrievalOrdering evaluator that compares
 // retrieved document order against expectedIDs using NDCG. The idExtractor
-// function defines how to extract an identifier from an agent.Document (e.g.,
+// function defines how to extract an identifier from a rag.Document (e.g.,
 // from Metadata["id"] or Content). It returns an error if expectedIDs is empty
 // or idExtractor is nil.
-func NewRetrievalOrdering(expectedIDs []string, idExtractor func(agent.Document) string, opts ...EvaluatorOption) (*RetrievalOrdering, error) {
+func NewRetrievalOrdering(expectedIDs []string, idExtractor func(rag.Document) string, opts ...EvaluatorOption) (*RetrievalOrdering, error) {
 	if len(expectedIDs) == 0 {
 		return nil, fmt.Errorf("expectedIDs must not be empty")
 	}

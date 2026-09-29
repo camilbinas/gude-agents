@@ -1,80 +1,38 @@
-# gude-agents
+# gude-agents documentation
 
-> **⚠️ Pre-1.0 — Expect Breaking Changes**
-> This project is under active development. Until version 1.0.0 is tagged, the API may change between minor releases without deprecation cycles. Pin your dependency to a specific version if stability matters.
+gude-agents uses three core concepts: an `Agent` is long-lived configuration, a `Context` configures one invocation, and a `Result` is its outcome.
 
-A Go agent framework for building LLM-powered applications. `gude-agents` provides a composable, provider-agnostic toolkit for creating conversational AI agents with tool use, memory, RAG, guardrails, and multi-agent orchestration.
-
-```
-go get github.com/camilbinas/gude-agents
-```
-
-Then add the provider(s) you need:
-
-```
-go get github.com/camilbinas/gude-agents/agent/provider/bedrock
+```go
+a, err := agent.New(prov, "You are concise.",
+    agent.WithTools(searchTool),
+    agent.WithConversationStore(store),
+)
+ctx := agent.NewContext(context.Background()).WithConversationID("thread-42")
+result, err := a.Invoke(ctx, "What changed?")
 ```
 
-Each provider and driver is a separate module — you only pull the dependencies you use. See [Getting Started](getting-started.md) for the full list.
+`Stream` and `ResumeStream` return `iter.Seq2[agent.Event, error]`; `TextStream` projects only live text. Approvals and human questions both return an `Interrupt`, continued with `Resume`.
 
-## Supported Providers
+## Start here
 
-| Provider | Models |
-|----------|--------|
-| **Amazon Bedrock** | Claude, Nova, Qwen, MiniMax, GPT-OSS, Nemotron, GLM |
-| **Anthropic** | Claude |
-| **OpenAI** | GPT, O-series |
-| **Google Gemini** | Gemini 2.5, 3, 3.1 |
+- [Getting started](getting-started.md) — construct, invoke, stream, and shut down an agent.
+- [Agent API](agent-api.md) — `Agent`, `Result`, `Event`, invocation, streaming, and errors.
+- [Invocation context](invocation-context.md) — cancellation, identity, principal, strict scopes, conversation IDs, attachments, and invocation KV.
+- [Decision guide](decision-guide.md) — choose state, retrieval, streaming, and composition components.
 
-## Recent Additions
+## Build agents
 
-- [What's New](whats-new.md) — Widget blocks, RBAC & identity, tool approval, A2A protocol, and the eval framework
+- [Tools](tools.md) and [middleware](middleware.md)
+- [Interrupts and resume](interrupts.md)
+- [Conversation persistence](conversation.md)
+- [RAG](rag.md) and [long-term memory](memory.md)
+- [Guardrails](guardrails.md) and [RBAC](rbac.md)
+- [Structured output](structured-output.md)
+- [Multi-agent composition](multi-agent.md)
 
-## Getting Started
+## Integrate and operate
 
-- [Getting Started Guide](getting-started.md) — Installation, first agent, and provider setup
-- [Decision Guide](decision-guide.md) — which store, which provider pattern, which invocation method
-
-## Core Concepts
-
-- [Agent API Reference](agent-api.md) — Constructor, options, invoke methods, and agent loop
-- [Message Types](message-types.md) — Message, ContentBlock, ConverseParams, and related types
-- [Prompt System](prompts.md) — Text, RISEN, and COSTAR prompt frameworks
-
-## Providers
-
-- [LLM Providers Overview](providers.md) — Interfaces, extended thinking, direct SDK access, custom providers
-  - [Bedrock](providers/bedrock.md) — AWS Bedrock: Claude, Nova, Qwen, guardrails
-  - [Anthropic](providers/anthropic.md) — Anthropic Messages API: Claude models
-  - [OpenAI](providers/openai.md) — OpenAI Chat Completions: GPT, O-series
-  - [Gemini](providers/gemini.md) — Google Gemini: model constructors
-- [Fallback Provider](fallback-provider.md) — Automatic failover across providers
-
-## Components
-
-- [Conversation System](conversation.md) — Strategies (Window, Token, Filter, Summary) and composable middleware
-- [Checkpointing](checkpoint.md) — Durable versioned state with history and point-in-time recovery for handoffs and your own resumable work
-- [Long-Term Memory](memory.md) — Long-term knowledge storage with Remember/Recall tools
-- [Redis Providers](redis.md) — Redis-backed conversation store and vector store
-- [Tool System](tools.md) — Typed tools, schema generation, and tool choice
-- [Tool Approval](tool-approval.md) — Human-in-the-loop approval flow for individual tool calls
-- [RBAC & Identity](rbac.md) — Per-invocation principals, role-based tool filtering, and custom policy enforcement
-- [RAG Pipeline](rag.md) — Embedders, vector stores, retrieval, and ingestion
-- [Guardrails](guardrails.md) — Input and output validation
-- [Middleware](middleware.md) — Tool execution middleware
-- [Structured Output](structured-output.md) — Type-safe JSON responses via `InvokeStructured[T]`
-
-## Advanced Topics
-
-- [Structured Logging](logging.md) — `log/slog`-based structured logging for agent lifecycle events
-- [OpenTelemetry Tracing](tracing.md) — Distributed tracing with spans for invocations, provider calls, and tools
-- [Prometheus Metrics](metrics.md) — Counters and histograms for agent lifecycle events
-- [OTEL Metrics](metrics-otel.md) — OpenTelemetry metrics exporter for OTLP-compatible backends
-- [CloudWatch Metrics](metrics-cloudwatch.md) — AWS CloudWatch metrics exporter with buffered flush
-- [HTTP & Multi-Tenant Environments](http.md) — `WithSharedConversation`, `WithConversationID`, and serving multiple users
-- [Multi-Agent HTTP Server with Fiber v3](fiber-multi-agent.md) — Streaming multi-agent server with per-user conversations
-- [Handoffs](handoff.md) — Pausing agents for human input and resuming
-- [Multi-Agent Composition](multi-agent.md) — AgentAsTool and orchestrator pattern
-- [MCP Integration](mcp.md) — Connect to MCP servers and use their tools
-- [Agent Context](invocation-context.md) — Per-invocation state sharing
-- [Agent-to-Agent (A2A) Protocol](a2a.md) — Remote agent clients, local agent hosting, and multi-server setup
+- [Providers](providers.md): [Anthropic](providers/anthropic.md), [Amazon Bedrock](providers/bedrock.md), [Gemini](providers/gemini.md), [OpenAI](providers/openai.md), [Ollama](providers/ollama.md), and [vLLM](providers/vllm.md)
+- [HTTP services](http.md), [MCP](mcp.md), and [A2A](a2a.md)
+- [Observability and audit](observability.md)
+- [Checkpointing](checkpoint.md) and [evaluation](eval.md)

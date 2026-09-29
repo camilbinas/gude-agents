@@ -2,200 +2,192 @@ package postgres
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
+
+	"github.com/camilbinas/gude-agents/agent/memory"
 )
 
-// SortDir is the sort direction for ORDER BY clauses.
-type SortDir string
-
-const (
-	Asc  SortDir = "ASC"
-	Desc SortDir = "DESC"
-)
-
-// RecallOption configures filtering and sorting for Recall queries.
-type RecallOption func(*recallConfig)
-
-func (RecallOption) IsRecallOption() {}
-
-func (r RecallOption) applyTool(c *toolConfig) {
-	c.recallOpts = append(c.recallOpts, r)
-}
-
-// recallConfig accumulates filters and ordering for a Recall query.
-type recallConfig struct {
-	filters       []filter
-	orderBy       []orderClause
-	minSimilarity *float64
-}
-
-type filter struct {
-	sql  string
-	args []any
-}
-
-type orderClause struct {
-	column string
-	dir    SortDir
-}
-
-// WithFieldEquals adds a WHERE column = value filter.
-func WithFieldEquals(column string, value any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			sql:  fmt.Sprintf("%s = ?", column),
-			args: []any{value},
-		})
+func validateRecallQuery(query memory.RecallQuery) error {
+	if query.Text == "" {
+		return fmt.Errorf("%w: text must not be empty", memory.ErrInvalidRecallQuery)
 	}
-}
-
-// WithFieldGT adds a WHERE column > value filter.
-func WithFieldGT(column string, value any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			sql:  fmt.Sprintf("%s > ?", column),
-			args: []any{value},
-		})
+	if query.Limit < 0 {
+		return fmt.Errorf("%w: limit must not be negative", memory.ErrInvalidRecallQuery)
 	}
-}
-
-// WithFieldLT adds a WHERE column < value filter.
-func WithFieldLT(column string, value any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			sql:  fmt.Sprintf("%s < ?", column),
-			args: []any{value},
-		})
+	if query.MinSimilarity < 0 || query.MinSimilarity > 1 || query.MinSimilarity != query.MinSimilarity {
+		return fmt.Errorf("%w: minimum similarity must be between 0 and 1", memory.ErrInvalidRecallQuery)
 	}
+	return nil
 }
 
-// WithFieldIn adds a WHERE column = ANY($n) filter for slice values.
-// The values slice is passed directly to pgx — use a typed slice (e.g.
-// []string) for correct encoding.
-func WithFieldIn(column string, values any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			sql:  fmt.Sprintf("%s = ANY(?)", column),
-			args: []any{values},
-		})
-	}
-}
-
-// WithTimeAfter adds a WHERE column > timestamp filter.
-func WithTimeAfter(column string, t time.Time) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			sql:  fmt.Sprintf("%s > ?", column),
-			args: []any{t},
-		})
-	}
-}
-
-// WithTimeBefore adds a WHERE column < timestamp filter.
-func WithTimeBefore(column string, t time.Time) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			sql:  fmt.Sprintf("%s < ?", column),
-			args: []any{t},
-		})
-	}
-}
-
-// WithMinSimilarity sets a minimum similarity threshold. Only results with
-// similarity >= this value are returned. This filters by vector distance
-// before applying the limit.
-func WithMinSimilarity(threshold float64) RecallOption {
-	return func(c *recallConfig) {
-		c.minSimilarity = &threshold
-	}
-}
-
-// WithOrderBy adds an ORDER BY clause. Multiple calls append additional
-// sort keys. Vector similarity is always the primary sort unless overridden
-// by explicit ordering.
-func WithOrderBy(column string, dir SortDir) RecallOption {
-	return func(c *recallConfig) {
-		c.orderBy = append(c.orderBy, orderClause{column: column, dir: dir})
-	}
-}
-
-// WithRawFilter adds a raw SQL WHERE clause with parameterized arguments.
-// Use ? as placeholder — they'll be renumbered to $N automatically.
-func WithRawFilter(sql string, args ...any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{sql: sql, args: args})
-	}
-}
-
-// buildWhereClause converts accumulated filters into a SQL WHERE fragment
-// with properly numbered $N placeholders. startParam is the next available
-// parameter number.
-func (rc *recallConfig) buildWhereClause(startParam int) (string, []any, int) {
-	if len(rc.filters) == 0 {
-		return "", nil, startParam
+// buildRecallQuery maps a portable query to parameterized PostgreSQL SQL. The
+// returned arguments start at $3 because $1 and $2 are reserved for the query
+// vector and identity respectively.
+func (s *Store[T]) buildRecallQuery(query memory.RecallQuery) (string, []any, error) {
+	if err := validateRecallQuery(query); err != nil {
+		return "", nil, err
 	}
 
-	var clauses []string
-	var allArgs []any
-	paramIdx := startParam
+	op := s.distanceOp()
+	identifierCol := s.schema.Columns[s.schema.IdentifierIdx].Column
+	selectCols := strings.Join(s.schema.columnNames(), ", ")
 
-	for _, f := range rc.filters {
-		clause := f.sql
-		for _, arg := range f.args {
-			placeholder := fmt.Sprintf("$%d", paramIdx)
-			clause = replaceFirst(clause, "?", placeholder)
-			allArgs = append(allArgs, arg)
-			paramIdx++
+	var sql strings.Builder
+	fmt.Fprintf(
+		&sql,
+		"SELECT %s, 1 - (%s %s $1) AS _similarity FROM %s WHERE %s = $2",
+		selectCols, s.embeddingCol, op, s.tableName, identifierCol,
+	)
+
+	args := make([]any, 0, len(query.Filters)+2)
+	paramIdx := 3
+	if query.MinSimilarity != 0 {
+		fmt.Fprintf(&sql, " AND 1 - (%s %s $1) >= $%d", s.embeddingCol, op, paramIdx)
+		args = append(args, query.MinSimilarity)
+		paramIdx++
+	}
+
+	for i, filter := range query.Filters {
+		column, ok := s.schema.recallColumn(filter.Field)
+		if !ok {
+			return "", nil, fmt.Errorf("%w: filter %d field %q", memory.ErrUnsupportedFilter, i, filter.Field)
 		}
-		clauses = append(clauses, clause)
-	}
 
-	return " AND " + joinAnd(clauses), allArgs, paramIdx
-}
-
-// buildOrderClause returns the ORDER BY fragment. If no explicit ordering
-// is set, returns empty (caller uses vector similarity as default).
-func (rc *recallConfig) buildOrderClause() string {
-	if len(rc.orderBy) == 0 {
-		return ""
-	}
-	parts := make([]string, len(rc.orderBy))
-	for i, o := range rc.orderBy {
-		parts[i] = fmt.Sprintf("%s %s", o.column, o.dir)
-	}
-	return joinComma(parts)
-}
-
-// replaceFirst replaces the first occurrence of old with new in s.
-func replaceFirst(s, old, new string) string {
-	i := indexOf(s, old)
-	if i == -1 {
-		return s
-	}
-	return s[:i] + new + s[i+len(old):]
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+		operator, err := postgresFilterOperator(filter.Operator)
+		if err != nil {
+			return "", nil, fmt.Errorf("filter %d: %w", i, err)
 		}
+		if err := validateFilterValue(filter.Operator, filter.Value); err != nil {
+			return "", nil, fmt.Errorf("filter %d field %q: %w", i, filter.Field, err)
+		}
+
+		if filter.Operator == memory.FilterIn {
+			fmt.Fprintf(&sql, " AND %s = ANY($%d)", column, paramIdx)
+		} else {
+			fmt.Fprintf(&sql, " AND %s %s $%d", column, operator, paramIdx)
+		}
+		args = append(args, filter.Value)
+		paramIdx++
 	}
-	return -1
+
+	if len(query.Order) == 0 {
+		fmt.Fprintf(&sql, " ORDER BY %s %s $1", s.embeddingCol, op)
+	} else {
+		orders := make([]string, len(query.Order))
+		for i, order := range query.Order {
+			column, ok := s.schema.recallColumn(order.Field)
+			if !ok {
+				return "", nil, fmt.Errorf("%w: order %d field %q", memory.ErrUnsupportedOrder, i, order.Field)
+			}
+			direction, err := postgresOrderDirection(order.Direction)
+			if err != nil {
+				return "", nil, fmt.Errorf("order %d: %w", i, err)
+			}
+			orders[i] = column + " " + direction
+		}
+		fmt.Fprintf(&sql, " ORDER BY %s", strings.Join(orders, ", "))
+	}
+
+	if query.Limit > 0 {
+		fmt.Fprintf(&sql, " LIMIT $%d", paramIdx)
+		args = append(args, query.Limit)
+	}
+
+	return sql.String(), args, nil
 }
 
-func joinAnd(parts []string) string {
-	result := parts[0]
-	for _, p := range parts[1:] {
-		result += " AND " + p
+func postgresFilterOperator(operator memory.FilterOperator) (string, error) {
+	switch operator {
+	case memory.FilterEqual:
+		return "=", nil
+	case memory.FilterNotEqual:
+		return "<>", nil
+	case memory.FilterGreaterThan:
+		return ">", nil
+	case memory.FilterGreaterThanOrEqual:
+		return ">=", nil
+	case memory.FilterLessThan:
+		return "<", nil
+	case memory.FilterLessThanOrEqual:
+		return "<=", nil
+	case memory.FilterIn:
+		return "= ANY", nil
+	default:
+		return "", fmt.Errorf("%w: operator %q", memory.ErrUnsupportedFilter, operator)
 	}
-	return result
 }
 
-func joinComma(parts []string) string {
-	result := parts[0]
-	for _, p := range parts[1:] {
-		result += ", " + p
+func postgresOrderDirection(direction memory.OrderDirection) (string, error) {
+	switch direction {
+	case memory.OrderAscending:
+		return "ASC", nil
+	case memory.OrderDescending:
+		return "DESC", nil
+	default:
+		return "", fmt.Errorf("%w: direction %q", memory.ErrUnsupportedOrder, direction)
 	}
-	return result
+}
+
+func validateFilterValue(operator memory.FilterOperator, value any) error {
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return fmt.Errorf("%w: nil value", memory.ErrUnsupportedFilter)
+	}
+
+	if operator == memory.FilterIn {
+		if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+			return fmt.Errorf("%w: operator %q requires a typed slice or array, got %T", memory.ErrUnsupportedFilter, operator, value)
+		}
+		if v.Kind() == reflect.Slice && v.IsNil() {
+			return fmt.Errorf("%w: operator %q does not support a nil slice", memory.ErrUnsupportedFilter, operator)
+		}
+		if !supportedArrayElement(v.Type().Elem()) {
+			return fmt.Errorf("%w: operator %q does not support %T", memory.ErrUnsupportedFilter, operator, value)
+		}
+		return nil
+	}
+
+	if isNilValue(v) || !supportedScalarType(v.Type()) {
+		return fmt.Errorf("%w: operator %q does not support %T", memory.ErrUnsupportedFilter, operator, value)
+	}
+	return nil
+}
+
+func supportedArrayElement(t reflect.Type) bool {
+	if t.Kind() == reflect.Interface || t.Kind() == reflect.Slice || t.Kind() == reflect.Map || t.Kind() == reflect.Func || t.Kind() == reflect.Chan || t.Kind() == reflect.UnsafePointer {
+		return false
+	}
+	if t.Kind() == reflect.Ptr {
+		return supportedScalarType(t.Elem())
+	}
+	return supportedScalarType(t)
+}
+
+func supportedScalarType(t reflect.Type) bool {
+	if t == reflect.TypeFor[time.Time]() {
+		return true
+	}
+	switch t.Kind() {
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64,
+		reflect.String:
+		return true
+	case reflect.Ptr:
+		return supportedScalarType(t.Elem())
+	default:
+		return false
+	}
+}
+
+func isNilValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

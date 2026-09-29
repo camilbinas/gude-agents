@@ -9,9 +9,9 @@
 // parallel, then synthesizes their answers into a single response.
 //
 // Key concepts demonstrated:
-//   - agent.Worker       — lightweight child agent optimized for tool use
-//   - agent.Orchestrator — parent agent with parallel tool execution enabled
-//   - agent.AgentAsTool  — wraps a child agent as a callable tool
+//   - agent.New         — creates both specialist and orchestrator agents
+//   - agent.WithTools   — installs specialist tools and wrapped child agents
+//   - agent.AgentAsTool — wraps a child agent as a callable tool
 //   - prompt.RISEN / prompt.COSTAR — structured prompt templates
 //
 // Run:
@@ -28,7 +28,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
@@ -41,7 +40,7 @@ func main() {
 
 	// ── Worker 1: Repo analyst ────────────────────────────────────────────────
 	// Searches the repo list and reports stats. Fast model — just tool + format.
-	repoAnalyst, err := agent.Worker(
+	repoAnalyst, err := agent.New(
 		haiku,
 		prompt.RISEN{
 			Role:         "You are a repository analyst.",
@@ -49,8 +48,8 @@ func main() {
 			Steps:        []string{"Search repos", "List each match with its language, description, open PRs, open issues, and last commit time"},
 			EndGoal:      "Give the caller a clear snapshot of the matching repositories.",
 			Narrowing:    "Report only what the tool returns. No speculation.",
-		},
-		[]tool.Tool{searchReposTool()},
+		}.String(),
+		agent.WithTools(searchReposTool()),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -58,7 +57,7 @@ func main() {
 
 	// ── Worker 2: PR reviewer ─────────────────────────────────────────────────
 	// Looks up open pull requests filtered by repo or author.
-	prReviewer, err := agent.Worker(
+	prReviewer, err := agent.New(
 		haiku,
 		prompt.RISEN{
 			Role:         "You are a pull request analyst.",
@@ -66,8 +65,8 @@ func main() {
 			Steps:        []string{"Search PRs with the appropriate filters", "List each PR with its ID, repo, title, author, and comment count"},
 			EndGoal:      "Give the caller a clear list of relevant open PRs.",
 			Narrowing:    "Only report open PRs. Do not invent status or context.",
-		},
-		[]tool.Tool{searchPRsTool()},
+		}.String(),
+		agent.WithTools(searchPRsTool()),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -75,7 +74,7 @@ func main() {
 
 	// ── Worker 3: Team lookup ─────────────────────────────────────────────────
 	// Finds team members by name or role.
-	teamLookup, err := agent.Worker(
+	teamLookup, err := agent.New(
 		haiku,
 		prompt.RISEN{
 			Role:         "You are a team directory assistant.",
@@ -83,8 +82,8 @@ func main() {
 			Steps:        []string{"Search the team", "For each match, report their name, role, repos they own, and open PR count"},
 			EndGoal:      "Give the caller a clear picture of who's on the team and what they're working on.",
 			Narrowing:    "Only report what the tool returns. Do not guess workload or availability.",
-		},
-		[]tool.Tool{searchTeamTool()},
+		}.String(),
+		agent.WithTools(searchTeamTool()),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -92,9 +91,8 @@ func main() {
 
 	// ── Orchestrator ──────────────────────────────────────────────────────────
 	// Routes to the right specialist(s) and synthesizes the answer.
-	// agent.Orchestrator enables WithParallelToolExecution — so for questions
-	// that span repos + people, both workers are called simultaneously.
-	orchestrator, err := agent.Orchestrator(
+	// WithParallelTools lets independent specialist calls run simultaneously.
+	orchestrator, err := agent.New(
 		sonnet,
 		prompt.COSTAR{
 			Context: `You are an internal dev-team assistant. You have three specialists:
@@ -106,8 +104,8 @@ func main() {
 			Tone:      "Straightforward — like a knowledgeable colleague, not a help desk.",
 			Audience:  "Developers and engineering managers who want quick, accurate answers.",
 			Response:  "Answer directly. Use the specialists' output as-is where possible.",
-		},
-		[]tool.Tool{
+		}.String(),
+		agent.WithTools(
 			agent.AgentAsTool(
 				"ask_repo_analyst",
 				"Search repositories by name, language, or description. Input: a search query.",
@@ -123,10 +121,10 @@ func main() {
 				"Find team members by name or role. Input: a name or role keyword.",
 				teamLookup,
 			),
-		},
-		agent.WithConversation(
+		),
+		agent.WithParallelTools(),
+		agent.WithConversationStore(
 			conversation.NewWindow(conversation.NewInMemory(), 20),
-			"dev-team-session",
 		),
 	)
 	if err != nil {
@@ -138,5 +136,5 @@ func main() {
 	fmt.Println("Try: 'What Go repos do we have?' or 'Show me Tom's open PRs' or 'Who are the backend engineers?'")
 	fmt.Println("Type 'quit' to exit.")
 
-	utils.Chat(agent.Background(), orchestrator)
+	utils.Chat(agent.Background().WithConversationID("dev-team-session"), orchestrator)
 }

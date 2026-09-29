@@ -12,7 +12,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation/redis"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
@@ -34,20 +33,18 @@ func main() {
 	defer store.Close()
 
 	provider := bedrock.Must(bedrock.Standard())
-
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithConversation(store, "demo-conversation"),
+		"You are a helpful assistant. Be concise.",
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println("Redis chat (type 'quit' to exit, 'clear' to reset)")
-
-	utils.Chat(agent.Background(), a, utils.ChatOptions{
+	ctx := agent.Background().WithConversationID("demo-conversation")
+	utils.Chat(ctx, a, utils.ChatOptions{
 		ClearFunc: utils.ClearConversation(store, "demo-conversation"),
 	})
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/fallback"
 )
 
@@ -18,7 +17,7 @@ import (
 // Run with:
 //   go test -v -timeout=120s -run TestIntegration_Resilience ./...
 
-// failNProvider wraps a real provider and fails the first N Converse calls.
+// failNProvider wraps a real provider and fails the first N Stream calls.
 type failNProvider struct {
 	inner     agent.Provider
 	failsLeft atomic.Int32
@@ -32,31 +31,22 @@ func newFailNProvider(inner agent.Provider, failCount int) *failNProvider {
 
 func (p *failNProvider) Name() string { return "mock" }
 
-func (p *failNProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
+func (p *failNProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	if p.failsLeft.Add(-1) >= 0 {
 		return nil, errors.New("simulated transient error")
 	}
-	return p.inner.Converse(ctx, params)
-}
-
-func (p *failNProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	if p.failsLeft.Add(-1) >= 0 {
-		return nil, errors.New("simulated transient error")
-	}
-	return p.inner.ConverseStream(ctx, params, cb)
+	return p.inner.Stream(ctx, req, emit)
 }
 
 func TestIntegration_Resilience_RetryRecovers(t *testing.T) {
 	t.Parallel()
 	real := newTestProvider(t)
-
-	// Fail the first 2 calls, succeed on the 3rd.
 	flaky := newFailNProvider(real, 2)
 
-	a, err := agent.New(flaky,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
-		agent.WithRetry(3, 10*time.Millisecond),
+	a, err := agent.New(
+		flaky,
+		"You are a helpful assistant. Be very brief.",
+		agent.WithProviderRetry(3, 10*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -65,29 +55,25 @@ func TestIntegration_Resilience_RetryRecovers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	result, err := a.Invoke(c, "What is 2+2? Reply with just the number.")
+	result, err := a.Invoke(agent.NewContext(ctx), "What is 2+2? Reply with just the number.")
 	if err != nil {
 		t.Fatalf("expected retry to recover, got error: %v", err)
 	}
-
-	if !strings.Contains(result, "4") {
-		t.Errorf("expected response to contain '4', got: %s", result)
+	if !strings.Contains(result.Text, "4") {
+		t.Errorf("expected response to contain '4', got: %s", result.Text)
 	}
-	t.Logf("Retry recovered, response: %s", result)
+	t.Logf("Retry recovered, response: %s", result.Text)
 }
 
 func TestIntegration_Resilience_RetryExhausted(t *testing.T) {
 	t.Parallel()
 	real := newTestProvider(t)
-
-	// Fail more times than retries allow.
 	flaky := newFailNProvider(real, 10)
 
-	a, err := agent.New(flaky,
-		prompt.Text("You are a helpful assistant."),
-		nil,
-		agent.WithRetry(2, 10*time.Millisecond),
+	a, err := agent.New(
+		flaky,
+		"You are a helpful assistant.",
+		agent.WithProviderRetry(2, 10*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -96,12 +82,10 @@ func TestIntegration_Resilience_RetryExhausted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	_, err = a.Invoke(c, "Hello")
+	_, err = a.Invoke(agent.NewContext(ctx), "Hello")
 	if err == nil {
 		t.Fatal("expected error after retries exhausted, got nil")
 	}
-
 	t.Logf("Retries exhausted as expected: %v", err)
 }
 
@@ -109,11 +93,10 @@ func TestIntegration_Resilience_TimeoutEnforced(t *testing.T) {
 	t.Parallel()
 	real := newTestProvider(t)
 
-	// Use an absurdly short timeout that will expire before the provider responds.
-	a, err := agent.New(real,
-		prompt.Text("You are a helpful assistant. Write a very long essay about the history of computing."),
-		nil,
-		agent.WithTimeout(1*time.Nanosecond),
+	a, err := agent.New(
+		real,
+		"You are a helpful assistant. Write a very long essay about the history of computing.",
+		agent.WithProviderTimeout(time.Nanosecond),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -122,27 +105,20 @@ func TestIntegration_Resilience_TimeoutEnforced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	_, err = a.Invoke(c, "Write a 1000 word essay.")
+	_, err = a.Invoke(agent.NewContext(ctx), "Write a 1000 word essay.")
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-
 	t.Logf("Timeout enforced: %v", err)
 }
 
 func TestIntegration_Resilience_FallbackProvider(t *testing.T) {
 	t.Parallel()
 	real := newTestProvider(t)
-
-	// Primary always fails, fallback is the real provider.
 	alwaysFail := newFailNProvider(real, 1000)
 	fb := fallback.New(alwaysFail, real)
 
-	a, err := agent.New(fb,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
-	)
+	a, err := agent.New(fb, "You are a helpful assistant. Be very brief.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,30 +126,22 @@ func TestIntegration_Resilience_FallbackProvider(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	result, err := a.Invoke(c, "What is the capital of France? Reply with just the city name.")
+	result, err := a.Invoke(agent.NewContext(ctx), "What is the capital of France? Reply with just the city name.")
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got error: %v", err)
 	}
-
-	if !strings.Contains(strings.ToLower(result), "paris") {
-		t.Errorf("expected response to mention Paris, got: %s", result)
+	if !strings.Contains(strings.ToLower(result.Text), "paris") {
+		t.Errorf("expected response to mention Paris, got: %s", result.Text)
 	}
-	t.Logf("Fallback succeeded, response: %s", result)
+	t.Logf("Fallback succeeded, response: %s", result.Text)
 }
 
 func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
 	t.Parallel()
 	real := newTestProvider(t)
+	fb := fallback.New(newFailNProvider(real, 1000), newFailNProvider(real, 1000))
 
-	fail1 := newFailNProvider(real, 1000)
-	fail2 := newFailNProvider(real, 1000)
-	fb := fallback.New(fail1, fail2)
-
-	a, err := agent.New(fb,
-		prompt.Text("You are a helpful assistant."),
-		nil,
-	)
+	a, err := agent.New(fb, "You are a helpful assistant.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,12 +149,10 @@ func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	_, err = a.Invoke(c, "Hello")
+	_, err = a.Invoke(agent.NewContext(ctx), "Hello")
 	if err == nil {
 		t.Fatal("expected error when all fallback providers fail, got nil")
 	}
-
 	if !strings.Contains(err.Error(), "all providers failed") {
 		t.Logf("Error (may be wrapped): %v", err)
 	}
@@ -196,17 +162,9 @@ func TestIntegration_Resilience_FallbackAllFail(t *testing.T) {
 func TestIntegration_Resilience_RetryWithFallback(t *testing.T) {
 	t.Parallel()
 	real := newTestProvider(t)
+	fb := fallback.New(newFailNProvider(real, 1000), real)
 
-	// Primary fails first 2 calls, fallback is the real provider.
-	// With retry(1) on the agent, the first attempt fails, retry fails,
-	// but the fallback provider catches it at the provider level.
-	flaky := newFailNProvider(real, 1000)
-	fb := fallback.New(flaky, real)
-
-	a, err := agent.New(fb,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
-	)
+	a, err := agent.New(fb, "You are a helpful assistant. Be very brief.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,14 +172,12 @@ func TestIntegration_Resilience_RetryWithFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	result, err := a.Invoke(c, "Say hello in one word.")
+	result, err := a.Invoke(agent.NewContext(ctx), "Say hello in one word.")
 	if err != nil {
 		t.Fatalf("expected fallback to handle failure, got: %v", err)
 	}
-
-	if result == "" {
+	if result.Text == "" {
 		t.Error("expected non-empty response")
 	}
-	t.Logf("Retry+fallback response: %s", result)
+	t.Logf("Retry+fallback response: %s", result.Text)
 }

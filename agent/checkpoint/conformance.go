@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -47,6 +48,80 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) Checkpointer) {
 		}
 		if got.Timestamp.IsZero() {
 			t.Error("timestamp was not defaulted")
+		}
+	})
+
+	t.Run("SaveIfVersionRequiresExactLatestVersion", func(t *testing.T) {
+		c := newStore(t)
+		created, err := c.SaveIfVersion(ctx, "conf-cas", Checkpoint{Label: "created"}, 0)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if created.Version != 1 {
+			t.Fatalf("create version = %d, want 1", created.Version)
+		}
+		updated, err := c.SaveIfVersion(ctx, "conf-cas", Checkpoint{Label: "updated"}, 1)
+		if err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if updated.Version != 2 {
+			t.Fatalf("update version = %d, want 2", updated.Version)
+		}
+		for _, expected := range []int{0, 1, 3} {
+			if _, err := c.SaveIfVersion(ctx, "conf-cas", Checkpoint{}, expected); !errors.Is(err, ErrConflict) {
+				t.Errorf("expected %d: err = %v, want ErrConflict", expected, err)
+			}
+		}
+		if _, err := c.SaveIfVersion(ctx, "conf-cas-missing", Checkpoint{}, 1); !errors.Is(err, ErrConflict) {
+			t.Errorf("missing expected version: err = %v, want ErrConflict", err)
+		}
+		metas, err := c.History(ctx, "conf-cas")
+		if err != nil {
+			t.Fatalf("history: %v", err)
+		}
+		if len(metas) != 2 {
+			t.Fatalf("history len = %d, want 2", len(metas))
+		}
+	})
+
+	t.Run("SaveIfVersionHasExactlyOneConcurrentWinner", func(t *testing.T) {
+		c := newStore(t)
+		if _, err := c.SaveIfVersion(ctx, "conf-cas-race", Checkpoint{}, 0); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+
+		const contenders = 16
+		var winners atomic.Int32
+		errs := make(chan error, contenders)
+		var wg sync.WaitGroup
+		wg.Add(contenders)
+		for range contenders {
+			go func() {
+				defer wg.Done()
+				_, err := c.SaveIfVersion(ctx, "conf-cas-race", Checkpoint{}, 1)
+				if err == nil {
+					winners.Add(1)
+					return
+				}
+				if !errors.Is(err, ErrConflict) {
+					errs <- err
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if got := winners.Load(); got != 1 {
+			t.Fatalf("winners = %d, want 1", got)
+		}
+		metas, err := c.History(ctx, "conf-cas-race")
+		if err != nil {
+			t.Fatalf("history: %v", err)
+		}
+		if len(metas) != 2 {
+			t.Fatalf("history len = %d, want 2", len(metas))
 		}
 	})
 

@@ -1,32 +1,14 @@
-// Package dynamodb provides a DynamoDB-backed memory driver for the gude-agents framework.
-// It stores conversation history as items in an Amazon DynamoDB table.
+// Package dynamodb provides a DynamoDB-backed conversation store.
 //
-// # Table Schema
-//
-// The DynamoDB table must be created by the caller with "conversation_id" (String)
-// as the partition key and no sort key. Each item stores:
-//   - conversation_id: string — keyPrefix + conversationID (configurable via WithPartitionKey)
-//   - messages: string — JSON-encoded []agent.Message
-//   - ttl: number (optional) — Unix epoch seconds for TTL expiry (configurable via WithTTLAttribute)
-//
-// # Item Size Limit
-//
-// DynamoDB items are limited to 400 KB. For long-running conversations that
-// accumulate large tool results, pair this driver with conversation.NewWindow or
-// conversation.NewSummary to bound item size.
-//
-// # List Performance
-//
-// The List method performs a full-table Scan with a filter expression on the
-// partition key attribute. This consumes read capacity proportional to the table
-// size. Callers with large tables should be aware of the cost and latency
-// implications and avoid calling List in hot paths.
+// The table must use "conversation_id" (String) as its partition key. Each
+// item stores JSON messages, a numeric revision, and optionally a TTL value.
 package dynamodb
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,19 +20,16 @@ import (
 	"github.com/camilbinas/gude-agents/agent/conversation"
 )
 
-// dynamoDBClient is the interface for DynamoDB operations used by DynamoDBMemory.
-// The concrete *dynamodb.Client satisfies this interface.
 type dynamoDBClient interface {
-	PutItem(ctx context.Context, in *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
-	GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
-	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
-	Scan(ctx context.Context, in *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+	DeleteItem(context.Context, *dynamodb.DeleteItemInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
+	Scan(context.Context, *dynamodb.ScanInput, ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
 }
 
-// Compile-time interface checks.
-var _ agent.Conversation = (*Conversation)(nil)
+var _ agent.ConversationManager = (*Conversation)(nil)
 
-// Conversation implements agent.Conversation using Amazon DynamoDB.
+// Conversation implements agent.ConversationManager using DynamoDB.
 type Conversation struct {
 	client       dynamoDBClient
 	table        string
@@ -60,171 +39,146 @@ type Conversation struct {
 	pkAttribute  string
 }
 
-// New creates a new DynamoDBMemory. No network calls are made at
-// construction time; connectivity errors surface on the first Save/Load call.
-//
-// Returns an error if table is empty.
+// New creates a store without making a network request.
 func New(cfg aws.Config, table string, opts ...Option) (*Conversation, error) {
 	if table == "" {
 		return nil, fmt.Errorf("dynamodb conversation: table name is required")
 	}
-
-	c := &config{
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
+	c := &config{keyPrefix: "gude:", ttlAttribute: "ttl", pkAttribute: "conversation_id"}
 	for _, o := range opts {
 		o(c)
 	}
-
 	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		if c.endpoint != "" {
 			o.BaseEndpoint = aws.String(c.endpoint)
 		}
 	})
-
-	return &Conversation{
-		client:       client,
-		table:        table,
-		keyPrefix:    c.keyPrefix,
-		ttl:          c.ttl,
-		ttlAttribute: c.ttlAttribute,
-		pkAttribute:  c.pkAttribute,
-	}, nil
+	return &Conversation{client: client, table: table, keyPrefix: c.keyPrefix, ttl: c.ttl, ttlAttribute: c.ttlAttribute, pkAttribute: c.pkAttribute}, nil
 }
 
-// Save persists messages for the given conversation ID as a DynamoDB item.
-// When TTL is configured, a numeric Unix-epoch TTL attribute is also written.
-func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+// Save atomically persists messages when expectedRevision matches.
+func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message, expectedRevision uint64) (uint64, error) {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("dynamodb conversation: save: %w", err)
+		return 0, fmt.Errorf("dynamodb conversation: save: %w", err)
 	}
-
-	pk := m.keyPrefix + conversationID
+	nextRevision := expectedRevision + 1
 	item := map[string]dbtypes.AttributeValue{
-		m.pkAttribute: &dbtypes.AttributeValueMemberS{Value: pk},
+		m.pkAttribute: &dbtypes.AttributeValueMemberS{Value: m.keyPrefix + conversationID},
 		"messages":    &dbtypes.AttributeValueMemberS{Value: string(data)},
+		"revision":    &dbtypes.AttributeValueMemberN{Value: strconv.FormatUint(nextRevision, 10)},
 	}
-
 	if m.ttl > 0 {
-		ttlVal := time.Now().Add(m.ttl).Unix()
-		item[m.ttlAttribute] = &dbtypes.AttributeValueMemberN{Value: fmt.Sprintf("%d", ttlVal)}
+		item[m.ttlAttribute] = &dbtypes.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Add(m.ttl).Unix(), 10)}
 	}
 
+	condition := "attribute_not_exists(#pk) OR attribute_not_exists(#revision)"
+	names := map[string]string{"#pk": m.pkAttribute, "#revision": "revision"}
+	var values map[string]dbtypes.AttributeValue
+	if expectedRevision != 0 {
+		condition = "#revision = :expected"
+		names = map[string]string{"#revision": "revision"}
+		values = map[string]dbtypes.AttributeValue{
+			":expected": &dbtypes.AttributeValueMemberN{Value: strconv.FormatUint(expectedRevision, 10)},
+		}
+	}
 	_, err = m.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(m.table),
-		Item:      item,
+		TableName:                 aws.String(m.table),
+		Item:                      item,
+		ConditionExpression:       aws.String(condition),
+		ExpressionAttributeNames:  names,
+		ExpressionAttributeValues: values,
 	})
 	if err != nil {
 		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) &&
-			apiErr.ErrorCode() == "ValidationException" &&
-			strings.Contains(apiErr.ErrorMessage(), "Item size has exceeded the maximum allowed size") {
-			return fmt.Errorf("dynamodb conversation: item too large: conversation exceeds DynamoDB's 400 KB item size limit; consider using conversation.NewWindow or conversation.NewSummary to bound conversation size: %w", err)
+		if errors.As(err, &apiErr) {
+			switch apiErr.ErrorCode() {
+			case "ConditionalCheckFailedException":
+				return 0, fmt.Errorf("dynamodb conversation: save %q: %w", conversationID, agent.ErrConversationConflict)
+			case "ValidationException":
+				if strings.Contains(apiErr.ErrorMessage(), "Item size has exceeded the maximum allowed size") {
+					return 0, fmt.Errorf("dynamodb conversation: item too large: conversation exceeds DynamoDB's 400 KB item size limit; consider using conversation.NewWindow or conversation.NewSummary: %w", err)
+				}
+			}
 		}
-		return fmt.Errorf("dynamodb conversation: save: %w", err)
+		return 0, fmt.Errorf("dynamodb conversation: save: %w", err)
 	}
-
-	return nil
+	return nextRevision, nil
 }
 
-// Load retrieves messages for the given conversation ID.
-// Returns an empty non-nil slice if the item does not exist.
-func (m *Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
-	pk := m.keyPrefix + conversationID
-
+// Load returns a snapshot. Missing items have revision zero and a non-nil
+// empty message slice.
+func (m *Conversation) Load(ctx context.Context, conversationID string) (agent.ConversationSnapshot, error) {
 	out, err := m.client.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(m.table),
+		TableName:      aws.String(m.table),
+		ConsistentRead: aws.Bool(true),
 		Key: map[string]dbtypes.AttributeValue{
-			m.pkAttribute: &dbtypes.AttributeValueMemberS{Value: pk},
+			m.pkAttribute: &dbtypes.AttributeValueMemberS{Value: m.keyPrefix + conversationID},
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("dynamodb conversation: load: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load: %w", err)
 	}
-
 	if len(out.Item) == 0 {
-		return []agent.Message{}, nil
+		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
 	}
-
-	attr, ok := out.Item["messages"]
+	messageAttr, ok := out.Item["messages"].(*dbtypes.AttributeValueMemberS)
 	if !ok {
-		return []agent.Message{}, nil
+		return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load: unexpected attribute type for messages")
 	}
-
-	sv, ok := attr.(*dbtypes.AttributeValueMemberS)
-	if !ok {
-		return nil, fmt.Errorf("dynamodb conversation: load: unexpected attribute type for messages")
+	revision := uint64(0)
+	if revisionValue, exists := out.Item["revision"]; exists {
+		revisionAttr, ok := revisionValue.(*dbtypes.AttributeValueMemberN)
+		if !ok {
+			return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load: unexpected attribute type for revision")
+		}
+		revision, err = strconv.ParseUint(revisionAttr.Value, 10, 64)
+		if err != nil {
+			return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load revision: %w", err)
+		}
 	}
-
-	messages, err := conversation.UnmarshalMessages([]byte(sv.Value))
+	messages, err := conversation.UnmarshalMessages([]byte(messageAttr.Value))
 	if err != nil {
-		return nil, fmt.Errorf("dynamodb conversation: load: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load: %w", err)
 	}
-
-	return messages, nil
+	return agent.ConversationSnapshot{Messages: messages, Revision: revision}, nil
 }
 
-// List returns all conversation IDs whose items share the configured key prefix.
-// This method performs a full-table Scan — see package documentation for cost implications.
+// List returns all IDs sharing the configured prefix.
 func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	var ids []string
 	var lastKey map[string]dbtypes.AttributeValue
-
 	for {
 		out, err := m.client.Scan(ctx, &dynamodb.ScanInput{
-			TableName:        aws.String(m.table),
-			FilterExpression: aws.String("begins_with(#pk, :prefix)"),
-			ExpressionAttributeNames: map[string]string{
-				"#pk": m.pkAttribute,
-			},
-			ExpressionAttributeValues: map[string]dbtypes.AttributeValue{
-				":prefix": &dbtypes.AttributeValueMemberS{Value: m.keyPrefix},
-			},
-			ExclusiveStartKey: lastKey,
+			TableName: aws.String(m.table), FilterExpression: aws.String("begins_with(#pk, :prefix)"),
+			ExpressionAttributeNames:  map[string]string{"#pk": m.pkAttribute},
+			ExpressionAttributeValues: map[string]dbtypes.AttributeValue{":prefix": &dbtypes.AttributeValueMemberS{Value: m.keyPrefix}},
+			ExclusiveStartKey:         lastKey,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("dynamodb conversation: list: %w", err)
 		}
-
 		for _, item := range out.Items {
-			pkAttr, ok := item[m.pkAttribute]
-			if !ok {
-				continue
+			if value, ok := item[m.pkAttribute].(*dbtypes.AttributeValueMemberS); ok {
+				ids = append(ids, strings.TrimPrefix(value.Value, m.keyPrefix))
 			}
-			sv, ok := pkAttr.(*dbtypes.AttributeValueMemberS)
-			if !ok {
-				continue
-			}
-			id := strings.TrimPrefix(sv.Value, m.keyPrefix)
-			ids = append(ids, id)
 		}
-
 		if len(out.LastEvaluatedKey) == 0 {
 			break
 		}
 		lastKey = out.LastEvaluatedKey
 	}
-
 	return ids, nil
 }
 
-// Delete removes the item for the given conversation ID.
-// A not-found response is not treated as an error.
+// Delete removes an item. Missing items are ignored.
 func (m *Conversation) Delete(ctx context.Context, conversationID string) error {
-	pk := m.keyPrefix + conversationID
-
 	_, err := m.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(m.table),
-		Key: map[string]dbtypes.AttributeValue{
-			m.pkAttribute: &dbtypes.AttributeValueMemberS{Value: pk},
-		},
+		Key:       map[string]dbtypes.AttributeValue{m.pkAttribute: &dbtypes.AttributeValueMemberS{Value: m.keyPrefix + conversationID}},
 	})
 	if err != nil {
 		return fmt.Errorf("dynamodb conversation: delete: %w", err)
 	}
-
 	return nil
 }

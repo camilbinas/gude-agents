@@ -3,6 +3,8 @@ package dynamodb
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -46,6 +48,137 @@ func TestSave_DefaultsTimestamp(t *testing.T) {
 	}
 	if got.Timestamp.IsZero() {
 		t.Error("timestamp not defaulted")
+	}
+}
+
+func TestSaveIfVersion_RejectsInvalidInput(t *testing.T) {
+	c := newFakeCheckpointer()
+	ctx := context.Background()
+
+	if _, err := c.SaveIfVersion(ctx, "", checkpoint.Checkpoint{}, 0); !errors.Is(err, checkpoint.ErrThreadIDRequired) {
+		t.Errorf("empty thread ID error = %v, want ErrThreadIDRequired", err)
+	}
+	if _, err := c.SaveIfVersion(ctx, "t1", checkpoint.Checkpoint{}, -1); err == nil || !strings.Contains(err.Error(), "expected version must be non-negative") {
+		t.Errorf("negative expected version error = %v, want explanatory error", err)
+	}
+}
+
+func TestSaveIfVersion_CreateExpectedZero(t *testing.T) {
+	c := newFakeCheckpointer()
+
+	got, err := c.SaveIfVersion(context.Background(), "t1", checkpoint.Checkpoint{Label: "created"}, 0)
+	if err != nil {
+		t.Fatalf("save if version: %v", err)
+	}
+	if got.ThreadID != "t1" || got.Version != 1 || got.Label != "created" {
+		t.Errorf("checkpoint = %+v, want thread t1 at version 1", got)
+	}
+	if got.Timestamp.IsZero() {
+		t.Error("timestamp not defaulted")
+	}
+}
+
+func TestSaveIfVersion_SucceedsAtCurrentVersion(t *testing.T) {
+	c := newFakeCheckpointer()
+	ctx := context.Background()
+
+	if _, err := c.Save(ctx, "t1", checkpoint.Checkpoint{}); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+	got, err := c.SaveIfVersion(ctx, "t1", checkpoint.Checkpoint{Label: "updated"}, 1)
+	if err != nil {
+		t.Fatalf("save if version: %v", err)
+	}
+	if got.Version != 2 || got.Label != "updated" {
+		t.Errorf("checkpoint = %+v, want version 2 with updated label", got)
+	}
+}
+
+func TestSaveIfVersion_RejectsVersionMismatchWithoutWriting(t *testing.T) {
+	tests := []struct {
+		name            string
+		seed            bool
+		expectedVersion int
+		currentVersion  string
+	}{
+		{name: "stale expectation", seed: true, expectedVersion: 0, currentVersion: "current version 1"},
+		{name: "absent expected nonzero", expectedVersion: 1, currentVersion: "current version 0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeDynamo()
+			c := &Checkpointer{client: fake, table: "checkpoints"}
+			ctx := context.Background()
+			if tt.seed {
+				if _, err := c.Save(ctx, "t1", checkpoint.Checkpoint{}); err != nil {
+					t.Fatalf("seed save: %v", err)
+				}
+			}
+			putCalls := fake.putCalls
+
+			_, err := c.SaveIfVersion(ctx, "t1", checkpoint.Checkpoint{}, tt.expectedVersion)
+			if !errors.Is(err, checkpoint.ErrConflict) {
+				t.Fatalf("error = %v, want ErrConflict", err)
+			}
+			if !strings.Contains(err.Error(), tt.currentVersion) {
+				t.Errorf("error = %v, want %q", err, tt.currentVersion)
+			}
+			if fake.putCalls != putCalls {
+				t.Errorf("PutItem calls = %d, want %d", fake.putCalls, putCalls)
+			}
+		})
+	}
+}
+
+func TestSaveIfVersion_ConcurrentOneWinner(t *testing.T) {
+	c := newFakeCheckpointer()
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := c.SaveIfVersion(ctx, "t1", checkpoint.Checkpoint{}, 0)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes, conflicts := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, checkpoint.ErrConflict):
+			conflicts++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Errorf("successes = %d, conflicts = %d; want 1 each", successes, conflicts)
+	}
+}
+
+func TestSaveIfVersion_MapsConditionalFailureWithoutRetry(t *testing.T) {
+	message := "forced conditional failure"
+	fake := newFakeDynamo()
+	fake.putErr = &dbtypes.ConditionalCheckFailedException{Message: &message}
+	c := &Checkpointer{client: fake, table: "checkpoints"}
+
+	_, err := c.SaveIfVersion(context.Background(), "t1", checkpoint.Checkpoint{}, 0)
+	if !errors.Is(err, checkpoint.ErrConflict) {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+	if fake.putCalls != 1 {
+		t.Errorf("PutItem calls = %d, want 1", fake.putCalls)
 	}
 }
 

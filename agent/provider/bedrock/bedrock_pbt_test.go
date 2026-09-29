@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/camilbinas/gude-agents/agent"
 	"pgregory.net/rapid"
@@ -209,33 +208,20 @@ func TestProperty_NonClaudeSystemPromptHasNoCachePoint(t *testing.T) {
 }
 
 // TestProperty_BedrockCacheUsageFieldsPreserved verifies that for any random
-// cache token counts r (read) and w (write), the usage mapping logic in Converse
-// faithfully propagates both values into ProviderResponse.Usage.
+// cache token counts r (read) and w (write), streamed usage metadata faithfully
+// propagates both values into ModelResponse.Usage.
 func TestProperty_BedrockCacheUsageFieldsPreserved(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		r := rapid.Int32Range(0, 1<<30).Draw(t, "cacheReadTokens")
 		w := rapid.Int32Range(0, 1<<30).Draw(t, "cacheWriteTokens")
 
-		out := &bedrockruntime.ConverseOutput{
-			Usage: &types.TokenUsage{
-				InputTokens:           aws.Int32(100),
-				OutputTokens:          aws.Int32(50),
-				CacheReadInputTokens:  aws.Int32(r),
-				CacheWriteInputTokens: aws.Int32(w),
-			},
-		}
-
-		resp := &agent.ProviderResponse{}
-		if out.Usage != nil {
-			resp.Usage.InputTokens = int(aws.ToInt32(out.Usage.InputTokens))
-			resp.Usage.OutputTokens = int(aws.ToInt32(out.Usage.OutputTokens))
-			if out.Usage.CacheReadInputTokens != nil {
-				resp.Usage.CacheReadTokens = int(aws.ToInt32(out.Usage.CacheReadInputTokens))
-			}
-			if out.Usage.CacheWriteInputTokens != nil {
-				resp.Usage.CacheWriteTokens = int(aws.ToInt32(out.Usage.CacheWriteInputTokens))
-			}
-		}
+		resp := &agent.ModelResponse{}
+		applyTokenUsage(resp, &types.TokenUsage{
+			InputTokens:           aws.Int32(100),
+			OutputTokens:          aws.Int32(50),
+			CacheReadInputTokens:  aws.Int32(r),
+			CacheWriteInputTokens: aws.Int32(w),
+		})
 
 		if resp.Usage.CacheReadTokens != int(r) {
 			t.Fatalf("CacheReadTokens = %d, want %d", resp.Usage.CacheReadTokens, r)

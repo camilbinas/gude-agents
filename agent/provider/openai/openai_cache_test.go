@@ -25,16 +25,16 @@ func buildChatCompletion(t *testing.T, raw map[string]any) openaisdk.ChatComplet
 }
 
 // ---------------------------------------------------------------------------
-// Converse — CacheReadTokens mapping
+// Stream — CacheReadTokens mapping
 // Requirements: 5.7, 7.1
 // ---------------------------------------------------------------------------
 
-// TestConverse_CacheReadTokens_PopulatedFromPromptTokensDetails verifies that
+// TestStream_CacheReadTokens_PopulatedFromPromptTokensDetails verifies that
 // PromptTokensDetails.CachedTokens is mapped to Usage.CacheReadTokens.
-// This mirrors the assignment in Converse:
+// This mirrors the assignment in Stream:
 //
 //	resp.Usage.CacheReadTokens = int(completion.Usage.PromptTokensDetails.CachedTokens)
-func TestConverse_CacheReadTokens_PopulatedFromPromptTokensDetails(t *testing.T) {
+func TestStream_CacheReadTokens_PopulatedFromPromptTokensDetails(t *testing.T) {
 	const wantCached int64 = 512
 
 	completion := buildChatCompletion(t, map[string]any{
@@ -62,7 +62,7 @@ func TestConverse_CacheReadTokens_PopulatedFromPromptTokensDetails(t *testing.T)
 		},
 	})
 
-	// Reproduce the exact logic from Converse:
+	// Reproduce the exact logic from Stream:
 	resp := parseCompletion(&completion)
 	resp.Usage.InputTokens = int(completion.Usage.PromptTokens)
 	resp.Usage.OutputTokens = int(completion.Usage.CompletionTokens)
@@ -73,10 +73,10 @@ func TestConverse_CacheReadTokens_PopulatedFromPromptTokensDetails(t *testing.T)
 	}
 }
 
-// TestConverse_CacheReadTokens_ZeroWhenAbsent verifies that CacheReadTokens
+// TestStream_CacheReadTokens_ZeroWhenAbsent verifies that CacheReadTokens
 // stays 0 when PromptTokensDetails is not present in the response (zero-value
 // semantics per requirement 5.8).
-func TestConverse_CacheReadTokens_ZeroWhenAbsent(t *testing.T) {
+func TestStream_CacheReadTokens_ZeroWhenAbsent(t *testing.T) {
 	completion := buildChatCompletion(t, map[string]any{
 		"id":      "chatcmpl-no-cache",
 		"object":  "chat.completion",
@@ -109,9 +109,9 @@ func TestConverse_CacheReadTokens_ZeroWhenAbsent(t *testing.T) {
 	}
 }
 
-// TestConverse_CacheReadTokens_DoesNotAffectTotal verifies that CacheReadTokens
+// TestStream_CacheReadTokens_DoesNotAffectTotal verifies that CacheReadTokens
 // does not leak into the Total() value (requirement 5.9).
-func TestConverse_CacheReadTokens_DoesNotAffectTotal(t *testing.T) {
+func TestStream_CacheReadTokens_DoesNotAffectTotal(t *testing.T) {
 	completion := buildChatCompletion(t, map[string]any{
 		"id":      "chatcmpl-total-test",
 		"object":  "chat.completion",
@@ -153,17 +153,17 @@ func TestConverse_CacheReadTokens_DoesNotAffectTotal(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ConverseStream — CacheReadTokens mapping from streaming usage chunk
+// Stream — CacheReadTokens mapping from streaming usage chunk
 // Requirements: 5.7, 7.2
 // ---------------------------------------------------------------------------
 
-// TestConverseStream_CacheReadTokens_ExtractionFromUsageChunk verifies that the
-// streaming usage extraction logic — the same condition used inside ConverseStream:
+// TestStream_CacheReadTokens_ExtractionFromUsageChunk verifies that the
+// streaming usage extraction logic — the same condition used inside Stream:
 //
 //	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 { ... }
 //
 // correctly maps PromptTokensDetails.CachedTokens to CacheReadTokens.
-func TestConverseStream_CacheReadTokens_ExtractionFromUsageChunk(t *testing.T) {
+func TestStream_CacheReadTokens_ExtractionFromUsageChunk(t *testing.T) {
 	const (
 		wantInput  int64 = 1000
 		wantOutput int64 = 200
@@ -196,8 +196,8 @@ func TestConverseStream_CacheReadTokens_ExtractionFromUsageChunk(t *testing.T) {
 		t.Fatalf("unmarshal chunk: %v", err)
 	}
 
-	// Reproduce the exact logic from ConverseStream:
-	resp := &agent.ProviderResponse{}
+	// Reproduce the exact logic from Stream:
+	resp := &agent.ModelResponse{}
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 		resp.Usage.InputTokens = int(chunk.Usage.PromptTokens)
 		resp.Usage.OutputTokens = int(chunk.Usage.CompletionTokens)
@@ -215,11 +215,11 @@ func TestConverseStream_CacheReadTokens_ExtractionFromUsageChunk(t *testing.T) {
 	}
 }
 
-// TestConverseStream_CacheReadTokens_ZeroWhenChunkHasNoUsage verifies that
+// TestStream_CacheReadTokens_ZeroWhenChunkHasNoUsage verifies that
 // CacheReadTokens stays 0 when the streaming chunk contains no usage fields
 // (i.e., the prompt_tokens and completion_tokens are both 0 — the guard
-// condition in ConverseStream skips the assignment).
-func TestConverseStream_CacheReadTokens_ZeroWhenChunkHasNoUsage(t *testing.T) {
+// condition in Stream skips the assignment).
+func TestStream_CacheReadTokens_ZeroWhenChunkHasNoUsage(t *testing.T) {
 	chunkRaw, err := json.Marshal(map[string]any{
 		"id":      "chatcmpl-stream-no-usage",
 		"object":  "chat.completion.chunk",
@@ -244,7 +244,7 @@ func TestConverseStream_CacheReadTokens_ZeroWhenChunkHasNoUsage(t *testing.T) {
 		t.Fatalf("unmarshal chunk: %v", err)
 	}
 
-	resp := &agent.ProviderResponse{}
+	resp := &agent.ModelResponse{}
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 		resp.Usage.InputTokens = int(chunk.Usage.PromptTokens)
 		resp.Usage.OutputTokens = int(chunk.Usage.CompletionTokens)
@@ -256,10 +256,10 @@ func TestConverseStream_CacheReadTokens_ZeroWhenChunkHasNoUsage(t *testing.T) {
 	}
 }
 
-// TestConverseStream_CacheReadTokens_ZeroWhenCacheAbsent verifies that
+// TestStream_CacheReadTokens_ZeroWhenCacheAbsent verifies that
 // CacheReadTokens is 0 when the final streaming usage chunk is present but
 // prompt_tokens_details.cached_tokens is absent.
-func TestConverseStream_CacheReadTokens_ZeroWhenCacheAbsent(t *testing.T) {
+func TestStream_CacheReadTokens_ZeroWhenCacheAbsent(t *testing.T) {
 	chunkRaw, err := json.Marshal(map[string]any{
 		"id":      "chatcmpl-stream-no-cache",
 		"object":  "chat.completion.chunk",
@@ -281,7 +281,7 @@ func TestConverseStream_CacheReadTokens_ZeroWhenCacheAbsent(t *testing.T) {
 		t.Fatalf("unmarshal chunk: %v", err)
 	}
 
-	resp := &agent.ProviderResponse{}
+	resp := &agent.ModelResponse{}
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 		resp.Usage.InputTokens = int(chunk.Usage.PromptTokens)
 		resp.Usage.OutputTokens = int(chunk.Usage.CompletionTokens)

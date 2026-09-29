@@ -2,12 +2,16 @@ package a2a
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/testutil"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // fakeProvider implements agent.Provider for testing.
@@ -18,33 +22,21 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Name() string { return "fake" }
 
-func (f *fakeProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
+func (f *fakeProvider) Stream(_ context.Context, _ agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &agent.ProviderResponse{
-		Text: f.response,
-	}, nil
-}
-
-func (f *fakeProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	if f.err != nil {
-		return nil, f.err
+	if emit != nil && f.response != "" {
+		emit(agent.ModelEvent{Type: agent.ModelEventText, Text: f.response})
 	}
-	if cb != nil {
-		cb(f.response)
-	}
-	return &agent.ProviderResponse{
-		Text: f.response,
-	}, nil
+	return &agent.ModelResponse{Text: f.response}, nil
 }
 
 func newTestAgent(t *testing.T, response string) *agent.Agent {
 	t.Helper()
 	a, err := agent.New(
 		&fakeProvider{response: response},
-		prompt.Text("You are a test agent."),
-		nil,
+		"You are a test agent.",
 		agent.WithName("test-agent"),
 	)
 	if err != nil {
@@ -57,8 +49,7 @@ func newErrorAgent(t *testing.T, providerErr error) *agent.Agent {
 	t.Helper()
 	a, err := agent.New(
 		&fakeProvider{err: providerErr},
-		prompt.Text("You are a test agent."),
-		nil,
+		"You are a test agent.",
 		agent.WithName("test-agent"),
 	)
 	if err != nil {
@@ -250,7 +241,7 @@ func TestExtractText(t *testing.T) {
 // inbound DataPart/FilePart → ImageBlock/DocumentBlock on context,
 // and outbound ImageBlock/DocumentBlock → DataPart/FilePart artifact events.
 
-// contextCapturingProvider captures the agent context during ConverseStream
+// contextCapturingProvider captures the agent context during Stream
 // so tests can inspect what images/documents were attached.
 type contextCapturingProvider struct {
 	response       string
@@ -260,31 +251,22 @@ type contextCapturingProvider struct {
 
 func (p *contextCapturingProvider) Name() string { return "capturing" }
 
-func (p *contextCapturingProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
+func (p *contextCapturingProvider) Stream(ctx context.Context, _ agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	if ac := agent.FromContext(ctx); ac != nil {
 		p.capturedImages = ac.Images()
 		p.capturedDocs = ac.Documents()
 	}
-	return &agent.ProviderResponse{Text: p.response}, nil
-}
-
-func (p *contextCapturingProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	if ac := agent.FromContext(ctx); ac != nil {
-		p.capturedImages = ac.Images()
-		p.capturedDocs = ac.Documents()
+	if emit != nil && p.response != "" {
+		emit(agent.ModelEvent{Type: agent.ModelEventText, Text: p.response})
 	}
-	if cb != nil {
-		cb(p.response)
-	}
-	return &agent.ProviderResponse{Text: p.response}, nil
+	return &agent.ModelResponse{Text: p.response}, nil
 }
 
 func newCapturingAgent(t *testing.T, provider *contextCapturingProvider) *agent.Agent {
 	t.Helper()
 	a, err := agent.New(
 		provider,
-		prompt.Text("You are a test agent."),
-		nil,
+		"You are a test agent.",
 		agent.WithName("capturing-agent"),
 	)
 	if err != nil {
@@ -437,5 +419,172 @@ func TestExecutor_InboundDocument_IsNotEchoedAsArtifact(t *testing.T) {
 				t.Error("inbound document was echoed as an output artifact")
 			}
 		}
+	}
+}
+
+// --- Interrupt / resume tests ---
+
+func lastStatus(t *testing.T, events []a2a.Event) *a2a.TaskStatusUpdateEvent {
+	t.Helper()
+	if len(events) == 0 {
+		t.Fatal("no events")
+	}
+	su, ok := events[len(events)-1].(*a2a.TaskStatusUpdateEvent)
+	if !ok {
+		t.Fatalf("last event: expected *a2a.TaskStatusUpdateEvent, got %T", events[len(events)-1])
+	}
+	return su
+}
+
+func artifactText(events []a2a.Event) string {
+	var sb strings.Builder
+	for _, ev := range events {
+		if art, ok := ev.(*a2a.TaskArtifactUpdateEvent); ok {
+			for _, p := range art.Artifact.Parts {
+				sb.WriteString(p.Text())
+			}
+		}
+	}
+	return sb.String()
+}
+
+func TestExecutor_HumanInputInterrupt_InputRequiredThenResume(t *testing.T) {
+	provider := testutil.NewMockProvider(testutil.WithResponses(
+		&agent.ModelResponse{ToolCalls: []tool.Call{{
+			ToolUseID: "h-1", Name: "ask_human",
+			Input: json.RawMessage(`{"reason":"missing info","question":"Which region?"}`),
+		}}},
+		&agent.ModelResponse{Text: "Deploying to eu-west-1"},
+	))
+	a, err := agent.New(provider, "test", agent.WithTools(agent.NewHumanInputTool("ask_human", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(a, nil)
+	taskID := a2a.NewTaskID()
+
+	events := collectEvents(t, executor, &a2asrv.ExecutorContext{
+		Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("deploy")),
+		TaskID:  taskID,
+	})
+	su := lastStatus(t, events)
+	if su.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("state = %s, want input-required", su.Status.State)
+	}
+	if su.Status.Message == nil || !strings.Contains(su.Status.Message.Parts[0].Text(), "Which region?") {
+		t.Errorf("status message = %+v, want the question", su.Status.Message)
+	}
+
+	events = collectEvents(t, executor, &a2asrv.ExecutorContext{
+		Message:    a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("eu-west-1")),
+		TaskID:     taskID,
+		StoredTask: &a2a.Task{ID: taskID, Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}},
+	})
+	if su := lastStatus(t, events); su.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("resume state = %s, want completed", su.Status.State)
+	}
+	if got := artifactText(events); got != "Deploying to eu-west-1" {
+		t.Errorf("artifact text = %q", got)
+	}
+}
+
+func TestExecutor_ApprovalInterrupt_ApproveAndDeny(t *testing.T) {
+	for _, tc := range []struct {
+		reply   string
+		wantRan bool
+	}{
+		{" Approve ", true},
+		{"no, too risky", false},
+	} {
+		t.Run(tc.reply, func(t *testing.T) {
+			var ran atomic.Bool
+			del := tool.NewRaw("delete_order", "deletes",
+				func(context.Context, json.RawMessage) (string, error) {
+					ran.Store(true)
+					return "deleted", nil
+				}, tool.WithSchema(map[string]any{"type": "object"}), tool.RequiresApproval())
+			provider := testutil.NewMockProvider(testutil.WithResponses(
+				&agent.ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "c-1", Name: "delete_order", Input: json.RawMessage(`{}`)}}},
+				&agent.ModelResponse{Text: "done"},
+			))
+			a, err := agent.New(provider, "test", agent.WithTools(del))
+			if err != nil {
+				t.Fatal(err)
+			}
+			executor := NewExecutor(a, nil)
+			taskID := a2a.NewTaskID()
+
+			su := lastStatus(t, collectEvents(t, executor, &a2asrv.ExecutorContext{
+				Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("delete it")),
+				TaskID:  taskID,
+			}))
+			if su.Status.State != a2a.TaskStateInputRequired {
+				t.Fatalf("state = %s, want input-required", su.Status.State)
+			}
+			if !strings.Contains(su.Status.Message.Parts[0].Text(), "delete_order") {
+				t.Errorf("status message should list the pending call: %q", su.Status.Message.Parts[0].Text())
+			}
+			if ran.Load() {
+				t.Fatal("tool ran before approval")
+			}
+
+			su = lastStatus(t, collectEvents(t, executor, &a2asrv.ExecutorContext{
+				Message:    a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(tc.reply)),
+				TaskID:     taskID,
+				StoredTask: &a2a.Task{ID: taskID, Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}},
+			}))
+			if su.Status.State != a2a.TaskStateCompleted {
+				t.Fatalf("resume state = %s, want completed", su.Status.State)
+			}
+			if ran.Load() != tc.wantRan {
+				t.Errorf("tool ran = %v, want %v", ran.Load(), tc.wantRan)
+			}
+		})
+	}
+}
+
+func TestExecutor_CancelDiscardsPendingInterrupt(t *testing.T) {
+	provider := testutil.NewMockProvider(testutil.WithResponses(
+		&agent.ModelResponse{ToolCalls: []tool.Call{{
+			ToolUseID: "h-1", Name: "ask_human", Input: json.RawMessage(`{"reason":"r","question":"q"}`),
+		}}},
+		&agent.ModelResponse{Text: "fresh turn"},
+	))
+	a, err := agent.New(provider, "test", agent.WithTools(agent.NewHumanInputTool("ask_human", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(a, nil)
+	taskID := a2a.NewTaskID()
+	collectEvents(t, executor, &a2asrv.ExecutorContext{
+		Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi")),
+		TaskID:  taskID,
+	})
+	for range executor.Cancel(context.Background(), &a2asrv.ExecutorContext{TaskID: taskID}) {
+	}
+	if _, ok := executor.pending.Load(taskID); ok {
+		t.Fatal("pending interrupt survived Cancel")
+	}
+}
+
+func TestExecutor_ConsumerBreakStopsCleanly(t *testing.T) {
+	a := newTestAgent(t, "chunk")
+	executor := NewExecutor(a, nil)
+	execCtx := &a2asrv.ExecutorContext{
+		Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("Hi")),
+		TaskID:  a2a.NewTaskID(),
+	}
+	n := 0
+	for _, err := range executor.Execute(context.Background(), execCtx) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		n++
+		if n == 3 { // submitted, working, first artifact
+			break
+		}
+	}
+	if n != 3 {
+		t.Fatalf("got %d events before break, want 3", n)
 	}
 }

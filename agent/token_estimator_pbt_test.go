@@ -13,14 +13,14 @@ import (
 
 // **Validates: Requirements 1.3**
 
-// TestProperty_NonNegativeEstimation verifies that for any valid ConverseParams
+// TestProperty_NonNegativeEstimation verifies that for any valid ModelRequest
 // (with any combination of messages, system prompt, and tool config), calling
 // EstimateTokens on CharEstimator returns a non-negative integer.
 func TestProperty_NonNegativeEstimation(t *testing.T) {
 	estimator := CharEstimator{}
 
 	rapid.Check(t, func(t *rapid.T) {
-		params := drawConverseParams(t)
+		params := drawModelRequest(t)
 
 		result, err := estimator.EstimateTokens(context.Background(), params)
 		if err != nil {
@@ -32,9 +32,9 @@ func TestProperty_NonNegativeEstimation(t *testing.T) {
 	})
 }
 
-// drawConverseParams generates a random ConverseParams with varying message counts,
+// drawModelRequest generates a random ModelRequest with varying message counts,
 // text lengths, and tool specs.
-func drawConverseParams(t *rapid.T) ConverseParams {
+func drawModelRequest(t *rapid.T) ModelRequest {
 	// Generate system prompt.
 	system := rapid.String().Draw(t, "system")
 
@@ -52,10 +52,10 @@ func drawConverseParams(t *rapid.T) ConverseParams {
 		tools[i] = drawToolSpec(t, i)
 	}
 
-	return ConverseParams{
-		Messages:   messages,
-		System:     system,
-		ToolConfig: tools,
+	return ModelRequest{
+		Messages: messages,
+		System:   system,
+		Tools:    tools,
 	}
 }
 

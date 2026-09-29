@@ -12,8 +12,6 @@
 // To run:
 //
 //	go run ./logging-prod
-//
-// Requires: go get github.com/camilbinas/gude-agents/agent/logging/slog
 
 package main
 
@@ -25,16 +23,13 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
 
 func main() {
 	ctx := agent.Background()
 
-	// Write structured JSON logs to a file so they don't mix with chat output.
 	if err := os.MkdirAll("tmp", 0o755); err != nil {
 		log.Fatal(err)
 	}
@@ -45,14 +40,13 @@ func main() {
 	defer logFile.Close()
 
 	provider := bedrock.Must(bedrock.Standard())
-
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant with access to weather and time tools. Be concise."),
-		[]tool.Tool{utils.WeatherTool(), utils.TimeTool()},
+		"You are a helpful assistant with access to weather and time tools. Be concise.",
+		agent.WithTools(utils.WeatherTool(), utils.TimeTool()),
 		agentslog.WithLogging(
 			agentslog.WithHandler(slog.NewJSONHandler(logFile, &slog.HandlerOptions{
-				Level: slog.LevelInfo, // Info+ only — skip noisy Debug start events
+				Level: slog.LevelInfo,
 			})),
 		),
 		agent.WithName("logging-demo"),
@@ -67,6 +61,5 @@ func main() {
 	fmt.Println()
 	fmt.Println("Try: What's the weather in Tokyo and the time in America/New_York?")
 	fmt.Println()
-
 	utils.Chat(ctx, a)
 }

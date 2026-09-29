@@ -12,7 +12,6 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 )
 
 // multimodalCapturingProvider captures images/documents from the agent context
@@ -24,23 +23,16 @@ type multimodalCapturingProvider struct {
 
 func (p *multimodalCapturingProvider) Name() string { return "multimodal-capturing" }
 
-func (p *multimodalCapturingProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
+func (p *multimodalCapturingProvider) Stream(ctx context.Context, _ agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	if ac := agent.FromContext(ctx); ac != nil {
 		p.capturedImages = ac.Images()
 		p.capturedDocs = ac.Documents()
 	}
-	return &agent.ProviderResponse{Text: "processed multimodal content"}, nil
-}
-
-func (p *multimodalCapturingProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	if ac := agent.FromContext(ctx); ac != nil {
-		p.capturedImages = ac.Images()
-		p.capturedDocs = ac.Documents()
+	const text = "processed multimodal content"
+	if emit != nil {
+		emit(agent.ModelEvent{Type: agent.ModelEventText, Text: text})
 	}
-	if cb != nil {
-		cb("processed multimodal content")
-	}
-	return &agent.ProviderResponse{Text: "processed multimodal content"}, nil
+	return &agent.ModelResponse{Text: text}, nil
 }
 
 // taskResultEnvelope matches the JSON-RPC result structure: {"task": {...}}
@@ -135,8 +127,7 @@ func TestIntegration_DataPart_Image_EndToEnd(t *testing.T) {
 	provider := &multimodalCapturingProvider{}
 	a, err := agent.New(
 		provider,
-		prompt.Text("You are an image processing agent."),
-		nil,
+		"You are an image processing agent.",
 		agent.WithName("image-agent"),
 	)
 	if err != nil {
@@ -226,8 +217,7 @@ func TestIntegration_FilePart_Document_EndToEnd(t *testing.T) {
 	provider := &multimodalCapturingProvider{}
 	a, err := agent.New(
 		provider,
-		prompt.Text("You are a document processing agent."),
-		nil,
+		"You are a document processing agent.",
 		agent.WithName("doc-agent"),
 	)
 	if err != nil {

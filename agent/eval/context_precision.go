@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // ContextPrecision is an LLM-based evaluator that measures the relevance of
@@ -139,7 +140,7 @@ func formatJudgments(relevant []bool) string {
 }
 
 // judgeDocuments prompts the LLM to judge the relevance of each retrieved document.
-func (cp *ContextPrecision) judgeDocuments(ctx context.Context, query, referenceAnswer string, docs []agent.Document) ([]documentJudgment, error) {
+func (cp *ContextPrecision) judgeDocuments(ctx context.Context, query, referenceAnswer string, docs []rag.Document) ([]documentJudgment, error) {
 	// Format retrieved documents.
 	var docParts []string
 	for i, doc := range docs {
@@ -154,7 +155,7 @@ Return ONLY the JSON object, no other text.`
 
 	userMsg := fmt.Sprintf("Query:\n%s\n\nReference Answer:\n%s\n\nRetrieved Documents:\n%s\n\nJudge the relevance of each document to the query.", query, referenceAnswer, docsStr)
 
-	resp, err := cp.provider.Converse(ctx, agent.ConverseParams{
+	resp, err := cp.provider.Stream(ctx, agent.ModelRequest{
 		System: system,
 		Messages: []agent.Message{
 			{
@@ -162,7 +163,7 @@ Return ONLY the JSON object, no other text.`
 				Content: []agent.ContentBlock{agent.TextBlock{Text: userMsg}},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("context_precision: judgment failed: %w", err)
 	}

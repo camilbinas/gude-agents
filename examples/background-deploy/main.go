@@ -2,10 +2,10 @@
 //
 //	go run ./background-deploy
 //
-// This example demonstrates a Background_Tool that simulates a service deployment
+// This example demonstrates a background tool that simulates a service deployment
 // taking 20-30 seconds. The agent returns an immediate ack ("Deployment started"),
 // the handler runs in the background, and when it completes the agent automatically
-// re-enters the conversation to report the result via the Notify_Callback.
+// re-enters the conversation to report the result via the notification callback.
 
 package main
 
@@ -19,7 +19,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -35,13 +34,13 @@ func main() {
 	store := conversation.NewInMemory()
 
 	// The deploy tool simulates a 20-30s deployment pipeline.
-	deployTool := tool.NewBackground("deploy_service",
+	deployTool := tool.NewBackground(
+		"deploy_service",
 		"Deploy a service to a specific version and region. This takes 20-30 seconds.",
 		"Deployment initiated — I'll notify you when it completes.",
 		func(ctx context.Context, in DeployInput) (string, error) {
 			log.Printf("[deploy] Starting deployment: %s@%s → %s", in.Service, in.Version, in.Region)
 
-			// Simulate deployment steps.
 			steps := []string{
 				"pulling container image",
 				"running pre-deploy checks",
@@ -53,7 +52,11 @@ func main() {
 			for i, step := range steps {
 				delay := time.Duration(4+rand.Intn(3)) * time.Second
 				log.Printf("[deploy] Step %d/%d: %s...", i+1, len(steps), step)
-				time.Sleep(delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
 			}
 
 			log.Printf("[deploy] Deployment complete: %s@%s in %s", in.Service, in.Version, in.Region)
@@ -64,11 +67,11 @@ func main() {
 
 	a, err := agent.New(
 		provider,
-		prompt.Text(`You are a DevOps assistant that helps deploy services.
+		`You are a DevOps assistant that helps deploy services.
 When the user asks to deploy something, use the deploy_service tool.
-Be concise and professional.`),
-		[]tool.Tool{deployTool},
-		agent.WithConversation(store, "deploy-session"),
+Be concise and professional.`,
+		agent.WithTools(deployTool),
+		agent.WithConversationStore(store),
 		agent.WithName("deploy-assistant"),
 		agent.WithBackgroundNotify(func(conversationID, agentMessage string) {
 			fmt.Printf("\n📬 [Background notification on %s]:\n%s\n", conversationID, agentMessage)
@@ -78,27 +81,29 @@ Be concise and professional.`),
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer a.Close()
 
-	// Ask the agent to deploy — it returns immediately with the ack.
 	fmt.Println("👤 User: Deploy the payments service to v2.4.1 in us-east-1")
 	fmt.Println()
 
-	result, err := a.Invoke(agent.Background(), "Deploy the payments service to v2.4.1 in us-east-1")
+	ctx := agent.Background().WithConversationID("deploy-session")
+	result, err := a.Invoke(ctx, "Deploy the payments service to v2.4.1 in us-east-1")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("🤖 Agent (immediate): %s\n", result)
+	fmt.Printf("🤖 Agent (immediate): %s\n", result.Text)
 	fmt.Println()
 	fmt.Println("⏳ Deployment running in background... (the HTTP request would have returned by now)")
 	fmt.Println()
 
 	// In a real app, the HTTP handler would return here and the user would
-	// receive the notification via SSE/websocket/push when the deployment finishes.
-	// For this demo, we just wait for Close() which blocks until all background
-	// work completes.
-	a.Close()
+	// receive the notification via SSE/websocket/push. This demo waits for all
+	// background work and its re-entry turn to finish.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := a.Shutdown(shutdownCtx); err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("\n✅ All background work complete.")
 }

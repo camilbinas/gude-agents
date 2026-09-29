@@ -21,7 +21,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/eval"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
@@ -61,16 +60,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	retriever := rag.NewRetriever(embedder, store, rag.WithTopK(3))
+	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(3))
 
 	// ── 2. Create the RAG agent ──────────────────────────────────────────────
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.RAGAgent(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant for Acme Corp. Answer questions using only the provided context. Be concise and factual."),
-		retriever,
-		nil,
+		"You are a helpful assistant for Acme Corp. Answer questions using only the provided context. Be concise and factual.",
+		agent.WithRetriever(retriever),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -115,13 +113,13 @@ func main() {
 
 		evalCases[i] = eval.EvalCase{
 			Query:            tc.query,
-			ActualOutput:     result,
+			ActualOutput:     result.Text,
 			RetrievedContext: docs,
 			ReferenceAnswer:  tc.referenceAnswer,
 			Metadata:         map[string]string{"case_index": fmt.Sprintf("%d", i)},
 		}
 
-		fmt.Printf("    → %s\n", truncate(result, 100))
+		fmt.Printf("    → %s\n", truncate(result.Text, 100))
 	}
 
 	// ── 5. Build evaluators ──────────────────────────────────────────────────
@@ -130,9 +128,6 @@ func main() {
 	// Use a cheap model as the LLM judge.
 	judge := bedrock.Must(bedrock.Cheapest())
 
-	// Rule-based: check that key facts appear in the output.
-	// We build per-case keyword evaluators, but for the suite we use a
-	// general one that checks common terms.
 	keywords, err := eval.NewKeywordGrounding(
 		[]string{"Acme"},
 		eval.WithThreshold(0.8),
@@ -141,7 +136,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// LLM-based evaluators.
 	faithfulness := eval.NewFaithfulness(judge, eval.WithThreshold(0.7))
 	relevance := eval.NewRelevance(judge, eval.WithThreshold(0.7))
 
@@ -165,7 +159,6 @@ func main() {
 	fmt.Printf("Timestamp: %s\n", report.Timestamp.Format(time.RFC3339))
 	fmt.Printf("Total cases: %d\n\n", report.TotalCases)
 
-	// Per-evaluator summary.
 	fmt.Println("Summaries:")
 	for _, summary := range report.Summaries {
 		status := "✓"
@@ -176,7 +169,6 @@ func main() {
 			status, summary.EvaluatorName, summary.MeanScore, summary.Passed, summary.Failed)
 	}
 
-	// Per-case details.
 	fmt.Println("\nDetails:")
 	for i, cr := range report.Results {
 		fmt.Printf("\n  Case %d: %s\n", i, truncate(cr.Case.Query, 60))
@@ -197,7 +189,6 @@ func main() {
 		}
 	}
 
-	// JSON output for CI integration.
 	fmt.Println("\n═══ JSON Report ═══")
 	out, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Println(string(out))

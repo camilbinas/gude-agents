@@ -2,7 +2,6 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -27,11 +25,11 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 	var order []string
 
 	mw1 := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 			mu.Lock()
 			order = append(order, "mw1-before")
 			mu.Unlock()
-			result, err := next(c, toolName, input)
+			result, err := next(ctx, call)
 			mu.Lock()
 			order = append(order, "mw1-after")
 			mu.Unlock()
@@ -40,11 +38,11 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 	}
 
 	mw2 := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 			mu.Lock()
 			order = append(order, "mw2-before")
 			mu.Unlock()
-			result, err := next(c, toolName, input)
+			result, err := next(ctx, call)
 			mu.Lock()
 			order = append(order, "mw2-after")
 			mu.Unlock()
@@ -59,9 +57,10 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 		return "42", nil
 	})
 
-	a, err := agent.New(p,
-		prompt.Text("You are a calculator. Always use the calculate tool. Be very brief."),
-		[]tool.Tool{calcTool},
+	a, err := agent.New(
+		p,
+		"You are a calculator. Always use the calculate tool. Be very brief.",
+		agent.WithTools(calcTool),
 		agent.WithMiddleware(mw1, mw2),
 	)
 	if err != nil {
@@ -71,23 +70,18 @@ func TestIntegration_Middleware_ExecutionOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	result, err := a.Invoke(c, "What is 7 times 6?")
+	result, err := a.Invoke(agent.NewContext(ctx), "What is 7 times 6?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-
-	t.Logf("Response: %s", result)
+	t.Logf("Response: %s", result.Text)
 
 	mu.Lock()
 	defer mu.Unlock()
-
 	t.Logf("Middleware order: %v", order)
-
 	if len(order) < 4 {
 		t.Fatalf("expected at least 4 middleware calls, got %d: %v", len(order), order)
 	}
-	// Outermost (mw1) wraps mw2: mw1-before → mw2-before → handler → mw2-after → mw1-after
 	if order[0] != "mw1-before" {
 		t.Errorf("expected first call to be mw1-before, got %s", order[0])
 	}
@@ -106,14 +100,13 @@ func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
 
-	// Middleware that appends a tag to every tool result.
 	tagger := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
-			result, err := next(c, toolName, input)
-			if err != nil {
-				return result, err
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
+			result, err := next(ctx, call)
+			if err == nil {
+				result.Text += " [verified]"
 			}
-			return result + " [verified]", nil
+			return result, err
 		}
 	}
 
@@ -124,9 +117,10 @@ func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
 		return "22°C, sunny", nil
 	})
 
-	a, err := agent.New(p,
-		prompt.Text("You are a weather assistant. Use the get_weather tool. Include the exact tool result in your response. Be brief."),
-		[]tool.Tool{weatherTool},
+	a, err := agent.New(
+		p,
+		"You are a weather assistant. Use the get_weather tool. Include the exact tool result in your response. Be brief.",
+		agent.WithTools(weatherTool),
 		agent.WithMiddleware(tagger),
 	)
 	if err != nil {
@@ -136,18 +130,13 @@ func TestIntegration_Middleware_ModifiesToolOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	result, err := a.Invoke(c, "What's the weather in Paris?")
+	result, err := a.Invoke(agent.NewContext(ctx), "What's the weather in Paris?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-
-	t.Logf("Response: %s", result)
-
-	// The LLM saw the modified tool output. We can't guarantee it echoes "[verified]"
-	// verbatim, but the tool result the LLM received was modified.
-	if !strings.Contains(result, "22") && !strings.Contains(strings.ToLower(result), "sunny") {
-		t.Logf("Warning: response may not reflect tool output: %s", result)
+	t.Logf("Response: %s", result.Text)
+	if !strings.Contains(result.Text, "22") && !strings.Contains(strings.ToLower(result.Text), "sunny") {
+		t.Logf("Warning: response may not reflect tool output: %s", result.Text)
 	}
 }
 
@@ -157,13 +146,12 @@ func TestIntegration_Middleware_LogsToolCalls(t *testing.T) {
 
 	var mu sync.Mutex
 	var logged []string
-
 	logger := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 			mu.Lock()
-			logged = append(logged, fmt.Sprintf("tool=%s input=%s", toolName, string(input)))
+			logged = append(logged, fmt.Sprintf("tool=%s input=%s", call.Name, string(call.Input)))
 			mu.Unlock()
-			return next(c, toolName, input)
+			return next(ctx, call)
 		}
 	}
 
@@ -174,9 +162,10 @@ func TestIntegration_Middleware_LogsToolCalls(t *testing.T) {
 		return "42", nil
 	})
 
-	a, err := agent.New(p,
-		prompt.Text("You are a calculator. Always use the calculate tool. Be very brief."),
-		[]tool.Tool{calcTool},
+	a, err := agent.New(
+		p,
+		"You are a calculator. Always use the calculate tool. Be very brief.",
+		agent.WithTools(calcTool),
 		agent.WithMiddleware(logger),
 	)
 	if err != nil {
@@ -186,15 +175,12 @@ func TestIntegration_Middleware_LogsToolCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
-	_, err = a.Invoke(c, "What is 7 times 6?")
-	if err != nil {
+	if _, err = a.Invoke(agent.NewContext(ctx), "What is 7 times 6?"); err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-
 	if len(logged) == 0 {
 		t.Error("expected middleware to log at least one tool call")
 	}

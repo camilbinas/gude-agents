@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 )
 
@@ -19,16 +18,18 @@ import (
 
 // captureHandler is a slog.Handler that stores all log records for assertion.
 type captureHandler struct {
-	mu      sync.Mutex
-	records []slog.Record
+	mu       sync.Mutex
+	records  []slog.Record
+	contexts []context.Context
 }
 
 func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
 
-func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+func (h *captureHandler) Handle(ctx context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.records = append(h.records, r)
+	h.contexts = append(h.contexts, ctx)
 	return nil
 }
 
@@ -40,6 +41,14 @@ func (h *captureHandler) getRecords() []slog.Record {
 	defer h.mu.Unlock()
 	cp := make([]slog.Record, len(h.records))
 	copy(cp, h.records)
+	return cp
+}
+
+func (h *captureHandler) getContexts() []context.Context {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	cp := make([]context.Context, len(h.contexts))
+	copy(cp, h.contexts)
 	return cp
 }
 
@@ -57,18 +66,13 @@ func recordAttrs(r slog.Record) map[string]slog.Value {
 // Tests
 // ---------------------------------------------------------------------------
 
-// TestWithLogging_InstallsHook verifies WithLogging sets LoggingHook on agent.
-func TestWithLogging_InstallsHook(t *testing.T) {
+// TestWithLogging_InstallsObserver verifies WithLogging registers a valid observer.
+func TestWithLogging_InstallsObserver(t *testing.T) {
 	ch := &captureHandler{}
 	opt := WithLogging(WithHandler(ch))
 
-	a, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "ok"})), prompt.Text("sys"), nil, opt)
-	if err != nil {
+	if _, err := agent.New(testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "ok"})), "sys", opt); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if a.LoggingHook() == nil {
-		t.Fatal("expected LoggingHook to be set after WithLogging")
 	}
 }
 
@@ -77,7 +81,7 @@ func TestWithHandler_CustomHandler(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
 
-	h.OnInvokeStart(agent.InvokeSpanParams{ModelID: "test-model"})
+	h.ObserveInvoke(context.Background(), agent.InvokeRecord{Phase: agent.Start, ModelID: "test-model"})
 
 	records := ch.getRecords()
 	if len(records) == 0 {
@@ -93,7 +97,7 @@ func TestDefaultHandler(t *testing.T) {
 	h := newSlogHook(nil)
 
 	// The default logger should be slog.Default(). We verify by checking
-	// that the hook's logger is non-nil and that calling a method doesn't panic.
+	// that the observer's logger is non-nil and that calling a method doesn't panic.
 	if h.logger == nil {
 		t.Fatal("expected default logger to be set")
 	}
@@ -101,11 +105,11 @@ func TestDefaultHandler(t *testing.T) {
 	// Verify it's the default logger by comparing handler types.
 	// slog.Default() returns the package-level default logger.
 	defaultHandler := slog.Default().Handler()
-	hookHandler := h.logger.Handler()
+	observerHandler := h.logger.Handler()
 
 	// Both should be the same handler instance when no custom handler is provided.
-	if defaultHandler != hookHandler {
-		t.Error("expected hook to use slog.Default() handler when no custom handler is provided")
+	if defaultHandler != observerHandler {
+		t.Error("expected observer to use slog.Default() handler when no custom handler is provided")
 	}
 }
 
@@ -113,12 +117,13 @@ func TestDefaultHandler(t *testing.T) {
 func TestWithMinLevel_FiltersBelow(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch), WithMinLevel(slog.LevelInfo)})
+	ctx := context.Background()
 
 	// Debug events should be filtered out.
-	h.OnInvokeStart(agent.InvokeSpanParams{})                    // Debug
-	h.OnIterationStart(1)                                        // Debug
-	h.OnToolStart("test-tool")                                   // Debug
-	h.OnInvokeEnd(nil, agent.TokenUsage{}, 100*time.Millisecond) // Info — should pass
+	h.ObserveInvoke(ctx, agent.InvokeRecord{Phase: agent.Start})
+	h.ObserveIteration(ctx, agent.IterationRecord{Phase: agent.Start, Iteration: 1})
+	h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.Start, Name: "test-tool"})
+	h.ObserveInvoke(ctx, agent.InvokeRecord{Phase: agent.End, Duration: 100 * time.Millisecond})
 
 	records := ch.getRecords()
 	if len(records) != 1 {
@@ -133,13 +138,14 @@ func TestWithMinLevel_FiltersBelow(t *testing.T) {
 func TestLogLevel_DebugForStarts(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
+	ctx := context.Background()
 
-	h.OnInvokeStart(agent.InvokeSpanParams{})
-	h.OnIterationStart(1)
-	h.OnProviderCallStart("model-1")
-	h.OnToolStart("my-tool")
-	h.OnConversationStart("load", "conv-1")
-	h.OnRetrieverStart("query")
+	h.ObserveInvoke(ctx, agent.InvokeRecord{Phase: agent.Start})
+	h.ObserveIteration(ctx, agent.IterationRecord{Phase: agent.Start, Iteration: 1})
+	h.ObserveModel(ctx, agent.ModelCallRecord{Phase: agent.Start, ModelID: "model-1"})
+	h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.Start, Name: "my-tool"})
+	h.ObserveConversation(ctx, agent.ConversationRecord{Phase: agent.Start, Operation: "load", ConversationID: "conv-1"})
+	h.ObserveRetrieval(ctx, agent.RetrievalRecord{Phase: agent.Start, Query: "query"})
 
 	records := ch.getRecords()
 	if len(records) != 6 {
@@ -156,15 +162,16 @@ func TestLogLevel_DebugForStarts(t *testing.T) {
 func TestLogLevel_InfoForEnds(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
+	ctx := context.Background()
 
 	dur := 50 * time.Millisecond
 	usage := agent.TokenUsage{InputTokens: 10, OutputTokens: 5}
 
-	h.OnInvokeEnd(nil, usage, dur)
-	h.OnProviderCallEnd(nil, usage, 2, dur)
-	h.OnToolEnd("my-tool", nil, dur)
-	h.OnConversationEnd("save", "conv-1", nil, 5, dur)
-	h.OnRetrieverEnd(nil, 3, dur)
+	h.ObserveInvoke(ctx, agent.InvokeRecord{Phase: agent.End, Usage: usage, Duration: dur})
+	h.ObserveModel(ctx, agent.ModelCallRecord{Phase: agent.End, Usage: usage, ToolCallCount: 2, Duration: dur})
+	h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.End, Name: "my-tool", Duration: dur})
+	h.ObserveConversation(ctx, agent.ConversationRecord{Phase: agent.End, Operation: "save", ConversationID: "conv-1", MessageCount: 5, Duration: dur})
+	h.ObserveRetrieval(ctx, agent.RetrievalRecord{Phase: agent.End, DocumentCount: 3, Duration: dur})
 
 	records := ch.getRecords()
 	if len(records) != 5 {
@@ -181,17 +188,17 @@ func TestLogLevel_InfoForEnds(t *testing.T) {
 func TestLogLevel_ErrorOnFailure(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
+	ctx := context.Background()
 
 	testErr := errors.New("something failed")
 	dur := 50 * time.Millisecond
-	usage := agent.TokenUsage{}
 
-	h.OnInvokeEnd(testErr, usage, dur)
-	h.OnProviderCallEnd(testErr, usage, 0, dur)
-	h.OnToolEnd("my-tool", testErr, dur)
-	h.OnConversationEnd("load", "conv-1", testErr, 0, dur)
-	h.OnRetrieverEnd(testErr, 0, dur)
-	h.OnGuardrailComplete("input", false, testErr)
+	h.ObserveInvoke(ctx, agent.InvokeRecord{Phase: agent.End, Err: testErr, Duration: dur})
+	h.ObserveModel(ctx, agent.ModelCallRecord{Phase: agent.End, Err: testErr, Duration: dur})
+	h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.End, Name: "my-tool", Err: testErr, Duration: dur})
+	h.ObserveConversation(ctx, agent.ConversationRecord{Phase: agent.End, Operation: "load", ConversationID: "conv-1", Err: testErr, Duration: dur})
+	h.ObserveRetrieval(ctx, agent.RetrievalRecord{Phase: agent.End, Err: testErr, Duration: dur})
+	h.ObserveGuardrail(ctx, agent.GuardrailRecord{Phase: agent.End, Direction: "input", Err: testErr})
 
 	records := ch.getRecords()
 	if len(records) != 6 {
@@ -209,7 +216,7 @@ func TestLogLevel_WarnForMaxIterations(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
 
-	h.OnMaxIterationsExceeded(10)
+	h.ObserveLimit(context.Background(), agent.LimitRecord{Phase: agent.End, Name: "max_iterations", Limit: 10})
 
 	records := ch.getRecords()
 	if len(records) != 1 {
@@ -228,7 +235,7 @@ func TestLogLevel_WarnForGuardrailBlock(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
 
-	h.OnGuardrailComplete("output", true, nil)
+	h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{Phase: agent.End, Direction: "output", Blocked: true})
 
 	records := ch.getRecords()
 	if len(records) != 1 {
@@ -254,9 +261,10 @@ func TestLogLevel_WarnForGuardrailBlock(t *testing.T) {
 func TestStructuredAttributes(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
-	h.agentName = "test-agent"
 
-	h.OnInvokeStart(agent.InvokeSpanParams{
+	h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+		Phase:          agent.Start,
+		AgentName:      "test-agent",
 		ModelID:        "claude-3",
 		ConversationID: "conv-123",
 		MaxIterations:  10,
@@ -297,7 +305,11 @@ func TestInvokeEnd_IncludesTokenUsage(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
 
-	h.OnInvokeEnd(nil, agent.TokenUsage{InputTokens: 150, OutputTokens: 42}, 200*time.Millisecond)
+	h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+		Phase:    agent.End,
+		Usage:    agent.TokenUsage{InputTokens: 150, OutputTokens: 42},
+		Duration: 200 * time.Millisecond,
+	})
 
 	records := ch.getRecords()
 	if len(records) != 1 {
@@ -323,12 +335,46 @@ func TestInvokeEnd_IncludesTokenUsage(t *testing.T) {
 	}
 }
 
+func TestInvokeEnd_LogsResponseText(t *testing.T) {
+	ch := &captureHandler{}
+	h := newSlogHook([]Option{WithHandler(ch)})
+
+	h.ObserveInvoke(context.Background(), agent.InvokeRecord{Phase: agent.End, Response: "hello"})
+
+	records := ch.getRecords()
+	if len(records) != 2 {
+		t.Fatalf("expected invoke end and response records, got %d", len(records))
+	}
+	if records[1].Message != "response.text" {
+		t.Fatalf("expected response.text, got %q", records[1].Message)
+	}
+	if got := recordAttrs(records[1])["text"].String(); got != "hello" {
+		t.Errorf("expected response text %q, got %q", "hello", got)
+	}
+}
+
+func TestObserverUsesSuppliedContext(t *testing.T) {
+	type contextKey struct{}
+	ch := &captureHandler{}
+	h := newSlogHook([]Option{WithHandler(ch)})
+	ctx := context.WithValue(context.Background(), contextKey{}, "value")
+
+	returned := h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.Start, Name: "tool"})
+	if returned != ctx {
+		t.Fatal("expected observer to return the supplied context")
+	}
+	contexts := ch.getContexts()
+	if len(contexts) != 1 || contexts[0].Value(contextKey{}) != "value" {
+		t.Fatal("expected slog handler to receive the supplied context")
+	}
+}
+
 // TestToolEnd_IncludesDuration verifies tool end includes duration_ms.
 func TestToolEnd_IncludesDuration(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
 
-	h.OnToolEnd("my-tool", nil, 123*time.Millisecond)
+	h.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: "my-tool", Duration: 123 * time.Millisecond})
 
 	records := ch.getRecords()
 	if len(records) != 1 {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/structured"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -27,7 +27,7 @@ import (
 func TestIntegration_SimpleTextResponse(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
+	a, err := agent.New(p, string("You are a helpful assistant. Be very brief."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,19 +40,19 @@ func TestIntegration_SimpleTextResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-	if result == "" {
+	if result.Text == "" {
 		t.Fatal("expected non-empty response")
 	}
-	if !strings.Contains(result, "4") {
-		t.Errorf("expected response to contain '4', got: %s", result)
+	if !strings.Contains(result.Text, "4") {
+		t.Errorf("expected response to contain '4', got: %s", result.Text)
 	}
-	t.Logf("Response: %s", result)
+	t.Logf("Response: %s", result.Text)
 }
 
 func TestIntegration_Streaming(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
+	a, err := agent.New(p, string("You are a helpful assistant. Be very brief."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +62,11 @@ func TestIntegration_Streaming(t *testing.T) {
 
 	c := agent.NewContext(ctx)
 	var chunks []string
-	err = a.InvokeStream(c, "Say hello in one word.", func(chunk string) {
+	for chunk, streamErr := range a.TextStream(c, "Say hello in one word.") {
+		if streamErr != nil {
+			t.Fatalf("TextStream error: %v", streamErr)
+		}
 		chunks = append(chunks, chunk)
-	})
-	if err != nil {
-		t.Fatalf("InvokeStream error: %v", err)
 	}
 	if len(chunks) == 0 {
 		t.Fatal("expected at least one streamed chunk")
@@ -82,9 +82,8 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 	store := conversation.NewInMemory()
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
-		agent.WithConversation(store, "stream-conv"),
+		string("You are a helpful assistant. Be very brief."),
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -93,25 +92,25 @@ func TestIntegration_StreamingWithMemory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
+	c := agent.NewContext(ctx).WithConversationID("stream-conv")
 
 	// Turn 1: stream a response and establish context.
 	var chunks1 []string
-	err = a.InvokeStream(c, "My favorite number is 42. Remember that.", func(chunk string) {
+	for chunk, streamErr := range a.TextStream(c, "My favorite number is 42. Remember that.") {
+		if streamErr != nil {
+			t.Fatalf("Turn 1 TextStream error: %v", streamErr)
+		}
 		chunks1 = append(chunks1, chunk)
-	})
-	if err != nil {
-		t.Fatalf("Turn 1 InvokeStream error: %v", err)
 	}
 	t.Logf("Turn 1 (%d chunks): %s", len(chunks1), strings.Join(chunks1, ""))
 
 	// Turn 2: stream again and verify memory continuity.
 	var chunks2 []string
-	err = a.InvokeStream(c, "What is my favorite number?", func(chunk string) {
+	for chunk, streamErr := range a.TextStream(c, "What is my favorite number?") {
+		if streamErr != nil {
+			t.Fatalf("Turn 2 TextStream error: %v", streamErr)
+		}
 		chunks2 = append(chunks2, chunk)
-	})
-	if err != nil {
-		t.Fatalf("Turn 2 InvokeStream error: %v", err)
 	}
 	full := strings.Join(chunks2, "")
 	t.Logf("Turn 2 (%d chunks): %s", len(chunks2), full)
@@ -136,7 +135,7 @@ func TestIntegration_ToolCalling(t *testing.T) {
 		return fmt.Sprintf("received: %s", in.Expression), nil
 	})
 
-	a, err := agent.New(p, prompt.Text("You are a calculator assistant. Always use the calculate tool for math. Be very brief."), []tool.Tool{calcTool})
+	a, err := agent.New(p, string("You are a calculator assistant. Always use the calculate tool for math. Be very brief."), agent.WithTools(calcTool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,13 +148,13 @@ func TestIntegration_ToolCalling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-	if result == "" {
+	if result.Text == "" {
 		t.Fatal("expected non-empty response")
 	}
-	if !strings.Contains(result, "42") {
-		t.Errorf("expected response to contain '42', got: %s", result)
+	if !strings.Contains(result.Text, "42") {
+		t.Errorf("expected response to contain '42', got: %s", result.Text)
 	}
-	t.Logf("Response: %s", result)
+	t.Logf("Response: %s", result.Text)
 }
 
 func TestIntegration_MultiToolCalls(t *testing.T) {
@@ -179,8 +178,8 @@ func TestIntegration_MultiToolCalls(t *testing.T) {
 	})
 
 	a, err := agent.New(p,
-		prompt.Text("You are a weather assistant. Use the get_weather tool for each city the user asks about. Be very brief."),
-		[]tool.Tool{weatherTool},
+		string("You are a weather assistant. Use the get_weather tool for each city the user asks about. Be very brief."),
+		agent.WithTools(weatherTool),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -194,13 +193,13 @@ func TestIntegration_MultiToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-	if result == "" {
+	if result.Text == "" {
 		t.Fatal("expected non-empty response")
 	}
-	if !strings.Contains(result, "22") && !strings.Contains(strings.ToLower(result), "sunny") {
-		t.Logf("Warning: response may not contain Paris weather: %s", result)
+	if !strings.Contains(result.Text, "22") && !strings.Contains(strings.ToLower(result.Text), "sunny") {
+		t.Logf("Warning: response may not contain Paris weather: %s", result.Text)
 	}
-	t.Logf("Response: %s", result)
+	t.Logf("Response: %s", result.Text)
 }
 
 func TestIntegration_MemoryMultiTurn(t *testing.T) {
@@ -209,9 +208,8 @@ func TestIntegration_MemoryMultiTurn(t *testing.T) {
 	store := conversation.NewInMemory()
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
-		agent.WithConversation(store, "test-conv"),
+		string("You are a helpful assistant. Be very brief."),
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +218,7 @@ func TestIntegration_MemoryMultiTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
+	c := agent.NewContext(ctx).WithConversationID("test-conv")
 	_, err = a.Invoke(c, "My favorite color is blue. Remember that.")
 	if err != nil {
 		t.Fatalf("first invoke error: %v", err)
@@ -230,10 +228,10 @@ func TestIntegration_MemoryMultiTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second invoke error: %v", err)
 	}
-	if !strings.Contains(strings.ToLower(result), "blue") {
-		t.Errorf("expected response to mention 'blue', got: %s", result)
+	if !strings.Contains(strings.ToLower(result.Text), "blue") {
+		t.Errorf("expected response to mention 'blue', got: %s", result.Text)
 	}
-	t.Logf("Response: %s", result)
+	t.Logf("Response: %s", result.Text)
 }
 
 func TestIntegration_InvocationContext(t *testing.T) {
@@ -253,10 +251,7 @@ func TestIntegration_InvocationContext(t *testing.T) {
 		return fmt.Sprintf("stored: %s", in.Text), nil
 	})
 
-	readTool := tool.NewRaw("read_value", "Read the previously stored value", map[string]any{
-		"type":       "object",
-		"properties": map[string]any{},
-	}, func(ctx context.Context, _ json.RawMessage) (string, error) {
+	readTool := tool.NewRaw("read_value", "Read the previously stored value", func(ctx context.Context, _ json.RawMessage) (string, error) {
 		c := agent.FromContext(ctx)
 		if c == nil {
 			return "error: no invocation context", nil
@@ -266,11 +261,14 @@ func TestIntegration_InvocationContext(t *testing.T) {
 			return "nothing stored yet", nil
 		}
 		return fmt.Sprintf("read: %s", v), nil
-	})
+	}, tool.WithSchema(map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}))
 
 	a, err := agent.New(p,
-		prompt.Text("You are a test assistant. When asked to store something, use store_value first, then use read_value to confirm. Be very brief."),
-		[]tool.Tool{storeTool, readTool},
+		string("You are a test assistant. When asked to store something, use store_value first, then use read_value to confirm. Be very brief."),
+		agent.WithTools(storeTool, readTool),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -284,16 +282,16 @@ func TestIntegration_InvocationContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-	if !strings.Contains(strings.ToLower(result), "banana") {
-		t.Errorf("expected response to mention 'banana', got: %s", result)
+	if !strings.Contains(strings.ToLower(result.Text), "banana") {
+		t.Errorf("expected response to mention 'banana', got: %s", result.Text)
 	}
-	t.Logf("Response: %s", result)
+	t.Logf("Response: %s", result.Text)
 }
 
 func TestIntegration_InvokeStructured(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	a, err := agent.New(p, prompt.Text("You are a helpful assistant that extracts structured data."), nil)
+	a, err := agent.New(p, string("You are a helpful assistant that extracts structured data."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,28 +305,27 @@ func TestIntegration_InvokeStructured(t *testing.T) {
 	defer cancel()
 
 	c := agent.NewContext(ctx)
-	result, err := agent.InvokeStructured[Person](c, a, "Extract the person: John is 30 years old.")
+	result, err := structured.Invoke[Person](c, a, "Extract the person: John is 30 years old.")
 	if err != nil {
-		t.Fatalf("InvokeStructured error: %v", err)
+		t.Fatalf("structured.Invoke error: %v", err)
 	}
 
-	if result.Name == "" {
+	if result.Value.Name == "" {
 		t.Error("expected non-empty Name")
 	}
-	if !strings.EqualFold(result.Name, "John") {
-		t.Errorf("expected Name to be 'John', got: %s", result.Name)
+	if !strings.EqualFold(result.Value.Name, "John") {
+		t.Errorf("expected Name to be 'John', got: %s", result.Value.Name)
 	}
-	if result.Age != 30 {
-		t.Errorf("expected Age to be 30, got: %d", result.Age)
+	if result.Value.Age != 30 {
+		t.Errorf("expected Age to be 30, got: %d", result.Value.Age)
 	}
-	usage := c.Usage()
-	t.Logf("Structured result: %+v, usage: %+v", result, usage)
+	t.Logf("Structured result: %+v, usage: %+v", result.Value, result.Run.Usage)
 }
 
 func TestIntegration_TokenUsage(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
+	a, err := agent.New(p, string("You are a helpful assistant. Be very brief."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,12 +334,12 @@ func TestIntegration_TokenUsage(t *testing.T) {
 	defer cancel()
 
 	c := agent.NewContext(ctx)
-	_, err = a.Invoke(c, "Say hello.")
+	result, err := a.Invoke(c, "Say hello.")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
-	usage := c.Usage()
+	usage := result.Usage
 	if usage.InputTokens <= 0 {
 		t.Errorf("expected InputTokens > 0, got: %d", usage.InputTokens)
 	}
@@ -365,8 +362,8 @@ func TestIntegration_StreamingWithToolCalls(t *testing.T) {
 	})
 
 	a, err := agent.New(p,
-		prompt.Text("You are a calculator. Always use the calculate tool. Be very brief."),
-		[]tool.Tool{calcTool},
+		string("You are a calculator. Always use the calculate tool. Be very brief."),
+		agent.WithTools(calcTool),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -377,14 +374,23 @@ func TestIntegration_StreamingWithToolCalls(t *testing.T) {
 
 	c := agent.NewContext(ctx)
 	var chunks []string
-	err = a.InvokeStream(c, "What is 7 times 6?", func(chunk string) {
-		chunks = append(chunks, chunk)
-	})
-	if err != nil {
-		t.Fatalf("InvokeStream error: %v", err)
+	var runResult *agent.Result
+	for event, streamErr := range a.Stream(c, "What is 7 times 6?") {
+		if streamErr != nil {
+			t.Fatalf("Stream error: %v", streamErr)
+		}
+		switch event.Type {
+		case agent.EventText:
+			chunks = append(chunks, event.Text.Content)
+		case agent.EventEnd:
+			runResult = event.Result
+		}
+	}
+	if runResult == nil {
+		t.Fatal("stream ended without a result")
 	}
 
-	usage := c.Usage()
+	usage := runResult.Usage
 	full := strings.Join(chunks, "")
 	if !strings.Contains(full, "42") {
 		t.Errorf("expected streamed response to contain '42', got: %s", full)
@@ -412,8 +418,8 @@ func TestIntegration_TokenUsageAccumulatesAcrossToolCalls(t *testing.T) {
 	})
 
 	a, err := agent.New(p,
-		prompt.Text("You are a weather assistant. Use the get_weather tool for each city. Be very brief."),
-		[]tool.Tool{weatherTool},
+		string("You are a weather assistant. Use the get_weather tool for each city. Be very brief."),
+		agent.WithTools(weatherTool),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -425,12 +431,12 @@ func TestIntegration_TokenUsageAccumulatesAcrossToolCalls(t *testing.T) {
 	c := agent.NewContext(ctx)
 
 	// Ask about two cities to force multiple provider calls (tool call + final response).
-	_, err = a.Invoke(c, "What's the weather in Paris and Tokyo?")
+	result, err := a.Invoke(c, "What's the weather in Paris and Tokyo?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
 
-	usage := c.Usage()
+	usage := result.Usage
 	// With tool calls, the agent makes at least 2 provider calls.
 	// Accumulated usage should be higher than a single-call scenario.
 	if usage.Total() <= 0 {
@@ -458,8 +464,8 @@ func TestIntegration_TokenBudgetEnforcement(t *testing.T) {
 
 	// Set a very small budget that will be exceeded after the first provider call.
 	a, err := agent.New(p,
-		prompt.Text("You are a calculator. Always use the calculate tool. Be very brief."),
-		[]tool.Tool{calcTool},
+		string("You are a calculator. Always use the calculate tool. Be very brief."),
+		agent.WithTools(calcTool),
 		agent.WithTokenBudget(1), // 1 token budget — will be exceeded immediately
 	)
 	if err != nil {
@@ -483,7 +489,7 @@ func TestIntegration_TokenBudgetEnforcement(t *testing.T) {
 func TestIntegration_StreamingTokenUsage(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	a, err := agent.New(p, prompt.Text("You are a helpful assistant. Be very brief."), nil)
+	a, err := agent.New(p, string("You are a helpful assistant. Be very brief."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,12 +498,20 @@ func TestIntegration_StreamingTokenUsage(t *testing.T) {
 	defer cancel()
 
 	c := agent.NewContext(ctx)
-	err = a.InvokeStream(c, "Say hello.", func(_ string) {})
-	if err != nil {
-		t.Fatalf("InvokeStream error: %v", err)
+	var runResult *agent.Result
+	for event, streamErr := range a.Stream(c, "Say hello.") {
+		if streamErr != nil {
+			t.Fatalf("Stream error: %v", streamErr)
+		}
+		if event.Type == agent.EventEnd {
+			runResult = event.Result
+		}
+	}
+	if runResult == nil {
+		t.Fatal("stream ended without a result")
 	}
 
-	usage := c.Usage()
+	usage := runResult.Usage
 	if usage.InputTokens <= 0 {
 		t.Errorf("expected InputTokens > 0 from streaming, got: %d", usage.InputTokens)
 	}
@@ -512,13 +526,13 @@ func TestIntegration_ToolChoiceAny(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
 
-	// Use Converse directly to test ToolChoice modes.
-	resp, err := p.Converse(context.Background(), agent.ConverseParams{
+	// Use Provider.Stream directly to test ToolChoice modes.
+	resp, err := p.Stream(context.Background(), agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello, how are you?"}}},
 		},
 		System: "You are a helpful assistant.",
-		ToolConfig: []tool.Spec{
+		Tools: []tool.Spec{
 			{
 				Name:        "greet",
 				Description: "Generate a greeting",
@@ -532,7 +546,7 @@ func TestIntegration_ToolChoiceAny(t *testing.T) {
 			},
 		},
 		ToolChoice: &tool.Choice{Mode: tool.ChoiceAny},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Converse with ToolChoiceAny error: %v", err)
 	}
@@ -552,10 +566,9 @@ func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
 
 	// Low temperature should produce consistent, deterministic output.
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. Be very brief. Reply with exactly one word."),
-		nil,
+		string("You are a helpful assistant. Be very brief. Reply with exactly one word."),
 		agent.WithTemperature(0.0),
-		agent.WithMaxTokens(10),
+		agent.WithMaxOutputTokens(10),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -569,14 +582,14 @@ func TestIntegration_InferenceConfig_AgentLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-	if !strings.Contains(result, "Paris") {
-		t.Errorf("expected response to contain 'Paris', got: %s", result)
+	if !strings.Contains(result.Text, "Paris") {
+		t.Errorf("expected response to contain 'Paris', got: %s", result.Text)
 	}
-	usage := c.Usage()
+	usage := result.Usage
 	if usage.InputTokens <= 0 || usage.OutputTokens <= 0 {
 		t.Errorf("expected non-zero token usage, got: %+v", usage)
 	}
-	t.Logf("Response: %s (tokens: %d in, %d out)", result, usage.InputTokens, usage.OutputTokens)
+	t.Logf("Response: %s (tokens: %d in, %d out)", result.Text, usage.InputTokens, usage.OutputTokens)
 }
 
 func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
@@ -585,8 +598,7 @@ func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
 
 	// Agent-level: low temperature.
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
+		string("You are a helpful assistant. Be very brief."),
 		agent.WithTemperature(0.0),
 	)
 	if err != nil {
@@ -606,10 +618,10 @@ func TestIntegration_InferenceConfig_PerInvocationOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
-	if result == "" {
+	if result.Text == "" {
 		t.Fatal("expected non-empty response")
 	}
-	t.Logf("Creative response (temp=0.9): %s", result)
+	t.Logf("Creative response (temp=0.9): %s", result.Text)
 }
 
 func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
@@ -617,8 +629,7 @@ func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
 	p := newTestProvider(t)
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. When listing items, number them as 1. 2. 3. etc."),
-		nil,
+		string("You are a helpful assistant. When listing items, number them as 1. 2. 3. etc."),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -637,10 +648,10 @@ func TestIntegration_InferenceConfig_StopSequences(t *testing.T) {
 		t.Fatalf("Invoke error: %v", err)
 	}
 	// The response should be cut short — it should NOT contain "3." or "4."
-	if strings.Contains(result, "3.") {
-		t.Errorf("expected stop sequence to cut generation before '3.', got: %s", result)
+	if strings.Contains(result.Text, "3.") {
+		t.Errorf("expected stop sequence to cut generation before '3.', got: %s", result.Text)
 	}
-	t.Logf("Stopped response: %s", strings.TrimSpace(result))
+	t.Logf("Stopped response: %s", strings.TrimSpace(result.Text))
 }
 
 func TestIntegration_InferenceConfig_InvalidPerInvocationReturnsError(t *testing.T) {
@@ -648,8 +659,7 @@ func TestIntegration_InferenceConfig_InvalidPerInvocationReturnsError(t *testing
 	p := newTestProvider(t)
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant."),
-		nil,
+		string("You are a helpful assistant."),
 	)
 	if err != nil {
 		t.Fatal(err)

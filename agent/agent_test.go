@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -19,41 +18,26 @@ type mockProvider struct{}
 
 func (mockProvider) Name() string { return "mock" }
 
-func (mockProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
-	return &ProviderResponse{Text: "ok"}, nil
+func (mockProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+	return &ModelResponse{Text: "ok"}, nil
 }
 
-func (mockProvider) ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
-	return &ProviderResponse{Text: "ok"}, nil
-}
-
-// scriptedProvider returns a pre-configured sequence of ProviderResponses.
-// Each call to ConverseStream pops the next response from the queue.
+// scriptedProvider returns a pre-configured sequence of ModelResponses.
+// Each call to Stream pops the next response from the queue.
 // It also streams text as individual word chunks when the response is a final text answer.
 type scriptedProvider struct {
 	mu        sync.Mutex
-	responses []*ProviderResponse
+	responses []*ModelResponse
 	callIndex int
 }
 
-func newScriptedProvider(responses ...*ProviderResponse) *scriptedProvider {
+func newScriptedProvider(responses ...*ModelResponse) *scriptedProvider {
 	return &scriptedProvider{responses: responses}
 }
 
 func (sp *scriptedProvider) Name() string { return "mock" }
 
-func (sp *scriptedProvider) Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error) {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	if sp.callIndex >= len(sp.responses) {
-		return nil, fmt.Errorf("scriptedProvider: no more responses (call %d)", sp.callIndex)
-	}
-	resp := sp.responses[sp.callIndex]
-	sp.callIndex++
-	return resp, nil
-}
-
-func (sp *scriptedProvider) ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+func (sp *scriptedProvider) Stream(ctx context.Context, params ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.callIndex >= len(sp.responses) {
@@ -67,9 +51,9 @@ func (sp *scriptedProvider) ConverseStream(ctx context.Context, params ConverseP
 		words := strings.Fields(resp.Text)
 		for i, w := range words {
 			if i > 0 {
-				cb(" ")
+				cb(ModelEvent{Type: ModelEventText, Text: " "})
 			}
-			cb(w)
+			cb(ModelEvent{Type: ModelEventText, Text: w})
 		}
 	}
 	return resp, nil
@@ -81,7 +65,20 @@ func dummyHandler(_ context.Context, _ json.RawMessage) (string, error) {
 }
 
 func dummyTool(name, desc string) tool.Tool {
-	return tool.NewRaw(name, desc, map[string]any{"type": "object"}, dummyHandler)
+	return tool.NewRaw(name, desc, dummyHandler)
+}
+
+// textStreamCB drains TextStream, forwarding each chunk to cb (if non-nil).
+func textStreamCB(a *Agent, c *Context, msg string, cb func(string)) error {
+	for chunk, err := range a.TextStream(c, msg) {
+		if err != nil {
+			return err
+		}
+		if cb != nil {
+			cb(chunk)
+		}
+	}
+	return nil
 }
 
 // toolCall is a helper to build a ToolCall with empty JSON input.
@@ -95,15 +92,12 @@ func TestNewAgent_ValidConstruction(t *testing.T) {
 		dummyTool("create", "Create things"),
 	}
 
-	a, err := New(mockProvider{}, prompt.Text("You are helpful."), tools)
+	a, err := New(mockProvider{}, "You are helpful.", WithTools(tools...))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(a.tools) != 2 {
-		t.Errorf("expected 2 tools, got %d", len(a.tools))
-	}
-	if len(a.toolSpecs) != 2 {
-		t.Errorf("expected 2 toolSpecs, got %d", len(a.toolSpecs))
+	if got := len(a.ToolSpecs()); got != 2 {
+		t.Errorf("expected 2 tools, got %d", got)
 	}
 	if a.maxIterations != 10 {
 		t.Errorf("expected default maxIterations=10, got %d", a.maxIterations)
@@ -116,9 +110,9 @@ func TestNewAgent_ValidConstruction(t *testing.T) {
 func TestNewAgent_WithOptions(t *testing.T) {
 	tools := []tool.Tool{dummyTool("t1", "Tool one")}
 
-	a, err := New(mockProvider{}, prompt.Text("sys"), tools,
+	a, err := New(mockProvider{}, "sys", WithTools(tools...),
 		WithMaxIterations(5),
-		WithParallelToolExecution(),
+		WithParallelTools(),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -137,7 +131,7 @@ func TestNewAgent_DuplicateToolName(t *testing.T) {
 		dummyTool("search", "Duplicate search"),
 	}
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), tools)
+	_, err := New(mockProvider{}, "sys", WithTools(tools...))
 	if err == nil {
 		t.Fatal("expected error for duplicate tool name, got nil")
 	}
@@ -148,7 +142,7 @@ func TestNewAgent_MissingToolName(t *testing.T) {
 		dummyTool("", "Has description"),
 	}
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), tools)
+	_, err := New(mockProvider{}, "sys", WithTools(tools...))
 	if err == nil {
 		t.Fatal("expected error for empty tool name, got nil")
 	}
@@ -159,7 +153,7 @@ func TestNewAgent_MissingToolDescription(t *testing.T) {
 		dummyTool("search", ""),
 	}
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), tools)
+	_, err := New(mockProvider{}, "sys", WithTools(tools...))
 	if err == nil {
 		t.Fatal("expected error for empty tool description, got nil")
 	}
@@ -177,19 +171,19 @@ func TestNewAgent_NilToolHandler(t *testing.T) {
 		},
 	}
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), tools)
+	_, err := New(mockProvider{}, "sys", WithTools(tools...))
 	if err == nil {
 		t.Fatal("expected error for nil tool handler, got nil")
 	}
 }
 
 func TestNewAgent_NoTools(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("sys"), nil)
+	a, err := New(mockProvider{}, "sys")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(a.tools) != 0 {
-		t.Errorf("expected 0 tools, got %d", len(a.tools))
+	if got := len(a.ToolSpecs()); got != 0 {
+		t.Errorf("expected 0 tools, got %d", got)
 	}
 }
 
@@ -198,8 +192,8 @@ func TestNewAgent_NoTools(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInvoke_TextOnlyResponse(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "Hello world"})
-	a, err := New(sp, prompt.Text("sys"), nil)
+	sp := newScriptedProvider(&ModelResponse{Text: "Hello world"})
+	a, err := New(sp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,24 +202,24 @@ func TestInvoke_TextOnlyResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Hello world" {
-		t.Errorf("expected %q, got %q", "Hello world", result)
+	if result.Text != "Hello world" {
+		t.Errorf("expected %q, got %q", "Hello world", result.Text)
 	}
 }
 
 func TestInvoke_SingleToolCall(t *testing.T) {
 	// Provider returns a tool call, then a final text answer.
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{toolCall("tc1", "echo")}},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("tc1", "echo")}},
+		&ModelResponse{Text: "done"},
 	)
 
-	echoTool := tool.NewRaw("echo", "echoes input", map[string]any{"type": "object"},
+	echoTool := tool.NewRaw("echo", "echoes input",
 		func(_ context.Context, input json.RawMessage) (string, error) {
 			return "echoed", nil
 		})
 
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{echoTool})
+	a, err := New(sp, "sys", WithTools(echoTool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,35 +228,34 @@ func TestInvoke_SingleToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "done" {
-		t.Errorf("expected %q, got %q", "done", result)
+	if result.Text != "done" {
+		t.Errorf("expected %q, got %q", "done", result.Text)
 	}
 }
 
 func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 	// Provider returns two tool calls in one response, then final text.
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			toolCall("tc1", "first"),
 			toolCall("tc2", "second"),
 		}},
-		&ProviderResponse{Text: "all done"},
+		&ModelResponse{Text: "all done"},
 	)
 
 	var mu sync.Mutex
 	var order []string
 
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
-			func(_ context.Context, _ json.RawMessage) (string, error) {
-				mu.Lock()
-				order = append(order, name)
-				mu.Unlock()
-				return name + " result", nil
-			})
+		return tool.NewRaw(name, name+" tool", func(_ context.Context, _ json.RawMessage) (string, error) {
+			mu.Lock()
+			order = append(order, name)
+			mu.Unlock()
+			return name + " result", nil
+		})
 	}
 
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{makeTool("first"), makeTool("second")})
+	a, err := New(sp, "sys", WithTools(makeTool("first"), makeTool("second")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,8 +264,8 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "all done" {
-		t.Errorf("expected %q, got %q", "all done", result)
+	if result.Text != "all done" {
+		t.Errorf("expected %q, got %q", "all done", result.Text)
 	}
 
 	// Sequential by default — order must be preserved.
@@ -283,12 +276,12 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 
 func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			toolCall("tc1", "a"),
 			toolCall("tc2", "b"),
 			toolCall("tc3", "c"),
 		}},
-		&ProviderResponse{Text: "parallel done"},
+		&ModelResponse{Text: "parallel done"},
 	)
 
 	const toolSleep = 100 * time.Millisecond
@@ -303,21 +296,20 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	executed := map[string]bool{}
 
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
-			func(_ context.Context, _ json.RawMessage) (string, error) {
-				barrier.Done()
-				barrier.Wait() // blocks until all 3 tools are running
-				time.Sleep(toolSleep)
-				mu.Lock()
-				executed[name] = true
-				mu.Unlock()
-				return name + " ok", nil
-			})
+		return tool.NewRaw(name, name+" tool", func(_ context.Context, _ json.RawMessage) (string, error) {
+			barrier.Done()
+			barrier.Wait() // blocks until all 3 tools are running
+			time.Sleep(toolSleep)
+			mu.Lock()
+			executed[name] = true
+			mu.Unlock()
+			return name + " ok", nil
+		})
 	}
 
-	a, err := New(sp, prompt.Text("sys"),
-		[]tool.Tool{makeTool("a"), makeTool("b"), makeTool("c")},
-		WithParallelToolExecution(),
+	a, err := New(sp, "sys",
+		WithTools(makeTool("a"), makeTool("b"), makeTool("c")),
+		WithParallelTools(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -329,8 +321,8 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "parallel done" {
-		t.Errorf("expected %q, got %q", "parallel done", result)
+	if result.Text != "parallel done" {
+		t.Errorf("expected %q, got %q", "parallel done", result.Text)
 	}
 
 	// All three tools must have been executed.
@@ -348,69 +340,20 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	}
 }
 
-func TestExecuteToolsWithMiddleware_ParallelToolsIsolateWidgetAccumulators(t *testing.T) {
-	calls := []tool.Call{
-		toolCall("widget-a", "a"),
-		toolCall("widget-b", "b"),
-	}
-
-	// Each handler waits until both calls have received their per-call widget
-	// accumulator. With a shared Context map, the second setup overwrites the
-	// first accumulator and both widgets end up associated with one tool call.
-	var barrier sync.WaitGroup
-	barrier.Add(len(calls))
-	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
-			func(ctx context.Context, _ json.RawMessage) (string, error) {
-				toolC := FromContext(ctx)
-				if toolC == nil {
-					return "", errors.New("tool context unavailable")
-				}
-				barrier.Done()
-				barrier.Wait()
-				if err := toolC.EmitWidget(WidgetBlock{Type: name + ".widget"}); err != nil {
-					return "", err
-				}
-				return name + " result", nil
-			})
-	}
-
-	tools := []tool.Tool{makeTool("a"), makeTool("b")}
-	a, err := New(mockProvider{}, prompt.Text("sys"), tools, WithParallelToolExecution())
-	if err != nil {
-		t.Fatal(err)
-	}
-	availableTools := map[string]tool.Tool{"a": tools[0], "b": tools[1]}
-	c := Background()
-	h := a.hooks(c)
-
-	results, widgetsByCall := a.executeToolsWithMiddleware(c, calls, availableTools, &h, nil, "")
-	for i, want := range []string{"a result", "b result"} {
-		if results[i].IsError || results[i].Content != want {
-			t.Errorf("result[%d] = %+v, want successful content %q", i, results[i], want)
-		}
-	}
-	for i, want := range []string{"a.widget", "b.widget"} {
-		if len(widgetsByCall[i]) != 1 || widgetsByCall[i][0].Type != want {
-			t.Errorf("widgetsByCall[%d] = %+v, want one %q widget", i, widgetsByCall[i], want)
-		}
-	}
-}
-
 func TestInvoke_ToolErrorReturnedAsResultText(t *testing.T) {
 	// Provider returns a tool call to "fail_tool", then final text.
 	// We verify the agent doesn't abort — it sends the error as a tool result.
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{toolCall("tc1", "fail_tool")}},
-		&ProviderResponse{Text: "recovered"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("tc1", "fail_tool")}},
+		&ModelResponse{Text: "recovered"},
 	)
 
-	failTool := tool.NewRaw("fail_tool", "always fails", map[string]any{"type": "object"},
+	failTool := tool.NewRaw("fail_tool", "always fails",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "", fmt.Errorf("something broke")
 		})
 
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{failTool})
+	a, err := New(sp, "sys", WithTools(failTool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,23 +362,23 @@ func TestInvoke_ToolErrorReturnedAsResultText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "recovered" {
-		t.Errorf("expected %q, got %q", "recovered", result)
+	if result.Text != "recovered" {
+		t.Errorf("expected %q, got %q", "recovered", result.Text)
 	}
 }
 
 func TestInvoke_MaxIterationError(t *testing.T) {
 	// Provider always returns a tool call — never a final answer.
 	// With maxIterations=2, the agent should error after 2 loops.
-	alwaysToolCall := &ProviderResponse{ToolCalls: []tool.Call{toolCall("tc", "loop")}}
+	alwaysToolCall := &ModelResponse{ToolCalls: []tool.Call{toolCall("tc", "loop")}}
 	sp := newScriptedProvider(alwaysToolCall, alwaysToolCall, alwaysToolCall)
 
-	loopTool := tool.NewRaw("loop", "loops forever", map[string]any{"type": "object"},
+	loopTool := tool.NewRaw("loop", "loops forever",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "looping", nil
 		})
 
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{loopTool}, WithMaxIterations(2))
+	a, err := New(sp, "sys", WithTools(loopTool), WithMaxIterations(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,15 +392,15 @@ func TestInvoke_MaxIterationError(t *testing.T) {
 	}
 }
 
-func TestInvokeStream_CallbackReceivesChunksInOrder(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "one two three"})
-	a, err := New(sp, prompt.Text("sys"), nil)
+func TestTextStream_ChunksInOrder(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "one two three"})
+	a, err := New(sp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var chunks []string
-	err = a.InvokeStream(Background(), "stream me", func(chunk string) {
+	err = textStreamCB(a, Background(), "stream me", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
@@ -476,29 +419,29 @@ func TestInvokeStream_CallbackReceivesChunksInOrder(t *testing.T) {
 	}
 }
 
-func TestInvokeStream_SuppressesChunksDuringToolIteration(t *testing.T) {
+func TestTextStream_SuppressesChunksDuringToolIteration(t *testing.T) {
 	// First response has tool calls (text should be suppressed).
 	// Second response is the final answer (text should be streamed).
 	sp := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			Text:      "thinking...",
 			ToolCalls: []tool.Call{toolCall("tc1", "work")},
 		},
-		&ProviderResponse{Text: "final answer"},
+		&ModelResponse{Text: "final answer"},
 	)
 
-	workTool := tool.NewRaw("work", "does work", map[string]any{"type": "object"},
+	workTool := tool.NewRaw("work", "does work",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "worked", nil
 		})
 
-	a, err := New(sp, prompt.Text("sys"), []tool.Tool{workTool})
+	a, err := New(sp, "sys", WithTools(workTool))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var chunks []string
-	err = a.InvokeStream(Background(), "go", func(chunk string) {
+	err = textStreamCB(a, Background(), "go", func(chunk string) {
 		chunks = append(chunks, chunk)
 	})
 	if err != nil {
@@ -516,25 +459,24 @@ func TestInvoke_MultiToolCallsResultOrderPreserved(t *testing.T) {
 	// Verify that tool results are sent back in the same order as the tool calls,
 	// even when running in parallel.
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{
+		&ModelResponse{ToolCalls: []tool.Call{
 			toolCall("id-a", "alpha"),
 			toolCall("id-b", "beta"),
 			toolCall("id-c", "gamma"),
 		}},
-		&ProviderResponse{Text: "ordered"},
+		&ModelResponse{Text: "ordered"},
 	)
 
 	makeTool := func(name, result string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
-			func(_ context.Context, _ json.RawMessage) (string, error) {
-				return result, nil
-			})
+		return tool.NewRaw(name, name+" tool", func(_ context.Context, _ json.RawMessage) (string, error) {
+			return result, nil
+		})
 	}
 
 	// Use parallel execution to stress order preservation.
-	a, err := New(sp, prompt.Text("sys"),
-		[]tool.Tool{makeTool("alpha", "A"), makeTool("beta", "B"), makeTool("gamma", "C")},
-		WithParallelToolExecution(),
+	a, err := New(sp, "sys",
+		WithTools(makeTool("alpha", "A"), makeTool("beta", "B"), makeTool("gamma", "C")),
+		WithParallelTools(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -544,8 +486,8 @@ func TestInvoke_MultiToolCallsResultOrderPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "ordered" {
-		t.Errorf("expected %q, got %q", "ordered", result)
+	if result.Text != "ordered" {
+		t.Errorf("expected %q, got %q", "ordered", result.Text)
 	}
 
 	// Verify the provider received tool results in the correct order by inspecting
@@ -557,11 +499,11 @@ func TestInvoke_MultiToolCallsResultOrderPreserved(t *testing.T) {
 func TestInvoke_UnknownToolReturnsError(t *testing.T) {
 	// Provider asks for a tool that doesn't exist.
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{toolCall("tc1", "nonexistent")}},
-		&ProviderResponse{Text: "handled"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("tc1", "nonexistent")}},
+		&ModelResponse{Text: "handled"},
 	)
 
-	a, err := New(sp, prompt.Text("sys"), nil)
+	a, err := New(sp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,40 +512,37 @@ func TestInvoke_UnknownToolReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "handled" {
-		t.Errorf("expected %q, got %q", "handled", result)
+	if result.Text != "handled" {
+		t.Errorf("expected %q, got %q", "handled", result.Text)
 	}
 }
 
-func TestInvokeStream_NilCallbackDoesNotPanic(t *testing.T) {
-	sp := newScriptedProvider(&ProviderResponse{Text: "hello"})
-	a, err := New(sp, prompt.Text("sys"), nil)
+func TestTextStream_NilCallbackDoesNotPanic(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "hello"})
+	a, err := New(sp, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Passing nil callback should not panic.
-	err = a.InvokeStream(Background(), "hi", nil)
+	err = textStreamCB(a, Background(), "hi", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// errorProvider always returns an error from ConverseStream.
+// errorProvider always returns an error from Stream.
 type errorProvider struct{ err error }
 
 func (ep errorProvider) Name() string { return "mock" }
 
-func (ep errorProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	return nil, ep.err
-}
-func (ep errorProvider) ConverseStream(_ context.Context, _ ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (ep errorProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return nil, ep.err
 }
 
 func TestInvoke_ProviderErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("connection refused")
-	a, err := New(errorProvider{err: cause}, prompt.Text("sys"), nil)
+	a, err := New(errorProvider{err: cause}, "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +564,7 @@ func TestInvoke_ProviderErrorWrapped(t *testing.T) {
 func TestInvoke_ToolErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("tool exploded")
 
-	boomTool := tool.NewRaw("boom", "always errors", map[string]any{"type": "object"},
+	boomTool := tool.NewRaw("boom", "always errors",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "", cause
 		})
@@ -633,11 +572,11 @@ func TestInvoke_ToolErrorWrapped(t *testing.T) {
 	// Use capturingProvider (defined in guardrail_test.go) to inspect what the
 	// second provider call receives as tool results.
 	cp := newCapturingProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{toolCall("tc1", "boom")}},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("tc1", "boom")}},
+		&ModelResponse{Text: "done"},
 	)
 
-	a, err := New(cp, prompt.Text("sys"), []tool.Tool{boomTool})
+	a, err := New(cp, "sys", WithTools(boomTool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,8 +585,8 @@ func TestInvoke_ToolErrorWrapped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "done" {
-		t.Errorf("expected %q, got %q", "done", result)
+	if result.Text != "done" {
+		t.Errorf("expected %q, got %q", "done", result.Text)
 	}
 
 	// The second provider call should have received a tool result with IsError=true
@@ -673,15 +612,15 @@ func TestInvoke_ToolErrorWrapped(t *testing.T) {
 }
 
 func TestInvoke_RichToolNilOutputReturnsErrorResult(t *testing.T) {
-	emptyRichTool := tool.NewRichRaw("empty_rich", "returns no output", map[string]any{"type": "object"},
+	emptyRichTool := tool.NewRich[json.RawMessage]("empty_rich", "returns no output",
 		func(_ context.Context, _ json.RawMessage) (*tool.Output, error) {
 			return nil, nil
-		})
+		}, tool.WithSchema(map[string]any{"type": "object"}))
 	cp := newCapturingProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{toolCall("empty-rich-1", "empty_rich")}},
-		&ProviderResponse{Text: "recovered"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("empty-rich-1", "empty_rich")}},
+		&ModelResponse{Text: "recovered"},
 	)
-	a, err := New(cp, prompt.Text("sys"), []tool.Tool{emptyRichTool})
+	a, err := New(cp, "sys", WithTools(emptyRichTool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,8 +629,8 @@ func TestInvoke_RichToolNilOutputReturnsErrorResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "recovered" {
-		t.Errorf("result = %q, want %q", result, "recovered")
+	if result.Text != "recovered" {
+		t.Errorf("result = %q, want %q", result.Text, "recovered")
 	}
 	if len(cp.captured) < 2 {
 		t.Fatalf("expected at least 2 provider calls, got %d", len(cp.captured))
@@ -713,8 +652,8 @@ func TestInvoke_RichToolNilOutputReturnsErrorResult(t *testing.T) {
 
 func TestInvoke_InputGuardrailErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("blocked by policy")
-	sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
-	a, err := New(sp, prompt.Text("sys"), nil,
+	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
+	a, err := New(sp, "sys",
 		WithInputGuardrail(func(_ *Context, msg string) (string, error) {
 			return "", cause
 		}),
@@ -742,8 +681,8 @@ func TestInvoke_InputGuardrailErrorWrapped(t *testing.T) {
 
 func TestInvoke_OutputGuardrailErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("output blocked")
-	sp := newScriptedProvider(&ProviderResponse{Text: "some response"})
-	a, err := New(sp, prompt.Text("sys"), nil,
+	sp := newScriptedProvider(&ModelResponse{Text: "some response"})
+	a, err := New(sp, "sys",
 		WithOutputGuardrail(func(_ *Context, msg string) (string, error) {
 			return "", cause
 		}),
@@ -770,11 +709,11 @@ func TestInvoke_OutputGuardrailErrorWrapped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Instructions / SetInstructions
+// Instructions
 // ---------------------------------------------------------------------------
 
 func TestInstructions_ReturnsInitialValue(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("initial system prompt"), nil)
+	a, err := New(mockProvider{}, "initial system prompt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -783,65 +722,12 @@ func TestInstructions_ReturnsInitialValue(t *testing.T) {
 	}
 }
 
-func TestSetInstructions_UpdatesValue(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("v1"), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	a.SetInstructions("v2")
-	if got := a.Instructions(); got != "v2" {
-		t.Errorf("after SetInstructions, Instructions() = %q, want %q", got, "v2")
-	}
-
-	a.SetInstructions("")
-	if got := a.Instructions(); got != "" {
-		t.Errorf("after empty SetInstructions, Instructions() = %q, want empty", got)
-	}
-}
-
-func TestSetInstructions_ConcurrentSafe(t *testing.T) {
-	a, err := New(mockProvider{}, prompt.Text("v0"), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	const goroutines = 16
-	const iterations = 200
-
-	var wg sync.WaitGroup
-	wg.Add(goroutines * 2)
-
-	// Writers
-	for i := 0; i < goroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				a.SetInstructions(fmt.Sprintf("writer-%d-iter-%d", id, j))
-			}
-		}(i)
-	}
-
-	// Readers
-	for i := 0; i < goroutines; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				_ = a.Instructions()
-			}
-		}()
-	}
-
-	wg.Wait()
-	// If we reach here without -race firing, the atomic pointer is doing its job.
-}
-
 // ---------------------------------------------------------------------------
 // Per-invocation system prompt override (for A/B testing)
 // ---------------------------------------------------------------------------
 
 // systemPromptCapturingProvider records the System field passed in each
-// ConverseParams so tests can assert which prompt the agent loop used.
+// ModelRequest so tests can assert which prompt the agent loop used.
 type systemPromptCapturingProvider struct {
 	mu       sync.Mutex
 	captured []string
@@ -849,18 +735,11 @@ type systemPromptCapturingProvider struct {
 
 func (p *systemPromptCapturingProvider) Name() string { return "capture" }
 
-func (p *systemPromptCapturingProvider) Converse(_ context.Context, params ConverseParams) (*ProviderResponse, error) {
+func (p *systemPromptCapturingProvider) Stream(_ context.Context, params ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	p.mu.Lock()
 	p.captured = append(p.captured, params.System)
 	p.mu.Unlock()
-	return &ProviderResponse{Text: "ok"}, nil
-}
-
-func (p *systemPromptCapturingProvider) ConverseStream(_ context.Context, params ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
-	p.mu.Lock()
-	p.captured = append(p.captured, params.System)
-	p.mu.Unlock()
-	return &ProviderResponse{Text: "ok"}, nil
+	return &ModelResponse{Text: "ok"}, nil
 }
 
 func (p *systemPromptCapturingProvider) lastSystem() string {
@@ -874,12 +753,12 @@ func (p *systemPromptCapturingProvider) lastSystem() string {
 
 func TestInvoke_UsesContextSystemPromptOverride(t *testing.T) {
 	p := &systemPromptCapturingProvider{}
-	a, err := New(p, prompt.Text("agent default prompt"), nil)
+	a, err := New(p, "agent default prompt")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx := Background().WithSystemPromptOverride("override prompt for this turn")
+	ctx := Background().WithInstructions("override prompt for this turn")
 	if _, err := a.Invoke(ctx, "hi"); err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
@@ -891,7 +770,7 @@ func TestInvoke_UsesContextSystemPromptOverride(t *testing.T) {
 
 func TestInvoke_FallsBackToAgentInstructionsWhenNoOverride(t *testing.T) {
 	p := &systemPromptCapturingProvider{}
-	a, err := New(p, prompt.Text("agent default prompt"), nil)
+	a, err := New(p, "agent default prompt")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -907,17 +786,17 @@ func TestInvoke_FallsBackToAgentInstructionsWhenNoOverride(t *testing.T) {
 
 func TestInvoke_DifferentOverridesPerCall(t *testing.T) {
 	p := &systemPromptCapturingProvider{}
-	a, err := New(p, prompt.Text("default"), nil)
+	a, err := New(p, "default")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctxA := Background().WithSystemPromptOverride("variant-A")
+	ctxA := Background().WithInstructions("variant-A")
 	if _, err := a.Invoke(ctxA, "hi"); err != nil {
 		t.Fatal(err)
 	}
 
-	ctxB := Background().WithSystemPromptOverride("variant-B")
+	ctxB := Background().WithInstructions("variant-B")
 	if _, err := a.Invoke(ctxB, "hi"); err != nil {
 		t.Fatal(err)
 	}
@@ -932,46 +811,113 @@ func TestInvoke_DifferentOverridesPerCall(t *testing.T) {
 	}
 }
 
-func TestSetConversationSupportsRegisteredBackgroundTools(t *testing.T) {
+func TestToolRegistrySupportsDynamicBackgroundTools(t *testing.T) {
 	handlerDone := make(chan struct{})
 	sp := newScriptedProvider(
-		&ProviderResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}},
-		&ProviderResponse{Text: "initial response"},
-		&ProviderResponse{Text: "background response"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}},
+		&ModelResponse{Text: "initial response"},
+		&ModelResponse{Text: "background response"},
 	)
 
-	a, err := New(sp, prompt.Text("sys"), nil)
+	var registry tool.Registry
+	a, err := New(sp, "sys", WithToolRegistry(&registry), WithConversationStore(newTestMemoryStore()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.SetConversation(newTestMemoryStore())
 
-	backgroundTool := tool.NewBackgroundRaw(
+	backgroundTool := tool.NewBackground[json.RawMessage](
 		"background",
 		"Runs in the background",
 		"Background work started.",
-		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			close(handlerDone)
 			return "finished", nil
 		},
+		tool.WithSchema(map[string]any{"type": "object"}),
 	)
-	if err := a.RegisterTool(backgroundTool); err != nil {
-		t.Fatalf("RegisterTool returned an error after SetConversation: %v", err)
+	if err := registry.Register(backgroundTool); err != nil {
+		t.Fatalf("Register returned an error: %v", err)
 	}
 
 	result, err := a.Invoke(Background().WithConversationID("conv-1"), "start background work")
 	if err != nil {
 		t.Fatalf("Invoke returned an error: %v", err)
 	}
-	if result != "initial response" {
-		t.Fatalf("expected initial response, got %q", result)
+	if result.Text != "initial response" {
+		t.Fatalf("expected initial response, got %q", result.Text)
 	}
 
-	a.Close()
+	_ = a.Shutdown(context.Background())
 	select {
 	case <-handlerDone:
 	case <-time.After(time.Second):
 		t.Fatal("background handler did not run")
 	}
+}
+
+func TestShutdown_RespectsContextDeadline(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	bg := tool.NewBackground[json.RawMessage]("slow", "slow background work", "started",
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			close(started)
+			<-release
+			return "finished", nil
+		}, tool.WithSchema(map[string]any{"type": "object"}))
+	sp := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "slow")}},
+		&ModelResponse{Text: "initial"},
+		&ModelResponse{Text: "after background"},
+	)
+	a, err := New(sp, "sys", WithTools(bg), WithConversationStore(newTestMemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(Background().WithConversationID("conv-1"), "go"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	begin := time.Now()
+	if err := a.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown err = %v, want DeadlineExceeded", err)
+	}
+	if time.Since(begin) > time.Second {
+		t.Fatal("Shutdown did not return at the deadline")
+	}
+
+	// Dispatches are rejected once shutdown started.
+	sp2 := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-2", "slow")}},
+		&ModelResponse{Text: "rejected"},
+	)
+	a.provider = sp2
+	res, err := a.Invoke(Background().WithConversationID("conv-2"), "again")
+	if err != nil || res.Text != "rejected" {
+		t.Fatalf("Invoke after shutdown = %+v, %v", res, err)
+	}
+
+	close(release)
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatalf("second Shutdown: %v", err)
+	}
+}
+
+// newTestBackgroundRaw adapts raw-message test fixtures to the canonical generic constructor.
+func newTestBackgroundRaw(name, description, ack string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), opts ...tool.Option) tool.Tool {
+	opts = append(opts, tool.WithSchema(schema))
+	return tool.NewBackground[json.RawMessage](name, description, ack, handler, opts...)
+}
+
+// newTestRaw adapts hand-written schema fixtures to the canonical raw constructor.
+func newTestRaw(name, description string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), opts ...tool.Option) tool.Tool {
+	opts = append(opts, tool.WithSchema(schema))
+	return tool.NewRaw(name, description, handler, opts...)
+}
+
+// contains is shared by root agent tests that assert error text.
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,6 +108,165 @@ func TestSave_MarshalFailureDoesNotAdvanceVersion(t *testing.T) {
 	}
 	if got.Version != 1 {
 		t.Errorf("version = %d, want 1", got.Version)
+	}
+}
+
+func TestSaveIfVersion_RejectsInvalidInput(t *testing.T) {
+	c := &Checkpointer{}
+
+	if _, err := c.SaveIfVersion(context.Background(), "", checkpoint.Checkpoint{}, 0); !errors.Is(err, checkpoint.ErrThreadIDRequired) {
+		t.Errorf("empty thread ID error = %v, want ErrThreadIDRequired", err)
+	}
+	if _, err := c.SaveIfVersion(context.Background(), "thread", checkpoint.Checkpoint{}, -1); err == nil || !strings.Contains(err.Error(), "expected version must be non-negative") {
+		t.Errorf("negative expected version error = %v, want explanatory error", err)
+	}
+}
+
+func TestSaveIfVersion_CreateRefreshPersistAndIndex(t *testing.T) {
+	c := newTestStore(t)
+	c.ttl = 2 * time.Second
+	ctx := context.Background()
+	threadID := "conditional-lifecycle"
+
+	created, err := c.SaveIfVersion(ctx, threadID, checkpoint.Checkpoint{Label: "created"}, 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.ThreadID != threadID || created.Version != 1 || created.Label != "created" {
+		t.Errorf("created checkpoint = %+v, want thread %q version 1 label created", created, threadID)
+	}
+	if created.Timestamp.IsZero() {
+		t.Error("created timestamp is zero")
+	}
+
+	score, err := c.client.ZScore(ctx, c.threadsKey(), threadID).Result()
+	if err != nil {
+		t.Fatalf("thread missing from index: %v", err)
+	}
+	if score != 0 {
+		t.Errorf("index score = %v, want 0", score)
+	}
+
+	if err := c.client.PExpire(ctx, c.threadKey(threadID), 50*time.Millisecond).Err(); err != nil {
+		t.Fatalf("shorten TTL: %v", err)
+	}
+	updated, err := c.SaveIfVersion(ctx, threadID, checkpoint.Checkpoint{Label: "updated"}, 1)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("updated version = %d, want 2", updated.Version)
+	}
+	remaining, err := c.client.PTTL(ctx, c.threadKey(threadID)).Result()
+	if err != nil {
+		t.Fatalf("read refreshed TTL: %v", err)
+	}
+	if remaining <= time.Second {
+		t.Errorf("refreshed TTL = %v, want more than 1s", remaining)
+	}
+
+	c.ttl = 0
+	persisted, err := c.SaveIfVersion(ctx, threadID, checkpoint.Checkpoint{Label: "persisted"}, 2)
+	if err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if persisted.Version != 3 {
+		t.Errorf("persisted version = %d, want 3", persisted.Version)
+	}
+	remaining, err = c.client.PTTL(ctx, c.threadKey(threadID)).Result()
+	if err != nil {
+		t.Fatalf("read persistent TTL: %v", err)
+	}
+	if remaining != -1 {
+		t.Errorf("persistent TTL = %v, want -1", remaining)
+	}
+}
+
+func TestSaveIfVersion_RejectsMismatchWithoutWriting(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("stale existing thread", func(t *testing.T) {
+		c := newTestStore(t)
+		if _, err := c.SaveIfVersion(ctx, "conditional-stale", checkpoint.Checkpoint{Label: "original"}, 0); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+
+		_, err := c.SaveIfVersion(ctx, "conditional-stale", checkpoint.Checkpoint{Label: "stale"}, 0)
+		if !errors.Is(err, checkpoint.ErrConflict) {
+			t.Fatalf("stale save error = %v, want ErrConflict", err)
+		}
+		history, err := c.History(ctx, "conditional-stale")
+		if err != nil {
+			t.Fatalf("history: %v", err)
+		}
+		if len(history) != 1 || history[0].Label != "original" {
+			t.Errorf("history = %+v, want only original checkpoint", history)
+		}
+	})
+
+	t.Run("absent thread with nonzero expectation", func(t *testing.T) {
+		c := newTestStore(t)
+		threadID := "conditional-absent"
+
+		_, err := c.SaveIfVersion(ctx, threadID, checkpoint.Checkpoint{}, 1)
+		if !errors.Is(err, checkpoint.ErrConflict) {
+			t.Fatalf("absent save error = %v, want ErrConflict", err)
+		}
+		exists, err := c.client.Exists(ctx, c.threadKey(threadID)).Result()
+		if err != nil {
+			t.Fatalf("check thread key: %v", err)
+		}
+		if exists != 0 {
+			t.Errorf("thread key exists = %d, want 0", exists)
+		}
+		if _, err := c.client.ZScore(ctx, c.threadsKey(), threadID).Result(); !errors.Is(err, goredis.Nil) {
+			t.Errorf("index lookup error = %v, want redis.Nil", err)
+		}
+	})
+}
+
+func TestSaveIfVersion_ConcurrentOneWinner(t *testing.T) {
+	c := newTestStore(t)
+	ctx := context.Background()
+	threadID := "conditional-concurrent"
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := c.SaveIfVersion(ctx, threadID, checkpoint.Checkpoint{}, 0)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	var successes, conflicts int
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, checkpoint.ErrConflict):
+			conflicts++
+		default:
+			t.Errorf("unexpected save error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Errorf("successes = %d, conflicts = %d; want 1 each", successes, conflicts)
+	}
+
+	history, err := c.History(ctx, threadID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 1 || history[0].Version != 1 {
+		t.Errorf("history = %+v, want exactly version 1", history)
 	}
 }
 

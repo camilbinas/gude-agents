@@ -245,7 +245,7 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 	name := mcpTool.Name
 	description := mcpTool.Description
 
-	return tool.NewRaw(name, description, schema,
+	return tool.NewRaw(name, description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var args map[string]any
 			if len(input) > 0 {
@@ -276,6 +276,7 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 
 			return text, nil
 		},
+		tool.WithSchema(schema),
 	), nil
 }
 

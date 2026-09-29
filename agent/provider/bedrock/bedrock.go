@@ -207,7 +207,8 @@ func WithSystemPromptCaching() Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	a, err := agent.Default(bedrock.Must(bedrock.Standard()), instructions, tools)
+//	provider := bedrock.Must(bedrock.Standard())
+//	a, err := agent.New(provider, instructions)
 func Must(p *BedrockProvider, err error) *BedrockProvider {
 	if err != nil {
 		panic("bedrock: " + err.Error())
@@ -285,124 +286,18 @@ func (p *BedrockProvider) ModelID() string { return p.model }
 // not exposed through the agent.Provider interface.
 func (p *BedrockProvider) Client() *bedrockruntime.Client { return p.client }
 
-// ---------------------------------------------------------------------------
-// Converse (non-streaming)
-// ---------------------------------------------------------------------------
+// Compile-time check: BedrockProvider satisfies agent.Provider.
+var _ agent.Provider = (*BedrockProvider)(nil)
 
 // Name returns a human-readable identifier for this provider instance.
 func (p *BedrockProvider) Name() string { return "bedrock" }
 
-// Converse sends messages to Bedrock and returns a complete response.
-func (p *BedrockProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
-	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, p.urlFetchPolicy, params.Messages, p.model, cachingEnabled)
-	if err != nil {
-		return nil, &agent.ProviderError{Cause: err}
-	}
-	input := &bedrockruntime.ConverseInput{
-		ModelId:         aws.String(p.model),
-		Messages:        msgs,
-		InferenceConfig: infCfg,
-	}
-	if params.System != "" {
-		if (params.CachingEnabled || p.cachingEnabled) && isClaudeModel(p.model) {
-			input.System = []types.SystemContentBlock{
-				&types.SystemContentBlockMemberText{Value: params.System},
-				&types.SystemContentBlockMemberCachePoint{
-					Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
-				},
-			}
-		} else {
-			input.System = []types.SystemContentBlock{
-				&types.SystemContentBlockMemberText{Value: params.System},
-			}
-		}
-	}
-	if tc := toToolConfig(params.ToolConfig); tc != nil {
-		if bc := toBedrockToolChoice(params.ToolChoice); bc != nil {
-			tc.ToolChoice = bc
-		}
-		input.ToolConfig = tc
-	}
-	input.AdditionalModelRequestFields = p.buildAdditionalFields(params.InferenceConfig)
-
-	if p.guardrailID != "" {
-		input.GuardrailConfig = &types.GuardrailConfiguration{
-			GuardrailIdentifier: aws.String(p.guardrailID),
-			GuardrailVersion:    aws.String(p.guardrailVersion),
-		}
-	}
-
-	out, err := p.client.Converse(ctx, input)
-	if err != nil {
-		return nil, &agent.ProviderError{Cause: err}
-	}
-
-	resp := parseConverseOutput(out)
-	if out.Usage != nil {
-		resp.Usage.InputTokens = int(aws.ToInt32(out.Usage.InputTokens))
-		resp.Usage.OutputTokens = int(aws.ToInt32(out.Usage.OutputTokens))
-		if out.Usage.CacheReadInputTokens != nil {
-			resp.Usage.CacheReadTokens = int(aws.ToInt32(out.Usage.CacheReadInputTokens))
-		}
-		if out.Usage.CacheWriteInputTokens != nil {
-			resp.Usage.CacheWriteTokens = int(aws.ToInt32(out.Usage.CacheWriteInputTokens))
-		}
-	}
-	return resp, nil
-}
-
-// parseConverseOutput maps the Bedrock Converse response to a ProviderResponse.
-func parseConverseOutput(out *bedrockruntime.ConverseOutput) *agent.ProviderResponse {
-	resp := &agent.ProviderResponse{}
-	if out.Output == nil {
-		return resp
-	}
-	msg, ok := out.Output.(*types.ConverseOutputMemberMessage)
-	if !ok {
-		return resp
-	}
-	for _, block := range msg.Value.Content {
-		switch b := block.(type) {
-		case *types.ContentBlockMemberText:
-			resp.Text += b.Value
-		case *types.ContentBlockMemberToolUse:
-			var raw json.RawMessage
-			if b.Value.Input != nil {
-				if data, err := b.Value.Input.MarshalSmithyDocument(); err == nil {
-					raw = json.RawMessage(data)
-				}
-			}
-			resp.ToolCalls = append(resp.ToolCalls, tool.Call{
-				ToolUseID: aws.ToString(b.Value.ToolUseId),
-				Name:      aws.ToString(b.Value.Name),
-				Input:     raw,
-			})
-		case *types.ContentBlockMemberReasoningContent:
-			if rt, ok := b.Value.(*types.ReasoningContentBlockMemberReasoningText); ok {
-				if resp.Metadata == nil {
-					resp.Metadata = map[string]any{}
-				}
-				existing, _ := resp.Metadata["thinking"].(string)
-				resp.Metadata["thinking"] = existing + aws.ToString(rt.Value.Text)
-			}
-		}
-	}
-	return resp
-}
-
-// ---------------------------------------------------------------------------
-// ConverseStream (streaming)
-// ---------------------------------------------------------------------------
-
-// ConverseStream sends messages to Bedrock and streams the response.
-// Text deltas are forwarded to cb. Tool use blocks are collected and
-// returned in the ProviderResponse.
-func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	infCfg := p.buildInferenceConfiguration(params.InferenceConfig)
-	cachingEnabled := params.CachingEnabled || p.cachingEnabled
-	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, p.urlFetchPolicy, params.Messages, p.model, cachingEnabled)
+// Stream sends messages to Bedrock using its streaming API. Text and thinking
+// deltas are emitted as typed events while the complete response is accumulated.
+func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	infCfg := p.buildInferenceConfiguration(req.InferenceConfig)
+	cachingEnabled := req.CachingEnabled || p.cachingEnabled
+	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, p.urlFetchPolicy, req.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
@@ -411,27 +306,27 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 		Messages:        msgs,
 		InferenceConfig: infCfg,
 	}
-	if params.System != "" {
-		if (params.CachingEnabled || p.cachingEnabled) && isClaudeModel(p.model) {
+	if req.System != "" {
+		if cachingEnabled && isClaudeModel(p.model) {
 			input.System = []types.SystemContentBlock{
-				&types.SystemContentBlockMemberText{Value: params.System},
+				&types.SystemContentBlockMemberText{Value: req.System},
 				&types.SystemContentBlockMemberCachePoint{
 					Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
 				},
 			}
 		} else {
 			input.System = []types.SystemContentBlock{
-				&types.SystemContentBlockMemberText{Value: params.System},
+				&types.SystemContentBlockMemberText{Value: req.System},
 			}
 		}
 	}
-	if tc := toToolConfig(params.ToolConfig); tc != nil {
-		if bc := toBedrockToolChoice(params.ToolChoice); bc != nil {
+	if tc := toToolConfig(req.Tools); tc != nil {
+		if bc := toBedrockToolChoice(req.ToolChoice); bc != nil {
 			tc.ToolChoice = bc
 		}
 		input.ToolConfig = tc
 	}
-	input.AdditionalModelRequestFields = p.buildAdditionalFields(params.InferenceConfig)
+	input.AdditionalModelRequestFields = p.buildAdditionalFields(req.InferenceConfig)
 
 	if p.guardrailID != "" {
 		input.GuardrailConfig = &types.GuardrailStreamConfiguration{
@@ -445,78 +340,11 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 		return nil, &agent.ProviderError{Cause: err}
 	}
 
-	resp := &agent.ProviderResponse{}
-
-	var currentToolName, currentToolID, currentToolInput string
-	var currentReasoning string
-
+	resp := &agent.ModelResponse{}
+	state := streamState{}
 	stream := out.GetStream()
 	for event := range stream.Events() {
-		switch ev := event.(type) {
-		case *types.ConverseStreamOutputMemberContentBlockStart:
-			if tuStart, ok := ev.Value.Start.(*types.ContentBlockStartMemberToolUse); ok {
-				currentToolName = aws.ToString(tuStart.Value.Name)
-				currentToolID = aws.ToString(tuStart.Value.ToolUseId)
-				currentToolInput = ""
-			}
-
-		case *types.ConverseStreamOutputMemberContentBlockDelta:
-			switch delta := ev.Value.Delta.(type) {
-			case *types.ContentBlockDeltaMemberText:
-				resp.Text += delta.Value
-				if cb != nil {
-					cb(delta.Value)
-				}
-			case *types.ContentBlockDeltaMemberToolUse:
-				currentToolInput += aws.ToString(delta.Value.Input)
-			case *types.ContentBlockDeltaMemberReasoningContent:
-				if td, ok := delta.Value.(*types.ReasoningContentBlockDeltaMemberText); ok {
-					currentReasoning += td.Value
-					if params.ThinkingCallback != nil {
-						params.ThinkingCallback(td.Value)
-					}
-				}
-			}
-
-		case *types.ConverseStreamOutputMemberContentBlockStop:
-			if currentToolName != "" {
-				raw := json.RawMessage(currentToolInput)
-				if len(raw) == 0 {
-					raw = json.RawMessage(`{}`)
-				}
-				resp.ToolCalls = append(resp.ToolCalls, tool.Call{
-					ToolUseID: currentToolID,
-					Name:      currentToolName,
-					Input:     raw,
-				})
-				currentToolName = ""
-				currentToolID = ""
-				currentToolInput = ""
-			}
-			if currentReasoning != "" {
-				if resp.Metadata == nil {
-					resp.Metadata = map[string]any{}
-				}
-				existing, _ := resp.Metadata["thinking"].(string)
-				resp.Metadata["thinking"] = existing + currentReasoning
-				currentReasoning = ""
-			}
-
-		case *types.ConverseStreamOutputMemberMetadata:
-			if ev.Value.Usage != nil {
-				resp.Usage.InputTokens = int(aws.ToInt32(ev.Value.Usage.InputTokens))
-				resp.Usage.OutputTokens = int(aws.ToInt32(ev.Value.Usage.OutputTokens))
-				if ev.Value.Usage.CacheReadInputTokens != nil {
-					resp.Usage.CacheReadTokens = int(aws.ToInt32(ev.Value.Usage.CacheReadInputTokens))
-				}
-				if ev.Value.Usage.CacheWriteInputTokens != nil {
-					resp.Usage.CacheWriteTokens = int(aws.ToInt32(ev.Value.Usage.CacheWriteInputTokens))
-				}
-			}
-
-		case *types.ConverseStreamOutputMemberMessageStop:
-			// End of message — nothing to do.
-		}
+		applyStreamEvent(resp, &state, event, emit)
 	}
 	stream.Close()
 	if err := stream.Err(); err != nil {
@@ -524,6 +352,83 @@ func (p *BedrockProvider) ConverseStream(ctx context.Context, params agent.Conve
 	}
 
 	return resp, nil
+}
+
+type streamState struct {
+	toolName  string
+	toolID    string
+	toolInput string
+	reasoning string
+}
+
+func applyStreamEvent(resp *agent.ModelResponse, state *streamState, event types.ConverseStreamOutput, emit func(agent.ModelEvent)) {
+	switch ev := event.(type) {
+	case *types.ConverseStreamOutputMemberContentBlockStart:
+		if toolStart, ok := ev.Value.Start.(*types.ContentBlockStartMemberToolUse); ok {
+			state.toolName = aws.ToString(toolStart.Value.Name)
+			state.toolID = aws.ToString(toolStart.Value.ToolUseId)
+			state.toolInput = ""
+		}
+
+	case *types.ConverseStreamOutputMemberContentBlockDelta:
+		switch delta := ev.Value.Delta.(type) {
+		case *types.ContentBlockDeltaMemberText:
+			resp.Text += delta.Value
+			if emit != nil {
+				emit(agent.ModelEvent{Type: agent.ModelEventText, Text: delta.Value})
+			}
+		case *types.ContentBlockDeltaMemberToolUse:
+			state.toolInput += aws.ToString(delta.Value.Input)
+		case *types.ContentBlockDeltaMemberReasoningContent:
+			if text, ok := delta.Value.(*types.ReasoningContentBlockDeltaMemberText); ok {
+				state.reasoning += text.Value
+				if emit != nil {
+					emit(agent.ModelEvent{Type: agent.ModelEventThinking, Text: text.Value})
+				}
+			}
+		}
+
+	case *types.ConverseStreamOutputMemberContentBlockStop:
+		if state.toolName != "" {
+			input := json.RawMessage(state.toolInput)
+			if len(input) == 0 {
+				input = json.RawMessage(`{}`)
+			}
+			resp.ToolCalls = append(resp.ToolCalls, tool.Call{
+				ToolUseID: state.toolID,
+				Name:      state.toolName,
+				Input:     input,
+			})
+			state.toolName = ""
+			state.toolID = ""
+			state.toolInput = ""
+		}
+		if state.reasoning != "" {
+			if resp.Metadata == nil {
+				resp.Metadata = map[string]any{}
+			}
+			existing, _ := resp.Metadata["thinking"].(string)
+			resp.Metadata["thinking"] = existing + state.reasoning
+			state.reasoning = ""
+		}
+
+	case *types.ConverseStreamOutputMemberMetadata:
+		applyTokenUsage(resp, ev.Value.Usage)
+	}
+}
+
+func applyTokenUsage(resp *agent.ModelResponse, usage *types.TokenUsage) {
+	if usage == nil {
+		return
+	}
+	resp.Usage.InputTokens = int(aws.ToInt32(usage.InputTokens))
+	resp.Usage.OutputTokens = int(aws.ToInt32(usage.OutputTokens))
+	if usage.CacheReadInputTokens != nil {
+		resp.Usage.CacheReadTokens = int(aws.ToInt32(usage.CacheReadInputTokens))
+	}
+	if usage.CacheWriteInputTokens != nil {
+		resp.Usage.CacheWriteTokens = int(aws.ToInt32(usage.CacheWriteInputTokens))
+	}
 }
 
 // ---------------------------------------------------------------------------

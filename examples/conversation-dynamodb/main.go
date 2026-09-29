@@ -30,7 +30,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation/dynamodb"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
@@ -41,8 +40,7 @@ func main() {
 		log.Fatal("AWS_DYNAMODB_TABLE environment variable is required")
 	}
 
-	ctx := agent.Background()
-
+	ctx := agent.Background().WithConversationID("demo-conversation")
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Fatalf("load AWS config: %v", err)
@@ -57,12 +55,10 @@ func main() {
 	}
 
 	provider := bedrock.Must(bedrock.Standard())
-
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithConversation(conv, "demo-conversation"),
+		"You are a helpful assistant. Be concise.",
+		agent.WithConversationStore(conv),
 		agent.WithName("helpful-agent"),
 		auto.WithLogging(),
 	)
@@ -71,7 +67,6 @@ func main() {
 	}
 
 	fmt.Println("DynamoDB chat (type 'quit' to exit, 'clear' to reset)")
-
 	utils.Chat(ctx, a, utils.ChatOptions{
 		ClearFunc: utils.ClearConversation(conv, "demo-conversation"),
 	})

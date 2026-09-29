@@ -3,54 +3,36 @@ package openai
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
-	agent "github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/tokencount/tiktoken"
+	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"pgregory.net/rapid"
 )
 
-// Feature: token-estimation, Property 4: OpenAI estimator delegation equivalence
-
-// **Validates: Requirements 4.4**
-
-// TestProperty_OpenAIDelegationEquivalence verifies that for any ConverseParams,
-// the OpenAI provider's EstimateTokens returns exactly the same value as calling
-// TiktokenEstimator.EstimateTokens with the same params.
+// TestProperty_OpenAIDelegationEquivalence verifies that every ModelRequest is
+// forwarded unchanged and that the delegate's exact result is returned.
 func TestProperty_OpenAIDelegationEquivalence(t *testing.T) {
-	tik, err := tiktoken.New("cl100k_base")
-	if err != nil {
-		t.Fatalf("failed to create TiktokenEstimator: %v", err)
-	}
-
-	oaiEstimator := NewEstimator(tik)
-
 	rapid.Check(t, func(t *rapid.T) {
-		params := drawConverseParams(t)
+		req := drawModelRequest(t)
+		want := rapid.IntRange(0, 1_000_000).Draw(t, "tokenCount")
+		delegate := &stubTokenEstimator{count: want}
 
-		// Call the OpenAI estimator (delegates to tiktoken).
-		oaiResult, oaiErr := oaiEstimator.EstimateTokens(context.Background(), params)
-		if oaiErr != nil {
-			t.Fatalf("OpenAI EstimateTokens returned unexpected error: %v", oaiErr)
+		got, err := NewEstimator(delegate).EstimateTokens(context.Background(), req)
+		if err != nil {
+			t.Fatalf("EstimateTokens() error = %v", err)
 		}
-
-		// Call the tiktoken estimator directly.
-		tikResult, tikErr := tik.EstimateTokens(context.Background(), params)
-		if tikErr != nil {
-			t.Fatalf("Tiktoken EstimateTokens returned unexpected error: %v", tikErr)
+		if got != want {
+			t.Fatalf("EstimateTokens() = %d, want %d", got, want)
 		}
-
-		// Both must produce the exact same result.
-		if oaiResult != tikResult {
-			t.Fatalf("OpenAI estimator returned %d, tiktoken returned %d — delegation mismatch", oaiResult, tikResult)
+		if !reflect.DeepEqual(delegate.got, req) {
+			t.Fatalf("delegated request = %#v, want %#v", delegate.got, req)
 		}
 	})
 }
 
-// drawConverseParams generates a random ConverseParams with ASCII/Unicode text
-// for property testing.
-func drawConverseParams(t *rapid.T) agent.ConverseParams {
+func drawModelRequest(t *rapid.T) agent.ModelRequest {
 	system := rapid.String().Draw(t, "system")
 
 	numMessages := rapid.IntRange(0, 10).Draw(t, "numMessages")
@@ -65,54 +47,28 @@ func drawConverseParams(t *rapid.T) agent.ConverseParams {
 		tools[i] = drawToolSpec(t, i)
 	}
 
-	return agent.ConverseParams{
-		Messages:   messages,
-		System:     system,
-		ToolConfig: tools,
+	return agent.ModelRequest{
+		Messages:       messages,
+		System:         system,
+		Tools:          tools,
+		CachingEnabled: rapid.Bool().Draw(t, "cachingEnabled"),
 	}
 }
 
-// drawMessage generates a random Message with text content blocks.
 func drawMessage(t *rapid.T, idx int) agent.Message {
-	roles := []agent.Role{agent.RoleUser, agent.RoleAssistant}
-	role := rapid.SampledFrom(roles).Draw(t, fmt.Sprintf("role_%d", idx))
-
+	role := rapid.SampledFrom([]agent.Role{agent.RoleUser, agent.RoleAssistant}).Draw(t, fmt.Sprintf("role_%d", idx))
 	numBlocks := rapid.IntRange(1, 3).Draw(t, fmt.Sprintf("numBlocks_%d", idx))
 	content := make([]agent.ContentBlock, numBlocks)
 	for i := range content {
-		text := rapid.String().Draw(t, fmt.Sprintf("text_%d_%d", idx, i))
-		content[i] = agent.TextBlock{Text: text}
+		content[i] = agent.TextBlock{Text: rapid.String().Draw(t, fmt.Sprintf("text_%d_%d", idx, i))}
 	}
-
-	return agent.Message{
-		Role:    role,
-		Content: content,
-	}
+	return agent.Message{Role: role, Content: content}
 }
 
-// drawToolSpec generates a random tool.Spec with simple schema.
 func drawToolSpec(t *rapid.T, idx int) tool.Spec {
-	name := rapid.StringMatching(`[a-z_]{3,15}`).Draw(t, fmt.Sprintf("toolName_%d", idx))
-	desc := rapid.String().Draw(t, fmt.Sprintf("toolDesc_%d", idx))
-
-	numProps := rapid.IntRange(0, 3).Draw(t, fmt.Sprintf("numProps_%d", idx))
-	props := make(map[string]any, numProps)
-	for i := 0; i < numProps; i++ {
-		propName := rapid.StringMatching(`[a-z]{3,8}`).Draw(t, fmt.Sprintf("propName_%d_%d", idx, i))
-		props[propName] = map[string]any{
-			"type":        "string",
-			"description": rapid.StringMatching(`[a-zA-Z0-9 ]{0,30}`).Draw(t, fmt.Sprintf("propDesc_%d_%d", idx, i)),
-		}
-	}
-
-	schema := map[string]any{
-		"type":       "object",
-		"properties": props,
-	}
-
 	return tool.Spec{
-		Name:        name,
-		Description: desc,
-		InputSchema: schema,
+		Name:        rapid.StringMatching(`[a-z_]{3,15}`).Draw(t, fmt.Sprintf("toolName_%d", idx)),
+		Description: rapid.String().Draw(t, fmt.Sprintf("toolDesc_%d", idx)),
+		InputSchema: map[string]any{"type": "object"},
 	}
 }

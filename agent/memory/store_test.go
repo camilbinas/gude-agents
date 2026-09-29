@@ -2,10 +2,14 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/camilbinas/gude-agents/agent"
 )
 
 // testEntry is a minimal struct for testing.
@@ -63,7 +67,7 @@ func TestStore_Update(t *testing.T) {
 	}
 
 	// Recall to get the ID.
-	results, err := store.Recall(ctx, "user-1", "Go", 1)
+	results, err := store.Recall(ctx, "user-1", RecallQuery{Text: "Go", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +83,7 @@ func TestStore_Update(t *testing.T) {
 	}
 
 	// Recall again — should get updated content.
-	results, err = store.Recall(ctx, "user-1", "Rust", 1)
+	results, err = store.Recall(ctx, "user-1", RecallQuery{Text: "Rust", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +155,7 @@ func TestStore_Forget(t *testing.T) {
 	_ = store.Remember(ctx, "user-1", testEntry{Content: "entry one"})
 	_ = store.Remember(ctx, "user-1", testEntry{Content: "entry two"})
 
-	results, _ := store.Recall(ctx, "user-1", "entry", 10)
+	results, _ := store.Recall(ctx, "user-1", RecallQuery{Text: "entry", Limit: 10})
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -162,7 +166,7 @@ func TestStore_Forget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, _ = store.Recall(ctx, "user-1", "entry", 10)
+	results, _ = store.Recall(ctx, "user-1", RecallQuery{Text: "entry", Limit: 10})
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result after forget, got %d", len(results))
 	}
@@ -185,7 +189,7 @@ func TestStore_ForgetAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, _ := store.Recall(ctx, "user-1", "entry", 10)
+	results, _ := store.Recall(ctx, "user-1", RecallQuery{Text: "entry", Limit: 10})
 	if len(results) != 0 {
 		t.Fatalf("expected 0 results after forget all, got %d", len(results))
 	}
@@ -239,7 +243,7 @@ func TestStoreRecallConcurrentWithUpdate(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
-			entries, err := store.Recall(ctx, "user-1", "query", 1)
+			entries, err := store.Recall(ctx, "user-1", RecallQuery{Text: "query", Limit: 1})
 			if err != nil {
 				errs <- err
 				return
@@ -267,5 +271,171 @@ func TestParseMemSchemaRejectsPointerGenericType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "T must be a non-pointer struct") || !strings.Contains(err.Error(), "*memory.testEntry") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveIdentity(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctx     context.Context
+		scope   string
+		want    string
+		wantErr bool
+	}{
+		{"identity", agent.Background().WithIdentity("user-1"), "", "user-1", false},
+		{"no identity", agent.Background(), "", "", true},
+		{"plain context", context.Background(), "", "", true},
+		{"scope set", agent.Background().WithIdentity("user-1").WithScope("tenant", "t-9"), "tenant", "t-9", false},
+		// Strict scopes: a configured scope never falls back to the identity.
+		{"scope missing no fallback", agent.Background().WithIdentity("user-1"), "tenant", "", true},
+		{"scope empty value", agent.Background().WithScope("tenant", ""), "tenant", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveIdentity(tc.ctx, tc.scope)
+			if tc.wantErr {
+				if !errors.Is(err, ErrMissingIdentity) {
+					t.Fatalf("err = %v, want ErrMissingIdentity", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTools_UseIdentityAndStrictScope(t *testing.T) {
+	store, err := NewStore[testEntry](newMockEmbedder(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"content":"likes Go"}`)
+
+	// Without identity the tool fails explicitly.
+	if _, err := NewRememberTool(store).Handler(agent.Background(), input); !errors.Is(err, ErrMissingIdentity) {
+		t.Fatalf("remember without identity: err = %v, want ErrMissingIdentity", err)
+	}
+
+	// Default: partitioned by Identity.
+	if _, err := NewRememberTool(store).Handler(agent.Background().WithIdentity("user-1"), input); err != nil {
+		t.Fatalf("remember with identity: %v", err)
+	}
+	got, err := store.Recall(context.Background(), "user-1", RecallQuery{Text: "likes Go", Limit: 5})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("recall user-1: %v, %d entries", err, len(got))
+	}
+
+	// Scoped tool with only an identity must not fall back to it.
+	scoped := NewRememberTool(store, WithScope("tenant"))
+	if _, err := scoped.Handler(agent.Background().WithIdentity("user-1"), input); !errors.Is(err, ErrMissingIdentity) {
+		t.Fatalf("scoped remember without scope: err = %v, want ErrMissingIdentity", err)
+	}
+
+	// Scoped tool uses the scope value.
+	if _, err := scoped.Handler(agent.Background().WithIdentity("user-1").WithScope("tenant", "t-9"), input); err != nil {
+		t.Fatalf("scoped remember: %v", err)
+	}
+	got, err = store.Recall(context.Background(), "t-9", RecallQuery{Text: "likes Go", Limit: 5})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("recall t-9: %v, %d entries", err, len(got))
+	}
+	if got, _ := store.Recall(context.Background(), "user-1", RecallQuery{Text: "likes Go", Limit: 5}); len(got) != 1 {
+		t.Errorf("user-1 has %d entries, want 1 (scope write must not land on identity)", len(got))
+	}
+
+	recall := NewRecallTool(store, WithScope("tenant"))
+	if _, err := recall.Handler(agent.Background(), json.RawMessage(`{"query":"x"}`)); !errors.Is(err, ErrMissingIdentity) {
+		t.Errorf("recall without scope: err = %v, want ErrMissingIdentity", err)
+	}
+	forget := NewForgetTool(store)
+	if _, err := forget.Handler(agent.Background(), json.RawMessage(`{"id":"x"}`)); !errors.Is(err, ErrMissingIdentity) {
+		t.Errorf("forget without identity: err = %v, want ErrMissingIdentity", err)
+	}
+	update := NewUpdateTool(store)
+	if _, err := update.Handler(agent.Background(), json.RawMessage(`{"id":"x","content":"y"}`)); !errors.Is(err, ErrMissingIdentity) {
+		t.Errorf("update without identity: err = %v, want ErrMissingIdentity", err)
+	}
+}
+
+func TestStore_RecallQuerySemantics(t *testing.T) {
+	embedder := newMockEmbedder(2)
+	embedder.embeddings["exact"] = []float64{1, 0}
+	embedder.embeddings["weak"] = []float64{0.5, 0.8660254037844386}
+	embedder.embeddings["opposite"] = []float64{-1, 0}
+	embedder.embeddings["query"] = []float64{1, 0}
+	store, err := NewStore[testEntry](embedder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, content := range []string{"exact", "weak", "opposite"} {
+		if err := store.Remember(ctx, "user-1", testEntry{Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := store.Recall(ctx, "user-1", RecallQuery{Text: "query"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("zero Limit must return all results: got %d, want 3", len(all))
+	}
+
+	filtered, err := store.Recall(ctx, "user-1", RecallQuery{Text: "query", MinSimilarity: 0.75})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 || filtered[0].Value.Content != "exact" {
+		t.Fatalf("minimum similarity was not applied: %#v", filtered)
+	}
+
+	limited, err := store.Recall(ctx, "user-1", RecallQuery{Text: "query", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 2 {
+		t.Fatalf("Limit = 2 returned %d entries", len(limited))
+	}
+}
+
+func TestStore_RecallQueryErrors(t *testing.T) {
+	store, err := NewStore[testEntry](newMockEmbedder(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	invalid := []RecallQuery{
+		{},
+		{Text: "query", Limit: -1},
+		{Text: "query", MinSimilarity: -0.1},
+		{Text: "query", MinSimilarity: 1.1},
+	}
+	for _, query := range invalid {
+		if _, err := store.Recall(ctx, "user-1", query); !errors.Is(err, ErrInvalidRecallQuery) {
+			t.Errorf("Recall(%+v) error = %v, want ErrInvalidRecallQuery", query, err)
+		}
+	}
+
+	_, err = store.Recall(ctx, "user-1", RecallQuery{
+		Text:    "query",
+		Filters: []Filter{{Field: "score", Operator: FilterGreaterThan, Value: 0.5}},
+	})
+	if !errors.Is(err, ErrUnsupportedFilter) {
+		t.Fatalf("filter error = %v, want ErrUnsupportedFilter", err)
+	}
+
+	_, err = store.Recall(ctx, "user-1", RecallQuery{
+		Text:  "query",
+		Order: []Order{{Field: "score", Direction: OrderDescending}},
+	})
+	if !errors.Is(err, ErrUnsupportedOrder) {
+		t.Fatalf("order error = %v, want ErrUnsupportedOrder", err)
 	}
 }

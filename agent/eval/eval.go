@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // EvalCase is a single evaluation test case.
 type EvalCase struct {
 	Query            string            `json:"query"`
 	ActualOutput     string            `json:"actual_output"`
-	RetrievedContext []agent.Document  `json:"retrieved_context"`
+	RetrievedContext []rag.Document    `json:"retrieved_context"`
 	ReferenceAnswer  string            `json:"reference_answer,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 }

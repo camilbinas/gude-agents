@@ -71,11 +71,9 @@ func genMessages(t *rapid.T) []Message {
 // Property 1: Output validity — user-first and strict alternation
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_OutputValidity verifies that for any non-empty message sequence
 // and any strategy, the normalized output starts with a user message and no two
 // consecutive messages share the same role.
-//
 func TestProperty_OutputValidity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessages(rt)
@@ -112,11 +110,9 @@ func TestProperty_OutputValidity(t *testing.T) {
 // Property 2: Idempotence — normalizing twice equals normalizing once
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_Idempotence verifies that for any message sequence and any
 // strategy, NormalizeMessages(NormalizeMessages(msgs, s), s) produces the same
 // result as NormalizeMessages(msgs, s).
-//
 func TestProperty_Idempotence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessages(rt)
@@ -144,12 +140,10 @@ func collectContentBlocks(msgs []Message) []ContentBlock {
 	return blocks
 }
 
-//
 // TestProperty_MergeContentPreservation verifies that for any message sequence,
 // applying Merge produces output where every ContentBlock from the input appears
 // exactly once in the output in the same relative order (excluding synthetic
 // opening message if one was prepended).
-//
 func TestProperty_MergeContentPreservation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessages(rt)
@@ -192,12 +186,10 @@ func isSyntheticMessage(m Message) bool {
 	return tb.Text == "Understood." || tb.Text == "Continue."
 }
 
-//
 // TestProperty_FillContentPreservation verifies that for any message sequence,
 // applying Fill produces output containing every original message's content
 // blocks in order; additional messages are synthetic with a single TextBlock
 // acknowledgement.
-//
 func TestProperty_FillContentPreservation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessages(rt)
@@ -257,11 +249,9 @@ func lastOfEachRun(msgs []Message) []Message {
 	return result
 }
 
-//
 // TestProperty_RemoveKeepsLast verifies that for any message sequence, applying
 // Remove produces output where for each consecutive run of same-role messages
 // in the input, only the content blocks of the last message in that run appear.
-//
 func TestProperty_RemoveKeepsLast(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessages(rt)
@@ -324,11 +314,9 @@ func deepCopyMessages(msgs []Message) []Message {
 	return cp
 }
 
-//
 // TestProperty_NoInputMutation verifies that for any message sequence and any
 // strategy, calling NormalizeMessages does not modify the input slice or any
 // message's Content slice.
-//
 func TestProperty_NoInputMutation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		msgs := genMessages(rt)

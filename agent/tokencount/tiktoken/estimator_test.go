@@ -36,7 +36,7 @@ func TestEstimateTokens_Hello(t *testing.T) {
 	}
 
 	// "hello" is 1 token in cl100k_base.
-	got, err := est.EstimateTokens(context.Background(), agent.ConverseParams{
+	got, err := est.EstimateTokens(context.Background(), agent.ModelRequest{
 		System: "hello",
 	})
 	if err != nil {
@@ -54,7 +54,7 @@ func TestEstimateTokens_HelloWorld(t *testing.T) {
 	}
 
 	// "hello world" is 2 tokens in cl100k_base.
-	got, err := est.EstimateTokens(context.Background(), agent.ConverseParams{
+	got, err := est.EstimateTokens(context.Background(), agent.ModelRequest{
 		System: "hello world",
 	})
 	if err != nil {
@@ -65,18 +65,18 @@ func TestEstimateTokens_HelloWorld(t *testing.T) {
 	}
 }
 
-func TestEstimateTokens_EmptyParams(t *testing.T) {
+func TestEstimateTokens_EmptyRequest(t *testing.T) {
 	est, err := New("cl100k_base")
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
-	got, err := est.EstimateTokens(context.Background(), agent.ConverseParams{})
+	got, err := est.EstimateTokens(context.Background(), agent.ModelRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != 0 {
-		t.Fatalf("expected 0 tokens for empty params, got %d", got)
+		t.Fatalf("expected 0 tokens for empty request, got %d", got)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestEstimateTokens_MessageContent(t *testing.T) {
 	}
 
 	// "hello" in a message text block should also produce 1 token.
-	got, err := est.EstimateTokens(context.Background(), agent.ConverseParams{
+	got, err := est.EstimateTokens(context.Background(), agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
 		},
@@ -106,17 +106,16 @@ func TestEstimateTokens_CombinedSources(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	// System "hello" + message "world" concatenated = "helloworld".
-	// "helloworld" is 1 token in cl100k_base (single BPE token).
+	// System "hello" + message " world" concatenated = "hello world".
 	// This verifies concatenation order: system first, then messages.
-	params := agent.ConverseParams{
+	req := agent.ModelRequest{
 		System: "hello",
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: " world"}}},
 		},
 	}
 
-	got, err := est.EstimateTokens(context.Background(), params)
+	got, err := est.EstimateTokens(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +131,7 @@ func TestEstimateTokens_NonNegative(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	got, err := est.EstimateTokens(context.Background(), agent.ConverseParams{
+	got, err := est.EstimateTokens(context.Background(), agent.ModelRequest{
 		System: "This is a longer sentence to tokenize with multiple tokens.",
 	})
 	if err != nil {

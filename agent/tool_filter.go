@@ -16,26 +16,15 @@ type ToolFilter func(c *Context, t tool.Tool) bool
 // available for the current provider call. A tool must pass all filters to be
 // included (AND semantics). Returns all tools if no filters are set.
 func (a *Agent) filterTools(c *Context) ([]tool.Spec, map[string]tool.Tool) {
-	a.toolsMu.RLock()
-	defer a.toolsMu.RUnlock()
-
-	if len(a.toolFilters) == 0 {
-		specs := make([]tool.Spec, len(a.toolSpecs))
-		copy(specs, a.toolSpecs)
-		tools := make(map[string]tool.Tool, len(a.tools))
-		for k, v := range a.tools {
-			tools[k] = v
-		}
-		return specs, tools
-	}
-
+	registered := a.toolRegistry.List()
 	var specs []tool.Spec
-	tools := make(map[string]tool.Tool)
-	for name, t := range a.tools {
-		if a.passesAllFilters(c, t) {
-			specs = append(specs, t.Spec)
-			tools[name] = t
+	tools := make(map[string]tool.Tool, len(registered))
+	for _, t := range registered {
+		if len(a.toolFilters) > 0 && !a.passesAllFilters(c, t) {
+			continue
 		}
+		specs = append(specs, t.Spec)
+		tools[t.Spec.Name] = t
 	}
 	return specs, tools
 }

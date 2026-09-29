@@ -3,218 +3,245 @@ package slog
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// slogHook implements agent.LoggingHook using the standard library's log/slog
-// package.
+// slogHook implements the relevant agent observer capabilities using the
+// standard library's log/slog package.
 type slogHook struct {
-	logger    *slog.Logger
-	minLevel  slog.Level
-	agentName string
+	logger   *slog.Logger
+	minLevel slog.Level
 }
 
 // Compile-time interface checks.
-var _ agent.LoggingHook = (*slogHook)(nil)
+var (
+	_ agent.InvokeObserver       = (*slogHook)(nil)
+	_ agent.IterationObserver    = (*slogHook)(nil)
+	_ agent.ModelObserver        = (*slogHook)(nil)
+	_ agent.ToolObserver         = (*slogHook)(nil)
+	_ agent.GuardrailObserver    = (*slogHook)(nil)
+	_ agent.ConversationObserver = (*slogHook)(nil)
+	_ agent.RetrievalObserver    = (*slogHook)(nil)
+	_ agent.AttachmentObserver   = (*slogHook)(nil)
+	_ agent.LimitObserver        = (*slogHook)(nil)
+	_ agent.ToolLogObserver      = (*slogHook)(nil)
+)
 
 // log emits a structured log entry if the level meets the minimum threshold.
-func (h *slogHook) log(level slog.Level, msg string, attrs ...slog.Attr) {
+func (h *slogHook) log(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr) {
 	if level < h.minLevel {
 		return
 	}
-	h.logger.LogAttrs(context.Background(), level, msg, attrs...)
+	h.logger.LogAttrs(ctx, level, msg, attrs...)
 }
 
 // ---------------------------------------------------------------------------
-// LoggingHook — agent lifecycle
+// Observer methods — agent lifecycle
 // ---------------------------------------------------------------------------
 
-func (h *slogHook) OnInvokeStart(params agent.InvokeSpanParams) {
-	h.log(slog.LevelDebug, "invoke.start",
-		slog.String("agent.name", h.agentName),
-		slog.String("model.id", params.ModelID),
-		slog.String("conversation_id", params.ConversationID),
-		slog.Int("max_iterations", params.MaxIterations),
+func (h *slogHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+	switch record.Phase {
+	case agent.Start:
+		h.log(ctx, slog.LevelDebug, "invoke.start",
+			slog.String("agent.name", record.AgentName),
+			slog.String("model.id", record.ModelID),
+			slog.String("conversation_id", record.ConversationID),
+			slog.Int("max_iterations", record.MaxIterations),
+		)
+	case agent.End:
+		level := slog.LevelInfo
+		attrs := []slog.Attr{
+			slog.Float64("duration_ms", float64(record.Duration.Milliseconds())),
+			slog.Int("input_tokens", record.Usage.InputTokens),
+			slog.Int("output_tokens", record.Usage.OutputTokens),
+		}
+		if record.Usage.CacheReadTokens > 0 {
+			attrs = append(attrs, slog.Int("cache_read_tokens", record.Usage.CacheReadTokens))
+		}
+		if record.Usage.CacheWriteTokens > 0 {
+			attrs = append(attrs, slog.Int("cache_write_tokens", record.Usage.CacheWriteTokens))
+		}
+		if record.Err != nil {
+			level = slog.LevelError
+			attrs = append(attrs, slog.String("error", record.Err.Error()))
+		}
+		h.log(ctx, level, "invoke.end", attrs...)
+		if record.Err == nil && record.Response != "" {
+			h.log(ctx, slog.LevelInfo, "response.text", slog.String("text", record.Response))
+		}
+	}
+	return ctx
+}
+
+func (h *slogHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+	switch record.Phase {
+	case agent.Start:
+		h.log(ctx, slog.LevelDebug, "iteration.start",
+			slog.Int("iteration", record.Iteration),
+		)
+	case agent.End:
+		h.log(ctx, slog.LevelDebug, "iteration.end",
+			slog.Int("iteration", record.Iteration),
+			slog.Int("tool_count", record.ToolCount),
+			slog.Bool("is_final", record.IsFinal),
+			slog.Float64("duration_ms", float64(record.Duration.Milliseconds())),
+		)
+	}
+	return ctx
+}
+
+func (h *slogHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+	switch record.Phase {
+	case agent.Start:
+		h.log(ctx, slog.LevelDebug, "provider_call.start",
+			slog.String("model.id", record.ModelID),
+		)
+	case agent.End:
+		level := slog.LevelInfo
+		attrs := []slog.Attr{
+			slog.Float64("duration_ms", float64(record.Duration.Milliseconds())),
+			slog.Int("input_tokens", record.Usage.InputTokens),
+			slog.Int("output_tokens", record.Usage.OutputTokens),
+			slog.Int("tool_call_count", record.ToolCallCount),
+		}
+		if record.Usage.CacheReadTokens > 0 {
+			attrs = append(attrs, slog.Int("cache_read_tokens", record.Usage.CacheReadTokens))
+		}
+		if record.Usage.CacheWriteTokens > 0 {
+			attrs = append(attrs, slog.Int("cache_write_tokens", record.Usage.CacheWriteTokens))
+		}
+		if record.Err != nil {
+			level = slog.LevelError
+			attrs = append(attrs, slog.String("error", record.Err.Error()))
+		}
+		h.log(ctx, level, "provider_call.end", attrs...)
+	}
+	return ctx
+}
+
+func (h *slogHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+	switch record.Phase {
+	case agent.Start:
+		h.log(ctx, slog.LevelDebug, "tool.start",
+			slog.String("tool.name", record.Name),
+		)
+	case agent.End:
+		level := slog.LevelInfo
+		attrs := []slog.Attr{
+			slog.String("tool.name", record.Name),
+			slog.Float64("duration_ms", float64(record.Duration.Milliseconds())),
+		}
+		if record.Err != nil {
+			level = slog.LevelError
+			attrs = append(attrs, slog.String("error", record.Err.Error()))
+		}
+		h.log(ctx, level, "tool.end", attrs...)
+	}
+	return ctx
+}
+
+func (h *slogHook) ObserveToolLog(ctx context.Context, record agent.ToolLogRecord) context.Context {
+	h.log(ctx, slog.LevelDebug, "tool.log",
+		slog.String("tool.name", record.Name),
+		slog.String("message", record.Message),
 	)
+	return ctx
 }
 
-func (h *slogHook) OnInvokeEnd(err error, usage agent.TokenUsage, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-		slog.Int("input_tokens", usage.InputTokens),
-		slog.Int("output_tokens", usage.OutputTokens),
+func (h *slogHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
-	if usage.CacheReadTokens > 0 {
-		attrs = append(attrs, slog.Int("cache_read_tokens", usage.CacheReadTokens))
-	}
-	if usage.CacheWriteTokens > 0 {
-		attrs = append(attrs, slog.Int("cache_write_tokens", usage.CacheWriteTokens))
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "invoke.end", attrs...)
-}
-
-func (h *slogHook) OnIterationStart(iteration int) {
-	h.log(slog.LevelDebug, "iteration.start",
-		slog.Int("iteration", iteration),
-	)
-}
-
-func (h *slogHook) OnIterationEnd(iteration int, toolCount int, isFinal bool, duration time.Duration) {
-	h.log(slog.LevelDebug, "iteration.end",
-		slog.Int("iteration", iteration),
-		slog.Int("tool_count", toolCount),
-		slog.Bool("is_final", isFinal),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-	)
-}
-
-func (h *slogHook) OnProviderCallStart(modelID string) {
-	h.log(slog.LevelDebug, "provider_call.start",
-		slog.String("model.id", modelID),
-	)
-}
-
-func (h *slogHook) OnProviderCallEnd(err error, usage agent.TokenUsage, toolCallCount int, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-		slog.Int("input_tokens", usage.InputTokens),
-		slog.Int("output_tokens", usage.OutputTokens),
-		slog.Int("tool_call_count", toolCallCount),
-	}
-	if usage.CacheReadTokens > 0 {
-		attrs = append(attrs, slog.Int("cache_read_tokens", usage.CacheReadTokens))
-	}
-	if usage.CacheWriteTokens > 0 {
-		attrs = append(attrs, slog.Int("cache_write_tokens", usage.CacheWriteTokens))
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "provider_call.end", attrs...)
-}
-
-func (h *slogHook) OnToolStart(toolName string) {
-	h.log(slog.LevelDebug, "tool.start",
-		slog.String("tool.name", toolName),
-	)
-}
-
-func (h *slogHook) OnToolEnd(toolName string, err error, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.String("tool.name", toolName),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
-	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
-	}
-	h.log(level, "tool.end", attrs...)
-}
-
-func (h *slogHook) OnToolLog(toolName string, msg string) {
-	h.log(slog.LevelDebug, "tool.log",
-		slog.String("tool.name", toolName),
-		slog.String("message", msg),
-	)
-}
-
-func (h *slogHook) OnGuardrailComplete(direction string, blocked bool, err error) {
 	level := slog.LevelDebug
-	if blocked {
+	if record.Blocked {
 		level = slog.LevelWarn
 	}
 	attrs := []slog.Attr{
-		slog.String("direction", direction),
-		slog.Bool("blocked", blocked),
+		slog.String("direction", record.Direction),
+		slog.Bool("blocked", record.Blocked),
 	}
-	if err != nil {
+	if record.Err != nil {
 		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
+		attrs = append(attrs, slog.String("error", record.Err.Error()))
 	}
-	h.log(level, "guardrail.complete", attrs...)
+	h.log(ctx, level, "guardrail.complete", attrs...)
+	return ctx
 }
 
-func (h *slogHook) OnConversationStart(operation string, conversationID string) {
-	h.log(slog.LevelDebug, "memory.start",
-		slog.String("operation", operation),
-		slog.String("conversation_id", conversationID),
-	)
-}
-
-func (h *slogHook) OnConversationEnd(operation string, conversationID string, err error, messageCount int, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.String("operation", operation),
-		slog.String("conversation_id", conversationID),
-		slog.Int("message_count", messageCount),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
+func (h *slogHook) ObserveConversation(ctx context.Context, record agent.ConversationRecord) context.Context {
+	switch record.Phase {
+	case agent.Start:
+		h.log(ctx, slog.LevelDebug, "memory.start",
+			slog.String("operation", record.Operation),
+			slog.String("conversation_id", record.ConversationID),
+		)
+	case agent.End:
+		level := slog.LevelInfo
+		attrs := []slog.Attr{
+			slog.String("operation", record.Operation),
+			slog.String("conversation_id", record.ConversationID),
+			slog.Int("message_count", record.MessageCount),
+			slog.Float64("duration_ms", float64(record.Duration.Milliseconds())),
+		}
+		if record.Err != nil {
+			level = slog.LevelError
+			attrs = append(attrs, slog.String("error", record.Err.Error()))
+		}
+		h.log(ctx, level, "memory.end", attrs...)
 	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
+	return ctx
+}
+
+func (h *slogHook) ObserveRetrieval(ctx context.Context, record agent.RetrievalRecord) context.Context {
+	switch record.Phase {
+	case agent.Start:
+		h.log(ctx, slog.LevelDebug, "retriever.start",
+			slog.String("query", record.Query),
+		)
+	case agent.End:
+		level := slog.LevelInfo
+		attrs := []slog.Attr{
+			slog.Int("doc_count", record.DocumentCount),
+			slog.Float64("duration_ms", float64(record.Duration.Milliseconds())),
+		}
+		if record.Err != nil {
+			level = slog.LevelError
+			attrs = append(attrs, slog.String("error", record.Err.Error()))
+		}
+		h.log(ctx, level, "retriever.end", attrs...)
 	}
-	h.log(level, "memory.end", attrs...)
+	return ctx
 }
 
-func (h *slogHook) OnRetrieverStart(query string) {
-	h.log(slog.LevelDebug, "retriever.start",
-		slog.String("query", query),
-	)
-}
-
-func (h *slogHook) OnRetrieverEnd(err error, docCount int, duration time.Duration) {
-	level := slog.LevelInfo
-	attrs := []slog.Attr{
-		slog.Int("doc_count", docCount),
-		slog.Float64("duration_ms", float64(duration.Milliseconds())),
+func (h *slogHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
-	if err != nil {
-		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", err.Error()))
+	if record.ImageCount > 0 {
+		h.log(ctx, slog.LevelDebug, "images.attached",
+			slog.Int("image_count", record.ImageCount),
+		)
 	}
-	h.log(level, "retriever.end", attrs...)
+	if record.DocumentCount > 0 {
+		h.log(ctx, slog.LevelDebug, "documents.attached",
+			slog.Int("document_count", record.DocumentCount),
+		)
+	}
+	return ctx
 }
 
-func (h *slogHook) OnImagesAttached(imageCount int) {
-	h.log(slog.LevelDebug, "images.attached",
-		slog.Int("image_count", imageCount),
-	)
-}
-
-func (h *slogHook) OnDocumentsAttached(docCount int) {
-	h.log(slog.LevelDebug, "documents.attached",
-		slog.Int("document_count", docCount),
-	)
-}
-
-func (h *slogHook) OnMaxIterationsExceeded(limit int) {
-	h.log(slog.LevelWarn, "max_iterations_exceeded",
-		slog.Int("limit", limit),
-	)
-}
-
-func (h *slogHook) OnStreamChunk(_ string) {
-	// no-op: too noisy for structured logs
-}
-
-func (h *slogHook) OnResponse(text string) {
-	h.log(slog.LevelInfo, "response.text",
-		slog.String("text", text),
-	)
+func (h *slogHook) ObserveLimit(ctx context.Context, record agent.LimitRecord) context.Context {
+	if record.Phase == agent.End && record.Name == "max_iterations" {
+		h.log(ctx, slog.LevelWarn, "max_iterations_exceeded",
+			slog.Int("limit", record.Limit),
+		)
+	}
+	return ctx
 }
 
 // ---------------------------------------------------------------------------
-// Option functions — wire the hook into an agent
+// Option functions — wire the observer into an agent
 // ---------------------------------------------------------------------------
 
 // newSlogHook creates a slogHook with defaults and applies the given options.
@@ -229,12 +256,7 @@ func newSlogHook(opts []Option) *slogHook {
 	return h
 }
 
-// WithLogging returns an agent.Option that installs the slog-based LoggingHook.
+// WithLogging returns an agent.Option that installs the slog-based observer.
 func WithLogging(opts ...Option) agent.Option {
-	return func(a *agent.Agent) error {
-		h := newSlogHook(opts)
-		h.agentName = a.Name()
-		a.SetLoggingHook(h)
-		return nil
-	}
+	return agent.WithObserver(newSlogHook(opts))
 }

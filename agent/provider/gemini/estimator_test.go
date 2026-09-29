@@ -51,7 +51,7 @@ func TestEstimator_ReturnsTokenCount(t *testing.T) {
 	defer srv.Close()
 
 	est := newTestEstimator(t, srv.URL)
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello, world!"}}},
 		},
@@ -79,7 +79,7 @@ func TestEstimator_WithSystemPrompt_GeminiAPIBackend_ReturnsError(t *testing.T) 
 	defer srv.Close()
 
 	est := newTestEstimator(t, srv.URL)
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hi"}}},
 		},
@@ -98,7 +98,7 @@ func TestEstimator_WithSystemPrompt_GeminiAPIBackend_ReturnsError(t *testing.T) 
 	}
 }
 
-func TestEstimator_WithToolConfig_GeminiAPIBackend_ReturnsError(t *testing.T) {
+func TestEstimator_WithTools_GeminiAPIBackend_ReturnsError(t *testing.T) {
 	// The Gemini API (mldev) backend does not support tools in
 	// countTokens requests — the SDK rejects this client-side.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,11 +111,11 @@ func TestEstimator_WithToolConfig_GeminiAPIBackend_ReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	est := newTestEstimator(t, srv.URL)
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Use a tool"}}},
 		},
-		ToolConfig: []tool.Spec{
+		Tools: []tool.Spec{
 			{
 				Name:        "get_weather",
 				Description: "Gets the weather for a location",
@@ -155,7 +155,7 @@ func TestEstimator_APIError_PropagatesError(t *testing.T) {
 	defer srv.Close()
 
 	est := newTestEstimator(t, srv.URL)
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},
@@ -184,7 +184,7 @@ func TestEstimator_ServerError_PropagatesError(t *testing.T) {
 	defer srv.Close()
 
 	est := newTestEstimator(t, srv.URL)
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},

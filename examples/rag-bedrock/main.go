@@ -11,7 +11,7 @@
 //
 // Run:
 //
-//	KNOWLEDGE_BASE_ID=<your-kb-id> go run ./aws-bedrock-rag
+//	KNOWLEDGE_BASE_ID=<your-kb-id> go run ./rag-bedrock
 
 package main
 
@@ -22,10 +22,9 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/camilbinas/gude-agents/agent/rag"
+	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
@@ -40,16 +39,16 @@ func main() {
 
 	// Build the retriever — points at your Bedrock Knowledge Base.
 	// Fetches up to 5 results and discards anything below 0.4 relevance.
-	retriever, err := rag.NewKnowledgeBaseRetriever(kbID,
-		rag.WithKnowledgeBaseTopK(5),
-		rag.WithKnowledgeBaseScoreThreshold(0.4),
+	retriever, err := ragbedrock.NewKnowledgeBaseRetriever(kbID,
+		ragbedrock.WithKnowledgeBaseMaxResults(5),
+		ragbedrock.WithKnowledgeBaseScoreThreshold(0.4),
 	)
 	if err != nil {
 		log.Fatalf("retriever: %v", err)
 	}
 
 	// Wrap the retriever as a tool the LLM can call on demand.
-	kbTool := agent.NewRetrieverTool(
+	kbTool := rag.NewRetrieverTool(
 		"search_knowledge_base",
 		"Search the knowledge base for relevant information. Use this whenever you need to answer a question.",
 		retriever,
@@ -59,8 +58,8 @@ func main() {
 
 	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Use the search_knowledge_base tool to find relevant information before answering."),
-		[]tool.Tool{kbTool},
+		"You are a helpful assistant. Use the search_knowledge_base tool to find relevant information before answering.",
+		agent.WithTools(kbTool),
 		auto.WithLogging(),
 	)
 	if err != nil {

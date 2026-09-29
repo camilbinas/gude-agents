@@ -21,7 +21,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/a2a"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
@@ -52,10 +51,10 @@ func main() {
 	// Wire the remote tools into a local orchestrator agent.
 	provider := bedrock.Must(bedrock.Standard())
 
-	orchestrator, err := agent.Default(
+	orchestrator, err := agent.New(
 		provider,
-		prompt.Text("You are an orchestrator. Use the available tools to answer questions."),
-		remoteTools,
+		"You are an orchestrator. Use the available tools to answer questions.",
+		agent.WithTools(remoteTools...),
 		agent.WithName("orchestrator"),
 	)
 	if err != nil {
@@ -68,5 +67,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("\nOrchestrator response: %s\n", result)
+	fmt.Printf("\nOrchestrator response: %s\n", result.Text)
 }

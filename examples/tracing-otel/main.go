@@ -1,32 +1,16 @@
 // Example: OpenTelemetry tracing for agent invocations.
 //
-// Demonstrates how to enable distributed tracing on an agent so that every
-// invocation, iteration, provider call, and tool execution produces OTEL
-// spans.
+// The example exports spans to an OTLP collector when reachable and prints a
+// formatted tree after each invocation otherwise.
 //
-// The example auto-detects whether an OTLP collector is running:
+// To run:
 //
-//   - If a collector is reachable (e.g. Jaeger on localhost:4317), spans are
-//     exported via OTLP gRPC and you can view them in the collector UI.
-//   - If no collector is found, spans are printed to stderr as a formatted
-//     tree after each invocation completes.
-//
-// To run with Jaeger:
-//
-//	go run ./tracing
-//	# open http://localhost:16686
-//
-// To run without a collector (console output):
-//
-//	go run ./tracing
-//
-// Set OTEL_EXPORTER_OTLP_ENDPOINT to override the default endpoint.
+//	go run ./tracing-otel
 
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -41,7 +25,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/agent/tracing"
@@ -50,8 +33,6 @@ import (
 
 func main() {
 	ctx := agent.Background()
-
-	// 1. Set up tracing — tries OTLP first, falls back to console tree.
 	treeExp, shutdown, err := setupTracing(ctx)
 	if err != nil {
 		log.Fatal(err)
@@ -62,76 +43,45 @@ func main() {
 		}
 	}()
 
-	// 2. Create a provider.
-	provider := bedrock.Must(bedrock.Standard())
+	type weatherInput struct {
+		City string `json:"city" description:"City name" required:"true"`
+	}
+	weatherTool := tool.New("get_weather", "Get the current weather for a city", func(_ context.Context, input weatherInput) (string, error) {
+		temp := 15 + rand.IntN(20)
+		return fmt.Sprintf(`{"city": %q, "temp_c": %d, "condition": "partly cloudy"}`, input.City, temp), nil
+	})
 
-	// 3. Define some tools so we get tool spans in the trace.
-	weatherTool := tool.NewRaw(
-		"get_weather",
-		"Get the current weather for a city",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"city": map[string]any{
-					"type":        "string",
-					"description": "City name",
-				},
-			},
-			"required": []any{"city"},
-		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var req struct {
-				City string `json:"city"`
-			}
-			if err := json.Unmarshal(input, &req); err != nil {
-				return "", err
-			}
-			temp := 15 + rand.IntN(20)
-			return fmt.Sprintf(`{"city": %q, "temp_c": %d, "condition": "partly cloudy"}`, req.City, temp), nil
-		},
-	)
+	type timeInput struct {
+		Timezone string `json:"timezone" description:"IANA timezone name (e.g. America/New_York)" required:"true"`
+	}
+	timeTool := tool.New("get_time", "Get the current time in a timezone", func(_ context.Context, input timeInput) (string, error) {
+		return fmt.Sprintf(`{"timezone": %q, "time": "14:32"}`, input.Timezone), nil
+	})
 
-	timeTool := tool.NewString(
-		"get_time",
-		"Get the current time in a timezone",
-		"timezone", "IANA timezone name (e.g. America/New_York)",
-		func(_ context.Context, tz string) (string, error) {
-			return fmt.Sprintf(`{"timezone": %q, "time": "14:32"}`, tz), nil
-		},
-	)
-
-	// 4. Create the agent with tracing enabled.
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant with access to weather and time tools. Be concise."),
-		[]tool.Tool{weatherTool, timeTool},
+	a, err := agent.New(
+		bedrock.Must(bedrock.Standard()),
+		"You are a helpful assistant with access to weather and time tools. Be concise.",
+		agent.WithTools(weatherTool, timeTool),
 		tracing.WithTracing(nil),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// 5. Interactive loop — each invocation produces a full trace.
 	fmt.Println("Traced agent ready. Type 'quit' to exit.")
 	fmt.Println("Try: What's the weather in Tokyo and the time in America/New_York?")
 	fmt.Println()
 
 	utils.Chat(ctx, a, utils.ChatOptions{
-		AfterInvoke: func(_ *agent.Context, _ error) {
-			// Flush the tree exporter after each invocation so the trace
-			// prints immediately (only relevant for console mode).
+		AfterInvoke: func(_ *agent.Context, _ agent.Result, _ error) {
 			if treeExp != nil {
 				treeExp.Flush()
 			}
 		},
 	})
-
 	fmt.Println("Flushing traces...")
 }
 
-// setupTracing configures a TracerProvider. It probes the OTLP endpoint first;
-// if reachable, spans go to the collector (treeExp is nil). Otherwise it falls
-// back to a tree formatter (treeExp is non-nil so the caller can Flush it).
 func setupTracing(ctx context.Context) (treeExp *utils.TreeExporter, shutdown func(context.Context) error, err error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {

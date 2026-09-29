@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"pgregory.net/rapid"
 )
 
@@ -52,16 +53,16 @@ func TestProperty_FaithfulnessClaimFraction(t *testing.T) {
 			t.Fatalf("failed to marshal verdicts: %v", err)
 		}
 
-		var responses []*agent.ProviderResponse
+		var responses []*agent.ModelResponse
 		var errs []error
 		if numClaims == 0 {
 			// Only the claims extraction step is called when there are no claims.
-			responses = []*agent.ProviderResponse{
+			responses = []*agent.ModelResponse{
 				{Text: string(claimsJSON)},
 			}
 			errs = []error{nil}
 		} else {
-			responses = []*agent.ProviderResponse{
+			responses = []*agent.ModelResponse{
 				{Text: string(claimsJSON)},
 				{Text: string(verdictsJSON)},
 			}
@@ -73,7 +74,7 @@ func TestProperty_FaithfulnessClaimFraction(t *testing.T) {
 
 		result, err := f.Evaluate(context.Background(), EvalCase{
 			ActualOutput:     "some output text",
-			RetrievedContext: []agent.Document{{Content: "some context"}},
+			RetrievedContext: []rag.Document{{Content: "some context"}},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

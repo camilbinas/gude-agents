@@ -37,10 +37,9 @@ func main() {
 
 	// ── Agent-level defaults ──────────────────────────────────────────
 	// Low temperature for consistent, deterministic output.
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Keep answers to 2-3 sentences."),
-		nil,
+		prompt.Text("You are a helpful assistant. Keep answers to 2-3 sentences.").String(),
 		agent.WithTemperature(0.1),
 		agent.WithTopP(0.9),
 		auto.WithLogging(),
@@ -55,7 +54,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(result)
+	fmt.Println(result.Text)
 
 	// ── Call 2: Per-invocation override (high temperature) ────────────
 	// Override temperature for this single call to get more creative output.
@@ -68,7 +67,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(result)
+	fmt.Println(result.Text)
 
 	// ── Call 3: Stop sequences ────────────────────────────────────────
 	// Use stop sequences to cut generation when the model outputs "2.".
@@ -81,5 +80,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(strings.TrimSpace(result))
+	fmt.Println(strings.TrimSpace(result.Text))
 }

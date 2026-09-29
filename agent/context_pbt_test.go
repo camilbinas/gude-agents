@@ -237,25 +237,23 @@ func TestProperty_WithAccessorRoundTripAndPointerIdentity(t *testing.T) {
 					rt.Fatalf("InferenceConfig().Temperature = %v, want %v", got.Temperature, temp)
 				}
 
-			case 4: // WithEventHook
-				hook := BaseEventHook{}
-				ret := c.WithEventHook(hook)
+			case 4: // WithInstructions
+				instr := rapid.String().Draw(rt, "instructions")
+				ret := c.WithInstructions(instr)
 				if ret != c {
-					rt.Fatalf("WithEventHook returned different pointer: got %p, want %p", ret, c)
+					rt.Fatalf("WithInstructions returned different pointer: got %p, want %p", ret, c)
 				}
-				got := c.EventHook()
-				if got != hook {
-					rt.Fatalf("EventHook() = %v, want %v", got, hook)
+				if got := c.Instructions(); got != instr {
+					rt.Fatalf("Instructions() = %q, want %q", got, instr)
 				}
-
-			case 5: // WithIdentifier
+			case 5: // WithIdentity
 				id := rapid.String().Draw(rt, "identifier")
-				ret := c.WithIdentifier(id)
+				ret := c.WithIdentity(id)
 				if ret != c {
-					rt.Fatalf("WithIdentifier returned different pointer: got %p, want %p", ret, c)
+					rt.Fatalf("WithIdentity returned different pointer: got %p, want %p", ret, c)
 				}
-				if got := c.Identifier(); got != id {
-					rt.Fatalf("Identifier() = %q, want %q", got, id)
+				if got := c.Identity(); got != id {
+					rt.Fatalf("Identity() = %q, want %q", got, id)
 				}
 			}
 		}

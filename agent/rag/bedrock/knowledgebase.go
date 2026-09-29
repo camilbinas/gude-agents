@@ -10,17 +10,17 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
-// Compile-time assertion that KnowledgeBaseRetriever satisfies agent.Retriever.
-var _ agent.Retriever = (*KnowledgeBaseRetriever)(nil)
+// Compile-time assertion that KnowledgeBaseRetriever satisfies rag.Retriever.
+var _ rag.Retriever = (*KnowledgeBaseRetriever)(nil)
 
 // KnowledgeBaseRetriever retrieves documents from an AWS Bedrock Knowledge Base.
 type KnowledgeBaseRetriever struct {
 	client          *bedrockagentruntime.Client
 	knowledgeBaseID string
-	topK            int
+	maxResults      int
 	scoreThreshold  float64
 }
 
@@ -29,7 +29,7 @@ type KnowledgeBaseOption func(*knowledgeBaseOptions)
 
 type knowledgeBaseOptions struct {
 	region         string
-	topK           int
+	maxResults     int
 	scoreThreshold float64
 }
 
@@ -38,9 +38,9 @@ func WithKnowledgeBaseRegion(region string) KnowledgeBaseOption {
 	return func(o *knowledgeBaseOptions) { o.region = region }
 }
 
-// WithKnowledgeBaseTopK sets the maximum number of results to retrieve.
-func WithKnowledgeBaseTopK(k int) KnowledgeBaseOption {
-	return func(o *knowledgeBaseOptions) { o.topK = k }
+// WithKnowledgeBaseMaxResults sets the maximum number of results to retrieve.
+func WithKnowledgeBaseMaxResults(n int) KnowledgeBaseOption {
+	return func(o *knowledgeBaseOptions) { o.maxResults = n }
 }
 
 // WithKnowledgeBaseScoreThreshold sets the minimum relevance score for returned documents.
@@ -50,18 +50,18 @@ func WithKnowledgeBaseScoreThreshold(t float64) KnowledgeBaseOption {
 
 // NewKnowledgeBaseRetriever creates a KnowledgeBaseRetriever for the given Knowledge Base ID.
 // Region is resolved in order: WithKnowledgeBaseRegion option → AWS_REGION env → "us-east-1".
-// Defaults: topK=5, scoreThreshold=0.0.
+// Defaults: maxResults=5, scoreThreshold=0.0.
 func NewKnowledgeBaseRetriever(knowledgeBaseID string, opts ...KnowledgeBaseOption) (*KnowledgeBaseRetriever, error) {
 	o := &knowledgeBaseOptions{
-		topK:           5,
+		maxResults:     5,
 		scoreThreshold: 0.0,
 	}
 	for _, fn := range opts {
 		fn(o)
 	}
 
-	if o.topK < 1 {
-		return nil, fmt.Errorf("bedrock knowledge base: topK must be >= 1")
+	if o.maxResults < 1 {
+		return nil, fmt.Errorf("bedrock knowledge base: maxResults must be >= 1")
 	}
 
 	region := o.region
@@ -80,13 +80,13 @@ func NewKnowledgeBaseRetriever(knowledgeBaseID string, opts ...KnowledgeBaseOpti
 	return &KnowledgeBaseRetriever{
 		client:          bedrockagentruntime.NewFromConfig(cfg),
 		knowledgeBaseID: knowledgeBaseID,
-		topK:            o.topK,
+		maxResults:      o.maxResults,
 		scoreThreshold:  o.scoreThreshold,
 	}, nil
 }
 
 // Retrieve fetches relevant documents from the Bedrock Knowledge Base for the given query.
-func (r *KnowledgeBaseRetriever) Retrieve(ctx context.Context, query string) ([]agent.Document, error) {
+func (r *KnowledgeBaseRetriever) Retrieve(ctx context.Context, query string) ([]rag.Document, error) {
 	if query == "" {
 		return nil, fmt.Errorf("bedrock knowledge base: query must not be empty")
 	}
@@ -98,7 +98,7 @@ func (r *KnowledgeBaseRetriever) Retrieve(ctx context.Context, query string) ([]
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults: aws.Int32(int32(r.topK)),
+				NumberOfResults: aws.Int32(int32(r.maxResults)),
 			},
 		},
 	}
@@ -113,11 +113,11 @@ func (r *KnowledgeBaseRetriever) Retrieve(ctx context.Context, query string) ([]
 	return docs, nil
 }
 
-// mapBedrockResults maps Bedrock retrieval results to agent.Document values.
-func mapBedrockResults(results []types.KnowledgeBaseRetrievalResult) []agent.Document {
-	docs := make([]agent.Document, 0, len(results))
+// mapBedrockResults maps Bedrock retrieval results to rag.Document values.
+func mapBedrockResults(results []types.KnowledgeBaseRetrievalResult) []rag.Document {
+	docs := make([]rag.Document, 0, len(results))
 	for _, result := range results {
-		doc := agent.Document{Metadata: make(map[string]string)}
+		doc := rag.Document{Metadata: make(map[string]string)}
 
 		if result.Content != nil && result.Content.Text != nil {
 			doc.Content = *result.Content.Text
@@ -135,11 +135,11 @@ func mapBedrockResults(results []types.KnowledgeBaseRetrievalResult) []agent.Doc
 }
 
 // filterByScore filters documents whose score metadata is below the threshold.
-func filterByScore(docs []agent.Document, threshold float64) []agent.Document {
+func filterByScore(docs []rag.Document, threshold float64) []rag.Document {
 	if threshold <= 0.0 {
 		return docs
 	}
-	result := []agent.Document{}
+	result := []rag.Document{}
 	for _, doc := range docs {
 		score, err := strconv.ParseFloat(doc.Metadata["score"], 64)
 		if err != nil {

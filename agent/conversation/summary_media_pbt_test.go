@@ -286,7 +286,7 @@ func TestProperty7_DisabledByDefault(t *testing.T) {
 			}
 		}
 
-		if err := s.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 			rt.Fatalf("Save: %v", err)
 		}
 
@@ -297,7 +297,9 @@ func TestProperty7_DisabledByDefault(t *testing.T) {
 			rt.Fatal("summarization did not complete")
 		}
 
-		s.Wait()
+		if err := s.Flush(context.Background()); err != nil {
+			rt.Fatalf("Flush: %v", err)
+		}
 
 		mu.Lock()
 		defer mu.Unlock()

@@ -71,6 +71,20 @@ const selectColumns = `version, label, state, usage, extra, created_at`
 
 // Save appends a checkpoint while serializing version allocation per thread.
 func (c *Checkpointer) Save(ctx context.Context, threadID string, cp checkpoint.Checkpoint) (checkpoint.Checkpoint, error) {
+	return c.save(ctx, threadID, cp, nil)
+}
+
+// SaveIfVersion appends a checkpoint only when expectedVersion is the thread's
+// current version. The advisory transaction lock makes the comparison and
+// insert atomic with other saves for the same thread.
+func (c *Checkpointer) SaveIfVersion(ctx context.Context, threadID string, cp checkpoint.Checkpoint, expectedVersion int) (checkpoint.Checkpoint, error) {
+	if expectedVersion < 0 {
+		return checkpoint.Checkpoint{}, fmt.Errorf("postgres checkpointer: expected version must be nonnegative: %d", expectedVersion)
+	}
+	return c.save(ctx, threadID, cp, &expectedVersion)
+}
+
+func (c *Checkpointer) save(ctx context.Context, threadID string, cp checkpoint.Checkpoint, expectedVersion *int) (checkpoint.Checkpoint, error) {
 	if threadID == "" {
 		return checkpoint.Checkpoint{}, checkpoint.ErrThreadIDRequired
 	}
@@ -109,7 +123,17 @@ func (c *Checkpointer) Save(ctx context.Context, threadID string, cp checkpoint.
 	if err := tx.QueryRow(ctx, maxQuery, threadID).Scan(&maxVersion); err != nil {
 		return checkpoint.Checkpoint{}, fmt.Errorf("postgres checkpointer: save max version: %w", err)
 	}
-	cp.Version = maxVersion + 1
+	if expectedVersion != nil {
+		if maxVersion != *expectedVersion {
+			return checkpoint.Checkpoint{}, fmt.Errorf(
+				"postgres checkpointer: save thread %q: expected version %d, current version %d: %w",
+				threadID, *expectedVersion, maxVersion, checkpoint.ErrConflict,
+			)
+		}
+		cp.Version = *expectedVersion + 1
+	} else {
+		cp.Version = maxVersion + 1
+	}
 
 	insert := fmt.Sprintf(
 		`INSERT INTO %s (thread_id, version, label, state, usage, extra, created_at)

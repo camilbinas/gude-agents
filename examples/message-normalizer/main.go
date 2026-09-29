@@ -56,10 +56,9 @@ func main() {
 	// ---------------------------------------------------------------
 	fmt.Println("\n=== Agent with Fill strategy ===")
 
-	a, err := agent.Default(provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithMessageNormalizer(agent.NormFill),
+	a, err := agent.New(provider,
+		prompt.Text("You are a helpful assistant. Be concise.").String(),
+		agent.WithNormalization(agent.NormFill),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -69,17 +68,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Response:", result)
+	fmt.Println("Response:", result.Text)
 
 	// ---------------------------------------------------------------
 	// 3. Disable normalization entirely.
 	// ---------------------------------------------------------------
 	fmt.Println("\n=== Agent with normalization disabled ===")
 
-	a2, err := agent.Default(provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithoutMessageNormalizer(),
+	a2, err := agent.New(provider,
+		prompt.Text("You are a helpful assistant. Be concise.").String(),
+		agent.WithoutNormalization(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -89,7 +87,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Response:", result2)
+	fmt.Println("Response:", result2.Text)
 }
 
 func printMessages(msgs []agent.Message) {

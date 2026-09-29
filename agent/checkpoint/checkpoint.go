@@ -26,6 +26,11 @@ var (
 	// does not exist.
 	ErrNotFound = errors.New("checkpoint: not found")
 
+	// ErrConflict is returned by SaveIfVersion when the latest stored version
+	// does not equal the expected version. It is also returned when a positive
+	// expected version names a missing thread.
+	ErrConflict = errors.New("checkpoint: version conflict")
+
 	// ErrThreadIDRequired is returned when an empty thread ID is supplied.
 	ErrThreadIDRequired = errors.New("checkpoint: thread ID is required")
 )
@@ -78,6 +83,12 @@ type Checkpointer interface {
 	// Save appends a checkpoint for the given thread, assigning the next
 	// version and returning the stored result.
 	Save(ctx context.Context, threadID string, cp Checkpoint) (Checkpoint, error)
+
+	// SaveIfVersion atomically appends a checkpoint only when expectedVersion
+	// equals the latest stored version. expectedVersion zero requires the
+	// thread to be absent. Success assigns version expectedVersion+1. A stale
+	// or missing expected version returns an error wrapping ErrConflict.
+	SaveIfVersion(ctx context.Context, threadID string, cp Checkpoint, expectedVersion int) (Checkpoint, error)
 
 	// Load returns the highest-versioned checkpoint for the thread, or
 	// ErrNotFound if the thread has none.

@@ -70,19 +70,19 @@ func main() {
 
 	// 4. Create a retriever and agent.
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(5))
+	instructions := (prompt.RISEN{
+		Role:         "You are a knowledgeable document assistant with access to reference documents provided as context.",
+		Instructions: "Answer questions based on the provided reference documents. Cite the source filename when possible.",
+		Steps:        []string{"Read the retrieved context carefully", "Find the most relevant information", "Formulate a concise answer grounded in the documents"},
+		EndGoal:      "Provide accurate, concise answers that reference the source material.",
+		Narrowing:    "Only use information from the provided documents. If the documents don't contain relevant information, say so.",
+	}).String()
 
-	a, err := agent.RAGAgent(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.RISEN{
-			Role:         "You are a knowledgeable document assistant with access to reference documents provided as context.",
-			Instructions: "Answer questions based on the provided reference documents. Cite the source filename when possible.",
-			Steps:        []string{"Read the retrieved context carefully", "Find the most relevant information", "Formulate a concise answer grounded in the documents"},
-			EndGoal:      "Provide accurate, concise answers that reference the source material.",
-			Narrowing:    "Only use information from the provided documents. If the documents don't contain relevant information, say so.",
-		},
-		retriever,
-		nil,
-		agent.WithSharedConversation(conversation.NewInMemory()),
+		instructions,
+		agent.WithRetriever(retriever),
+		agent.WithConversationStore(conversation.NewInMemory()),
 		auto.WithLogging(),
 		agent.WithContextFormatter(logAndFormat),
 	)
@@ -91,12 +91,13 @@ func main() {
 	}
 
 	// 5. Interactive chat.
+	ctx.WithConversationID("rag-pdf-session")
 	fmt.Println("\nAsk questions about your documents. Type 'quit' to exit.")
 	utils.Chat(ctx, a)
 }
 
 // logAndFormat prints the retrieved chunks and returns the formatted context string.
-func logAndFormat(docs []agent.Document) string {
+func logAndFormat(docs []rag.Document) string {
 	fmt.Printf("\n  📄 Retrieved %d chunk(s):\n", len(docs))
 	for i, d := range docs {
 		source := d.Metadata["filename"]
@@ -110,5 +111,5 @@ func logAndFormat(docs []agent.Document) string {
 		fmt.Printf("     [%d] %s: %s\n", i+1, source, preview)
 	}
 	fmt.Println()
-	return agent.DefaultContextFormatter(docs)
+	return rag.DefaultContextFormatter(docs)
 }

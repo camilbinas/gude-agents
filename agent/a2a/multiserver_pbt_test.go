@@ -10,7 +10,6 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"pgregory.net/rapid"
 )
 
@@ -56,8 +55,7 @@ func TestProperty_MultiServerCardURLContainsPrefix(t *testing.T) {
 		for _, prefix := range prefixes {
 			a, err := agent.New(
 				&fakeProvider{response: "ok"},
-				prompt.Text("Agent at "+prefix),
-				nil,
+				"Agent at "+prefix,
 				agent.WithName("agent"+prefix),
 			)
 			if err != nil {
@@ -118,8 +116,7 @@ func TestProperty_MultiServerRejectsDuplicatePrefixes(t *testing.T) {
 		for _, p := range prefixes {
 			a, err := agent.New(
 				&fakeProvider{response: "ok"},
-				prompt.Text("test agent"),
-				nil,
+				"test agent",
 				agent.WithName("agent-"+p),
 			)
 			if err != nil {
@@ -131,8 +128,7 @@ func TestProperty_MultiServerRejectsDuplicatePrefixes(t *testing.T) {
 		// Append the duplicate registration.
 		dupAgent, err := agent.New(
 			&fakeProvider{response: "dup"},
-			prompt.Text("dup agent"),
-			nil,
+			"dup agent",
 			agent.WithName("dup-agent"),
 		)
 		if err != nil {
@@ -238,8 +234,7 @@ func TestProperty_MultiServerPrefixRoutingCorrectness(t *testing.T) {
 			name := "agent-" + prefix[len("/agents/"):]
 			a, err := agent.New(
 				&fakeProvider{response: "ok from " + name},
-				prompt.Text("You are "+name),
-				nil,
+				"You are "+name,
 				agent.WithName(name),
 			)
 			if err != nil {

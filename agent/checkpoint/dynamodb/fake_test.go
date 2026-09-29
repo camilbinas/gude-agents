@@ -26,6 +26,7 @@ type fakeDynamo struct {
 
 	putCalls int
 	delCalls int
+	putErr   error
 }
 
 func newFakeDynamo() *fakeDynamo {
@@ -44,6 +45,11 @@ func (f *fakeDynamo) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.putCalls++
+	if f.putErr != nil {
+		err := f.putErr
+		f.putErr = nil
+		return nil, err
+	}
 
 	pk, ok := pkOf(in.Item, "thread_id")
 	if !ok {

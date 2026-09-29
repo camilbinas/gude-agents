@@ -18,7 +18,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/joho/godotenv"
 )
@@ -39,10 +38,9 @@ func main() {
 		},
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text("You are a helpful assistant. Analyze documents thoroughly and answer questions concisely."),
-		nil,
+		"You are a helpful assistant. Analyze documents thoroughly and answer questions concisely.",
 		auto.WithLogging(),
 	)
 	if err != nil {
@@ -54,10 +52,11 @@ func main() {
 	fmt.Printf("Document URL: %s\n", docURL)
 	fmt.Println(strings.Repeat("─", 60))
 
-	if err := a.InvokeStream(docCtx, "Summarize this document. What are the key points?", func(chunk string) {
+	for chunk, err := range a.TextStream(docCtx, "Summarize this document. What are the key points?") {
+		if err != nil {
+			log.Fatal(err)
+		}
 		fmt.Print(chunk)
-	}); err != nil {
-		log.Fatal(err)
 	}
 	fmt.Println()
 }

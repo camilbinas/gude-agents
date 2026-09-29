@@ -3,7 +3,9 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 
 	_ "pgregory.net/rapid" // register -rapid.checks flag
@@ -278,7 +280,7 @@ func TestNew_InvalidJSON(t *testing.T) {
 }
 
 func TestNewRaw_Handler(t *testing.T) {
-	tl := NewRaw("echo", "Echo input", map[string]any{"type": "object"}, func(_ context.Context, input json.RawMessage) (string, error) {
+	tl := NewRaw("echo", "Echo input", func(_ context.Context, input json.RawMessage) (string, error) {
 		return string(input), nil
 	})
 
@@ -292,5 +294,49 @@ func TestNewRaw_Handler(t *testing.T) {
 	}
 	if result != `{"msg":"hi"}` {
 		t.Fatalf("expected %q, got %q", `{"msg":"hi"}`, result)
+	}
+}
+
+func TestNewRichAndNamedOption(t *testing.T) {
+	type Input struct {
+		Name string `json:"name"`
+	}
+	var _ Option = RequiresApproval()
+	tl := NewRich("avatar", "return avatar", func(_ context.Context, in Input) (*Output, error) {
+		return &Output{Text: in.Name, Images: []Image{{URL: "https://example.com/a.png", MIMEType: "image/png"}}}, nil
+	}, RequiresApproval())
+	if !tl.NeedsApproval() || !tl.IsRich() {
+		t.Fatal("expected rich approval tool")
+	}
+	out, err := tl.RichHandler(context.Background(), json.RawMessage(`{"name":"Ada"}`))
+	if err != nil || out.Text != "Ada" || len(out.Images) != 1 {
+		t.Fatalf("out=%#v err=%v", out, err)
+	}
+}
+
+func TestRegistryDynamicAndConcurrent(t *testing.T) {
+	var registry Registry
+	const workers = 32
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name := fmt.Sprintf("tool-%02d", i)
+			if err := registry.Register(NewRaw(name, "dynamic", func(context.Context, json.RawMessage) (string, error) { return name, nil })); err != nil {
+				t.Errorf("Register: %v", err)
+			}
+			registry.Lookup(name)
+		}()
+	}
+	wg.Wait()
+	if got := len(registry.List()); got != workers {
+		t.Fatalf("List len = %d, want %d", got, workers)
+	}
+	if !registry.Unregister("tool-00") {
+		t.Fatal("Unregister returned false")
+	}
+	if _, ok := registry.Lookup("tool-00"); ok {
+		t.Fatal("unregistered tool remains")
 	}
 }

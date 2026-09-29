@@ -1,6 +1,7 @@
 package prometheus
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -87,11 +88,9 @@ func newTestHook(ns string) (*prometheusHook, *prom.Registry) {
 // Property 1: Status label mapping
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_StatusLabelMapping verifies that for any error value (nil or
 // non-nil), the statusLabel helper returns "success" for nil and "error" for
 // non-nil.
-//
 func TestProperty_StatusLabelMapping(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		isErr := rapid.Bool().Draw(rt, "isError")
@@ -117,11 +116,9 @@ func TestProperty_StatusLabelMapping(t *testing.T) {
 // Property 2: Model ID fallback
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_ModelIDFallback verifies that for any string passed as modelID
-// to OnProviderCallStart, the label recorded on provider metrics equals the
+// to ObserveModel, the label recorded on provider metrics equals the
 // input when non-empty, and equals "unknown" when the input is empty.
-//
 func TestProperty_ModelIDFallback(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		// Generate a string that may be empty.
@@ -132,8 +129,10 @@ func TestProperty_ModelIDFallback(t *testing.T) {
 
 		h, reg := newTestHook("")
 
-		finish := h.OnProviderCallStart(modelID)
-		finish(nil, agent.TokenUsage{InputTokens: 1, OutputTokens: 1})
+		_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+			Phase: agent.End, ModelID: modelID,
+			Usage: agent.TokenUsage{InputTokens: 1, OutputTokens: 1},
+		})
 
 		expectedLabel := modelID
 		if modelID == "" {
@@ -154,11 +153,9 @@ func TestProperty_ModelIDFallback(t *testing.T) {
 // Property 3: Invoke counter correctness
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_InvokeCounterCorrectness verifies that for any sequence of N
 // invocations with random success/error outcomes, the invoke counter sums
 // match the expected counts.
-//
 func TestProperty_InvokeCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 50).Draw(rt, "n")
@@ -168,8 +165,6 @@ func TestProperty_InvokeCounterCorrectness(t *testing.T) {
 
 		for i := range n {
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
-			finish := h.OnInvokeStart()
-
 			var err error
 			if isErr {
 				err = errors.New("fail")
@@ -177,7 +172,9 @@ func TestProperty_InvokeCounterCorrectness(t *testing.T) {
 			} else {
 				successCount++
 			}
-			finish(err, agent.TokenUsage{})
+			_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+				Phase: agent.End, Err: err,
+			})
 		}
 
 		gotSuccess := gatherCounter(reg, "agent_invoke_total", map[string]string{"status": "success"})
@@ -199,11 +196,9 @@ func TestProperty_InvokeCounterCorrectness(t *testing.T) {
 // Property 4: Provider token accounting
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_ProviderTokenAccounting verifies that for any sequence of
 // provider call completions with random TokenUsage values and model IDs,
 // token counters sum correctly per model and direction.
-//
 func TestProperty_ProviderTokenAccounting(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 30).Draw(rt, "n")
@@ -220,15 +215,25 @@ func TestProperty_ProviderTokenAccounting(t *testing.T) {
 				Draw(rt, fmt.Sprintf("model_%d", i))
 			inputTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("input_%d", i))
 			outputTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("output_%d", i))
+			cacheReadTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("cache_read_%d", i))
+			cacheWriteTokens := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("cache_write_%d", i))
 
-			finish := h.OnProviderCallStart(modelID)
-			finish(nil, agent.TokenUsage{
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
+			_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+				Phase: agent.End, ModelID: modelID,
+				Usage: agent.TokenUsage{
+					InputTokens: inputTokens, OutputTokens: outputTokens,
+					CacheReadTokens: cacheReadTokens, CacheWriteTokens: cacheWriteTokens,
+				},
 			})
 
 			expected[key{modelID, "input"}] += float64(inputTokens)
 			expected[key{modelID, "output"}] += float64(outputTokens)
+			if cacheReadTokens > 0 {
+				expected[key{modelID, "cache_read"}] += float64(cacheReadTokens)
+			}
+			if cacheWriteTokens > 0 {
+				expected[key{modelID, "cache_write"}] += float64(cacheWriteTokens)
+			}
 		}
 
 		for k, want := range expected {
@@ -248,11 +253,9 @@ func TestProperty_ProviderTokenAccounting(t *testing.T) {
 // Property 5: Tool call counter correctness
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_ToolCallCounterCorrectness verifies that for any sequence of
 // tool executions with random tool names and outcomes, counters match per
 // (tool_name, status) pair.
-//
 func TestProperty_ToolCallCounterCorrectness(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 30).Draw(rt, "n")
@@ -268,15 +271,15 @@ func TestProperty_ToolCallCounterCorrectness(t *testing.T) {
 				Draw(rt, fmt.Sprintf("tool_%d", i))
 			isErr := rapid.Bool().Draw(rt, fmt.Sprintf("err_%d", i))
 
-			finish := h.OnToolStart(toolName)
-
 			var err error
 			status := "success"
 			if isErr {
 				err = errors.New("tool failed")
 				status = "error"
 			}
-			finish(err)
+			_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+				Phase: agent.End, Name: toolName, Err: err,
+			})
 
 			expected[key{toolName, status}]++
 		}
@@ -298,11 +301,9 @@ func TestProperty_ToolCallCounterCorrectness(t *testing.T) {
 // Property 6: Guardrail block counter selectivity
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_GuardrailBlockSelectivity verifies that for any sequence of
 // guardrail completions with random direction and blocked values, the counter
 // only increments when blocked is true.
-//
 func TestProperty_GuardrailBlockSelectivity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(1, 50).Draw(rt, "n")
@@ -318,7 +319,9 @@ func TestProperty_GuardrailBlockSelectivity(t *testing.T) {
 				Draw(rt, fmt.Sprintf("dir_%d", i))
 			blocked := rapid.Bool().Draw(rt, fmt.Sprintf("blocked_%d", i))
 
-			h.OnGuardrailComplete(direction, blocked)
+			_ = h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+				Phase: agent.End, Direction: direction, Blocked: blocked,
+			})
 
 			if blocked {
 				expected[direction]++
@@ -341,18 +344,16 @@ func TestProperty_GuardrailBlockSelectivity(t *testing.T) {
 // Property 7: Iteration counter monotonicity
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_IterationCounterMonotonicity verifies that for any non-negative
-// integer N, calling OnIterationStart exactly N times results in the counter
+// integer N, calling ObserveIteration with Start records exactly N times results in the counter
 // having value N.
-//
 func TestProperty_IterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(0, 100).Draw(rt, "n")
 		h, reg := newTestHook("")
 
 		for range n {
-			h.OnIterationStart()
+			_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 		}
 
 		got := gatherCounterTotal(reg, "agent_iteration_total")
@@ -366,12 +367,10 @@ func TestProperty_IterationCounterMonotonicity(t *testing.T) {
 // Property 8: Namespace prefixing
 // ---------------------------------------------------------------------------
 
-//
 // TestProperty_NamespacePrefixing verifies that for any non-empty namespace
 // string, all registered metric names are prefixed with that namespace
 // followed by an underscore. When the namespace is empty, metric names have
 // no prefix.
-//
 func TestProperty_NamespacePrefixing(t *testing.T) {
 	baseNames := []string{
 		"agent_invoke_total",
@@ -383,6 +382,8 @@ func TestProperty_NamespacePrefixing(t *testing.T) {
 		"agent_tool_call_duration_seconds",
 		"agent_guardrail_block_total",
 		"agent_iteration_total",
+		"agent_images_attached_total",
+		"agent_documents_attached_total",
 	}
 
 	rapid.Check(t, func(rt *rapid.T) {
@@ -391,14 +392,18 @@ func TestProperty_NamespacePrefixing(t *testing.T) {
 		h, reg := newTestHook(ns)
 
 		// Exercise hooks so all metric families appear in Gather output.
-		finishInvoke := h.OnInvokeStart()
-		finishInvoke(nil, agent.TokenUsage{InputTokens: 1, OutputTokens: 1})
-		h.OnIterationStart()
-		finishProvider := h.OnProviderCallStart("m")
-		finishProvider(nil, agent.TokenUsage{InputTokens: 1, OutputTokens: 1})
-		finishTool := h.OnToolStart("t")
-		finishTool(nil)
-		h.OnGuardrailComplete("input", true)
+		_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{Phase: agent.End})
+		_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+		_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+			Phase: agent.End, ModelID: "m", Usage: agent.TokenUsage{InputTokens: 1, OutputTokens: 1},
+		})
+		_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: "t"})
+		_ = h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+			Phase: agent.End, Direction: "input", Blocked: true,
+		})
+		_ = h.ObserveAttachment(context.Background(), agent.AttachmentRecord{
+			Phase: agent.End, ImageCount: 1, DocumentCount: 1,
+		})
 
 		families, err := reg.Gather()
 		if err != nil {

@@ -12,9 +12,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
-// Embedder implements agent.Embedder using the AWS Bedrock InvokeModel API.
+var _ rag.Embedder = (*Embedder)(nil)
+
+// Embedder implements rag.Embedder using the AWS Bedrock InvokeModel API.
 // It supports Amazon Titan Embeddings V2 and Cohere Embed v3/v4 models,
 // selecting the correct request/response format by model ID prefix.
 type Embedder struct {

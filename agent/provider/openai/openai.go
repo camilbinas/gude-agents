@@ -26,6 +26,8 @@ type OpenAIProvider struct {
 	cachingEnabled bool
 }
 
+var _ agent.Provider = (*OpenAIProvider)(nil)
+
 // Name returns a human-readable identifier for this provider instance.
 func (p *OpenAIProvider) Name() string { return "openai" }
 
@@ -72,7 +74,8 @@ func WithSystemPromptCaching() Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	a, err := agent.Default(openai.Must(openai.Standard()), instructions, tools)
+//	provider := openai.Must(openai.Standard())
+//	a, err := agent.New(provider, instructions)
 func Must(p *OpenAIProvider, err error) *OpenAIProvider {
 	if err != nil {
 		panic("openai: " + err.Error())
@@ -113,42 +116,20 @@ func (p *OpenAIProvider) ModelID() string { return p.model }
 // not exposed through the agent.Provider interface.
 func (p *OpenAIProvider) Client() *openaisdk.Client { return p.client }
 
-// ---------------------------------------------------------------------------
-// Converse (non-streaming)
-// ---------------------------------------------------------------------------
-
-func (p *OpenAIProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	if err := validateOpenAIDocumentSources(params.Messages); err != nil {
+// Stream sends a streaming chat completion request and accumulates its final response.
+// Text deltas are emitted when emit is non-nil.
+func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	if err := validateOpenAIDocumentSources(req.Messages); err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
-	input := p.buildParams(params)
-	completion, err := p.client.Chat.Completions.New(ctx, input)
-	if err != nil {
-		return nil, &agent.ProviderError{Cause: err}
-	}
-	resp := parseCompletion(completion)
-	resp.Usage.InputTokens = int(completion.Usage.PromptTokens)
-	resp.Usage.OutputTokens = int(completion.Usage.CompletionTokens)
-	resp.Usage.CacheReadTokens = int(completion.Usage.PromptTokensDetails.CachedTokens)
-	return resp, nil
-}
-
-// ---------------------------------------------------------------------------
-// ConverseStream (streaming)
-// ---------------------------------------------------------------------------
-
-func (p *OpenAIProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	if err := validateOpenAIDocumentSources(params.Messages); err != nil {
-		return nil, &agent.ProviderError{Cause: err}
-	}
-	input := p.buildParams(params)
+	input := p.buildParams(req)
 	input.StreamOptions = openaisdk.ChatCompletionStreamOptionsParam{
 		IncludeUsage: openaisdk.Bool(true),
 	}
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, input)
 
-	resp := &agent.ProviderResponse{}
+	resp := &agent.ModelResponse{}
 
 	// Track in-flight tool calls being assembled from deltas.
 	// OpenAI streams tool calls by index.
@@ -175,8 +156,8 @@ func (p *OpenAIProvider) ConverseStream(ctx context.Context, params agent.Conver
 			// Text content delta.
 			if delta.Content != "" {
 				resp.Text += delta.Content
-				if cb != nil {
-					cb(delta.Content)
+				if emit != nil {
+					emit(agent.ModelEvent{Type: agent.ModelEventText, Text: delta.Content})
 				}
 			}
 
@@ -228,26 +209,26 @@ func (p *OpenAIProvider) ConverseStream(ctx context.Context, params agent.Conver
 // Helpers
 // ---------------------------------------------------------------------------
 
-func (p *OpenAIProvider) buildParams(params agent.ConverseParams) openaisdk.ChatCompletionNewParams {
+func (p *OpenAIProvider) buildParams(req agent.ModelRequest) openaisdk.ChatCompletionNewParams {
 	input := openaisdk.ChatCompletionNewParams{
 		Model:    shared.ChatModel(p.model),
-		Messages: toOpenAIMessages(params.Messages, params.System),
+		Messages: toOpenAIMessages(req.Messages, req.System),
 	}
 	if p.maxTokens > 0 {
 		input.MaxCompletionTokens = openaisdk.Int(p.maxTokens)
 	}
-	if len(params.ToolConfig) > 0 {
-		input.Tools = toOpenAITools(params.ToolConfig)
+	if len(req.Tools) > 0 {
+		input.Tools = toOpenAITools(req.Tools)
 	}
-	if params.ToolChoice != nil {
-		input.ToolChoice = toOpenAIToolChoice(params.ToolChoice)
+	if req.ToolChoice != nil {
+		input.ToolChoice = toOpenAIToolChoice(req.ToolChoice)
 	}
 	if p.thinkingEffort != "" {
 		input.ReasoningEffort = shared.ReasoningEffort(p.thinkingEffort)
 	}
 	// Apply inference config overrides.
 	// TopK is silently ignored — OpenAI Chat Completions API does not support it.
-	if cfg := params.InferenceConfig; cfg != nil {
+	if cfg := req.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
 			input.Temperature = openaisdk.Float(*cfg.Temperature)
 		}
@@ -266,8 +247,8 @@ func (p *OpenAIProvider) buildParams(params agent.ConverseParams) openaisdk.Chat
 	return input
 }
 
-func parseCompletion(completion *openaisdk.ChatCompletion) *agent.ProviderResponse {
-	resp := &agent.ProviderResponse{}
+func parseCompletion(completion *openaisdk.ChatCompletion) *agent.ModelResponse {
+	resp := &agent.ModelResponse{}
 	if len(completion.Choices) == 0 {
 		return resp
 	}

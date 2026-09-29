@@ -1,7 +1,7 @@
 package prometheus
 
 import (
-	"time"
+	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -11,7 +11,7 @@ import (
 // llmBuckets defines histogram buckets tuned for LLM latencies.
 var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0}
 
-// Option configures the Prometheus metrics hook.
+// Option configures the Prometheus metrics observer.
 type Option func(*prometheusHook)
 
 // WithNamespace sets a prefix for all metric names.
@@ -30,7 +30,7 @@ func WithRegisterer(r prometheus.Registerer) Option {
 	}
 }
 
-// prometheusHook implements agent.MetricsHook using Prometheus metrics.
+// prometheusHook implements the observer capabilities needed for Prometheus metrics.
 type prometheusHook struct {
 	namespace   string
 	registerer  prometheus.Registerer
@@ -50,9 +50,16 @@ type prometheusHook struct {
 	docsAttachedTotal    prometheus.Counter
 }
 
-var _ agent.MetricsHook = (*prometheusHook)(nil)
+var (
+	_ agent.InvokeObserver     = (*prometheusHook)(nil)
+	_ agent.IterationObserver  = (*prometheusHook)(nil)
+	_ agent.ModelObserver      = (*prometheusHook)(nil)
+	_ agent.ToolObserver       = (*prometheusHook)(nil)
+	_ agent.GuardrailObserver  = (*prometheusHook)(nil)
+	_ agent.AttachmentObserver = (*prometheusHook)(nil)
+)
 
-// register creates and registers all 9 Prometheus metrics with the registerer.
+// register creates and registers all 11 Prometheus metrics with the registerer.
 func (h *prometheusHook) register() {
 	ns := h.namespace
 	cl := h.constLabels
@@ -134,76 +141,73 @@ func statusLabel(err error) string {
 	return "success"
 }
 
-// OnInvokeStart is called at the beginning of an invocation.
-// It returns a finish function that records duration and status.
-func (h *prometheusHook) OnInvokeStart() func(err error, usage agent.TokenUsage) {
-	start := time.Now()
-	return func(err error, usage agent.TokenUsage) {
-		h.invokeDuration.Observe(time.Since(start).Seconds())
-		h.invokeTotal.WithLabelValues(statusLabel(err)).Inc()
+// ObserveInvoke records invocation duration and status from a normalized end record.
+func (h *prometheusHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
+	h.invokeDuration.Observe(record.Duration.Seconds())
+	h.invokeTotal.WithLabelValues(statusLabel(record.Err)).Inc()
+	return ctx
 }
 
-// OnIterationStart is called at the beginning of each agent loop iteration.
-func (h *prometheusHook) OnIterationStart() {
-	h.iterationTotal.Inc()
+func (h *prometheusHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.iterationTotal.Inc()
+	}
+	return ctx
 }
 
-// OnIterationEnd is called at the end of each agent loop iteration.
-func (h *prometheusHook) OnIterationEnd(toolCount int, isFinal bool) {
-	// Iteration count is already tracked in OnIterationStart.
-	// OnIterationEnd is available for custom extensions; no additional metrics emitted.
-}
-
-// OnProviderCallStart is called before each provider call.
-// It returns a finish function that records duration, status, and token counts.
-func (h *prometheusHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {
+func (h *prometheusHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
+	}
+	modelID := record.ModelID
 	if modelID == "" {
 		modelID = "unknown"
 	}
-	start := time.Now()
-	return func(err error, usage agent.TokenUsage) {
-		h.providerCallDuration.Observe(time.Since(start).Seconds())
-		h.providerCallTotal.WithLabelValues(modelID, statusLabel(err)).Inc()
-		if err == nil {
-			h.providerTokensTotal.WithLabelValues(modelID, "input").Add(float64(usage.InputTokens))
-			h.providerTokensTotal.WithLabelValues(modelID, "output").Add(float64(usage.OutputTokens))
-			if usage.CacheReadTokens > 0 {
-				h.providerTokensTotal.WithLabelValues(modelID, "cache_read").Add(float64(usage.CacheReadTokens))
-			}
-			if usage.CacheWriteTokens > 0 {
-				h.providerTokensTotal.WithLabelValues(modelID, "cache_write").Add(float64(usage.CacheWriteTokens))
-			}
+	h.providerCallDuration.Observe(record.Duration.Seconds())
+	h.providerCallTotal.WithLabelValues(modelID, statusLabel(record.Err)).Inc()
+	if record.Err == nil {
+		h.providerTokensTotal.WithLabelValues(modelID, "input").Add(float64(record.Usage.InputTokens))
+		h.providerTokensTotal.WithLabelValues(modelID, "output").Add(float64(record.Usage.OutputTokens))
+		if record.Usage.CacheReadTokens > 0 {
+			h.providerTokensTotal.WithLabelValues(modelID, "cache_read").Add(float64(record.Usage.CacheReadTokens))
+		}
+		if record.Usage.CacheWriteTokens > 0 {
+			h.providerTokensTotal.WithLabelValues(modelID, "cache_write").Add(float64(record.Usage.CacheWriteTokens))
 		}
 	}
+	return ctx
 }
 
-// OnToolStart is called before each tool execution.
-// It returns a finish function that records duration and status.
-func (h *prometheusHook) OnToolStart(toolName string) func(err error) {
-	start := time.Now()
-	return func(err error) {
-		h.toolCallDuration.WithLabelValues(toolName).Observe(time.Since(start).Seconds())
-		h.toolCallTotal.WithLabelValues(toolName, statusLabel(err)).Inc()
+func (h *prometheusHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
+	h.toolCallDuration.WithLabelValues(record.Name).Observe(record.Duration.Seconds())
+	h.toolCallTotal.WithLabelValues(record.Name, statusLabel(record.Err)).Inc()
+	return ctx
 }
 
-// OnGuardrailComplete is called after a guardrail evaluation.
-// It increments the block counter only when blocked is true.
-func (h *prometheusHook) OnGuardrailComplete(direction string, blocked bool) {
-	if blocked {
-		h.guardrailBlockTotal.WithLabelValues(direction).Inc()
+func (h *prometheusHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+	if record.Phase == agent.End && record.Blocked {
+		h.guardrailBlockTotal.WithLabelValues(record.Direction).Inc()
 	}
+	return ctx
 }
 
-// OnImagesAttached is called when images are attached to the invocation.
-// It increments the images-attached counter by imageCount.
-func (h *prometheusHook) OnImagesAttached(imageCount int) {
-	h.imagesAttachedTotal.Add(float64(imageCount))
-}
-
-func (h *prometheusHook) OnDocumentsAttached(docCount int) {
-	h.docsAttachedTotal.Add(float64(docCount))
+func (h *prometheusHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
+	}
+	if record.ImageCount > 0 {
+		h.imagesAttachedTotal.Add(float64(record.ImageCount))
+	}
+	if record.DocumentCount > 0 {
+		h.docsAttachedTotal.Add(float64(record.DocumentCount))
+	}
+	return ctx
 }
 
 // WithMetrics returns an agent.Option that enables Prometheus metrics.
@@ -220,7 +224,6 @@ func WithMetrics(opts ...Option) agent.Option {
 			h.constLabels = prometheus.Labels{"agent_name": name}
 		}
 		h.register()
-		a.SetMetricsHook(h)
-		return nil
+		return agent.WithObserver(h)(a)
 	}
 }

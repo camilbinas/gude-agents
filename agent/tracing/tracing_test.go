@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	agent "github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -92,11 +92,11 @@ var (
 // Mock Provider
 // ---------------------------------------------------------------------------
 
-func newMockProvider(responses ...*agent.ProviderResponse) *testutil.MockProvider {
+func newMockProvider(responses ...*agent.ModelResponse) *testutil.MockProvider {
 	return testutil.NewMockProvider(testutil.WithResponses(responses...))
 }
 
-func newMockProviderWithModel(modelID string, responses ...*agent.ProviderResponse) *testutil.MockProvider {
+func newMockProviderWithModel(modelID string, responses ...*agent.ModelResponse) *testutil.MockProvider {
 	return testutil.NewMockProvider(testutil.WithModelID(modelID), testutil.WithResponses(responses...))
 }
 
@@ -104,10 +104,7 @@ type errorProvider struct{ err error }
 
 func (ep *errorProvider) Name() string { return "mock" }
 
-func (ep *errorProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return nil, ep.err
-}
-func (ep *errorProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, _ agent.StreamCallback) (*agent.ProviderResponse, error) {
+func (ep *errorProvider) Stream(_ context.Context, _ agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	return nil, ep.err
 }
 
@@ -116,35 +113,45 @@ func (ep *errorProvider) ConverseStream(_ context.Context, _ agent.ConverseParam
 // ---------------------------------------------------------------------------
 
 type mockMemory struct {
-	mu      sync.RWMutex
-	data    map[string][]agent.Message
-	loadErr error
-	saveErr error
+	mu        sync.RWMutex
+	data      map[string][]agent.Message
+	revisions map[string]uint64
+	loadErr   error
+	saveErr   error
 }
 
 func newMockMemory() *mockMemory {
-	return &mockMemory{data: make(map[string][]agent.Message)}
+	return &mockMemory{
+		data:      make(map[string][]agent.Message),
+		revisions: make(map[string]uint64),
+	}
 }
 
-func (m *mockMemory) Load(_ context.Context, id string) ([]agent.Message, error) {
+func (m *mockMemory) Load(_ context.Context, id string) (agent.ConversationSnapshot, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.loadErr != nil {
-		return nil, m.loadErr
+		return agent.ConversationSnapshot{}, m.loadErr
 	}
-	return m.data[id], nil
+	messages := append([]agent.Message(nil), m.data[id]...)
+	return agent.ConversationSnapshot{Messages: messages, Revision: m.revisions[id]}, nil
 }
 
-func (m *mockMemory) Save(_ context.Context, id string, msgs []agent.Message) error {
+func (m *mockMemory) Save(_ context.Context, id string, msgs []agent.Message, expectedRevision uint64) (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.saveErr != nil {
-		return m.saveErr
+		return 0, m.saveErr
 	}
-	cp := make([]agent.Message, len(msgs))
-	copy(cp, msgs)
-	m.data[id] = cp
-	return nil
+	if m.revisions == nil {
+		m.revisions = make(map[string]uint64)
+	}
+	if m.revisions[id] != expectedRevision {
+		return 0, agent.ErrConversationConflict
+	}
+	m.data[id] = append([]agent.Message(nil), msgs...)
+	m.revisions[id]++
+	return m.revisions[id], nil
 }
 
 func (m *mockMemory) List(_ context.Context) ([]string, error) { return nil, nil }
@@ -155,11 +162,11 @@ func (m *mockMemory) Delete(_ context.Context, _ string) error { return nil }
 // ---------------------------------------------------------------------------
 
 type mockRetriever struct {
-	docs []agent.Document
+	docs []rag.Document
 	err  error
 }
 
-func (r *mockRetriever) Retrieve(_ context.Context, _ string) ([]agent.Document, error) {
+func (r *mockRetriever) Retrieve(_ context.Context, _ string) ([]rag.Document, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -175,7 +182,7 @@ func tc(id, name string) tool.Call {
 }
 
 func dummyTool(name, desc string) tool.Tool {
-	return tool.NewRaw(name, desc, map[string]any{"type": "object"},
+	return tool.NewRaw(name, desc,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "ok", nil
 		})
@@ -186,12 +193,12 @@ func dummyTool(name, desc string) tool.Tool {
 
 // 7.1 WithTracing option wiring
 
-func TestWithTracing_NonNilProvider_SetsHook(t *testing.T) {
+func TestWithTracing_NonNilProvider_SetsObserver(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -213,8 +220,8 @@ func TestWithTracing_NilProvider_UsesGlobalProvider(t *testing.T) {
 	otel.SetTracerProvider(tp)
 	defer otel.SetTracerProvider(nil)
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(nil))
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys", WithTracing(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,8 +241,8 @@ func TestWithoutTracing_NoSpansCreated(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil)
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -259,14 +266,14 @@ func TestZeroOverhead_NoTracingNoSpans(t *testing.T) {
 
 	mem := newMockMemory()
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
+		&agent.ModelResponse{Text: "done"},
 	)
-	echoTool := tool.NewRaw("echo", "echoes", map[string]any{"type": "object"},
+	echoTool := tool.NewRaw("echo", "echoes",
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "echoed", nil })
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool},
-		agent.WithConversation(mem, "conv-1"),
+	a, err := agent.New(prov, "sys", agent.WithTools(echoTool),
+		agent.WithConversationStore(mem),
 		agent.WithInputGuardrail(func(_ *agent.Context, msg string) (string, error) { return msg, nil }),
 		agent.WithOutputGuardrail(func(_ *agent.Context, resp string) (string, error) { return resp, nil }),
 	)
@@ -274,7 +281,7 @@ func TestZeroOverhead_NoTracingNoSpans(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = a.Invoke(agent.Background(), "hi")
+	_, err = a.Invoke(agent.Background().WithConversationID("conv-1"), "hi")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -366,8 +373,8 @@ func TestWithTracing_AutoLoggerSelection(t *testing.T) {
 	_, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,8 +394,8 @@ func TestInvokeSpan_Created(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,19 +418,19 @@ func TestInvokeSpan_Attributes(t *testing.T) {
 
 	mem := newMockMemory()
 	prov := newMockProviderWithModel("test-model-v1",
-		&agent.ProviderResponse{Text: "hello", Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5}},
+		&agent.ModelResponse{Text: "hello", Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5}},
 	)
 
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	a, err := agent.New(prov, "sys",
 		agent.WithMaxIterations(7),
-		agent.WithConversation(mem, "conv-123"),
+		agent.WithConversationStore(mem),
 		WithTracing(tp),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(agent.Background(), "hi")
+	_, err = a.Invoke(agent.Background().WithConversationID("conv-123"), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,11 +459,11 @@ func TestInvokeSpan_OKStatusOnSuccess(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{
+	prov := newMockProvider(&agent.ModelResponse{
 		Text:  "hello",
 		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,12 +491,44 @@ func TestInvokeSpan_OKStatusOnSuccess(t *testing.T) {
 	}
 }
 
+func TestInvokeSpan_ContentCaptureUsesFinalResponse(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(&agent.ModelResponse{Text: "draft"})
+	a, err := agent.New(prov, "sys",
+		agent.WithOutputGuardrail(func(_ *agent.Context, _ string) (string, error) {
+			return "final response", nil
+		}),
+		WithTracing(tp, WithContentCapture()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.Invoke(agent.Background(), "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "final response" {
+		t.Fatalf("result.Text = %q, want final response", result.Text)
+	}
+
+	invokeSpan := findSpan(exp.GetSpans(), "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if got := getAttr(*invokeSpan, AttrGenAICompletion).AsString(); got != result.Text {
+		t.Errorf("gen_ai.completion = %q, want final Result.Text %q", got, result.Text)
+	}
+}
+
 func TestInvokeSpan_ErrorStatusOnFailure(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
 	prov := &errorProvider{err: fmt.Errorf("connection refused")}
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,12 +557,12 @@ func TestIterationSpans_Created(t *testing.T) {
 
 	// Two iterations: first returns tool call, second returns text.
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
+		&agent.ModelResponse{Text: "done"},
 	)
 	echoTool := dummyTool("echo", "echoes")
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool}, WithTracing(tp))
+	a, err := agent.New(prov, "sys", agent.WithTools(echoTool), WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,12 +592,12 @@ func TestIterationSpans_ToolCount(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "a"), tc("tc2", "b")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "a"), tc("tc2", "b")}},
+		&agent.ModelResponse{Text: "done"},
 	)
 
-	a, err := agent.New(prov, prompt.Text("sys"),
-		[]tool.Tool{dummyTool("a", "tool a"), dummyTool("b", "tool b")},
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(dummyTool("a", "tool a"), dummyTool("b", "tool b")),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -588,12 +627,12 @@ func TestIterationSpans_FinalTrue(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
+		&agent.ModelResponse{Text: "done"},
 	)
 	echoTool := dummyTool("echo", "echoes")
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool}, WithTracing(tp))
+	a, err := agent.New(prov, "sys", agent.WithTools(echoTool), WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -626,8 +665,8 @@ func TestIterationSpans_ParentIsInvoke(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,11 +696,11 @@ func TestProviderCallSpan_Created(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{
+	prov := newMockProvider(&agent.ModelResponse{
 		Text:  "hello",
 		Usage: agent.TokenUsage{InputTokens: 100, OutputTokens: 50},
 	})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,15 +729,15 @@ func TestProviderCallSpan_ToolCallCount(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			ToolCalls: []tool.Call{tc("tc1", "a"), tc("tc2", "b"), tc("tc3", "c")},
 			Usage:     agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 		},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{Text: "done"},
 	)
 
-	a, err := agent.New(prov, prompt.Text("sys"),
-		[]tool.Tool{dummyTool("a", "a"), dummyTool("b", "b"), dummyTool("c", "c")},
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(dummyTool("a", "a"), dummyTool("b", "b"), dummyTool("c", "c")),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -728,7 +767,7 @@ func TestProviderCallSpan_ErrorStatus(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := &errorProvider{err: fmt.Errorf("timeout")}
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,12 +792,12 @@ func TestToolSpan_NameAndAttribute(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "search")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "search")}},
+		&agent.ModelResponse{Text: "done"},
 	)
 	searchTool := dummyTool("search", "search things")
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{searchTool}, WithTracing(tp))
+	a, err := agent.New(prov, "sys", agent.WithTools(searchTool), WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -785,18 +824,18 @@ func TestToolSpan_ErrorOnValidationFailure(t *testing.T) {
 
 	// Tool with required field — provider sends empty input.
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "strict")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "strict")}},
+		&agent.ModelResponse{Text: "done"},
 	)
-	strictTool := tool.NewRaw("strict", "strict tool", map[string]any{
+	strictTool := tool.NewRaw("strict", "strict tool", func(_ context.Context, _ json.RawMessage) (string, error) {
+		return "ok", nil
+	}, tool.WithSchema(map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"name": map[string]any{"type": "string"}},
 		"required":   []any{"name"},
-	}, func(_ context.Context, _ json.RawMessage) (string, error) {
-		return "ok", nil
-	})
+	}))
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{strictTool}, WithTracing(tp))
+	a, err := agent.New(prov, "sys", agent.WithTools(strictTool), WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -822,15 +861,15 @@ func TestToolSpan_ErrorOnHandlerError(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "fail")}},
-		&agent.ProviderResponse{Text: "recovered"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "fail")}},
+		&agent.ModelResponse{Text: "recovered"},
 	)
-	failTool := tool.NewRaw("fail", "always fails", map[string]any{"type": "object"},
+	failTool := tool.NewRaw("fail", "always fails",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "", fmt.Errorf("tool exploded")
 		})
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{failTool}, WithTracing(tp))
+	a, err := agent.New(prov, "sys", agent.WithTools(failTool), WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -856,17 +895,17 @@ func TestToolSpan_ParallelToolsShareParent(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{
+		&agent.ModelResponse{ToolCalls: []tool.Call{
 			tc("tc1", "alpha"),
 			tc("tc2", "beta"),
 			tc("tc3", "gamma"),
 		}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{Text: "done"},
 	)
 
-	a, err := agent.New(prov, prompt.Text("sys"),
-		[]tool.Tool{dummyTool("alpha", "a"), dummyTool("beta", "b"), dummyTool("gamma", "g")},
-		agent.WithParallelToolExecution(),
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(dummyTool("alpha", "a"), dummyTool("beta", "b"), dummyTool("gamma", "g")),
+		agent.WithParallelTools(),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -904,8 +943,8 @@ func TestGuardrailSpan_Input(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
 		agent.WithInputGuardrail(func(_ *agent.Context, msg string) (string, error) {
 			return msg, nil
 		}),
@@ -931,8 +970,8 @@ func TestGuardrailSpan_Output(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
 		agent.WithOutputGuardrail(func(_ *agent.Context, resp string) (string, error) {
 			return resp, nil
 		}),
@@ -958,8 +997,8 @@ func TestGuardrailSpan_InputErrorStatus(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
 		agent.WithInputGuardrail(func(_ *agent.Context, msg string) (string, error) {
 			return "", fmt.Errorf("blocked")
 		}),
@@ -986,8 +1025,8 @@ func TestGuardrailSpan_OutputErrorStatus(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
 		agent.WithOutputGuardrail(func(_ *agent.Context, resp string) (string, error) {
 			return "", fmt.Errorf("output blocked")
 		}),
@@ -1017,16 +1056,16 @@ func TestMemorySpan_LoadAndSave(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	mem := newMockMemory()
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithConversation(mem, "conv-42"),
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
+		agent.WithConversationStore(mem),
 		WithTracing(tp),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = a.Invoke(agent.Background(), "hi")
+	_, err = a.Invoke(agent.Background().WithConversationID("conv-42"), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1058,16 +1097,16 @@ func TestMemorySpan_LoadErrorStatus(t *testing.T) {
 		data:    make(map[string][]agent.Message),
 		loadErr: fmt.Errorf("disk on fire"),
 	}
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithConversation(mem, "conv-1"),
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
+		agent.WithConversationStore(mem),
 		WithTracing(tp),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, _ = a.Invoke(agent.Background(), "hi")
+	_, _ = a.Invoke(agent.Background().WithConversationID("conv-1"), "hi")
 
 	spans := exp.GetSpans()
 	loadSpan := findSpan(spans, "agent.conversation.load")
@@ -1088,16 +1127,16 @@ func TestMemorySpan_SaveErrorStatus(t *testing.T) {
 		data:    make(map[string][]agent.Message),
 		saveErr: fmt.Errorf("write failed"),
 	}
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
-		agent.WithConversation(mem, "conv-1"),
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
+		agent.WithConversationStore(mem),
 		WithTracing(tp),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, invokeErr := a.Invoke(agent.Background(), "hi")
+	_, invokeErr := a.Invoke(agent.Background().WithConversationID("conv-1"), "hi")
 	if invokeErr == nil {
 		t.Fatal("expected error from memory save failure")
 	}
@@ -1119,13 +1158,13 @@ func TestRetrieverSpan_Created(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	ret := &mockRetriever{docs: []agent.Document{
+	ret := &mockRetriever{docs: []rag.Document{
 		{Content: "doc1"},
 		{Content: "doc2"},
 		{Content: "doc3"},
 	}}
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
 		agent.WithRetriever(ret),
 		WithTracing(tp),
 	)
@@ -1154,8 +1193,8 @@ func TestRetrieverSpan_ErrorStatus(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	ret := &mockRetriever{err: fmt.Errorf("retriever timeout")}
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys",
 		agent.WithRetriever(ret),
 		WithTracing(tp),
 	)
@@ -1183,12 +1222,12 @@ func TestMaxIterationsExceeded_EventRecorded(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	// Provider always returns tool calls — never a final answer.
-	alwaysToolCall := &agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc", "loop")}}
+	alwaysToolCall := &agent.ModelResponse{ToolCalls: []tool.Call{tc("tc", "loop")}}
 	prov := newMockProvider(alwaysToolCall, alwaysToolCall, alwaysToolCall)
 
 	loopTool := dummyTool("loop", "loops forever")
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{loopTool},
+	a, err := agent.New(prov, "sys", agent.WithTools(loopTool),
 		agent.WithMaxIterations(2),
 		WithTracing(tp),
 	)
@@ -1231,11 +1270,11 @@ func TestMultiAgentComposition_ChildSpansUnderParentToolSpan(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	// Child agent: responds with a simple text.
-	childProvider := newMockProvider(&agent.ProviderResponse{
+	childProvider := newMockProvider(&agent.ModelResponse{
 		Text:  "child response",
 		Usage: agent.TokenUsage{InputTokens: 5, OutputTokens: 3},
 	})
-	childAgent, err := agent.New(childProvider, prompt.Text("child instructions"), nil, WithTracing(tp))
+	childAgent, err := agent.New(childProvider, "child instructions", WithTracing(tp))
 	if err != nil {
 		t.Fatalf("creating child agent: %v", err)
 	}
@@ -1243,19 +1282,19 @@ func TestMultiAgentComposition_ChildSpansUnderParentToolSpan(t *testing.T) {
 	// Parent agent: first response triggers the child agent tool, second is final answer.
 	childTool := agent.AgentAsTool("child_agent", "delegates to child", childAgent)
 	parentProvider := newMockProvider(
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			ToolCalls: []tool.Call{
 				{ToolUseID: "tc1", Name: "child_agent", Input: json.RawMessage(`{"message":"hello child"}`)},
 			},
 			Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 8},
 		},
-		&agent.ProviderResponse{
+		&agent.ModelResponse{
 			Text:  "parent done",
 			Usage: agent.TokenUsage{InputTokens: 15, OutputTokens: 12},
 		},
 	)
-	parentAgent, err := agent.New(parentProvider, prompt.Text("parent instructions"),
-		[]tool.Tool{childTool}, WithTracing(tp))
+	parentAgent, err := agent.New(parentProvider, "parent instructions",
+		agent.WithTools(childTool), WithTracing(tp))
 	if err != nil {
 		t.Fatalf("creating parent agent: %v", err)
 	}
@@ -1310,22 +1349,22 @@ func TestMiddleware_ContextPropagation_ChildSpanUnderToolSpan(t *testing.T) {
 
 	// Middleware that extracts the span from context and creates a child span.
 	mw := func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
-		return func(c *agent.Context, toolName string, input json.RawMessage) (string, error) {
+		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 			// Extract the active span from context and create a child span.
-			_, childSpan := tracer.Start(c, "middleware.custom")
+			_, childSpan := tracer.Start(ctx, "middleware.custom")
 			defer childSpan.End()
 
-			return next(c, toolName, input)
+			return next(ctx, call)
 		}
 	}
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{tc("tc1", "my_tool")}},
-		&agent.ProviderResponse{Text: "done"},
+		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "my_tool")}},
+		&agent.ModelResponse{Text: "done"},
 	)
 	myTool := dummyTool("my_tool", "a tool")
 
-	a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{myTool},
+	a, err := agent.New(prov, "sys", agent.WithTools(myTool),
 		agent.WithMiddleware(mw),
 		WithTracing(tp),
 	)
@@ -1369,12 +1408,12 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 	defer tp.Shutdown(context.Background())
 
 	prov := newMockProvider(
-		&agent.ProviderResponse{ToolCalls: []tool.Call{
+		&agent.ModelResponse{ToolCalls: []tool.Call{
 			tc("tc1", "a"),
 			tc("tc2", "b"),
 			tc("tc3", "c"),
 		}},
-		&agent.ProviderResponse{Text: "parallel done"},
+		&agent.ModelResponse{Text: "parallel done"},
 	)
 
 	const toolSleep = 100 * time.Millisecond
@@ -1383,7 +1422,7 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 	barrier.Add(3)
 
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", map[string]any{"type": "object"},
+		return tool.NewRaw(name, name+" tool",
 			func(_ context.Context, _ json.RawMessage) (string, error) {
 				barrier.Done()
 				barrier.Wait()
@@ -1392,9 +1431,9 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 			})
 	}
 
-	a, err := agent.New(prov, prompt.Text("sys"),
-		[]tool.Tool{makeTool("a"), makeTool("b"), makeTool("c")},
-		agent.WithParallelToolExecution(),
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(makeTool("a"), makeTool("b"), makeTool("c")),
+		agent.WithParallelTools(),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1407,8 +1446,8 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "parallel done" {
-		t.Errorf("expected %q, got %q", "parallel done", result)
+	if result.Text != "parallel done" {
+		t.Errorf("expected %q, got %q", "parallel done", result.Text)
 	}
 
 	// If tools ran in parallel, total time should be ~1x toolSleep.
@@ -1454,17 +1493,17 @@ func TestInvokeSpan_InferenceConfigAttributes(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{
+	prov := newMockProvider(&agent.ModelResponse{
 		Text:  "hello",
 		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
 
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	a, err := agent.New(prov, "sys",
 		agent.WithTemperature(0.7),
 		agent.WithTopP(0.9),
 		agent.WithTopK(50),
 		agent.WithStopSequences([]string{"STOP", "END"}),
-		agent.WithMaxTokens(2048),
+		agent.WithMaxOutputTokens(2048),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1523,8 +1562,8 @@ func TestInvokeSpan_NoInferenceConfigAttributes_WhenNoneSet(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{Text: "hello"})
-	a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+	prov := newMockProvider(&agent.ModelResponse{Text: "hello"})
+	a, err := agent.New(prov, "sys", WithTracing(tp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1553,13 +1592,13 @@ func TestInvokeSpan_PerInvocationOverride_ReflectedInSpan(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 
-	prov := newMockProvider(&agent.ProviderResponse{
+	prov := newMockProvider(&agent.ModelResponse{
 		Text:  "hello",
 		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
 
 	// Agent-level: temperature=0.3
-	a, err := agent.New(prov, prompt.Text("sys"), nil,
+	a, err := agent.New(prov, "sys",
 		agent.WithTemperature(0.3),
 		WithTracing(tp),
 	)

@@ -1,256 +1,41 @@
-# LLM Providers
+# Providers
 
-gude-agents ships with four built-in LLM providers: AWS Bedrock, Anthropic, OpenAI, and Google Gemini. It also supports local model servers (Ollama, vLLM) via the OpenAI provider's compatible endpoint constructors. Each provider implements the `Provider` interface, so they're interchangeable — swap one for another without changing your agent code.
-
-| Provider       | Import                     | Details                                  |
-| -------------- | -------------------------- | ---------------------------------------- |
-| AWS Bedrock    | `agent/provider/bedrock`   | [Bedrock docs](providers/bedrock.md)     |
-| Anthropic      | `agent/provider/anthropic` | [Anthropic docs](providers/anthropic.md) |
-| OpenAI         | `agent/provider/openai`    | [OpenAI docs](providers/openai.md)       |
-| Google Gemini  | `agent/provider/gemini`    | [Gemini docs](providers/gemini.md)       |
-| Ollama (local) | `agent/provider/ollama`    | [Ollama docs](providers/ollama.md)       |
-| vLLM (local)   | `agent/provider/vllm`      | [vLLM docs](providers/vllm.md)           |
-
-## Quick Start
-
-```go
-bedrock.GlobalClaudeSonnet4_6()    // AWS Bedrock (uses AWS credential chain)
-anthropic.ClaudeSonnet4_6()  // Anthropic API (uses ANTHROPIC_API_KEY)
-openai.GPT4_1()              // OpenAI API (uses OPENAI_API_KEY)
-gemini.Gemini25Flash()       // Gemini API (uses GEMINI_API_KEY)
-ollama.New("qwen2.5")        // Local Ollama server (uses OLLAMA_HOST)
-vllm.New("mistral")          // Local vLLM server (uses VLLM_BASE_URL)
-```
-
-Each provider has `Cheapest()`, `Standard()`, `Smartest()` tier aliases. These mappings change over time as better models become available — pin a specific constructor (e.g., `GlobalClaudeSonnet4_6()`) if you need a stable model across upgrades.
-
-## ModelIdentifier Interface
-
-Providers can optionally implement `ModelIdentifier` to expose the underlying model ID:
-
-```go
-type ModelIdentifier interface {
-    ModelID() string
-}
-```
-
-All four built-in providers implement this interface. Useful for logging, routing, and debugging:
-
-```go
-if mi, ok := provider.(agent.ModelIdentifier); ok {
-    fmt.Println("Using model:", mi.ModelID())
-}
-```
-
-## Extended Thinking
-
-Extended thinking lets models reason internally before producing a final answer. The reasoning process is separate from the response text and can be streamed in real-time via `EventHook.OnThinking`.
-
-### Enabling Thinking
-
-All providers use the same option pattern:
-
-```go
-import pvdr "github.com/camilbinas/gude-agents/agent/provider"
-
-// Anthropic
-provider, _ := anthropic.New("claude-sonnet-4-6",
-    anthropic.WithThinking(pvdr.ThinkingHigh),
-    anthropic.WithMaxTokens(16000),
-)
-
-// Bedrock (Claude or Nova 2 Lite)
-provider, _ := bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingMedium))
-
-// OpenAI (o-series models)
-provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
-```
-
-### Effort Levels
-
-| Constant              | Value      | Anthropic/Bedrock Claude | Bedrock Nova 2  | OpenAI          |
-| --------------------- | ---------- | ------------------------ | --------------- | --------------- |
-| `pvdr.ThinkingLow`    | `"low"`    | 2 048 token budget       | `low` effort    | `low` effort    |
-| `pvdr.ThinkingMedium` | `"medium"` | 8 192 token budget       | `medium` effort | `medium` effort |
-| `pvdr.ThinkingHigh`   | `"high"`   | 16 384 token budget      | `high` effort   | `high` effort   |
-
-### Supported Models
-
-| Provider  | Supported models                                                                 |
-| --------- | -------------------------------------------------------------------------------- |
-| Anthropic | All Claude 4-series (`claude-haiku-4-5`, `claude-sonnet-4-*`, `claude-opus-4-*`) |
-| Bedrock   | Same Claude 4-series via Bedrock + `Nova2Lite`                                   |
-| OpenAI    | `o3`, `o3-mini`, `o4-mini` and other o-series reasoning models                   |
-
-`WithThinking` is silently ignored for models that don't support it.
-
-### Token Budget Override
-
-`WithThinkingBudget` sets an explicit token budget instead of relying on the effort-level presets. Use it when you need finer control than `ThinkingLow/Medium/High` provides. It takes precedence over `WithThinking` when both are set.
-
-| Option | Signature | Support |
-| ------ | --------- | ------- |
-| `WithThinkingBudget` | `WithThinkingBudget(tokens int64)` | Anthropic, Bedrock Claude |
-
-```go
-import pvdr "github.com/camilbinas/gude-agents/agent/provider"
-
-// Pin to exactly 5 000 thinking tokens (Anthropic)
-provider, _ := anthropic.New("claude-sonnet-4-6",
-    anthropic.WithThinkingBudget(5000),
-    anthropic.WithMaxTokens(16000),
-)
-
-// Same on Bedrock Claude
-provider, _ := bedrock.GlobalClaudeSonnet4_6(
-    bedrock.WithThinkingBudget(5000),
-)
-```
-
-The budget is added on top of `WithMaxTokens`, so the model has headroom to reason and then produce a final answer. Not meaningful for Nova 2 (effort-string only) or OpenAI (effort-level only).
-
-### Streaming Thinking Output
-
-Use `EventHook.OnThinking` to receive reasoning chunks in real-time:
-
-```go
-c := agent.Background().WithEventHook(myEventHook) // OnThinking receives reasoning chunks
-a.InvokeStream(c, message, streamCB)
-```
-
-The thinking chunks arrive before the answer streams. OpenAI does not expose reasoning tokens in the stream, so `OnThinking` never fires for OpenAI providers.
-
-See `examples/thinking` for a complete working example.
-
-## Direct SDK Access
-
-Every built-in provider exposes a `Client()` method that returns the underlying SDK client. Use this when you need provider-specific features not available through the `agent.Provider` interface — for example, Bedrock guardrail configs, Anthropic metadata, or OpenAI response formats.
-
-```go
-// Bedrock — returns *bedrockruntime.Client
-provider, _ := bedrock.GlobalClaudeSonnet4_6()
-bedrockClient := provider.Client()
-
-// Anthropic — returns *anthropicsdk.Client
-provider, _ := anthropic.ClaudeSonnet4_6()
-anthropicClient := provider.Client()
-
-// OpenAI — returns *openaisdk.Client
-provider, _ := openai.GPT4_1()
-openaiClient := provider.Client()
-
-// Gemini — returns *genai.Client
-provider, _ := gemini.Gemini25Flash()
-geminiClient := provider.Client()
-```
-
-This lets you share a single set of credentials and configuration between the agent loop and direct SDK calls:
-
-```go
-provider, _ := bedrock.GlobalClaudeSonnet4_6()
-
-// Normal agent usage for most calls
-a, _ := agent.Default(provider, instructions, tools)
-result, _, _ := a.Invoke(ctx, "normal question")
-
-// Drop to raw SDK for provider-specific features
-resp, err := provider.Client().Converse(ctx, &bedrockruntime.ConverseInput{
-    ModelId:         aws.String("global.anthropic.claude-sonnet-4-6"),
-    Messages:        myMessages,
-    GuardrailConfig: &types.GuardrailConfiguration{
-        GuardrailIdentifier: aws.String("my-guardrail"),
-        GuardrailVersion:    aws.String("1"),
-    },
-})
-```
-
-Note: direct SDK calls bypass the agent loop entirely — no memory, tools, guardrails, middleware, or tracing. Use this as an escape hatch, not the default path.
-
-## Implementing a Custom Provider
-
-Implement the `Provider` interface:
+Agents depend on one streaming provider contract:
 
 ```go
 type Provider interface {
     Name() string
-    Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error)
-    ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
+    Stream(
+        ctx context.Context,
+        req agent.ModelRequest,
+        emit func(agent.ModelEvent),
+    ) (*agent.ModelResponse, error)
 }
 ```
 
-`Name()` returns the provider identifier (e.g. `"bedrock"`, `"anthropic"`, `"openai"`) — used by logging, tracing, and devtools. `ConverseParams` contains the messages, system prompt, tool configuration, and tool choice. `ProviderResponse` contains the text response, tool calls, and token usage. See [Message Types](message-types.md) for full type definitions.
+`emit` may be nil. Providers emit `ModelEventText` and `ModelEventThinking`; the returned `ModelResponse` contains final text, tool calls, usage, and provider metadata. `ModelRequest` contains messages, system instructions, tool specs/choice, inference configuration, and caching preference.
 
-## Provider Registry
-
-The `registry` package provides environment-driven provider selection. Instead of hardcoding a specific provider, you register factories and select at runtime by name and tier.
-
-Import: `github.com/camilbinas/gude-agents/agent/provider/registry`
-
-### Setup
-
-Call `RegisterBuiltins()` once at startup to register all built-in providers:
+Applications normally construct a provider and pass it to `agent.New`:
 
 ```go
-import "github.com/camilbinas/gude-agents/agent/provider/registry"
-
-func init() {
-    registry.RegisterBuiltins() // registers bedrock, anthropic, openai, gemini, ollama
-}
+prov, err := openai.New("gpt-4o-mini")
+a, err := agent.New(prov, "You are helpful.", agent.WithTools(tools...))
+result, err := a.Invoke(agent.NewContext(ctx), "Hello")
 ```
 
-### Creating a Provider by Name and Tier
+Agent-level inference options provide portable temperature, top-p/top-k, stop sequences, and output-token limits. Provider options configure credentials, endpoints, provider-specific thinking, caching, or guardrails. `ModelIdentifier` and token-estimator interfaces are optional capabilities.
 
-```go
-provider, err := registry.New("bedrock", registry.Standard)
-```
+## Built-ins
 
-Available tiers: `registry.Cheapest`, `registry.Standard`, `registry.Smartest`. These map to each provider's tier aliases.
+- [Anthropic](providers/anthropic.md)
+- [Amazon Bedrock](providers/bedrock.md)
+- [Gemini](providers/gemini.md)
+- [OpenAI and compatible endpoints](providers/openai.md)
+- [Ollama](providers/ollama.md)
+- [vLLM](providers/vllm.md)
 
-### Environment-Driven Selection
+The provider registry can create a registered provider by name and tier. The fallback provider accepts a primary plus ordered fallbacks; it changes provider only if failure occurs before any event is emitted, avoiding mixed streams.
 
-`FromEnv` reads `MODEL_PROVIDER` and `MODEL_TIER` from the environment:
+## Implementing a provider
 
-```go
-provider, err := registry.FromEnv()
-// MODEL_PROVIDER=anthropic MODEL_TIER=smartest → anthropic.Smartest()
-```
-
-Defaults to `bedrock` / `standard` when the variables are unset.
-
-### Why vLLM is not in the registry
-
-vLLM is not included in `RegisterBuiltins` because it has no fixed model catalog — the available model depends entirely on what the user launched their vLLM server with. Use `vllm.New(model)` directly instead:
-
-```go
-import "github.com/camilbinas/gude-agents/agent/provider/vllm"
-
-provider, err := vllm.New("mistralai/Mistral-7B-Instruct-v0.2")
-```
-
-### Custom Providers
-
-Register your own provider with factories for each tier:
-
-```go
-registry.Register("my-provider",
-    func() (agent.Provider, error) { return myProvider("cheap") },
-    func() (agent.Provider, error) { return myProvider("standard") },
-    func() (agent.Provider, error) { return myProvider("smart") },
-)
-```
-
-Pass `nil` for any tier your provider doesn't support.
-
-## See Also
-
-- [Bedrock Provider](providers/bedrock.md) — AWS Bedrock configuration, models, guardrails
-- [Anthropic Provider](providers/anthropic.md) — Anthropic API configuration and models
-- [OpenAI Provider](providers/openai.md) — OpenAI and compatible endpoints
-- [Gemini Provider](providers/gemini.md) — Google Gemini configuration and models
-- [Ollama Provider](providers/ollama.md) — local Ollama model server
-- [vLLM Provider](providers/vllm.md) — local vLLM model server
-- [Getting Started](getting-started.md) — installation and first agent
-- [Fallback Provider](fallback-provider.md) — automatic failover across providers
-- [Agent API Reference](agent-api.md) — full list of options and methods
-- [Message Types](message-types.md) — `ConverseParams`, `ProviderResponse`, `StreamCallback`
-- [RAG Pipeline](rag.md) — embedder implementations in `agent/rag/bedrock`, `agent/rag/openai`, and `agent/rag/gemini`
+Map every provider request to `ModelRequest`, emit live text/thinking when available, and return authoritative aggregate text, tool calls, and `TokenUsage`. Respect context cancellation. Wrap backend failures with enough context for diagnosis but never log credentials or raw content by default. Keep provider streaming callbacks synchronous unless the implementation documents ordering and safe shutdown.

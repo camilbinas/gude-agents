@@ -12,7 +12,7 @@ type mockEstimator struct {
 	err      error
 }
 
-func (m *mockEstimator) EstimateTokens(_ context.Context, _ ConverseParams) (int, error) {
+func (m *mockEstimator) EstimateTokens(_ context.Context, _ ModelRequest) (int, error) {
 	return m.estimate, m.err
 }
 
@@ -24,7 +24,7 @@ func TestPreFlightCheck_NoEstimatorConfigured_ReturnsNil(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	params := ConverseParams{System: "hello world"}
+	params := ModelRequest{System: "hello world"}
 
 	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
 		t.Fatalf("expected nil when pre-flight disabled, got: %v", err)
@@ -44,7 +44,7 @@ func TestPreFlightCheck_DefaultCharEstimatorWhenTPMConfigured(t *testing.T) {
 
 	// "hello" is 5 chars → ceil(5/4) = 2 tokens, well within 1000 TPM.
 	ctx := context.Background()
-	params := ConverseParams{System: "hello"}
+	params := ModelRequest{System: "hello"}
 
 	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
 		t.Fatalf("expected nil for small input within budget, got: %v", err)
@@ -61,7 +61,7 @@ func TestPreFlightCheck_EstimatorError_ReturnsNil_FailOpen(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	params := ConverseParams{System: "hello world"}
+	params := ModelRequest{System: "hello world"}
 
 	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
 		t.Fatalf("expected nil on estimator error (fail-open), got: %v", err)
@@ -83,7 +83,7 @@ func TestPreFlightCheck_WithTokenEstimatorNil_DefaultsToCharEstimator(t *testing
 	// CharEstimator on "hello" (5 chars) → ceil(5/4) = 2 tokens.
 	// With TPM(1000), this should easily fit — PreFlightCheck returns nil.
 	ctx := context.Background()
-	params := ConverseParams{System: "hello"}
+	params := ModelRequest{System: "hello"}
 
 	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
 		t.Fatalf("expected nil for small input within budget, got: %v", err)
@@ -100,7 +100,7 @@ func TestPreFlightCheck_EstimateExceedsCapacity_ReturnsErrRateLimitExceeded(t *t
 	}
 
 	ctx := context.Background()
-	params := ConverseParams{System: "test"}
+	params := ModelRequest{System: "test"}
 
 	err = rl.PreFlightCheck(ctx, "key", params)
 	if !errors.Is(err, ErrRateLimitExceeded) {
@@ -118,7 +118,7 @@ func TestPreFlightCheck_EstimateWithinCapacity_ReturnsNil(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	params := ConverseParams{System: "test"}
+	params := ModelRequest{System: "test"}
 
 	if err := rl.PreFlightCheck(ctx, "key", params); err != nil {
 		t.Fatalf("expected nil when estimate within capacity, got: %v", err)

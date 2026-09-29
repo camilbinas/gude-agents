@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 func TestResultsForEvaluator_FiltersCorrectly(t *testing.T) {
@@ -115,7 +115,7 @@ func TestEvalCase_JSONMarshal_OmitsOptionalFields(t *testing.T) {
 	ec := EvalCase{
 		Query:        "What is Go?",
 		ActualOutput: "Go is a programming language.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go was created at Google."},
 		},
 	}
@@ -149,7 +149,7 @@ func TestEvalCase_JSONMarshal_IncludesOptionalFieldsWhenSet(t *testing.T) {
 	ec := EvalCase{
 		Query:            "What is Go?",
 		ActualOutput:     "Go is a programming language.",
-		RetrievedContext: []agent.Document{},
+		RetrievedContext: []rag.Document{},
 		ReferenceAnswer:  "Go is a statically typed language.",
 		Metadata:         map[string]string{"source": "test"},
 	}
@@ -175,7 +175,7 @@ func TestEvalCase_JSONRoundTrip(t *testing.T) {
 	ec := EvalCase{
 		Query:        "What is Go?",
 		ActualOutput: "Go is a programming language.",
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go was created at Google.", Metadata: map[string]string{"page": "1"}},
 		},
 		ReferenceAnswer: "Go is a statically typed language.",

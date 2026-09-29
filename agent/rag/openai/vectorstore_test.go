@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,6 +51,9 @@ func TestMapOpenAIResultsProperty(t *testing.T) {
 		}
 
 		for i, doc := range docs {
+			if doc.ID != fileIDs[i] {
+				rt.Fatalf("doc[%d]: ID = %q, want %q", i, doc.ID, fileIDs[i])
+			}
 			if doc.Content != expectedContents[i] {
 				rt.Fatalf("doc[%d]: Content = %q, want %q", i, doc.Content, expectedContents[i])
 			}
@@ -71,12 +74,12 @@ func TestMapOpenAIResultsProperty(t *testing.T) {
 func TestFilterByScoreOpenAIProperty(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(0, 30).Draw(rt, "n")
-		docs := make([]agent.Document, n)
+		docs := make([]rag.Document, n)
 		scores := make([]float64, n)
 		for i := range n {
 			score := rapid.Float64Range(0.0, 1.0).Draw(rt, "score")
 			scores[i] = score
-			docs[i] = agent.Document{
+			docs[i] = rag.Document{
 				Content:  rapid.StringMatching(`[a-zA-Z0-9 ]{1,50}`).Draw(rt, "content"),
 				Metadata: map[string]string{"score": strconv.FormatFloat(score, 'f', -1, 64)},
 			}
@@ -130,6 +133,6 @@ func TestVectorStoreRetrieverToolCompat(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	retriever, err := NewVectorStoreRetriever("vs-test-id")
 	require.NoError(t, err)
-	tool := agent.NewRetrieverTool("vs", "Vector store tool", retriever)
+	tool := rag.NewRetrieverTool("vs", "Vector store tool", retriever)
 	assert.NotNil(t, tool)
 }

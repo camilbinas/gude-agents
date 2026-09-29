@@ -2,7 +2,7 @@ package tracing
 
 // AttrRole identifies a logical span attribute. The actual key emitted on
 // spans is determined by the active AttributeScheme: callers map roles to
-// concrete attribute keys, allowing the same tracing hook to emit
+// concrete attribute keys, allowing the same tracing observer to emit
 // attributes compatible with different observability backends.
 //
 // Each role's string value is also its default key, so unmapped roles fall
@@ -102,7 +102,7 @@ func DefaultScheme() AttributeScheme {
 	return AttributeScheme{}
 }
 
-// WithScheme configures the tracing hook to use a custom attribute naming
+// WithScheme configures the tracing observer to use a custom attribute naming
 // scheme. If not set (or nil/empty), each role falls back to its default key.
 func WithScheme(scheme AttributeScheme) TracingOption {
 	return func(h *otelHook) {

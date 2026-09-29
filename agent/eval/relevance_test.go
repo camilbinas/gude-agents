@@ -11,7 +11,7 @@ import (
 
 func TestRelevance_HighRelevance(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"score": 0.95, "justification": "The answer directly and thoroughly addresses the question about Go concurrency."}`},
 		},
 		[]error{nil},
@@ -39,7 +39,7 @@ func TestRelevance_HighRelevance(t *testing.T) {
 
 func TestRelevance_LowRelevance(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"score": 0.05, "justification": "The answer discusses Python, not Go, and is completely off-topic."}`},
 		},
 		[]error{nil},
@@ -65,7 +65,7 @@ func TestRelevance_LowRelevance(t *testing.T) {
 func TestRelevance_JustificationInExplanation(t *testing.T) {
 	justification := "The answer partially addresses the question but misses key details about channels."
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `{"score": 0.6, "justification": "` + justification + `"}`},
 		},
 		[]error{nil},
@@ -88,7 +88,7 @@ func TestRelevance_JustificationInExplanation(t *testing.T) {
 func TestRelevance_ProviderError(t *testing.T) {
 	providerErr := errors.New("service unavailable")
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{nil},
+		[]*agent.ModelResponse{nil},
 		[]error{providerErr},
 	)
 
@@ -107,7 +107,7 @@ func TestRelevance_ProviderError(t *testing.T) {
 
 func TestRelevance_MalformedResponse(t *testing.T) {
 	provider := newScriptedProvider(
-		[]*agent.ProviderResponse{
+		[]*agent.ModelResponse{
 			{Text: `not valid json`},
 		},
 		[]error{nil},

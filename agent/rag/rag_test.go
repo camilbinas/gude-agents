@@ -8,7 +8,6 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/camilbinas/gude-agents/agent"
 	"pgregory.net/rapid"
 )
 
@@ -21,7 +20,10 @@ func TestSplitText_ChunkSizeBound(t *testing.T) {
 		chunkSize := rapid.IntRange(1, 200).Draw(t, "chunkSize")
 		chunkOverlap := rapid.IntRange(0, chunkSize-1).Draw(t, "chunkOverlap")
 
-		chunks := SplitText(text, chunkSize, chunkOverlap)
+		chunks, err := SplitText(text, chunkSize, chunkOverlap)
+		if err != nil {
+			t.Fatalf("SplitText failed: %v", err)
+		}
 
 		for i, chunk := range chunks {
 			runeLen := utf8.RuneCountInString(chunk)
@@ -40,7 +42,10 @@ func TestSplitText_ZeroOverlapPartition(t *testing.T) {
 		}
 		chunkSize := rapid.IntRange(1, 200).Draw(t, "chunkSize")
 
-		chunks := SplitText(text, chunkSize, 0)
+		chunks, err := SplitText(text, chunkSize, 0)
+		if err != nil {
+			t.Fatalf("SplitText failed: %v", err)
+		}
 
 		concatenated := ""
 		for _, chunk := range chunks {
@@ -54,8 +59,8 @@ func TestSplitText_ZeroOverlapPartition(t *testing.T) {
 
 // --- Unit tests for SplitText edge cases ---
 
-func TestSplitTextE_EmptyInput(t *testing.T) {
-	chunks, err := SplitTextE("", 10, 0)
+func TestSplitText_EmptyInput(t *testing.T) {
+	chunks, err := SplitText("", 10, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,14 +69,7 @@ func TestSplitTextE_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestSplitText_EmptyInput(t *testing.T) {
-	chunks := SplitText("", 10, 0)
-	if len(chunks) != 0 {
-		t.Fatalf("expected empty slice, got %v", chunks)
-	}
-}
-
-func TestSplitTextE_ChunkSizeLessThanOne(t *testing.T) {
+func TestSplitText_ChunkSizeLessThanOne(t *testing.T) {
 	tests := []struct {
 		name      string
 		chunkSize int
@@ -82,7 +80,7 @@ func TestSplitTextE_ChunkSizeLessThanOne(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := SplitTextE("hello", tc.chunkSize, 0)
+			_, err := SplitText("hello", tc.chunkSize, 0)
 			if err == nil {
 				t.Fatal("expected error for chunkSize < 1, got nil")
 			}
@@ -94,7 +92,7 @@ func TestSplitTextE_ChunkSizeLessThanOne(t *testing.T) {
 	}
 }
 
-func TestSplitTextE_OverlapGEChunkSize(t *testing.T) {
+func TestSplitText_OverlapGEChunkSize(t *testing.T) {
 	tests := []struct {
 		name         string
 		chunkSize    int
@@ -106,11 +104,11 @@ func TestSplitTextE_OverlapGEChunkSize(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := SplitTextE("hello", tc.chunkSize, tc.chunkOverlap)
+			_, err := SplitText("hello", tc.chunkSize, tc.chunkOverlap)
 			if err == nil {
 				t.Fatal("expected error for chunkOverlap >= chunkSize, got nil")
 			}
-			expected := fmt.Sprintf("splittext: chunkOverlap (%d) must be < chunkSize (%d)", tc.chunkOverlap, tc.chunkSize)
+			expected := fmt.Sprintf("splittext: overlap (%d) must be < chunkSize (%d)", tc.chunkOverlap, tc.chunkSize)
 			if err.Error() != expected {
 				t.Fatalf("expected error %q, got %q", expected, err.Error())
 			}
@@ -118,41 +116,20 @@ func TestSplitTextE_OverlapGEChunkSize(t *testing.T) {
 	}
 }
 
-func TestSplitText_ClampsInvalidParams(t *testing.T) {
-	// SplitText silently clamps invalid params instead of erroring
-	tests := []struct {
-		name         string
-		text         string
-		chunkSize    int
-		chunkOverlap int
-	}{
-		{"chunkSize zero", "abc", 0, 0},
-		{"chunkSize negative", "abc", -5, 0},
-		{"overlap equals chunkSize", "abcdef", 3, 3},
-		{"overlap exceeds chunkSize", "abcdef", 3, 10},
-		{"negative overlap", "abcdef", 3, -1},
+func TestSplitText_RejectsNegativeOverlap(t *testing.T) {
+	_, err := SplitText("abcdef", 3, -1)
+	if err == nil {
+		t.Fatal("expected error for negative overlap")
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Should not panic and should return a valid result
-			chunks := SplitText(tc.text, tc.chunkSize, tc.chunkOverlap)
-			if chunks == nil {
-				t.Fatal("expected non-nil result from SplitText with clamped params")
-			}
-			// Every chunk should be non-empty for non-empty input
-			for i, c := range chunks {
-				if len(c) == 0 {
-					t.Fatalf("chunk[%d] is empty", i)
-				}
-			}
-		})
+	if err.Error() != "splittext: overlap must be >= 0, got -1" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestSplitTextE_BoundaryValues(t *testing.T) {
+func TestSplitText_BoundaryValues(t *testing.T) {
 	// Boundary: chunkSize=1, overlap=0 → each rune is its own chunk
 	t.Run("chunkSize 1 overlap 0", func(t *testing.T) {
-		chunks, err := SplitTextE("abc", 1, 0)
+		chunks, err := SplitText("abc", 1, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -168,7 +145,7 @@ func TestSplitTextE_BoundaryValues(t *testing.T) {
 
 	// Boundary: chunkSize equals text length → single chunk
 	t.Run("chunkSize equals text length", func(t *testing.T) {
-		chunks, err := SplitTextE("hello", 5, 0)
+		chunks, err := SplitText("hello", 5, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -179,7 +156,7 @@ func TestSplitTextE_BoundaryValues(t *testing.T) {
 
 	// Boundary: chunkSize exceeds text length → single chunk
 	t.Run("chunkSize exceeds text length", func(t *testing.T) {
-		chunks, err := SplitTextE("hi", 100, 0)
+		chunks, err := SplitText("hi", 100, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -190,7 +167,7 @@ func TestSplitTextE_BoundaryValues(t *testing.T) {
 
 	// Boundary: overlap = chunkSize - 1 (maximum valid overlap)
 	t.Run("max overlap", func(t *testing.T) {
-		chunks, err := SplitTextE("abcde", 3, 2)
+		chunks, err := SplitText("abcde", 3, 2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -212,7 +189,7 @@ func TestSplitTextE_BoundaryValues(t *testing.T) {
 	// Boundary: multi-byte runes (UTF-8)
 	t.Run("multi-byte runes", func(t *testing.T) {
 		text := "héllo"
-		chunks, err := SplitTextE(text, 2, 0)
+		chunks, err := SplitText(text, 2, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -232,10 +209,10 @@ func TestMemoryStore_SearchDescendingOrder(t *testing.T) {
 
 		// Generate between 1 and 20 documents with random embeddings.
 		n := rapid.IntRange(1, 20).Draw(t, "numDocs")
-		docs := make([]agent.Document, n)
+		docs := make([]Document, n)
 		embeddings := make([][]float64, n)
 		for i := 0; i < n; i++ {
-			docs[i] = agent.Document{
+			docs[i] = Document{
 				Content:  fmt.Sprintf("doc-%d", i),
 				Metadata: map[string]string{},
 			}
@@ -281,10 +258,10 @@ func TestMemoryStore_SearchReturnsAllWhenTopKExceedsSize(t *testing.T) {
 		n := rapid.IntRange(1, 20).Draw(t, "numDocs")
 		topK := rapid.IntRange(n+1, n+50).Draw(t, "topK")
 
-		docs := make([]agent.Document, n)
+		docs := make([]Document, n)
 		embeddings := make([][]float64, n)
 		for i := 0; i < n; i++ {
-			docs[i] = agent.Document{
+			docs[i] = Document{
 				Content:  fmt.Sprintf("doc-%d", i),
 				Metadata: map[string]string{},
 			}
@@ -325,25 +302,25 @@ func TestMemoryStore_AddLengthMismatch(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		docs       []agent.Document
+		docs       []Document
 		embeddings [][]float64
 		wantErr    string
 	}{
 		{
 			name:       "more docs than embeddings",
-			docs:       []agent.Document{{Content: "a"}, {Content: "b"}},
+			docs:       []Document{{Content: "a"}, {Content: "b"}},
 			embeddings: [][]float64{{1.0}},
 			wantErr:    "vectorstore: docs and embeddings length mismatch: 2 vs 1",
 		},
 		{
 			name:       "more embeddings than docs",
-			docs:       []agent.Document{{Content: "a"}},
+			docs:       []Document{{Content: "a"}},
 			embeddings: [][]float64{{1.0}, {2.0}, {3.0}},
 			wantErr:    "vectorstore: docs and embeddings length mismatch: 1 vs 3",
 		},
 		{
 			name:       "empty docs non-empty embeddings",
-			docs:       []agent.Document{},
+			docs:       []Document{},
 			embeddings: [][]float64{{1.0}},
 			wantErr:    "vectorstore: docs and embeddings length mismatch: 0 vs 1",
 		},
@@ -367,7 +344,7 @@ func TestMemoryStore_SearchTopKLessThanOne(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a document so the store is non-empty
-	_, err := store.Upsert(ctx, []agent.Document{{Content: "hello"}}, [][]float64{{1.0, 0.0}})
+	_, err := store.Upsert(ctx, []Document{{Content: "hello"}}, [][]float64{{1.0, 0.0}})
 	if err != nil {
 		t.Fatalf("unexpected Add error: %v", err)
 	}
@@ -407,9 +384,9 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer func() { done <- struct{}{} }()
 			for i := 0; i < opsPerGoroutine; i++ {
-				doc := agent.Document{Content: fmt.Sprintf("doc-%d-%d", id, i)}
+				doc := Document{Content: fmt.Sprintf("doc-%d-%d", id, i)}
 				emb := []float64{float64(id), float64(i), 1.0}
-				_, _ = store.Upsert(ctx, []agent.Document{doc}, [][]float64{emb})
+				_, _ = store.Upsert(ctx, []Document{doc}, [][]float64{emb})
 			}
 		}(g)
 		go func(id int) {
@@ -441,15 +418,15 @@ func (m *mockEmbedder) Embed(_ context.Context, _ string) ([]float64, error) {
 
 // mockVectorStore returns a pre-configured list of ScoredDocuments from Search.
 type mockVectorStore struct {
-	searchResults []agent.ScoredDocument
+	searchResults []ScoredDocument
 	searchErr     error
 }
 
-func (m *mockVectorStore) Upsert(_ context.Context, _ []agent.Document, _ [][]float64) ([]string, error) {
+func (m *mockVectorStore) Upsert(_ context.Context, _ []Document, _ [][]float64) ([]string, error) {
 	return nil, nil
 }
 
-func (m *mockVectorStore) Search(_ context.Context, _ []float64, _ int) ([]agent.ScoredDocument, error) {
+func (m *mockVectorStore) Search(_ context.Context, _ []float64, _ int) ([]ScoredDocument, error) {
 	return m.searchResults, m.searchErr
 }
 
@@ -469,10 +446,10 @@ func TestRetriever_DescendingOrder(t *testing.T) {
 			return scores[i] > scores[j]
 		})
 
-		scoredDocs := make([]agent.ScoredDocument, n)
+		scoredDocs := make([]ScoredDocument, n)
 		for i, s := range scores {
-			scoredDocs[i] = agent.ScoredDocument{
-				Document: agent.Document{
+			scoredDocs[i] = ScoredDocument{
+				Document: Document{
 					Content:  fmt.Sprintf("doc-%d", i),
 					Metadata: map[string]string{},
 				},
@@ -482,7 +459,7 @@ func TestRetriever_DescendingOrder(t *testing.T) {
 
 		store := &mockVectorStore{searchResults: scoredDocs}
 		embedder := &mockEmbedder{embedding: []float64{1.0}}
-		retriever := NewRetriever(embedder, store, WithTopK(n))
+		retriever := NewRetriever(embedder, store, WithMaxResults(n))
 
 		docs, err := retriever.Retrieve(context.Background(), "test query")
 		if err != nil {
@@ -520,11 +497,11 @@ func TestRetriever_ScoreThreshold(t *testing.T) {
 
 		// Generate between 1 and 20 scored documents with random scores in [0, 1].
 		n := rapid.IntRange(1, 20).Draw(t, "numDocs")
-		scoredDocs := make([]agent.ScoredDocument, n)
+		scoredDocs := make([]ScoredDocument, n)
 		for i := 0; i < n; i++ {
 			score := rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("score[%d]", i))
-			scoredDocs[i] = agent.ScoredDocument{
-				Document: agent.Document{
+			scoredDocs[i] = ScoredDocument{
+				Document: Document{
 					Content:  fmt.Sprintf("doc-%d", i),
 					Metadata: map[string]string{},
 				},
@@ -539,7 +516,7 @@ func TestRetriever_ScoreThreshold(t *testing.T) {
 		store := &mockVectorStore{searchResults: scoredDocs}
 		embedder := &mockEmbedder{embedding: []float64{1.0}}
 		retriever := NewRetriever(embedder, store,
-			WithTopK(n),
+			WithMaxResults(n),
 			WithScoreThreshold(threshold),
 		)
 
@@ -580,8 +557,8 @@ func TestRetriever_ScoreThreshold(t *testing.T) {
 // mockReranker reverses the document order (deterministic shuffle).
 type mockReranker struct{}
 
-func (m *mockReranker) Rerank(_ context.Context, _ string, docs []agent.Document) ([]agent.Document, error) {
-	reversed := make([]agent.Document, len(docs))
+func (m *mockReranker) Rerank(_ context.Context, _ string, docs []Document) ([]Document, error) {
+	reversed := make([]Document, len(docs))
 	for i, doc := range docs {
 		reversed[len(docs)-1-i] = doc
 	}
@@ -592,11 +569,11 @@ func TestRetriever_RerankerOutputUsed(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate between 1 and 20 scored documents with scores in [0, 1].
 		n := rapid.IntRange(1, 20).Draw(t, "numDocs")
-		scoredDocs := make([]agent.ScoredDocument, n)
+		scoredDocs := make([]ScoredDocument, n)
 		for i := 0; i < n; i++ {
 			score := rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("score[%d]", i))
-			scoredDocs[i] = agent.ScoredDocument{
-				Document: agent.Document{
+			scoredDocs[i] = ScoredDocument{
+				Document: Document{
 					Content:  fmt.Sprintf("doc-%d", i),
 					Metadata: map[string]string{},
 				},
@@ -612,7 +589,7 @@ func TestRetriever_RerankerOutputUsed(t *testing.T) {
 		embedder := &mockEmbedder{embedding: []float64{1.0}}
 		reranker := &mockReranker{}
 		retriever := NewRetriever(embedder, store,
-			WithTopK(n),
+			WithMaxResults(n),
 			WithReranker(reranker),
 		)
 
@@ -623,11 +600,11 @@ func TestRetriever_RerankerOutputUsed(t *testing.T) {
 
 		// Compute expected reranker output: the store docs (after threshold filter)
 		// reversed by the mock reranker.
-		var storeDocs []agent.Document
+		var storeDocs []Document
 		for _, sd := range scoredDocs {
 			storeDocs = append(storeDocs, sd.Document)
 		}
-		expectedDocs := make([]agent.Document, len(storeDocs))
+		expectedDocs := make([]Document, len(storeDocs))
 		for i, doc := range storeDocs {
 			expectedDocs[len(storeDocs)-1-i] = doc
 		}
@@ -651,7 +628,7 @@ type errReranker struct {
 	err error
 }
 
-func (m *errReranker) Rerank(_ context.Context, _ string, _ []agent.Document) ([]agent.Document, error) {
+func (m *errReranker) Rerank(_ context.Context, _ string, _ []Document) ([]Document, error) {
 	return nil, m.err
 }
 
@@ -672,8 +649,8 @@ func TestRetriever_EmptyQueryError(t *testing.T) {
 
 func TestRetriever_RerankerErrorWrapping(t *testing.T) {
 	store := &mockVectorStore{
-		searchResults: []agent.ScoredDocument{
-			{Document: agent.Document{Content: "doc1"}, Score: 0.9},
+		searchResults: []ScoredDocument{
+			{Document: Document{Content: "doc1"}, Score: 0.9},
 		},
 	}
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
@@ -694,15 +671,15 @@ func TestRetriever_RerankerErrorWrapping(t *testing.T) {
 func TestRetriever_ScoreThresholdExactMatch(t *testing.T) {
 	threshold := 0.75
 	store := &mockVectorStore{
-		searchResults: []agent.ScoredDocument{
-			{Document: agent.Document{Content: "above"}, Score: 0.9},
-			{Document: agent.Document{Content: "exact"}, Score: threshold},
-			{Document: agent.Document{Content: "below"}, Score: 0.5},
+		searchResults: []ScoredDocument{
+			{Document: Document{Content: "above"}, Score: 0.9},
+			{Document: Document{Content: "exact"}, Score: threshold},
+			{Document: Document{Content: "below"}, Score: 0.5},
 		},
 	}
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
 	retriever := NewRetriever(embedder, store,
-		WithTopK(10),
+		WithMaxResults(10),
 		WithScoreThreshold(threshold),
 	)
 
@@ -727,14 +704,14 @@ func TestRetriever_ScoreThresholdBelowExcluded(t *testing.T) {
 	threshold := 0.75
 	justBelow := 0.7499999999999999
 	store := &mockVectorStore{
-		searchResults: []agent.ScoredDocument{
-			{Document: agent.Document{Content: "above"}, Score: 0.9},
-			{Document: agent.Document{Content: "just-below"}, Score: justBelow},
+		searchResults: []ScoredDocument{
+			{Document: Document{Content: "above"}, Score: 0.9},
+			{Document: Document{Content: "just-below"}, Score: justBelow},
 		},
 	}
 	embedder := &mockEmbedder{embedding: []float64{1.0}}
 	retriever := NewRetriever(embedder, store,
-		WithTopK(10),
+		WithMaxResults(10),
 		WithScoreThreshold(threshold),
 	)
 
@@ -754,15 +731,15 @@ func TestRetriever_ScoreThresholdBelowExcluded(t *testing.T) {
 
 // recordingVectorStore records all documents passed to Add.
 type recordingVectorStore struct {
-	docs []agent.Document
+	docs []Document
 }
 
-func (r *recordingVectorStore) Upsert(_ context.Context, docs []agent.Document, _ [][]float64) ([]string, error) {
+func (r *recordingVectorStore) Upsert(_ context.Context, docs []Document, _ [][]float64) ([]string, error) {
 	r.docs = append(r.docs, docs...)
 	return nil, nil
 }
 
-func (r *recordingVectorStore) Search(_ context.Context, _ []float64, _ int) ([]agent.ScoredDocument, error) {
+func (r *recordingVectorStore) Search(_ context.Context, _ []float64, _ int) ([]ScoredDocument, error) {
 	return nil, nil
 }
 
@@ -793,7 +770,11 @@ func TestIngest_ChunkCount(t *testing.T) {
 		// Compute expected total chunks.
 		expectedTotal := 0
 		for _, text := range texts {
-			expectedTotal += len(SplitText(text, chunkSize, chunkOverlap))
+			parts, err := SplitText(text, chunkSize, chunkOverlap)
+			if err != nil {
+				t.Fatalf("SplitText failed: %v", err)
+			}
+			expectedTotal += len(parts)
 		}
 
 		if len(store.docs) != expectedTotal {
@@ -860,11 +841,11 @@ type failingVectorStore struct {
 	err error
 }
 
-func (f *failingVectorStore) Upsert(_ context.Context, _ []agent.Document, _ [][]float64) ([]string, error) {
+func (f *failingVectorStore) Upsert(_ context.Context, _ []Document, _ [][]float64) ([]string, error) {
 	return nil, f.err
 }
 
-func (f *failingVectorStore) Search(_ context.Context, _ []float64, _ int) ([]agent.ScoredDocument, error) {
+func (f *failingVectorStore) Search(_ context.Context, _ []float64, _ int) ([]ScoredDocument, error) {
 	return nil, nil
 }
 

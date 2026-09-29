@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/camilbinas/gude-agents/agent/rag"
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 )
 
-// Embedder implements agent.Embedder using the OpenAI Embeddings API.
+var _ rag.Embedder = (*Embedder)(nil)
+
+// Embedder implements rag.Embedder using the OpenAI Embeddings API.
 type Embedder struct {
 	client *openaisdk.Client
 	model  string

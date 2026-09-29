@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -27,6 +28,10 @@ type Executor struct {
 	// fields. Return an error to reject the request with a failed task status.
 	// When nil, headers are trusted as-is — safe for internal service meshes.
 	verifyPrincipal func(agent.Principal) (agent.Principal, error)
+	// pending holds the interrupt each input-required task is paused on,
+	// keyed by a2a.TaskID. It is process-local: a task paused in one process
+	// cannot be resumed by another.
+	pending sync.Map
 }
 
 // NewExecutor creates an Executor that delegates to the given agent.
@@ -49,9 +54,11 @@ func NewExecutorWithVerify(a *agent.Agent, logger *slog.Logger, verify func(agen
 	return e
 }
 
-// Execute implements a2asrv.AgentExecutor. It invokes the underlying agent with
-// the user message extracted from the A2A request and streams artifact events
-// back through the iterator.
+// Execute implements a2asrv.AgentExecutor. It streams the underlying agent with
+// the user message extracted from the A2A request and emits artifact events
+// for each text chunk. When the invocation pauses on an agent.Interrupt the
+// task moves to input-required; the next message on that task resumes it
+// (see takePending for how replies map to ResumeResponses).
 func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		// 1. If this is a new task (no stored task), emit a submitted task event.
@@ -79,7 +86,9 @@ func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 				verified, err := e.verifyPrincipal(p)
 				if err != nil {
 					msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("principal verification failed: "+err.Error()))
-					yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil)
+					if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil) {
+						return
+					}
 					return
 				}
 				p = verified
@@ -94,54 +103,135 @@ func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			agentCtx = agentCtx.WithDocuments(result.Documents)
 		}
 
-		// Wire metrics hook from the agent if available.
-		if mh := e.agent.MetricsHook(); mh != nil {
-			agentCtx = agentCtx.WithMetricsHook(mh)
+		// 5. Stream the agent response (a fresh turn, or a resume when the task
+		// is paused on an interrupt), emitting artifact events for each chunk.
+		var events iter.Seq2[agent.Event, error]
+		if in, resp, ok := e.takePending(execCtx, result.Text); ok {
+			events = e.agent.ResumeStream(agentCtx, in, resp)
+		} else {
+			events = e.agent.Stream(agentCtx, result.Text)
 		}
 
-		// 5. Stream the agent response, emitting artifact events for each chunk.
 		var artifactID a2a.ArtifactID
-		var stopped bool
-
-		err := e.agent.InvokeStream(agentCtx, result.Text, func(chunk string) {
-			if stopped {
+		var final *agent.Result
+		for ev, err := range events {
+			if err != nil {
+				msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))
+				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil)
 				return
 			}
-			parts := []*a2a.Part{a2a.NewTextPart(chunk)}
-			var event *a2a.TaskArtifactUpdateEvent
-			if artifactID == "" {
-				event = a2a.NewArtifactEvent(execCtx, parts...)
-				artifactID = event.Artifact.ID
-			} else {
-				event = a2a.NewArtifactUpdateEvent(execCtx, artifactID, parts...)
+			switch ev.Type {
+			case agent.EventText:
+				if ev.Text == nil || ev.Text.Content == "" {
+					continue
+				}
+				parts := []*a2a.Part{a2a.NewTextPart(ev.Text.Content)}
+				var event *a2a.TaskArtifactUpdateEvent
+				if artifactID == "" {
+					event = a2a.NewArtifactEvent(execCtx, parts...)
+					artifactID = event.Artifact.ID
+				} else {
+					event = a2a.NewArtifactUpdateEvent(execCtx, artifactID, parts...)
+				}
+				// Breaking out of the range stops the agent stream cleanly.
+				if !yield(event, nil) {
+					return
+				}
+			case agent.EventEnd:
+				final = ev.Result
 			}
-			if !yield(event, nil) {
-				stopped = true
-			}
-		})
-
-		if stopped {
-			return
-		}
-
-		if err != nil {
-			msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))
-			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil)
-			return
 		}
 
 		// Inbound media belongs only to the invocation context. Emitting it here
 		// would echo user-provided attachments as response artifacts. Genuine
 		// agent-generated media requires a dedicated response-output channel.
 
-		// 6. Emit completed status.
+		if final == nil {
+			msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("agent stream ended without a result"))
+			if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil) {
+				return
+			}
+			return
+		}
+
+		// 6. A paused invocation maps to input-required; the next message on
+		// the same task resumes it.
+		if final.StopReason == agent.StopInterrupt && final.Interrupt != nil {
+			e.pending.Store(execCtx.TaskID, final.Interrupt)
+			msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(describeInterrupt(final.Interrupt)))
+			if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, msg), nil) {
+				return
+			}
+			return
+		}
+
+		// 7. Emit completed status.
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
 	}
 }
 
-// Cancel implements a2asrv.AgentExecutor. It emits a canceled status event.
+// takePending removes and returns the interrupt the task is paused on, with
+// the ResumeResponse built from the caller's reply text:
+//   - human_input interrupts are answered with agent.Respond(text).
+//   - approval interrupts are approved only when the reply is exactly
+//     "approve" (case-insensitive, surrounding whitespace ignored); any other
+//     reply denies every pending call with the reply as the reason.
+func (e *Executor) takePending(execCtx *a2asrv.ExecutorContext, reply string) (*agent.Interrupt, agent.ResumeResponse, bool) {
+	if execCtx.StoredTask == nil {
+		return nil, agent.ResumeResponse{}, false
+	}
+	v, ok := e.pending.LoadAndDelete(execCtx.TaskID)
+	if !ok {
+		return nil, agent.ResumeResponse{}, false
+	}
+	in := v.(*agent.Interrupt)
+	if in.Type == agent.InterruptApproval {
+		if strings.EqualFold(strings.TrimSpace(reply), ApproveReply) {
+			return in, agent.Approve(), true
+		}
+		return in, agent.Deny(reply), true
+	}
+	return in, agent.Respond(reply), true
+}
+
+// ApproveReply is the reply text that approves a pending approval interrupt
+// when an A2A task is in the input-required state. Any other reply denies.
+const ApproveReply = "approve"
+
+// describeInterrupt renders the input-required status message for an interrupt.
+func describeInterrupt(in *agent.Interrupt) string {
+	switch in.Type {
+	case agent.InterruptHumanInput:
+		if in.Input != nil {
+			if in.Input.Reason != "" {
+				return in.Input.Question + "\n\n(" + in.Input.Reason + ")"
+			}
+			return in.Input.Question
+		}
+	case agent.InterruptApproval:
+		var sb strings.Builder
+		sb.WriteString("Approval required for:")
+		if in.Approval != nil {
+			for _, c := range in.Approval.Calls {
+				sb.WriteString("\n- ")
+				sb.WriteString(c.Name)
+				if len(c.Input) > 0 {
+					sb.WriteByte(' ')
+					sb.Write(c.Input)
+				}
+			}
+		}
+		sb.WriteString("\n\nReply \"" + ApproveReply + "\" to approve; any other reply denies.")
+		return sb.String()
+	}
+	return "Input required."
+}
+
+// Cancel implements a2asrv.AgentExecutor. It discards any pending interrupt
+// for the task and emits a canceled status event.
 func (e *Executor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		e.pending.Delete(execCtx.TaskID)
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
 	}
 }

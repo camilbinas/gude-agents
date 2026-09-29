@@ -18,8 +18,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 
@@ -40,11 +38,12 @@ func main() {
 			"When the user asks you to perform an action, use the appropriate tool immediately. "+
 			"Do not ask for confirmation — the caller has already confirmed. "+
 			"If a tool you need is not available, say so briefly.",
-	), []tool.Tool{
-		lookupOrderTool(),
-		processRefundTool(),
-		deleteAccountTool(),
-	},
+	).String(),
+		agent.WithTools(
+			lookupOrderTool(),
+			processRefundTool(),
+			deleteAccountTool(),
+		),
 		agent.WithRoleEnforcement(),
 	)
 	if err != nil {
@@ -67,79 +66,55 @@ func main() {
 func runAs(a *agent.Agent, p agent.Principal, message string) {
 	c := agent.Background().WithPrincipal(p)
 
-	err := a.InvokeStream(c, message, func(chunk string) {
-		fmt.Print(chunk)
-	})
-
-	if errors.Is(err, agent.ErrToolApprovalRequired) {
-		ar, _ := agent.GetApprovalRequest(c)
-		fmt.Printf("\n[approval required] tool=%s input=%s\n", ar.ToolName, ar.ToolInput)
-		fmt.Println("[auto-approving for demo]")
-		result, err := a.ResumeWithApprovalInvoke(c, ar, tool.Allow())
-		if err != nil {
-			log.Printf("resume error: %v", err)
-			return
-		}
-		fmt.Println(result)
-		return
-	}
-
+	result, err := a.Invoke(c, message)
 	if err != nil {
 		log.Printf("error: %v", err)
 		return
 	}
-	fmt.Println()
+	if result.StopReason == agent.StopInterrupt && result.Interrupt != nil && result.Interrupt.Approval != nil {
+		for _, call := range result.Interrupt.Approval.Calls {
+			fmt.Printf("[approval required] tool=%s input=%s\n", call.Name, call.Input)
+		}
+		fmt.Println("[auto-approving for demo]")
+		result, err = a.Resume(c, result.Interrupt, agent.Approve())
+		if err != nil {
+			log.Printf("resume error: %v", err)
+			return
+		}
+	}
+	fmt.Println(result.Text)
 }
 
 func lookupOrderTool() tool.Tool {
-	return tool.NewRaw("lookup_order", "Look up an order by ID",
-		map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"order_id": map[string]any{"type": "string"}},
-			"required":   []string{"order_id"},
+	type input struct {
+		OrderID string `json:"order_id" required:"true"`
+	}
+	return tool.New("lookup_order", "Look up an order by ID",
+		func(_ context.Context, in input) (string, error) {
+			return fmt.Sprintf(`{"order_id":%q,"total":"$89.99","status":"delivered"}`, in.OrderID), nil
 		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				OrderID string `json:"order_id"`
-			}
-			json.Unmarshal(input, &p)
-			return fmt.Sprintf(`{"order_id":%q,"total":"$89.99","status":"delivered"}`, p.OrderID), nil
-		},
-		// no role restriction — available to everyone
 	)
 }
 
 func processRefundTool() tool.Tool {
-	return tool.NewRaw("process_refund", "Process a refund for an order",
-		map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"order_id": map[string]any{"type": "string"}},
-			"required":   []string{"order_id"},
-		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				OrderID string `json:"order_id"`
-			}
-			json.Unmarshal(input, &p)
-			return fmt.Sprintf(`{"refunded":true,"order_id":%q}`, p.OrderID), nil
+	type input struct {
+		OrderID string `json:"order_id" required:"true"`
+	}
+	return tool.New("process_refund", "Process a refund for an order",
+		func(_ context.Context, in input) (string, error) {
+			return fmt.Sprintf(`{"refunded":true,"order_id":%q}`, in.OrderID), nil
 		},
 		tool.AllowRoles("support", "admin"),
 	)
 }
 
 func deleteAccountTool() tool.Tool {
-	return tool.NewRaw("delete_account", "Permanently delete a customer account",
-		map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"account_id": map[string]any{"type": "string"}},
-			"required":   []string{"account_id"},
-		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				AccountID string `json:"account_id"`
-			}
-			json.Unmarshal(input, &p)
-			return fmt.Sprintf(`{"deleted":true,"account_id":%q}`, p.AccountID), nil
+	type input struct {
+		AccountID string `json:"account_id" required:"true"`
+	}
+	return tool.New("delete_account", "Permanently delete a customer account",
+		func(_ context.Context, in input) (string, error) {
+			return fmt.Sprintf(`{"deleted":true,"account_id":%q}`, in.AccountID), nil
 		},
 		tool.AllowRoles("admin"),
 		tool.RequiresApproval(),

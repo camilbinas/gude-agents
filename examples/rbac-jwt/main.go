@@ -15,8 +15,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -82,11 +80,12 @@ func main() {
 		"You are a customer support assistant. "+
 			"When asked to perform an action, use the appropriate tool immediately. "+
 			"If a tool is not available, say so briefly.",
-	), []tool.Tool{
-		publicTool(),
-		supportTool(),
-		acmeOnlyTool(),
-	},
+	).String(),
+		agent.WithTools(
+			publicTool(),
+			supportTool(),
+			acmeOnlyTool(),
+		),
 		agent.WithRoleEnforcement(),
 	)
 	if err != nil {
@@ -115,53 +114,38 @@ func runWithJWT(a *agent.Agent, tokenStr string, message string) {
 		return
 	}
 	fmt.Printf("[principal] id=%s roles=%v org=%s\n", p.ID, p.Roles, p.Attr("org"))
-	c := agent.Background().WithPrincipal(p)
-	err = a.InvokeStream(c, message, func(chunk string) {
-		fmt.Print(chunk)
-	})
-	if errors.Is(err, agent.ErrToolApprovalRequired) {
-		fmt.Println("\n[approval required — skipping in demo]")
-		return
-	}
+	result, err := a.Invoke(agent.Background().WithPrincipal(p), message)
 	if err != nil {
 		log.Printf("error: %v", err)
 		return
 	}
-	fmt.Println()
+	if result.StopReason == agent.StopInterrupt {
+		fmt.Println("[approval required — skipping in demo]")
+		return
+	}
+	fmt.Println(result.Text)
 }
 
 // publicTool is available to all roles.
 func publicTool() tool.Tool {
-	return tool.NewRaw("lookup_order", "Look up an order by ID",
-		map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"order_id": map[string]any{"type": "string"}},
-			"required":   []string{"order_id"},
-		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				OrderID string `json:"order_id"`
-			}
-			json.Unmarshal(input, &p)
-			return fmt.Sprintf(`{"order_id":%q,"status":"delivered"}`, p.OrderID), nil
+	type input struct {
+		OrderID string `json:"order_id" required:"true"`
+	}
+	return tool.New("lookup_order", "Look up an order by ID",
+		func(_ context.Context, in input) (string, error) {
+			return fmt.Sprintf(`{"order_id":%q,"status":"delivered"}`, in.OrderID), nil
 		},
 	)
 }
 
 // supportTool requires support or admin role.
 func supportTool() tool.Tool {
-	return tool.NewRaw("process_refund", "Process a refund",
-		map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"order_id": map[string]any{"type": "string"}},
-			"required":   []string{"order_id"},
-		},
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				OrderID string `json:"order_id"`
-			}
-			json.Unmarshal(input, &p)
-			return fmt.Sprintf(`{"refunded":true,"order_id":%q}`, p.OrderID), nil
+	type input struct {
+		OrderID string `json:"order_id" required:"true"`
+	}
+	return tool.New("process_refund", "Process a refund",
+		func(_ context.Context, in input) (string, error) {
+			return fmt.Sprintf(`{"refunded":true,"order_id":%q}`, in.OrderID), nil
 		},
 		tool.AllowRoles("support", "admin"),
 	)
@@ -169,9 +153,9 @@ func supportTool() tool.Tool {
 
 // acmeOnlyTool requires support or admin role AND org == "acme" (ABAC).
 func acmeOnlyTool() tool.Tool {
-	return tool.NewRaw("acme_report", "Generate an Acme-exclusive report",
-		map[string]any{"type": "object"},
-		func(_ context.Context, _ json.RawMessage) (string, error) {
+	type input struct{}
+	return tool.New("acme_report", "Generate an Acme-exclusive report",
+		func(_ context.Context, _ input) (string, error) {
 			return `{"report":"acme-q1","status":"generated"}`, nil
 		},
 		tool.AllowRoles("support", "admin"),

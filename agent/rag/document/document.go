@@ -13,7 +13,6 @@
 //	texts, metadata, err := document.LoadDir(ctx, "docs/", document.WithExtensions(".md", ".txt"))
 //	if err != nil { ... }
 //	err = rag.Ingest(ctx, store, embedder, texts, metadata)
-//
 package document
 
 import (
@@ -27,7 +26,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
@@ -330,8 +328,8 @@ func extractDocxText(r io.Reader) (string, error) {
 //	err := document.IngestFiles(ctx, store, embedder, []string{"guide.pdf", "faq.md"})
 func IngestFiles(
 	ctx context.Context,
-	store agent.VectorStore,
-	embedder agent.Embedder,
+	store rag.Store,
+	embedder rag.Embedder,
 	paths []string,
 	loadOpts []LoadOption,
 	ingestOpts ...rag.IngestOption,
@@ -353,8 +351,8 @@ func IngestFiles(
 //	)
 func IngestDir(
 	ctx context.Context,
-	store agent.VectorStore,
-	embedder agent.Embedder,
+	store rag.Store,
+	embedder rag.Embedder,
 	dir string,
 	loadOpts []LoadOption,
 	ingestOpts ...rag.IngestOption,

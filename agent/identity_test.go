@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // --- helpers ---
 
 func adminTool() tool.Tool {
-	return tool.NewRaw("admin_op", "Admin operation",
+	return newTestRaw("admin_op", "Admin operation",
 		map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "done", nil },
 		tool.AllowRoles("admin"),
@@ -20,14 +19,14 @@ func adminTool() tool.Tool {
 }
 
 func publicTool() tool.Tool {
-	return tool.NewRaw("public_op", "Public operation",
+	return newTestRaw("public_op", "Public operation",
 		map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "public", nil },
 	)
 }
 
 func guestDeniedTool() tool.Tool {
-	return tool.NewRaw("view_logs", "View logs",
+	return newTestRaw("view_logs", "View logs",
 		map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "logs", nil },
 		tool.DenyRoles("guest"),
@@ -147,12 +146,12 @@ func TestTool_DenyRoles_Blocks(t *testing.T) {
 func TestWithRoleEnforcement_AdminSeesAdminTool(t *testing.T) {
 	// Admin calls a tool that requires "admin" role — should succeed.
 	prov := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{{ToolUseID: "t1", Name: "admin_op", Input: json.RawMessage(`{}`)}},
 		},
-		&ProviderResponse{Text: "done"},
+		&ModelResponse{Text: "done"},
 	)
-	a, err := New(prov, prompt.Text("test"), []tool.Tool{adminTool()}, WithRoleEnforcement())
+	a, err := New(prov, "test", WithTools(adminTool()), WithRoleEnforcement())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,16 +160,16 @@ func TestWithRoleEnforcement_AdminSeesAdminTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "done" {
-		t.Errorf("result = %q", result)
+	if result.Text != "done" {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
 func TestWithRoleEnforcement_GuestCannotSeeAdminTool(t *testing.T) {
 	// Guest invokes agent — admin_op should be filtered out of the tool spec
 	// sent to the provider, so the LLM never sees it.
-	prov := newCapturingProvider(&ProviderResponse{Text: "ok"})
-	a, err := New(prov, prompt.Text("test"), []tool.Tool{adminTool(), publicTool()},
+	prov := newCapturingProvider(&ModelResponse{Text: "ok"})
+	a, err := New(prov, "test", WithTools(adminTool(), publicTool()),
 		WithRoleEnforcement())
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +180,7 @@ func TestWithRoleEnforcement_GuestCannotSeeAdminTool(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, call := range prov.captured {
-		for _, s := range call.ToolConfig {
+		for _, s := range call.Tools {
 			if s.Name == "admin_op" {
 				t.Error("admin_op should not be visible to guest role")
 			}
@@ -191,8 +190,8 @@ func TestWithRoleEnforcement_GuestCannotSeeAdminTool(t *testing.T) {
 
 func TestWithRequirePrincipal_NoPrincipal_ToolsHidden(t *testing.T) {
 	// No principal set — all tools should be filtered out.
-	prov := newCapturingProvider(&ProviderResponse{Text: "ok"})
-	a, err := New(prov, prompt.Text("test"), []tool.Tool{publicTool()},
+	prov := newCapturingProvider(&ModelResponse{Text: "ok"})
+	a, err := New(prov, "test", WithTools(publicTool()),
 		WithRequirePrincipal())
 	if err != nil {
 		t.Fatal(err)
@@ -201,16 +200,16 @@ func TestWithRequirePrincipal_NoPrincipal_ToolsHidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(prov.captured) > 0 && len(prov.captured[0].ToolConfig) != 0 {
-		t.Errorf("expected 0 tool specs without principal, got %d", len(prov.captured[0].ToolConfig))
+	if len(prov.captured) > 0 && len(prov.captured[0].Tools) != 0 {
+		t.Errorf("expected 0 tool specs without principal, got %d", len(prov.captured[0].Tools))
 	}
 }
 
 func TestWithPolicy_CustomFunc(t *testing.T) {
 	// Custom policy: only allow tools whose name starts with "pub".
-	prov := newCapturingProvider(&ProviderResponse{Text: "ok"})
-	a, err := New(prov, prompt.Text("test"),
-		[]tool.Tool{adminTool(), publicTool()},
+	prov := newCapturingProvider(&ModelResponse{Text: "ok"})
+	a, err := New(prov, "test",
+		WithTools(adminTool(), publicTool()),
 		WithPolicy(func(c *Context, t tool.Tool) bool {
 			return len(t.Spec.Name) >= 3 && t.Spec.Name[:3] == "pub"
 		}),
@@ -223,7 +222,7 @@ func TestWithPolicy_CustomFunc(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, call := range prov.captured {
-		for _, s := range call.ToolConfig {
+		for _, s := range call.Tools {
 			if s.Name != "public_op" {
 				t.Errorf("expected only public_op, got %q", s.Name)
 			}
@@ -236,7 +235,7 @@ func TestWithPolicy_CustomFunc(t *testing.T) {
 // still blocks the handler with a denial result.
 func TestRoleEnforcement_ExecutionTime(t *testing.T) {
 	handlerCalled := false
-	restricted := tool.NewRaw("restricted", "admin only",
+	restricted := newTestRaw("restricted", "admin only",
 		map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			handlerCalled = true
@@ -248,13 +247,13 @@ func TestRoleEnforcement_ExecutionTime(t *testing.T) {
 	// No WithRoleEnforcement — filterTools passes everything.
 	// The execution-time check inside executeToolsWithMiddleware is what we're testing.
 	prov := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{{ToolUseID: "t1", Name: "restricted", Input: json.RawMessage(`{}`)}},
 		},
-		&ProviderResponse{Text: "access denied response"},
+		&ModelResponse{Text: "access denied response"},
 	)
 
-	a, err := New(prov, prompt.Text("test"), []tool.Tool{restricted})
+	a, err := New(prov, "test", WithTools(restricted))
 	if err != nil {
 		t.Fatal(err)
 	}

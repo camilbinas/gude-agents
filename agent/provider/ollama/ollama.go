@@ -8,7 +8,6 @@
 //
 //	provider, err := ollama.New("qwen2.5")
 //	provider, err := ollama.New("llama3.2", ollama.WithBaseURL("http://10.0.0.5:11434/v1"))
-//
 package ollama
 
 import (
@@ -17,8 +16,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
 )
 
-// OllamaProvider is the provider type returned by constructors in this package.
-type OllamaProvider = openai.OpenAIProvider
+// Provider is the provider type returned by constructors in this package.
+type Provider = openai.OpenAIProvider
 
 // Option configures the Ollama provider.
 type Option = openai.Option
@@ -27,12 +26,9 @@ type Option = openai.Option
 // By default, the URL is read from OLLAMA_HOST, falling back to http://localhost:11434.
 var WithBaseURL = openai.WithBaseURL
 
-// WithMaxTokens sets the max tokens for responses.
-var WithMaxTokens = openai.WithMaxTokens
-
 // New creates a provider targeting a local Ollama server.
 // The model parameter is the Ollama model name (e.g. "llama3.2", "qwen2.5", "mistral").
-func New(model string, opts ...Option) (*OllamaProvider, error) {
+func New(model string, opts ...Option) (*Provider, error) {
 	host := os.Getenv("OLLAMA_HOST")
 	if host == "" {
 		host = "http://localhost:11434"
@@ -42,7 +38,7 @@ func New(model string, opts ...Option) (*OllamaProvider, error) {
 }
 
 // Must is a helper that wraps a call to New and panics on error.
-func Must(p *OllamaProvider, err error) *OllamaProvider {
+func Must(p *Provider, err error) *Provider {
 	if err != nil {
 		panic("ollama: " + err.Error())
 	}

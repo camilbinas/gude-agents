@@ -1,9 +1,9 @@
 package postgres
 
-// Option configures a VectorStore instance.
+// Option configures a Store instance.
 type Option func(*pgvConfig)
 
-// pgvConfig holds configuration for VectorStore construction.
+// pgvConfig holds configuration for Store construction.
 type pgvConfig struct {
 	tableName  string
 	colID      string

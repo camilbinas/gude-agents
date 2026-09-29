@@ -1,27 +1,10 @@
-// Package sqlite provides a SQLite-based memory driver for the gude-agents framework.
-// It stores each conversation as a row in a SQLite database, with messages serialized
-// as JSON.
-//
-// This is useful for CLI tools, local agents, development, and single-machine
-// deployments where you want durable, queryable persistence without running an
-// external service. Unlike the disk driver, SQLite provides ACID transactions
-// and handles concurrent access safely.
-//
-// The driver uses modernc.org/sqlite, a pure-Go SQLite implementation that
-// requires no CGo and cross-compiles cleanly.
-//
-// Usage:
-//
-//	store, err := sqlite.New("/tmp/agent-memory.db")
-//	// Creates a SQLite database at /tmp/agent-memory.db
-//
-//	store, err := sqlite.New(":memory:")
-//	// Creates an in-memory database (useful for testing)
+// Package sqlite provides a SQLite-backed conversation store.
 package sqlite
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,31 +14,22 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Compile-time interface checks.
-var _ agent.Conversation = (*Conversation)(nil)
+var _ agent.ConversationManager = (*Conversation)(nil)
 
-// Conversation implements agent.Conversation using SQLite.
+// Conversation implements agent.ConversationManager using SQLite.
 type Conversation struct {
 	db        *sql.DB
 	tableName string
 }
 
-// New creates a new SQLiteMemory. The dsn is a SQLite connection string —
-// typically a file path like "/tmp/agent.db" or ":memory:" for an in-memory
-// database.
-//
-// The conversations table is created automatically if it doesn't exist.
-// Returns an error if the database cannot be opened or the schema cannot
-// be initialized.
+// New creates a SQLite conversation store. The dsn is normally a file path or
+// ":memory:". The conversations table is created automatically.
 func New(dsn string, opts ...Option) (*Conversation, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("sqlite conversation: dsn is required")
 	}
 
-	cfg := &sqliteConfig{
-		tableName:   "conversations",
-		busyTimeout: 5 * time.Second,
-	}
+	cfg := &sqliteConfig{tableName: "conversations", busyTimeout: 5 * time.Second}
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -65,7 +39,6 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 		return nil, fmt.Errorf("sqlite conversation: open: %w", err)
 	}
 
-	// Set pragmas for reliability and performance.
 	pragmas := fmt.Sprintf(`
 		PRAGMA journal_mode=WAL;
 		PRAGMA busy_timeout=%d;
@@ -76,11 +49,11 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 		return nil, fmt.Errorf("sqlite conversation: pragmas: %w", err)
 	}
 
-	// Create the conversations table if it doesn't exist.
 	ddl := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			conversation_id TEXT PRIMARY KEY,
 			messages        TEXT NOT NULL,
+			revision        INTEGER NOT NULL,
 			updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`, cfg.tableName)
@@ -88,61 +61,92 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite conversation: create table: %w", err)
 	}
+	var hasRevision bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name = 'revision')`, cfg.tableName).Scan(&hasRevision); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("sqlite conversation: inspect revision column: %w", err)
+	}
+	if !hasRevision {
+		// Existing pre-CAS tables are upgraded in place. Revision zero marks a
+		// legacy row and allows exactly one expectedRevision=0 CAS upgrade.
+		alter := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`, cfg.tableName)
+		if _, err := db.Exec(alter); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("sqlite conversation: add revision column: %w", err)
+		}
+	}
 
-	return &Conversation{
-		db:        db,
-		tableName: cfg.tableName,
-	}, nil
+	return &Conversation{db: db, tableName: cfg.tableName}, nil
 }
 
-// Save persists messages for the given conversation ID. Uses an upsert so
-// that both new and existing conversations are handled in a single statement.
-func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message) error {
+// Save atomically persists messages when expectedRevision matches the current
+// revision. New conversations must use expectedRevision zero.
+func (m *Conversation) Save(ctx context.Context, conversationID string, messages []agent.Message, expectedRevision uint64) (uint64, error) {
 	data, err := conversation.MarshalMessages(messages)
 	if err != nil {
-		return fmt.Errorf("sqlite conversation: marshal: %w", err)
+		return 0, fmt.Errorf("sqlite conversation: marshal: %w", err)
 	}
 
-	query := fmt.Sprintf(`
-		INSERT INTO %s (conversation_id, messages, updated_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(conversation_id) DO UPDATE SET
-			messages   = excluded.messages,
-			updated_at = excluded.updated_at
-	`, m.tableName)
-
-	if _, err := m.db.ExecContext(ctx, query, conversationID, string(data)); err != nil {
-		return fmt.Errorf("sqlite conversation: save: %w", err)
+	var query string
+	var args []any
+	if expectedRevision == 0 {
+		query = fmt.Sprintf(`
+			INSERT INTO %s (conversation_id, messages, revision, updated_at)
+			VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+			ON CONFLICT(conversation_id) DO UPDATE SET
+				messages = excluded.messages,
+				revision = 1,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE revision = 0
+			RETURNING revision
+		`, m.tableName)
+		args = []any{conversationID, string(data)}
+	} else {
+		query = fmt.Sprintf(`
+			UPDATE %s SET
+				messages = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+			WHERE conversation_id = ? AND revision = ?
+			RETURNING revision
+		`, m.tableName)
+		args = []any{string(data), conversationID, expectedRevision}
 	}
-	return nil
+
+	var revision uint64
+	err = m.db.QueryRowContext(ctx, query, args...).Scan(&revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("sqlite conversation: save %q: %w", conversationID, agent.ErrConversationConflict)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("sqlite conversation: save: %w", err)
+	}
+	return revision, nil
 }
 
-// Load retrieves messages for the given conversation ID.
-// Returns an empty non-nil slice if the conversation does not exist.
-func (m *Conversation) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
-	query := fmt.Sprintf(`SELECT messages FROM %s WHERE conversation_id = ?`, m.tableName)
+// Load returns the messages and revision. Missing conversations return a
+// non-nil empty message slice and revision zero.
+func (m *Conversation) Load(ctx context.Context, conversationID string) (agent.ConversationSnapshot, error) {
+	query := fmt.Sprintf(`SELECT messages, revision FROM %s WHERE conversation_id = ?`, m.tableName)
 
 	var data string
-	err := m.db.QueryRowContext(ctx, query, conversationID).Scan(&data)
+	var revision uint64
+	err := m.db.QueryRowContext(ctx, query, conversationID).Scan(&data, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
+	}
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return []agent.Message{}, nil
-		}
-		return nil, fmt.Errorf("sqlite conversation: load: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: load: %w", err)
 	}
 
 	messages, err := conversation.UnmarshalMessages([]byte(data))
 	if err != nil {
-		return nil, fmt.Errorf("sqlite conversation: unmarshal: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: unmarshal: %w", err)
 	}
-	return messages, nil
+	return agent.ConversationSnapshot{Messages: messages, Revision: revision}, nil
 }
 
-// List returns all conversation IDs in the database, ordered by most recently
-// updated first.
+// List returns all conversation IDs ordered by most recent update.
 func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	query := fmt.Sprintf(`SELECT conversation_id FROM %s ORDER BY updated_at DESC`, m.tableName)
-
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite conversation: list: %w", err)
@@ -163,11 +167,9 @@ func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// Delete removes a conversation by ID. Returns nil if the conversation
-// does not exist.
+// Delete removes a conversation. Missing conversations are ignored.
 func (m *Conversation) Delete(ctx context.Context, conversationID string) error {
 	query := fmt.Sprintf(`DELETE FROM %s WHERE conversation_id = ?`, m.tableName)
-
 	if _, err := m.db.ExecContext(ctx, query, conversationID); err != nil {
 		return fmt.Errorf("sqlite conversation: delete: %w", err)
 	}
@@ -175,6 +177,4 @@ func (m *Conversation) Delete(ctx context.Context, conversationID string) error 
 }
 
 // Close closes the underlying database connection.
-func (m *Conversation) Close() error {
-	return m.db.Close()
-}
+func (m *Conversation) Close() error { return m.db.Close() }

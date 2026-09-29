@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // testEstimatorClient creates a Bedrock client pointed at a local test server.
@@ -46,7 +48,7 @@ func TestEstimator_ReturnsTokenCount(t *testing.T) {
 		model:  "anthropic.claude-3-5-haiku-20241022-v1:0",
 	}
 
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},
@@ -81,11 +83,16 @@ func TestEstimator_WithSystemPrompt(t *testing.T) {
 		model:  "anthropic.claude-3-5-haiku-20241022-v1:0",
 	}
 
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hi"}}},
 		},
 		System: "Be concise.",
+		Tools: []tool.Spec{{
+			Name:        "lookup",
+			Description: "Look up a value",
+			InputSchema: map[string]any{"type": "object"},
+		}},
 	}
 
 	count, err := est.EstimateTokens(context.Background(), params)
@@ -94,6 +101,15 @@ func TestEstimator_WithSystemPrompt(t *testing.T) {
 	}
 	if count != 10 {
 		t.Errorf("expected 10 tokens, got %d", count)
+	}
+	body, err := json.Marshal(capturedBody)
+	if err != nil {
+		t.Fatalf("marshal captured request: %v", err)
+	}
+	for _, want := range []string{"Be concise.", `"toolConfig"`, "lookup"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("request body %s does not contain %q", body, want)
+		}
 	}
 }
 
@@ -110,7 +126,7 @@ func TestEstimator_APIError_PropagatesError(t *testing.T) {
 		model:  "anthropic.claude-3-5-haiku-20241022-v1:0",
 	}
 
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},
@@ -138,7 +154,7 @@ func TestEstimator_ServerError_PropagatesError(t *testing.T) {
 		model:  "anthropic.claude-3-5-haiku-20241022-v1:0",
 	}
 
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},
@@ -169,7 +185,7 @@ func TestEstimator_EmptyMessages(t *testing.T) {
 		model:  "anthropic.claude-3-5-haiku-20241022-v1:0",
 	}
 
-	params := agent.ConverseParams{
+	params := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: ""}}},
 		},

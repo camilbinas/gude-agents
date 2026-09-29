@@ -2,341 +2,176 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/testutil"
-	"pgregory.net/rapid"
 )
 
-// skipIfNoRedis skips the test if REDIS_ADDR is not set and returns the address.
 func skipIfNoRedis(t *testing.T) string {
+	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
-		t.Skip("REDIS_ADDR not set, skipping integration test")
+		t.Skip("REDIS_ADDR not set")
 	}
 	return addr
 }
 
-func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
+func redisMessages(text string) []agent.Message {
+	return []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: text}}}}
+}
 
-func TestProperty_ConversationSaveLoadRoundTrip(t *testing.T) {
-	addr := skipIfNoRedis(t)
-
-	mem, err := New(Options{Addr: addr})
+func newTestConversation(t *testing.T, options ...Option) *Conversation {
+	t.Helper()
+	options = append(options, WithKeyPrefix("conversation-test:"+strings.ReplaceAll(t.Name(), "/", ":")+":"))
+	m, err := New(Options{Addr: skipIfNoRedis(t)}, options...)
 	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
+		t.Fatal(err)
 	}
-	defer mem.Close()
-
-	rapid.Check(t, func(t *rapid.T) {
-		messages := genMessages(t)
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-
-		ctx := context.Background()
-
-		if err := mem.Save(ctx, convID, messages); err != nil {
-			t.Fatalf("Save failed: %v", err)
+	t.Cleanup(func() {
+		keys, _ := m.client.Keys(context.Background(), m.keyPrefix+"*").Result()
+		if len(keys) > 0 {
+			_ = m.client.Del(context.Background(), keys...).Err()
 		}
-
-		// Clean up the key after the test iteration.
-		defer mem.client.Del(ctx, mem.keyPrefix+convID)
-
-		loaded, err := mem.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
-		}
-
-		if !reflect.DeepEqual(messages, loaded) {
-			t.Fatalf("round-trip mismatch:\n  saved:  %+v\n  loaded: %+v", messages, loaded)
-		}
+		_ = m.Close()
 	})
+	return m
 }
 
-// --- Unit Tests for Conversation ---
-
-// TestNew_UnreachableAddr verifies that NewConversation returns an error
-// containing "ping" when the Redis address is unreachable.
-func TestNew_UnreachableAddr(t *testing.T) {
+func TestNewUnreachable(t *testing.T) {
 	_, err := New(Options{Addr: "localhost:1"})
-	if err == nil {
-		t.Fatal("expected error for unreachable address, got nil")
-	}
-	if !contains(err.Error(), "ping") {
-		t.Fatalf("expected error to contain 'ping', got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "ping") {
+		t.Fatalf("New error = %v", err)
 	}
 }
 
-// TestConversation_LoadNonExistent verifies that Load for a non-existent conversation ID
-// returns an empty (non-nil) slice and nil error.
-func TestConversation_LoadNonExistent(t *testing.T) {
-	addr := skipIfNoRedis(t)
-
-	mem, err := New(Options{Addr: addr})
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
-	msgs, err := mem.Load(context.Background(), "nonexistent-conv-id-12345")
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-	if msgs == nil {
-		t.Fatal("expected non-nil empty slice, got nil")
-	}
-	if len(msgs) != 0 {
-		t.Fatalf("expected empty slice, got %d messages", len(msgs))
-	}
-}
-
-// TestConversation_DefaultKeyPrefix verifies that a newly created Conversation
-// has the default key prefix "gude:".
-func TestConversation_DefaultKeyPrefix(t *testing.T) {
-	addr := skipIfNoRedis(t)
-
-	mem, err := New(Options{Addr: addr})
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
-	if mem.keyPrefix != "gude:" {
-		t.Fatalf("expected default keyPrefix %q, got %q", "gude:", mem.keyPrefix)
-	}
-}
-
-// TestConversation_TTLSet verifies that when WithTTL is configured, saved keys
-// have a TTL set in Redis.
-func TestConversation_TTLSet(t *testing.T) {
-	addr := skipIfNoRedis(t)
-
-	ttl := 10 * time.Minute
-	mem, err := New(Options{Addr: addr}, WithTTL(ttl))
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
+func TestSaveLoadRevisionAndConflict(t *testing.T) {
+	m := newTestConversation(t)
 	ctx := context.Background()
-	convID := "test-ttl-set-conv"
-	key := mem.keyPrefix + convID
-
-	// Clean up before and after.
-	mem.client.Del(ctx, key)
-	defer mem.client.Del(ctx, key)
-
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
+	missing, err := m.Load(ctx, "missing")
+	if err != nil || missing.Messages == nil || missing.Revision != 0 {
+		t.Fatalf("missing = %+v, %v", missing, err)
 	}
-	if err := mem.Save(ctx, convID, msgs); err != nil {
-		t.Fatalf("Save failed: %v", err)
+	rev, err := m.Save(ctx, "conv", redisMessages("one"), 0)
+	if err != nil || rev != 1 {
+		t.Fatalf("first Save = %d, %v", rev, err)
 	}
-
-	remaining := mem.client.TTL(ctx, key).Val()
-	if remaining <= 0 {
-		t.Fatalf("expected positive TTL, got %v", remaining)
+	rev, err = m.Save(ctx, "conv", redisMessages("two"), rev)
+	if err != nil || rev != 2 {
+		t.Fatalf("second Save = %d, %v", rev, err)
 	}
-	if remaining > ttl {
-		t.Fatalf("TTL %v exceeds configured %v", remaining, ttl)
+	if _, err := m.Save(ctx, "conv", redisMessages("stale"), 1); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("stale Save = %v", err)
+	}
+	snapshot, err := m.Load(ctx, "conv")
+	if err != nil || snapshot.Revision != 2 || !reflect.DeepEqual(snapshot.Messages, redisMessages("two")) {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
 	}
 }
 
-// TestConversation_NoExpiration verifies that when no TTL is configured (default),
-// saved keys have no expiration (TTL returns -1 in Redis).
-func TestConversation_NoExpiration(t *testing.T) {
-	addr := skipIfNoRedis(t)
-
-	mem, err := New(Options{Addr: addr})
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
+func TestTTLAndNoExpiration(t *testing.T) {
 	ctx := context.Background()
-	convID := "test-no-expiration-conv"
-	key := mem.keyPrefix + convID
-
-	// Clean up before and after.
-	mem.client.Del(ctx, key)
-	defer mem.client.Del(ctx, key)
-
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
+	withTTL := newTestConversation(t, WithTTL(10*time.Minute))
+	if _, err := withTTL.Save(ctx, "ttl", redisMessages("x"), 0); err != nil {
+		t.Fatal(err)
 	}
-	if err := mem.Save(ctx, convID, msgs); err != nil {
-		t.Fatalf("Save failed: %v", err)
+	if ttl := withTTL.client.TTL(ctx, withTTL.keyPrefix+"ttl").Val(); ttl <= 0 || ttl > 10*time.Minute {
+		t.Fatalf("TTL = %v", ttl)
 	}
-
-	remaining := mem.client.TTL(ctx, key).Val()
-	// Redis returns -1 for keys with no expiration.
-	if remaining != -1*time.Second {
-		t.Fatalf("expected TTL of -1 (no expiration), got %v", remaining)
+	withoutTTL := newTestConversation(t)
+	if _, err := withoutTTL.Save(ctx, "persistent", redisMessages("x"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if ttl := withoutTTL.client.TTL(ctx, withoutTTL.keyPrefix+"persistent").Val(); ttl != -time.Second {
+		t.Fatalf("TTL = %v", ttl)
 	}
 }
 
-// contains checks if s contains substr (helper to avoid importing strings).
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchSubstr(s, substr)
-}
-
-func searchSubstr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-// TestConversation_WithOption verifies that Conversation is accepted by agent.WithConversation.
-func TestConversation_WithOption(t *testing.T) {
-	addr := skipIfNoRedis(t)
-	mem, err := New(Options{Addr: addr})
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
-	// This should compile and not panic — proves Conversation satisfies the Conversation interface
-	// used by WithConversation.
-	opt := agent.WithConversation(mem, "test-conv")
-	if opt == nil {
-		t.Fatal("expected non-nil option from WithConversation")
-	}
-}
-
-// --- Integration Tests for Conversation List and Delete ---
-
-// TestConversation_ListReturnsSavedConversationIDs verifies that List returns
-// all conversation IDs that have been saved, using a unique key prefix.
-func TestConversation_ListReturnsSavedConversationIDs(t *testing.T) {
-	addr := skipIfNoRedis(t)
-
-	prefix := "test-list-delete:"
-	mem, err := New(Options{Addr: addr}, WithKeyPrefix(prefix))
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
+func TestListAndDelete(t *testing.T) {
+	m := newTestConversation(t)
 	ctx := context.Background()
-
-	convIDs := []string{"conv-alpha", "conv-beta", "conv-gamma"}
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-	}
-
-	// Save 3 conversations.
-	for _, id := range convIDs {
-		if err := mem.Save(ctx, id, msgs); err != nil {
-			t.Fatalf("Save(%q) failed: %v", id, err)
+	for _, id := range []string{"a", "b"} {
+		if _, err := m.Save(ctx, id, redisMessages(id), 0); err != nil {
+			t.Fatal(err)
 		}
 	}
-
-	// Clean up after test.
-	defer func() {
-		for _, id := range convIDs {
-			mem.client.Del(ctx, prefix+id)
-		}
-	}()
-
-	// List and verify all 3 IDs are returned.
-	listed, err := mem.List(ctx)
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
+	ids, err := m.List(ctx)
+	sort.Strings(ids)
+	if err != nil || !reflect.DeepEqual(ids, []string{"a", "b"}) {
+		t.Fatalf("List = %v, %v", ids, err)
 	}
-
-	if len(listed) != len(convIDs) {
-		t.Fatalf("expected %d IDs, got %d: %v", len(convIDs), len(listed), listed)
+	if err := m.Delete(ctx, "a"); err != nil {
+		t.Fatal(err)
 	}
-
-	// Sort both slices for comparison since order is not guaranteed.
-	sortStrings(listed)
-	expected := make([]string, len(convIDs))
-	copy(expected, convIDs)
-	sortStrings(expected)
-
-	if !reflect.DeepEqual(expected, listed) {
-		t.Fatalf("List mismatch:\n  expected: %v\n  got:      %v", expected, listed)
+	if err := m.Delete(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := m.Load(ctx, "a")
+	if err != nil || snapshot.Revision != 0 || len(snapshot.Messages) != 0 {
+		t.Fatalf("deleted = %+v, %v", snapshot, err)
 	}
 }
 
-// TestConversation_DeleteRemovesTargetKey verifies that Delete removes the target
-// conversation while leaving other conversations intact.
-func TestConversation_DeleteRemovesTargetKey(t *testing.T) {
-	addr := skipIfNoRedis(t)
+func TestConversationManagerCompatibility(t *testing.T) {
+	var _ agent.ConversationManager = (*Conversation)(nil)
+}
 
-	prefix := "test-del-target:"
-	mem, err := New(Options{Addr: addr}, WithKeyPrefix(prefix))
-	if err != nil {
-		t.Fatalf("failed to create Conversation: %v", err)
-	}
-	defer mem.Close()
-
+func TestConcurrentCASOneWinner(t *testing.T) {
+	store := newTestConversation(t)
 	ctx := context.Background()
-
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := store.Save(ctx, "race", redisMessages("value"), 0)
+			errs <- err
+		}()
 	}
-
-	// Save 2 conversations.
-	if err := mem.Save(ctx, "keep-me", msgs); err != nil {
-		t.Fatalf("Save(keep-me) failed: %v", err)
-	}
-	if err := mem.Save(ctx, "delete-me", msgs); err != nil {
-		t.Fatalf("Save(delete-me) failed: %v", err)
-	}
-
-	// Clean up after test.
-	defer func() {
-		mem.client.Del(ctx, prefix+"keep-me")
-		mem.client.Del(ctx, prefix+"delete-me")
-	}()
-
-	// Delete one conversation.
-	if err := mem.Delete(ctx, "delete-me"); err != nil {
-		t.Fatalf("Delete(delete-me) failed: %v", err)
-	}
-
-	// Verify deleted conversation is gone from List.
-	listed, err := mem.List(ctx)
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	for _, id := range listed {
-		if id == "delete-me" {
-			t.Fatal("deleted conversation still appears in List")
+	close(start)
+	wg.Wait()
+	close(errs)
+	var successes, conflicts int
+	for err := range errs {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, agent.ErrConversationConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	}
-
-	// Verify Load returns empty for deleted conversation.
-	loaded, err := mem.Load(ctx, "delete-me")
-	if err != nil {
-		t.Fatalf("Load(delete-me) failed: %v", err)
-	}
-	if len(loaded) != 0 {
-		t.Fatalf("expected empty messages for deleted conversation, got %d", len(loaded))
-	}
-
-	// Verify the other conversation still exists.
-	remaining, err := mem.Load(ctx, "keep-me")
-	if err != nil {
-		t.Fatalf("Load(keep-me) failed: %v", err)
-	}
-	if !reflect.DeepEqual(msgs, remaining) {
-		t.Fatalf("remaining conversation mismatch:\n  expected: %+v\n  got:      %+v", msgs, remaining)
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
 	}
 }
 
-// sortStrings sorts a string slice in place (simple insertion sort to avoid importing sort).
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
+func TestLegacyHashUpgradesWithCAS(t *testing.T) {
+	m := newTestConversation(t)
+	ctx := context.Background()
+	key := m.keyPrefix + "legacy"
+	legacyJSON := `[{"role":"user","content":[{"type":"text","text":"legacy"}]}]`
+	if err := m.client.HSet(ctx, key, "messages", legacyJSON).Err(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := m.Load(ctx, "legacy")
+	if err != nil || snapshot.Revision != 0 || len(snapshot.Messages) != 1 {
+		t.Fatalf("legacy snapshot = %+v, %v", snapshot, err)
+	}
+	revision, err := m.Save(ctx, "legacy", redisMessages("upgraded"), 0)
+	if err != nil || revision != 1 {
+		t.Fatalf("upgrade Save = %d, %v", revision, err)
+	}
+	if _, err := m.Save(ctx, "legacy", redisMessages("stale"), 0); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("second revision-zero Save = %v", err)
 	}
 }

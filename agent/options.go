@@ -2,7 +2,12 @@ package agent
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
+
+	"github.com/camilbinas/gude-agents/agent/rag"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // Logger is an optional interface for logging. Used by conversation strategies
@@ -35,30 +40,41 @@ func WithMaxIterations(n int) Option {
 	}
 }
 
-// WithParallelToolExecution enables concurrent tool execution.
-func WithParallelToolExecution() Option {
+// WithTools registers a fixed set of tools on the Agent's registry.
+func WithTools(tools ...tool.Tool) Option {
+	return func(a *Agent) error {
+		for _, t := range tools {
+			if err := a.toolRegistry.Register(t); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// WithToolRegistry uses a shared concurrency-safe dynamic tool registry.
+func WithToolRegistry(registry *tool.Registry) Option {
+	return func(a *Agent) error {
+		if registry == nil {
+			return fmt.Errorf("tool registry must not be nil")
+		}
+		a.toolRegistry = registry
+		return nil
+	}
+}
+
+// WithParallelTools enables concurrent tool execution.
+func WithParallelTools() Option {
 	return func(a *Agent) error {
 		a.parallelTools = true
 		return nil
 	}
 }
 
-// WithConversation configures conversation history for multi-turn support.
-// The conversationID is used as the default; it can be overridden per-invocation
-// using c.WithConversationID on the *Context.
-func WithConversation(c Conversation, conversationID string) Option {
-	return func(a *Agent) error {
-		a.conversation = c
-		a.conversationID = conversationID
-		return nil
-	}
-}
-
-// WithSharedConversation configures conversation history without a default conversationID.
-// Each invocation must provide a conversationID via c.WithConversationID on the *Context.
-// This is the recommended pattern for HTTP servers where a single Agent instance
-// serves multiple concurrent conversations.
-func WithSharedConversation(c Conversation) Option {
+// WithConversationStore configures conversation persistence. Conversation IDs
+// are supplied only by Context.WithConversationID; an empty ID is stateless and
+// never loads, saves, or flushes the store.
+func WithConversationStore(c ConversationStore) Option {
 	return func(a *Agent) error {
 		a.conversation = c
 		return nil
@@ -82,9 +98,9 @@ func WithInputGuardrail(g ...InputGuardrail) Option {
 }
 
 // WithOutputGuardrail adds output guardrail(s) applied to the final response.
-// With InvokeStream, chunks stream in real-time and guardrails run after the
-// full response is assembled. A GuardrailError is returned if validation fails.
-// With Invoke, the returned text is always the guardrail-processed result.
+// With Stream / TextStream, text chunks stream live and guardrails run after
+// the full response is assembled; a GuardrailError ends the stream if
+// validation fails. Result.Text is always the guardrail-processed answer.
 func WithOutputGuardrail(g ...OutputGuardrail) Option {
 	return func(a *Agent) error {
 		a.outputGuardrails = append(a.outputGuardrails, g...)
@@ -124,26 +140,26 @@ func WithRateLimiter(rl *RateLimiter) Option {
 	}
 }
 
-// WithRetriever attaches a Retriever to the agent for RAG.
-func WithRetriever(r Retriever) Option {
+// WithRetriever attaches a rag.Retriever to the agent.
+func WithRetriever(r rag.Retriever) Option {
 	return func(a *Agent) error {
 		a.retriever = r
 		return nil
 	}
 }
 
-// WithContextFormatter sets a custom ContextFormatter for RAG.
-// Defaults to DefaultContextFormatter when not set.
-func WithContextFormatter(f ContextFormatter) Option {
+// WithContextFormatter sets a custom rag.ContextFormatter for RAG.
+// It defaults to rag.DefaultContextFormatter when not set.
+func WithContextFormatter(f rag.ContextFormatter) Option {
 	return func(a *Agent) error {
 		a.contextFormatter = f
 		return nil
 	}
 }
 
-// WithSyncConversation makes the agent call Wait() on the conversation after each Save,
-// blocking until any background work (e.g. summarization) is complete before
-// returning from Invoke. Only has an effect if the conversation implements ConversationWaiter.
+// WithSyncConversation makes the agent call Flush(ctx) after each Save,
+// blocking until asynchronous persistence work is complete. It only has an
+// effect when the store implements Flusher.
 func WithSyncConversation() Option {
 	return func(a *Agent) error {
 		a.syncConversation = true
@@ -151,8 +167,8 @@ func WithSyncConversation() Option {
 	}
 }
 
-// WithMessageNormalizer sets the normalization strategy.
-func WithMessageNormalizer(s NormStrategy) Option {
+// WithNormalization sets the message normalization strategy.
+func WithNormalization(s NormStrategy) Option {
 	return func(a *Agent) error {
 		if s < NormMerge || s > NormRemove {
 			return fmt.Errorf("invalid normalization strategy: %d", s)
@@ -163,20 +179,16 @@ func WithMessageNormalizer(s NormStrategy) Option {
 	}
 }
 
-// WithoutMessageNormalizer disables message normalization entirely.
-func WithoutMessageNormalizer() Option {
+// WithoutNormalization disables message normalization entirely.
+func WithoutNormalization() Option {
 	return func(a *Agent) error {
 		a.normDisabled = true
 		return nil
 	}
 }
 
-// WithTimeout sets a per-call timeout for provider calls. Each call to
-// ConverseStream gets a context with this deadline. If the provider doesn't
-// respond in time, the call is cancelled and returns a context.DeadlineExceeded
-// error wrapped in a ProviderError.
-// A value of 0 means no timeout (default).
-func WithTimeout(d time.Duration) Option {
+// WithProviderTimeout sets a timeout for each provider call.
+func WithProviderTimeout(d time.Duration) Option {
 	return func(a *Agent) error {
 		if d < 0 {
 			return fmt.Errorf("timeout must be non-negative, got %s", d)
@@ -186,12 +198,8 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
-// WithRetry enables automatic retry with exponential backoff for transient
-// provider errors. When a provider call fails, the agent retries up to
-// maxRetries times with delays of baseDelay, 2*baseDelay, 4*baseDelay, etc.
-// Only errors that are not context cancellation or deadline exceeded are retried.
-// A maxRetries of 0 means no retry (default).
-func WithRetry(maxRetries int, baseDelay time.Duration) Option {
+// WithProviderRetry configures provider retry with exponential backoff.
+func WithProviderRetry(maxRetries int, baseDelay time.Duration) Option {
 	return func(a *Agent) error {
 		if maxRetries < 0 {
 			return fmt.Errorf("maxRetries must be non-negative, got %d", maxRetries)
@@ -262,10 +270,8 @@ func WithStopSequences(s []string) Option {
 	}
 }
 
-// WithMaxTokens sets the max tokens inference parameter on the agent.
-// This controls the maximum number of tokens the LLM can generate in a response.
-// Must be >= 1. When set, this overrides the provider-level max tokens for every call.
-func WithMaxTokens(n int) Option {
+// WithMaxOutputTokens sets the maximum provider output tokens.
+func WithMaxOutputTokens(n int) Option {
 	return func(a *Agent) error {
 		if n < 1 {
 			return fmt.Errorf("max_tokens must be >= 1, got %d", n)
@@ -289,22 +295,6 @@ func WithBackgroundNotify(fn func(conversationID, agentMessage string)) Option {
 	}
 }
 
-// WithHandoffStore configures a durable store for in-flight HandoffRequests.
-// When set, the agent automatically persists the HandoffRequest to the store
-// whenever ErrHandoffRequested is returned, and deletes it from the store
-// after a successful Resume. This makes it safe to store pending handoffs
-// across process restarts or in multi-process HTTP servers without managing
-// the HandoffRequest lifecycle manually.
-func WithHandoffStore(s HandoffStore) Option {
-	return func(a *Agent) error {
-		if s == nil {
-			return fmt.Errorf("WithHandoffStore: store must not be nil")
-		}
-		a.handoffStore = s
-		return nil
-	}
-}
-
 // WithCaching enables all supported prompt caching. It sets CachingEnabled on
 // each provider call (causing providers to automatically inject cache markers
 // on DocumentBlocks and system prompts) and enables summary caching on any
@@ -313,5 +303,54 @@ func WithCaching() Option {
 	return func(a *Agent) error {
 		a.cachingEnabled = true
 		return nil
+	}
+}
+
+// observerCapabilityNames lists every observer capability interface, in the
+// order checked by supportsObserver. Used to build a self-documenting error
+// when a value implements none of them.
+var observerCapabilityNames = []string{
+	"InvokeObserver", "IterationObserver", "ModelObserver", "ToolObserver",
+	"GuardrailObserver", "ConversationObserver", "RetrievalObserver",
+	"AttachmentObserver", "LimitObserver", "ToolLogObserver", "InterruptObserver",
+}
+
+// WithObserver registers one observer adapter. observer must implement at
+// least one observer capability interface (see Observer); it is repeatable,
+// and observers are called in registration order at lifecycle start and
+// reverse order at end.
+func WithObserver(observer Observer) Option {
+	return func(a *Agent) error {
+		if !supportsObserver(observer) {
+			return fmt.Errorf("WithObserver: %s implements none of %s",
+				describeObserverType(observer), strings.Join(observerCapabilityNames, ", "))
+		}
+		a.observers = append(a.observers, observer)
+		return nil
+	}
+}
+
+func describeObserverType(observer any) string {
+	if observer == nil {
+		return "nil"
+	}
+	return reflect.TypeOf(observer).String()
+}
+
+func supportsObserver(observer any) bool {
+	if observer == nil {
+		return false
+	}
+	value := reflect.ValueOf(observer)
+	if (value.Kind() == reflect.Ptr || value.Kind() == reflect.Map || value.Kind() == reflect.Slice || value.Kind() == reflect.Func || value.Kind() == reflect.Interface) && value.IsNil() {
+		return false
+	}
+	switch observer.(type) {
+	case InvokeObserver, IterationObserver, ModelObserver, ToolObserver,
+		GuardrailObserver, ConversationObserver, RetrievalObserver,
+		AttachmentObserver, LimitObserver, ToolLogObserver, InterruptObserver:
+		return true
+	default:
+		return false
 	}
 }

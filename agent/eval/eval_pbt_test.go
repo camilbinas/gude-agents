@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"pgregory.net/rapid"
 )
 
@@ -27,8 +27,8 @@ func TestProperty_ThresholdPassFail(t *testing.T) {
 	})
 }
 
-// genDocument generates a random agent.Document with random Content and Metadata.
-func genDocument(t *rapid.T, label string) agent.Document {
+// genDocument generates a random rag.Document with random Content and Metadata.
+func genDocument(t *rapid.T, label string) rag.Document {
 	content := rapid.StringMatching(`[a-zA-Z0-9 ]{0,80}`).Draw(t, label+"_content")
 	numMeta := rapid.IntRange(0, 3).Draw(t, label+"_numMeta")
 	meta := make(map[string]string, numMeta)
@@ -37,13 +37,13 @@ func genDocument(t *rapid.T, label string) agent.Document {
 		val := rapid.StringMatching(`[a-zA-Z0-9]{0,20}`).Draw(t, fmt.Sprintf("%s_metaVal_%d", label, i))
 		meta[key] = val
 	}
-	return agent.Document{Content: content, Metadata: meta}
+	return rag.Document{Content: content, Metadata: meta}
 }
 
 // genEvalCase generates a random EvalCase.
 func genEvalCase(t *rapid.T, label string) EvalCase {
 	numDocs := rapid.IntRange(0, 3).Draw(t, label+"_numDocs")
-	docs := make([]agent.Document, numDocs)
+	docs := make([]rag.Document, numDocs)
 	for i := 0; i < numDocs; i++ {
 		docs[i] = genDocument(t, fmt.Sprintf("%s_doc_%d", label, i))
 	}
@@ -183,7 +183,7 @@ func normalizeReport(r *EvalReport) {
 			r.Results[i].Results = []EvalResult{}
 		}
 		if r.Results[i].Case.RetrievedContext == nil {
-			r.Results[i].Case.RetrievedContext = []agent.Document{}
+			r.Results[i].Case.RetrievedContext = []rag.Document{}
 		}
 		if r.Results[i].Case.Metadata == nil {
 			r.Results[i].Case.Metadata = map[string]string{}

@@ -3,30 +3,15 @@ package redis
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// identifierFromContext extracts the identifier from a context.Context.
-// If scope is non-empty, uses agent.ScopeFrom which checks the named scope
-// first, then falls back to Identifier().
-func identifierFromContext(ctx context.Context, scope string) string {
-	return agent.ScopeFrom(ctx, scope)
-}
-
-// Option configures NewRememberTool or NewRecallTool. Both ToolOption and
-// RecallOption satisfy this interface.
-type Option interface {
-	applyTool(*toolConfig)
-}
-
-// ToolOption configures tool metadata (name, description).
+// ToolOption configures memory tool metadata and identity scope.
 type ToolOption func(*toolConfig)
 
 func (f ToolOption) applyTool(c *toolConfig) { f(c) }
@@ -34,8 +19,7 @@ func (f ToolOption) applyTool(c *toolConfig) { f(c) }
 type toolConfig struct {
 	name        string
 	description string
-	scope       string // named scope key; empty = use Identifier()
-	recallOpts  []memory.RecallOption
+	scope       string // named scope key; empty = use the invocation Identity()
 }
 
 // WithToolName sets the tool name.
@@ -56,8 +40,10 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
-// WithScope configures the tool to read its identifier from a named scope
-// on the context (via c.Scope(key)) instead of the default c.Identifier().
+// WithScope configures the tool to partition entries by a named scope on the
+// context (set with c.WithScope(key, value)) instead of the default
+// c.Identity(). Scopes are strict: if the scope is not set, the tool call
+// fails with memory.ErrMissingIdentity; it never falls back to the identity.
 func WithScope(key string) ToolOption {
 	return func(c *toolConfig) {
 		c.scope = key
@@ -67,7 +53,7 @@ func WithScope(key string) ToolOption {
 // NewRememberTool creates a tool that stores values into a Store.
 func NewRememberTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "remember",
@@ -79,11 +65,11 @@ func NewRememberTool[T any](
 
 	schema := generateRedisInputSchema[T]()
 
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx, cfg.scope)
-			if id == "" {
-				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
+			id, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var value T
@@ -97,13 +83,14 @@ func NewRememberTool[T any](
 
 			return "Remembered.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // NewUpdateTool creates a tool that updates an existing entry by ID.
 func NewUpdateTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "update",
@@ -122,11 +109,11 @@ func NewUpdateTool[T any](
 		schema["required"] = []any{"id"}
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx, cfg.scope)
-			if identifier == "" {
-				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
+			identity, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var params struct {
@@ -141,20 +128,20 @@ func NewUpdateTool[T any](
 				return "", fmt.Errorf("redis: unmarshal: %w", err)
 			}
 
-			if err := store.Update(ctx, identifier, params.ID, value); err != nil {
+			if err := store.Update(ctx, identity, params.ID, value); err != nil {
 				return "", err
 			}
 
 			return "Updated.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // NewRecallTool creates a tool that retrieves typed values from a Redis Store.
-// RecallOptions passed here become default filters for every call.
 func NewRecallTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "recall",
@@ -179,13 +166,11 @@ func NewRecallTool[T any](
 		"required": []any{"query"},
 	}
 
-	recallOpts := cfg.recallOpts
-
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx, cfg.scope)
-			if id == "" {
-				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
+			id, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var params struct {
@@ -199,7 +184,10 @@ func NewRecallTool[T any](
 				params.Limit = 5
 			}
 
-			results, err := store.Recall(ctx, id, params.Query, params.Limit, recallOpts...)
+			results, err := store.Recall(ctx, id, memory.RecallQuery{
+				Text:  params.Query,
+				Limit: params.Limit,
+			})
 			if err != nil {
 				return "", err
 			}
@@ -210,13 +198,14 @@ func NewRecallTool[T any](
 
 			return formatTypedResults(results), nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // NewForgetTool creates a tool that removes a single entry by ID.
 func NewForgetTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "forget",
@@ -237,11 +226,11 @@ func NewForgetTool[T any](
 		"required": []any{"id"},
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx, cfg.scope)
-			if identifier == "" {
-				return "", errors.New("redis: identifier not found in context; use c.WithIdentifier")
+			identity, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var params struct {
@@ -251,12 +240,13 @@ func NewForgetTool[T any](
 				return "", err
 			}
 
-			if err := store.Forget(ctx, identifier, params.ID); err != nil {
+			if err := store.Forget(ctx, identity, params.ID); err != nil {
 				return "", err
 			}
 
 			return "Forgotten.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 

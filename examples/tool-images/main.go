@@ -74,14 +74,14 @@ func main() {
 		},
 	)
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.APE{
+		(prompt.APE{
 			Action:      "Use the color_swatch tool to generate images, then describe what you see.",
 			Purpose:     "Demonstrate that tools can return images for visual analysis.",
 			Expectation: "When an image is returned, describe its contents in detail.",
-		},
-		[]tool.Tool{swatchTool},
+		}).String(),
+		agent.WithTools(swatchTool),
 		auto.WithLogging(),
 	)
 	if err != nil {

@@ -68,9 +68,9 @@ func main() {
 	a, err := agent.New(provider,
 		prompt.Text(`You are a payment processing assistant. You can process payments and refunds.
 If a payment is denied, explain the limit to the user and suggest they contact a manager for approval.
-Be concise.`),
-		tools,
-		agent.WithConversation(store, "payment-chat"),
+Be concise.`).String(),
+		agent.WithTools(tools...),
+		agent.WithConversationStore(store),
 		auto.WithLogging(),
 	)
 	if err != nil {
@@ -80,5 +80,6 @@ Be concise.`),
 	fmt.Println("Payment assistant (type 'quit' to exit)")
 	fmt.Println("Try: 'Pay $50 for lunch' or 'Pay $250 for a laptop'")
 
-	utils.Chat(agent.Background(), a)
+	ctx := agent.Background().WithConversationID("payment-chat")
+	utils.Chat(ctx, a)
 }

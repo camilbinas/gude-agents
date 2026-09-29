@@ -12,7 +12,6 @@ import (
 	"pgregory.net/rapid"
 
 	agent "github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -37,19 +36,19 @@ func TestProperty_InvokeSpanAttributes(t *testing.T) {
 
 		mem := newMockMemory()
 		prov := newMockProviderWithModel(modelID,
-			&agent.ProviderResponse{Text: "ok", Usage: agent.TokenUsage{InputTokens: 1, OutputTokens: 1}},
+			&agent.ModelResponse{Text: "ok", Usage: agent.TokenUsage{InputTokens: 1, OutputTokens: 1}},
 		)
 
-		a, err := agent.New(prov, prompt.Text("sys"), nil,
+		a, err := agent.New(prov, "sys",
 			agent.WithMaxIterations(maxIter),
-			agent.WithConversation(mem, convID),
+			agent.WithConversationStore(mem),
 			WithTracing(tp),
 		)
 		if err != nil {
 			t.Fatalf("agent.New: %v", err)
 		}
 
-		_, err = a.Invoke(agent.Background(), "hi")
+		_, err = a.Invoke(agent.Background().WithConversationID(convID), "hi")
 		if err != nil {
 			t.Fatalf("Invoke: %v", err)
 		}
@@ -90,12 +89,12 @@ func TestProperty_SuccessTokenUsage(t *testing.T) {
 		exp, tp := newTestTracerProvider()
 		defer tp.Shutdown(context.Background())
 
-		prov := newMockProvider(&agent.ProviderResponse{
+		prov := newMockProvider(&agent.ModelResponse{
 			Text:  "ok",
 			Usage: agent.TokenUsage{InputTokens: inputTokens, OutputTokens: outputTokens},
 		})
 
-		a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+		a, err := agent.New(prov, "sys", WithTracing(tp))
 		if err != nil {
 			t.Fatalf("agent.New: %v", err)
 		}
@@ -137,7 +136,7 @@ func TestProperty_ErrorSpans(t *testing.T) {
 		defer tp.Shutdown(context.Background())
 
 		prov := &errorProvider{err: fmt.Errorf("%s", errMsg)}
-		a, err := agent.New(prov, prompt.Text("sys"), nil, WithTracing(tp))
+		a, err := agent.New(prov, "sys", WithTracing(tp))
 		if err != nil {
 			t.Fatalf("agent.New: %v", err)
 		}
@@ -199,14 +198,14 @@ func TestProperty_IterationNumbering(t *testing.T) {
 		defer tp.Shutdown(context.Background())
 
 		// Build N-1 tool-call responses + 1 final text response.
-		responses := make([]*agent.ProviderResponse, n)
+		responses := make([]*agent.ModelResponse, n)
 		for i := 0; i < n-1; i++ {
-			responses[i] = &agent.ProviderResponse{
+			responses[i] = &agent.ModelResponse{
 				ToolCalls: []tool.Call{tc("tc"+fmt.Sprint(i), "echo")},
 				Usage:     agent.TokenUsage{InputTokens: 1, OutputTokens: 1},
 			}
 		}
-		responses[n-1] = &agent.ProviderResponse{
+		responses[n-1] = &agent.ModelResponse{
 			Text:  "done",
 			Usage: agent.TokenUsage{InputTokens: 1, OutputTokens: 1},
 		}
@@ -214,7 +213,8 @@ func TestProperty_IterationNumbering(t *testing.T) {
 		prov := newMockProvider(responses...)
 		echoTool := dummyTool("echo", "echoes")
 
-		a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{echoTool},
+		a, err := agent.New(prov, "sys",
+			agent.WithTools(echoTool),
 			agent.WithMaxIterations(n+5), // ensure we don't hit max iterations
 			WithTracing(tp),
 		)
@@ -257,22 +257,22 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 		defer tp.Shutdown(context.Background())
 
 		prov := newMockProvider(
-			&agent.ProviderResponse{
+			&agent.ModelResponse{
 				ToolCalls: []tool.Call{{ToolUseID: "tc1", Name: toolName, Input: json.RawMessage(`{}`)}},
 				Usage:     agent.TokenUsage{InputTokens: 1, OutputTokens: 1},
 			},
-			&agent.ProviderResponse{
+			&agent.ModelResponse{
 				Text:  "done",
 				Usage: agent.TokenUsage{InputTokens: 1, OutputTokens: 1},
 			},
 		)
 
-		theTool := tool.NewRaw(toolName, "a tool", map[string]any{"type": "object"},
+		theTool := tool.NewRaw(toolName, "a tool",
 			func(_ context.Context, _ json.RawMessage) (string, error) {
 				return "ok", nil
 			})
 
-		a, err := agent.New(prov, prompt.Text("sys"), []tool.Tool{theTool}, WithTracing(tp))
+		a, err := agent.New(prov, "sys", agent.WithTools(theTool), WithTracing(tp))
 		if err != nil {
 			t.Fatalf("agent.New: %v", err)
 		}
@@ -299,7 +299,7 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 // Property 5: Tracing span name consistency (memory-package-rename)
 // ---------------------------------------------------------------------------
 
-// For any memory operation string ("load" or "save"), the tracing hook SHALL
+// For any memory operation string ("load" or "save"), the tracing observer SHALL
 // produce a span name of the form "agent.conversation.{operation}".
 func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -309,12 +309,19 @@ func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 		exp, tp := newTestTracerProvider()
 		defer tp.Shutdown(context.Background())
 
-		hook := newOtelHook(tp.Tracer(instrumentationName))
+		observer := newOtelHook(tp.Tracer(instrumentationName))
 
 		ctx := context.Background()
-		ctx, end := hook.OnConversationStart(ctx, operation, conversationID)
-		_ = ctx
-		end(nil)
+		ctx = observer.ObserveConversation(ctx, agent.ConversationRecord{
+			Phase:          agent.Start,
+			Operation:      operation,
+			ConversationID: conversationID,
+		})
+		observer.ObserveConversation(ctx, agent.ConversationRecord{
+			Phase:          agent.End,
+			Operation:      operation,
+			ConversationID: conversationID,
+		})
 
 		spans := exp.GetSpans()
 		expectedSpanName := "agent.conversation." + operation

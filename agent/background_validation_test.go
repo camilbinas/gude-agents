@@ -9,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // validBackgroundTool returns a well-formed Background_Tool for use in validation tests.
 func validBackgroundTool(name string) tool.Tool {
-	return tool.NewBackgroundRaw(name, "does background work", "acknowledged",
+	return newTestBackgroundRaw(name, "does background work", "acknowledged",
 		map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "done", nil
@@ -27,12 +26,12 @@ func validBackgroundTool(name string) tool.Tool {
 // ---------------------------------------------------------------------------
 
 func TestNewAgent_BackgroundTool_EmptyAck(t *testing.T) {
-	bt := tool.NewBackgroundRaw("bg-tool", "desc", "", map[string]any{"type": "object"},
+	bt := newTestBackgroundRaw("bg-tool", "desc", "", map[string]any{"type": "object"},
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "done", nil
 		})
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt})
+	_, err := New(mockProvider{}, "sys", WithTools(bt))
 	if err == nil {
 		t.Fatal("expected error for background tool with empty ack, got nil")
 	}
@@ -49,9 +48,9 @@ func TestNewAgent_BackgroundTool_EmptyAck(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewAgent_BackgroundTool_NilHandler(t *testing.T) {
-	bt := tool.NewBackgroundRaw("bg-nil", "desc", "ack-string", map[string]any{"type": "object"}, nil)
+	bt := newTestBackgroundRaw("bg-nil", "desc", "ack-string", map[string]any{"type": "object"}, nil)
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt})
+	_, err := New(mockProvider{}, "sys", WithTools(bt))
 	if err == nil {
 		t.Fatal("expected error for background tool with nil handler, got nil")
 	}
@@ -70,12 +69,12 @@ func TestNewAgent_BackgroundTool_NilHandler(t *testing.T) {
 func TestNewAgent_BackgroundTool_NoConversationStore(t *testing.T) {
 	bt := validBackgroundTool("bg-noconv")
 
-	_, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt})
+	_, err := New(mockProvider{}, "sys", WithTools(bt))
 	if err == nil {
 		t.Fatal("expected error for background tool without conversation store, got nil")
 	}
-	if !strings.Contains(err.Error(), "WithConversation") || !strings.Contains(err.Error(), "WithSharedConversation") {
-		t.Errorf("expected error to mention WithConversation or WithSharedConversation, got: %v", err)
+	if !strings.Contains(err.Error(), "WithConversationStore") {
+		t.Errorf("expected error to mention WithConversationStore, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "bg-noconv") {
 		t.Errorf("expected error to mention tool name 'bg-noconv', got: %v", err)
@@ -83,60 +82,21 @@ func TestNewAgent_BackgroundTool_NoConversationStore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Background_Tool: agent.New succeeds when WithConversation is supplied
+// Background_Tool: agent.New succeeds with a conversation store
 // ---------------------------------------------------------------------------
 
-func TestNewAgent_BackgroundTool_WithConversation_Succeeds(t *testing.T) {
+func TestNewAgent_BackgroundTool_WithConversationStore_Succeeds(t *testing.T) {
 	bt := validBackgroundTool("bg-ok")
 	store := newTestMemoryStore()
 
-	a, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt},
-		WithConversation(store, "conv-1"),
+	a, err := New(mockProvider{}, "sys", WithTools(bt),
+		WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatalf("expected success, got error: %v", err)
 	}
 	if !a.HasTool("bg-ok") {
 		t.Error("expected bg-ok tool to be registered")
-	}
-}
-
-func TestNewAgent_BackgroundTool_WithSharedConversation_Succeeds(t *testing.T) {
-	bt := validBackgroundTool("bg-shared")
-	store := newTestMemoryStore()
-
-	a, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt},
-		WithSharedConversation(store),
-	)
-	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
-	}
-	if !a.HasTool("bg-shared") {
-		t.Error("expected bg-shared tool to be registered")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// RegisterTool returns an error for Background_Tools without a Conversation_Store
-// ---------------------------------------------------------------------------
-
-func TestRegisterTool_BackgroundTool_NoConversationStore(t *testing.T) {
-	// Create an agent without any conversation store.
-	a, err := New(mockProvider{}, prompt.Text("sys"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	bt := validBackgroundTool("bg-register")
-	err = a.RegisterTool(bt)
-	if err == nil {
-		t.Fatal("expected error when registering background tool without conversation store, got nil")
-	}
-	if !strings.Contains(err.Error(), "WithConversation") || !strings.Contains(err.Error(), "WithSharedConversation") {
-		t.Errorf("expected error to mention WithConversation or WithSharedConversation, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "bg-register") {
-		t.Errorf("expected error to mention tool name 'bg-register', got: %v", err)
 	}
 }
 
@@ -152,8 +112,8 @@ func TestWithBackgroundNotify_WiredOntoRegistry(t *testing.T) {
 	notifyFn := func(convID, msg string) { called = true }
 	_ = called // suppress unused warning; we only check registry wiring
 
-	a, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt},
-		WithConversation(store, "conv-1"),
+	a, err := New(mockProvider{}, "sys", WithTools(bt),
+		WithConversationStore(store),
 		WithBackgroundNotify(notifyFn),
 	)
 	if err != nil {
@@ -171,8 +131,8 @@ func TestWithoutBackgroundNotify_NotifyIsNil(t *testing.T) {
 	bt := validBackgroundTool("bg-no-notify")
 	store := newTestMemoryStore()
 
-	a, err := New(mockProvider{}, prompt.Text("sys"), []tool.Tool{bt},
-		WithConversation(store, "conv-1"),
+	a, err := New(mockProvider{}, "sys", WithTools(bt),
+		WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatalf("expected success, got error: %v", err)
@@ -185,7 +145,7 @@ func TestWithoutBackgroundNotify_NotifyIsNil(t *testing.T) {
 	}
 
 	// Close should not error even without a notify callback.
-	a.Close()
+	_ = a.Shutdown(context.Background())
 }
 
 // ---------------------------------------------------------------------------

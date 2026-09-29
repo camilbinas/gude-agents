@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +27,80 @@ func TestSave_AssignsSequentialVersions(t *testing.T) {
 		if got.ThreadID != "t1" {
 			t.Errorf("threadID = %q, want t1", got.ThreadID)
 		}
+	}
+}
+
+func TestSaveIfVersion(t *testing.T) {
+	c := NewMemory()
+	ctx := context.Background()
+
+	created, err := c.SaveIfVersion(ctx, "cas", Checkpoint{Label: "pending"}, 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.Version != 1 {
+		t.Fatalf("create version = %d, want 1", created.Version)
+	}
+	updated, err := c.SaveIfVersion(ctx, "cas", Checkpoint{Label: "consumed"}, 1)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Fatalf("update version = %d, want 2", updated.Version)
+	}
+
+	for _, expected := range []int{0, 1, 3, -1} {
+		if _, err := c.SaveIfVersion(ctx, "cas", Checkpoint{}, expected); !errors.Is(err, ErrConflict) {
+			t.Errorf("expected %d: err = %v, want ErrConflict", expected, err)
+		}
+	}
+	if _, err := c.SaveIfVersion(ctx, "missing", Checkpoint{}, 1); !errors.Is(err, ErrConflict) {
+		t.Errorf("missing expected version: err = %v, want ErrConflict", err)
+	}
+	metas, err := c.History(ctx, "cas")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(metas) != 2 {
+		t.Fatalf("history len = %d, want 2", len(metas))
+	}
+}
+
+func TestSaveIfVersion_ExactlyOneConcurrentWinner(t *testing.T) {
+	c := NewMemory()
+	ctx := context.Background()
+	if _, err := c.SaveIfVersion(ctx, "cas-race", Checkpoint{}, 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	const contenders = 50
+	var winners atomic.Int32
+	var wg sync.WaitGroup
+	wg.Add(contenders)
+	for range contenders {
+		go func() {
+			defer wg.Done()
+			_, err := c.SaveIfVersion(ctx, "cas-race", Checkpoint{}, 1)
+			if err == nil {
+				winners.Add(1)
+				return
+			}
+			if !errors.Is(err, ErrConflict) {
+				t.Errorf("save: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := winners.Load(); got != 1 {
+		t.Fatalf("winners = %d, want 1", got)
+	}
+	metas, err := c.History(ctx, "cas-race")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(metas) != 2 {
+		t.Fatalf("history len = %d, want 2", len(metas))
 	}
 }
 

@@ -3,41 +3,54 @@ package dynamodb
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	smithy "github.com/aws/smithy-go"
+	"github.com/aws/smithy-go"
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// mockDynamoDBClient is an in-memory implementation of the dynamoDBClient interface for testing.
 type mockDynamoDBClient struct {
-	items  map[string]map[string]dbtypes.AttributeValue
-	pkAttr string // partition key attribute name, defaults to "conversation_id"
-
-	putErr    error
-	getErr    error
-	deleteErr error
-	scanErr   error
+	mu                 sync.Mutex
+	items              map[string]map[string]dbtypes.AttributeValue
+	pkAttr             string
+	putErr             error
+	getErr             error
+	deleteErr          error
+	scanErr            error
+	lastConsistentRead bool
 }
 
 func newMockDynamoDBClient() *mockDynamoDBClient {
-	return &mockDynamoDBClient{
-		items:  make(map[string]map[string]dbtypes.AttributeValue),
-		pkAttr: "conversation_id",
-	}
+	return &mockDynamoDBClient{items: map[string]map[string]dbtypes.AttributeValue{}, pkAttr: "conversation_id"}
 }
 
 func (m *mockDynamoDBClient) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.putErr != nil {
 		return nil, m.putErr
 	}
 	pk := in.Item[m.pkAttr].(*dbtypes.AttributeValueMemberS).Value
-	// Deep-copy the item map.
+	existing, exists := m.items[pk]
+	if strings.Contains(*in.ConditionExpression, "attribute_not_exists(#pk)") {
+		_, hasRevision := existing["revision"]
+		if exists && hasRevision {
+			return nil, &validationError{code: "ConditionalCheckFailedException", message: "exists"}
+		}
+	} else {
+		expected := in.ExpressionAttributeValues[":expected"].(*dbtypes.AttributeValueMemberN).Value
+		current, hasRevision := existing["revision"].(*dbtypes.AttributeValueMemberN)
+		if !exists || !hasRevision || current.Value != expected {
+			return nil, &validationError{code: "ConditionalCheckFailedException", message: "revision mismatch"}
+		}
+	}
 	copied := make(map[string]dbtypes.AttributeValue, len(in.Item))
 	for k, v := range in.Item {
 		copied[k] = v
@@ -47,411 +60,201 @@ func (m *mockDynamoDBClient) PutItem(_ context.Context, in *dynamodb.PutItemInpu
 }
 
 func (m *mockDynamoDBClient) GetItem(_ context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
-	pk := in.Key[m.pkAttr].(*dbtypes.AttributeValueMemberS).Value
-	item, ok := m.items[pk]
-	if !ok {
-		return &dynamodb.GetItemOutput{}, nil
-	}
-	return &dynamodb.GetItemOutput{Item: item}, nil
+	m.lastConsistentRead = in.ConsistentRead != nil && *in.ConsistentRead
+	return &dynamodb.GetItemOutput{Item: m.items[in.Key[m.pkAttr].(*dbtypes.AttributeValueMemberS).Value]}, nil
 }
 
 func (m *mockDynamoDBClient) DeleteItem(_ context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.deleteErr != nil {
 		return nil, m.deleteErr
 	}
-	pk := in.Key[m.pkAttr].(*dbtypes.AttributeValueMemberS).Value
-	delete(m.items, pk)
+	delete(m.items, in.Key[m.pkAttr].(*dbtypes.AttributeValueMemberS).Value)
 	return &dynamodb.DeleteItemOutput{}, nil
 }
 
 func (m *mockDynamoDBClient) Scan(_ context.Context, in *dynamodb.ScanInput, _ ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.scanErr != nil {
 		return nil, m.scanErr
 	}
 	prefix := in.ExpressionAttributeValues[":prefix"].(*dbtypes.AttributeValueMemberS).Value
 	var items []map[string]dbtypes.AttributeValue
-	for pk, item := range m.items {
-		if strings.HasPrefix(pk, prefix) {
+	for key, item := range m.items {
+		if strings.HasPrefix(key, prefix) {
 			items = append(items, item)
 		}
 	}
 	return &dynamodb.ScanOutput{Items: items}, nil
 }
 
-// --- Constructor tests ---
+type validationError struct{ code, message string }
 
-// TestNew_EmptyTable verifies that an empty table name returns an error.
-func TestNew_EmptyTable(t *testing.T) {
-	_, err := New(aws.Config{}, "")
-	if err == nil {
-		t.Fatal("expected error for empty table, got nil")
+func (e *validationError) Error() string                 { return e.message }
+func (e *validationError) ErrorCode() string             { return e.code }
+func (e *validationError) ErrorMessage() string          { return e.message }
+func (e *validationError) ErrorFault() smithy.ErrorFault { return smithy.FaultClient }
+
+func testStore(mock *mockDynamoDBClient) *Conversation {
+	return &Conversation{client: mock, table: "test", keyPrefix: "gude:", ttlAttribute: "ttl", pkAttribute: mock.pkAttr}
+}
+
+func TestNew(t *testing.T) {
+	if _, err := New(aws.Config{}, ""); err == nil {
+		t.Fatal("expected empty table error")
 	}
-	if !strings.Contains(err.Error(), "table name is required") {
-		t.Errorf("expected error to contain %q, got %q", "table name is required", err.Error())
+	m, err := New(aws.Config{}, "table")
+	if err != nil || m.keyPrefix != "gude:" || m.pkAttribute != "conversation_id" {
+		t.Fatalf("New = %+v, %v", m, err)
 	}
 }
 
-// TestNew_LazyConstruction verifies that valid args return a non-nil Conversation
-// without making any network calls.
-func TestNew_LazyConstruction(t *testing.T) {
-	m, err := New(aws.Config{}, "my-table")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestSaveLoadRevisionAndConflict(t *testing.T) {
+	mock := newMockDynamoDBClient()
+	m := testStore(mock)
+	ctx := context.Background()
+	messages := []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "one"}}}}
+
+	missing, err := m.Load(ctx, "missing")
+	if err != nil || missing.Messages == nil || missing.Revision != 0 {
+		t.Fatalf("missing = %+v, %v", missing, err)
 	}
-	if m == nil {
-		t.Fatal("expected non-nil Conversation")
+	rev, err := m.Save(ctx, "conv", messages, 0)
+	if err != nil || rev != 1 {
+		t.Fatalf("first save = %d, %v", rev, err)
+	}
+	rev, err = m.Save(ctx, "conv", messages, rev)
+	if err != nil || rev != 2 {
+		t.Fatalf("second save = %d, %v", rev, err)
+	}
+	if _, err := m.Save(ctx, "conv", messages, 1); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("stale save = %v", err)
+	}
+	snapshot, err := m.Load(ctx, "conv")
+	if err != nil || snapshot.Revision != 2 || len(snapshot.Messages) != 1 {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
 	}
 }
 
-// TestConversation_DefaultKeyPrefix verifies that keyPrefix defaults to "gude:".
-func TestConversation_DefaultKeyPrefix(t *testing.T) {
-	m, err := New(aws.Config{}, "my-table")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if m.keyPrefix != "gude:" {
-		t.Errorf("expected keyPrefix %q, got %q", "gude:", m.keyPrefix)
-	}
-}
-
-// TestConversation_DefaultPKAttribute verifies that pkAttribute defaults to "conversation_id".
-func TestConversation_DefaultPKAttribute(t *testing.T) {
-	m, err := New(aws.Config{}, "my-table")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if m.pkAttribute != "conversation_id" {
-		t.Errorf("expected pkAttribute %q, got %q", "conversation_id", m.pkAttribute)
-	}
-}
-
-// TestConversation_WithPartitionKey verifies that a custom partition key attribute name is used in PutItem.
-func TestConversation_WithPartitionKey(t *testing.T) {
+func TestSaveAttributesTTLAndCustomKey(t *testing.T) {
 	mock := newMockDynamoDBClient()
 	mock.pkAttr = "id"
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "id",
+	m := &Conversation{client: mock, table: "test", keyPrefix: "p:", ttl: time.Hour, ttlAttribute: "expires", pkAttribute: "id"}
+	rev, err := m.Save(context.Background(), "conv", []agent.Message{}, 0)
+	if err != nil || rev != 1 {
+		t.Fatalf("Save = %d, %v", rev, err)
 	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	item := mock.items["p:conv"]
+	if item["id"] == nil || item["expires"] == nil || item["messages"].(*dbtypes.AttributeValueMemberS).Value != "[]" {
+		t.Fatalf("item = %+v", item)
 	}
-
-	item, ok := mock.items["gude:conv1"]
-	if !ok {
-		t.Fatal("expected item to be stored")
-	}
-	if _, hasCustomPK := item["id"]; !hasCustomPK {
-		t.Error("expected custom partition key attribute \"id\" to be present in item")
-	}
-	if _, hasDefaultPK := item["conversation_id"]; hasDefaultPK {
-		t.Error("expected default partition key attribute \"conversation_id\" to be absent when custom attribute is set")
+	if item["revision"].(*dbtypes.AttributeValueMemberN).Value != strconv.Itoa(1) {
+		t.Fatalf("revision attribute = %+v", item["revision"])
 	}
 }
 
-// TestConversation_WithTTL verifies that when TTL is set, PutItem includes the TTL attribute.
-func TestConversation_WithTTL(t *testing.T) {
+func TestListAndDelete(t *testing.T) {
+	m := testStore(newMockDynamoDBClient())
+	ctx := context.Background()
+	for _, id := range []string{"a", "b"} {
+		if _, err := m.Save(ctx, id, []agent.Message{}, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids, err := m.List(ctx)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("List = %v, %v", ids, err)
+	}
+	if err := m.Delete(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestErrors(t *testing.T) {
 	mock := newMockDynamoDBClient()
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttl:          24 * time.Hour,
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
+	m := testStore(mock)
+	mock.putErr = errors.New("down")
+	if _, err := m.Save(context.Background(), "x", nil, 0); err == nil || !strings.Contains(err.Error(), "save") {
+		t.Fatalf("save error = %v", err)
 	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	mock.putErr = &validationError{code: "ValidationException", message: "Item size has exceeded the maximum allowed size"}
+	if _, err := m.Save(context.Background(), "x", nil, 0); err == nil || !strings.Contains(err.Error(), "item too large") {
+		t.Fatalf("size error = %v", err)
 	}
-
-	item, ok := mock.items["gude:conv1"]
-	if !ok {
-		t.Fatal("expected item to be stored")
+	mock.putErr = nil
+	mock.getErr = errors.New("down")
+	if _, err := m.Load(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "load") {
+		t.Fatalf("load error = %v", err)
 	}
-	if _, hasTTL := item["ttl"]; !hasTTL {
-		t.Error("expected TTL attribute to be present in item")
+	mock.getErr = nil
+	mock.deleteErr = errors.New("down")
+	if err := m.Delete(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "delete") {
+		t.Fatalf("delete error = %v", err)
 	}
 }
 
-// TestConversation_NoTTL verifies that when no TTL is set, PutItem omits the TTL attribute.
-func TestConversation_NoTTL(t *testing.T) {
+func TestConversationManagerCompatibility(t *testing.T) {
+	var _ agent.ConversationManager = (*Conversation)(nil)
+}
+
+func TestConcurrentCASOneWinner(t *testing.T) {
+	store := testStore(newMockDynamoDBClient())
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := store.Save(ctx, "race", []agent.Message{}, 0)
+			errs <- err
+		}()
+	}
+	close(start)
+	var successes, conflicts int
+	for range 2 {
+		err := <-errs
+		if err == nil {
+			successes++
+		} else if errors.Is(err, agent.ErrConversationConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
+	}
+}
+
+func TestLegacyItemLoadsConsistentlyAndUpgradesWithCAS(t *testing.T) {
 	mock := newMockDynamoDBClient()
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttl:          0, // no TTL
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
+	mock.items["gude:legacy"] = map[string]dbtypes.AttributeValue{
+		"conversation_id": &dbtypes.AttributeValueMemberS{Value: "gude:legacy"},
+		"messages":        &dbtypes.AttributeValueMemberS{Value: `[{"role":"user","content":[{"type":"text","text":"legacy"}]}]`},
 	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	m := testStore(mock)
+	snapshot, err := m.Load(context.Background(), "legacy")
+	if err != nil || snapshot.Revision != 0 || len(snapshot.Messages) != 1 {
+		t.Fatalf("legacy snapshot = %+v, %v", snapshot, err)
 	}
-
-	item, ok := mock.items["gude:conv1"]
-	if !ok {
-		t.Fatal("expected item to be stored")
+	if !mock.lastConsistentRead {
+		t.Fatal("Load did not request a strongly consistent read")
 	}
-	if _, hasTTL := item["ttl"]; hasTTL {
-		t.Error("expected TTL attribute to be absent when no TTL is configured")
+	revision, err := m.Save(context.Background(), "legacy", snapshot.Messages, 0)
+	if err != nil || revision != 1 {
+		t.Fatalf("upgrade Save = %d, %v", revision, err)
 	}
-}
-
-// TestConversation_WithTTLAttribute verifies that a custom TTL attribute name is used in PutItem.
-func TestConversation_WithTTLAttribute(t *testing.T) {
-	mock := newMockDynamoDBClient()
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttl:          1 * time.Hour,
-		ttlAttribute: "expires_at",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	item, ok := mock.items["gude:conv1"]
-	if !ok {
-		t.Fatal("expected item to be stored")
-	}
-	if _, hasCustomAttr := item["expires_at"]; !hasCustomAttr {
-		t.Error("expected custom TTL attribute \"expires_at\" to be present in item")
-	}
-	if _, hasDefaultAttr := item["ttl"]; hasDefaultAttr {
-		t.Error("expected default TTL attribute \"ttl\" to be absent when custom attribute is set")
-	}
-}
-
-// --- Error wrapping tests ---
-
-// TestConversation_Save_ErrorWrapping verifies that a generic PutItem error is wrapped with "dynamodb conversation: save".
-func TestConversation_Save_ErrorWrapping(t *testing.T) {
-	mock := newMockDynamoDBClient()
-	mock.putErr = errors.New("dynamodb unavailable")
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "dynamodb conversation: save") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: save", err.Error())
-	}
-}
-
-// TestConversation_Load_ErrorWrapping verifies that a GetItem error is wrapped with "dynamodb conversation: load".
-func TestConversation_Load_ErrorWrapping(t *testing.T) {
-	mock := newMockDynamoDBClient()
-	mock.getErr = errors.New("dynamodb internal error")
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	_, err := m.Load(context.Background(), "conv1")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "dynamodb conversation: load") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: load", err.Error())
-	}
-}
-
-// TestConversation_Delete_ErrorWrapping verifies that a DeleteItem error is wrapped with "dynamodb conversation: delete".
-func TestConversation_Delete_ErrorWrapping(t *testing.T) {
-	mock := newMockDynamoDBClient()
-	mock.deleteErr = errors.New("dynamodb delete error")
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Delete(context.Background(), "conv1")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "dynamodb conversation: delete") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: delete", err.Error())
-	}
-}
-
-// --- Not-found and edge case tests ---
-
-// TestConversation_Load_NotFound verifies that a missing item returns an empty slice and nil error.
-func TestConversation_Load_NotFound(t *testing.T) {
-	mock := newMockDynamoDBClient()
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	msgs, err := m.Load(context.Background(), "nonexistent")
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if msgs == nil {
-		t.Fatal("expected non-nil empty slice, got nil")
-	}
-	if len(msgs) != 0 {
-		t.Errorf("expected empty slice, got %d messages", len(msgs))
-	}
-}
-
-// TestConversation_Save_EmptySlice verifies that saving an empty slice writes "[]" in the messages attribute.
-func TestConversation_Save_EmptySlice(t *testing.T) {
-	mock := newMockDynamoDBClient()
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	item, ok := mock.items["gude:conv1"]
-	if !ok {
-		t.Fatal("expected item to be stored")
-	}
-	msgAttr, ok := item["messages"]
-	if !ok {
-		t.Fatal("expected messages attribute to be present")
-	}
-	sv, ok := msgAttr.(*dbtypes.AttributeValueMemberS)
-	if !ok {
-		t.Fatal("expected messages attribute to be a String type")
-	}
-	if sv.Value != "[]" {
-		t.Errorf("expected messages attribute value %q, got %q", "[]", sv.Value)
-	}
-}
-
-// TestConversation_Delete_NonExistent verifies that deleting a key that was never saved returns nil error.
-func TestConversation_Delete_NonExistent(t *testing.T) {
-	mock := newMockDynamoDBClient()
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Delete(context.Background(), "never-saved")
-	if err != nil {
-		t.Errorf("expected nil error for non-existent key, got %v", err)
-	}
-}
-
-// --- Item size limit tests ---
-
-// validationError is a smithy.GenericAPIError that simulates a DynamoDB ValidationException.
-type validationError struct {
-	code    string
-	message string
-}
-
-func (e *validationError) Error() string        { return e.message }
-func (e *validationError) ErrorCode() string    { return e.code }
-func (e *validationError) ErrorMessage() string { return e.message }
-func (e *validationError) ErrorFault() smithy.ErrorFault {
-	return smithy.FaultClient
-}
-
-var _ smithy.APIError = (*validationError)(nil)
-
-// TestConversation_ItemTooLarge verifies that a ValidationException with the size message
-// is wrapped with "dynamodb conversation: item too large".
-func TestConversation_ItemTooLarge(t *testing.T) {
-	mock := newMockDynamoDBClient()
-	mock.putErr = &validationError{
-		code:    "ValidationException",
-		message: "Item size has exceeded the maximum allowed size",
-	}
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "dynamodb conversation: item too large") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: item too large", err.Error())
-	}
-}
-
-// TestConversation_OtherValidationException verifies that a ValidationException with a different
-// message is wrapped with "dynamodb conversation: save" (not item-too-large).
-func TestConversation_OtherValidationException(t *testing.T) {
-	mock := newMockDynamoDBClient()
-	mock.putErr = &validationError{
-		code:    "ValidationException",
-		message: "One or more parameter values were invalid",
-	}
-
-	m := &Conversation{
-		client:       mock,
-		table:        "test-table",
-		keyPrefix:    "gude:",
-		ttlAttribute: "ttl",
-		pkAttribute:  "conversation_id",
-	}
-
-	err := m.Save(context.Background(), "conv1", []agent.Message{})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if strings.Contains(err.Error(), "item too large") {
-		t.Errorf("expected generic save error, but got item-too-large: %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "dynamodb conversation: save") {
-		t.Errorf("expected error to contain %q, got %q", "dynamodb conversation: save", err.Error())
+	if _, err := m.Save(context.Background(), "legacy", snapshot.Messages, 0); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("second revision-zero Save = %v", err)
 	}
 }

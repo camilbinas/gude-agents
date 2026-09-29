@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"pgregory.net/rapid"
 )
@@ -13,7 +12,7 @@ func TestProperty_AgentTokenAccumulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a random number of provider calls (1-5), each with random usage.
 		numCalls := rapid.IntRange(1, 5).Draw(t, "numCalls")
-		responses := make([]*ProviderResponse, numCalls)
+		responses := make([]*ModelResponse, numCalls)
 		var expectedInput, expectedOutput int
 
 		for i := 0; i < numCalls-1; i++ {
@@ -22,7 +21,7 @@ func TestProperty_AgentTokenAccumulation(t *testing.T) {
 			expectedInput += inputTok
 			expectedOutput += outputTok
 			// Intermediate calls return tool calls to keep the loop going.
-			responses[i] = &ProviderResponse{
+			responses[i] = &ModelResponse{
 				ToolCalls: []tool.Call{toolCall("tc", "dummy")},
 				Usage:     TokenUsage{InputTokens: inputTok, OutputTokens: outputTok},
 			}
@@ -33,25 +32,24 @@ func TestProperty_AgentTokenAccumulation(t *testing.T) {
 		lastOutput := rapid.IntRange(0, 1000).Draw(t, "lastOutputTokens")
 		expectedInput += lastInput
 		expectedOutput += lastOutput
-		responses[numCalls-1] = &ProviderResponse{
+		responses[numCalls-1] = &ModelResponse{
 			Text:  "done",
 			Usage: TokenUsage{InputTokens: lastInput, OutputTokens: lastOutput},
 		}
 
 		sp := newScriptedProvider(responses...)
 		tools := []tool.Tool{dummyTool("dummy", "dummy tool")}
-		a, err := New(sp, prompt.Text("sys"), tools)
+		a, err := New(sp, "sys", WithTools(tools...))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		ic := Background()
-		_, err = a.Invoke(ic, "go")
+		res, err := a.Invoke(Background(), "go")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		usage := ic.Usage()
+		usage := res.Usage
 		if usage.InputTokens != expectedInput {
 			t.Errorf("InputTokens: expected %d, got %d", expectedInput, usage.InputTokens)
 		}
@@ -69,38 +67,36 @@ func TestProperty_AgentTokenResetBetweenInvocations(t *testing.T) {
 		output2 := rapid.IntRange(1, 500).Draw(t, "output2")
 
 		sp := newScriptedProvider(
-			&ProviderResponse{
+			&ModelResponse{
 				Text:  "first",
 				Usage: TokenUsage{InputTokens: input1, OutputTokens: output1},
 			},
-			&ProviderResponse{
+			&ModelResponse{
 				Text:  "second",
 				Usage: TokenUsage{InputTokens: input2, OutputTokens: output2},
 			},
 		)
 
-		a, err := New(sp, prompt.Text("sys"), nil)
+		a, err := New(sp, "sys")
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// First invocation.
-		ic1 := Background()
-		_, err = a.Invoke(ic1, "first")
+		res1, err := a.Invoke(Background(), "first")
 		if err != nil {
 			t.Fatalf("first invoke: %v", err)
 		}
 
 		// Second invocation.
-		ic2 := Background()
-		_, err = a.Invoke(ic2, "second")
+		res2, err := a.Invoke(Background(), "second")
 		if err != nil {
 			t.Fatalf("second invoke: %v", err)
 		}
 
 		// Usage from second invocation must reflect only the second call.
-		usage1 := ic1.Usage()
-		usage2 := ic2.Usage()
+		usage1 := res1.Usage
+		usage2 := res2.Usage
 		if usage1.InputTokens != input1 || usage1.OutputTokens != output1 {
 			t.Errorf("first usage: expected (%d, %d), got (%d, %d)",
 				input1, output1, usage1.InputTokens, usage1.OutputTokens)
@@ -118,7 +114,7 @@ func TestProperty_AgentBudgetEnforcement(t *testing.T) {
 		budget := rapid.IntRange(10, 500).Draw(t, "budget")
 		numCalls := rapid.IntRange(1, 5).Draw(t, "numCalls")
 
-		responses := make([]*ProviderResponse, numCalls+1) // +1 for potential final text
+		responses := make([]*ModelResponse, numCalls+1) // +1 for potential final text
 		var cumulativeTotal int
 		expectedAbortIdx := -1
 
@@ -132,20 +128,20 @@ func TestProperty_AgentBudgetEnforcement(t *testing.T) {
 			}
 
 			// Use tool calls to keep the loop going.
-			responses[i] = &ProviderResponse{
+			responses[i] = &ModelResponse{
 				ToolCalls: []tool.Call{toolCall("tc", "dummy")},
 				Usage:     TokenUsage{InputTokens: inputTok, OutputTokens: outputTok},
 			}
 		}
 		// Final text response in case budget is never exceeded.
-		responses[numCalls] = &ProviderResponse{
+		responses[numCalls] = &ModelResponse{
 			Text:  "done",
 			Usage: TokenUsage{InputTokens: 0, OutputTokens: 0},
 		}
 
 		sp := newScriptedProvider(responses...)
 		tools := []tool.Tool{dummyTool("dummy", "dummy tool")}
-		a, err := New(sp, prompt.Text("sys"), tools, WithTokenBudget(budget))
+		a, err := New(sp, "sys", WithTools(tools...), WithTokenBudget(budget))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -169,32 +165,31 @@ func TestProperty_AgentBudgetEnforcement(t *testing.T) {
 func TestAgent_NoBudget_DoesNotAbort(t *testing.T) {
 	// Provider returns large token usage but no budget is set — should succeed.
 	sp := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{toolCall("tc", "dummy")},
 			Usage:     TokenUsage{InputTokens: 50000, OutputTokens: 50000},
 		},
-		&ProviderResponse{
+		&ModelResponse{
 			Text:  "done",
 			Usage: TokenUsage{InputTokens: 50000, OutputTokens: 50000},
 		},
 	)
 
 	tools := []tool.Tool{dummyTool("dummy", "dummy tool")}
-	a, err := New(sp, prompt.Text("sys"), tools) // No WithTokenBudget
+	a, err := New(sp, "sys", WithTools(tools...)) // No WithTokenBudget
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ic := Background()
-	result, err := a.Invoke(ic, "go")
+	result, err := a.Invoke(Background(), "go")
 	if err != nil {
 		t.Fatalf("expected no error without budget, got: %v", err)
 	}
-	if result != "done" {
-		t.Errorf("expected %q, got %q", "done", result)
+	if result.Text != "done" {
+		t.Errorf("expected %q, got %q", "done", result.Text)
 	}
 	// Usage should still be accumulated even without a budget.
-	usage := ic.Usage()
+	usage := result.Usage
 	if usage.InputTokens != 100000 {
 		t.Errorf("expected InputTokens=100000, got %d", usage.InputTokens)
 	}
@@ -206,13 +201,13 @@ func TestAgent_NoBudget_DoesNotAbort(t *testing.T) {
 func TestAgent_ZeroBudget_DoesNotAbort(t *testing.T) {
 	// Explicitly setting budget to 0 should behave the same as no budget.
 	sp := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			Text:  "ok",
 			Usage: TokenUsage{InputTokens: 9999, OutputTokens: 9999},
 		},
 	)
 
-	a, err := New(sp, prompt.Text("sys"), nil, WithTokenBudget(0))
+	a, err := New(sp, "sys", WithTokenBudget(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +216,7 @@ func TestAgent_ZeroBudget_DoesNotAbort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error with zero budget, got: %v", err)
 	}
-	if result != "ok" {
-		t.Errorf("expected %q, got %q", "ok", result)
+	if result.Text != "ok" {
+		t.Errorf("expected %q, got %q", "ok", result.Text)
 	}
 }

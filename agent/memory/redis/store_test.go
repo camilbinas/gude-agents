@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -29,7 +33,8 @@ func (redisTestEmbedder) Embed(context.Context, string) ([]float64, error) {
 	return []float64{1}, nil
 }
 
-var _ agent.Embedder = redisTestEmbedder{}
+var _ rag.Embedder = redisTestEmbedder{}
+var _ memory.Memory[redisTestEntry] = (*Store[redisTestEntry])(nil)
 
 type fakeRedisClient struct {
 	hashes   map[string]map[string]string
@@ -102,6 +107,7 @@ func newTestRedisStore(t *testing.T, client *fakeRedisClient) *Store[redisTestEn
 	}
 	return &Store[redisTestEntry]{
 		client:   client,
+		dim:      1,
 		embedder: redisTestEmbedder{},
 		schema:   schema,
 	}
@@ -155,7 +161,7 @@ func TestRememberNamespacesKeysByIdentifier(t *testing.T) {
 			"score", "0",
 		},
 	}
-	entries, err := store.Recall(context.Background(), "tenant/a", "find first", 1)
+	entries, err := store.Recall(context.Background(), "tenant/a", memory.RecallQuery{Text: "find first", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,5 +346,278 @@ func existingRedisIndexInfoRESP3(prefix, contentType, dim string) map[string]any
 			map[string]any{"identifier": "content", "attribute": "content", "type": contentType},
 			map[string]any{"identifier": "embedding", "attribute": "embedding", "type": "VECTOR", "algorithm": "HNSW", "data_type": "FLOAT32", "dim": dim, "distance_metric": "COSINE"},
 		},
+	}
+}
+
+func TestToolsUseIdentityAndStrictScope(t *testing.T) {
+	client := &fakeRedisClient{}
+	store := newTestRedisStore(t, client)
+	input := []byte(`{"content":"likes Go"}`)
+
+	if _, err := NewRememberTool(store).Handler(agent.Background(), input); !errors.Is(err, memory.ErrMissingIdentity) {
+		t.Fatalf("remember without identity: err = %v, want ErrMissingIdentity", err)
+	}
+	scoped := NewRememberTool(store, WithScope("tenant"))
+	if _, err := scoped.Handler(agent.Background().WithIdentity("user-1"), input); !errors.Is(err, memory.ErrMissingIdentity) {
+		t.Fatalf("scoped remember must not fall back to identity: err = %v", err)
+	}
+	if len(client.hsets) != 0 {
+		t.Fatalf("writes = %v, want none", client.hsets)
+	}
+
+	if _, err := NewRememberTool(store).Handler(agent.Background().WithIdentity("user-1"), input); err != nil {
+		t.Fatalf("remember with identity: %v", err)
+	}
+	if _, err := scoped.Handler(agent.Background().WithScope("tenant", "t-9"), input); err != nil {
+		t.Fatalf("scoped remember: %v", err)
+	}
+	if len(client.hsets) != 2 {
+		t.Fatalf("writes = %v, want 2", client.hsets)
+	}
+	var tenants []string
+	for _, h := range client.hashes {
+		tenants = append(tenants, h["tenant"])
+	}
+	if strings.Join(tenants, ",") != "user-1,t-9" && strings.Join(tenants, ",") != "t-9,user-1" {
+		t.Errorf("stored tenants = %v, want user-1 and t-9", tenants)
+	}
+
+	for name, tl := range map[string]func() (string, error){
+		"recall": func() (string, error) {
+			return NewRecallTool(store).Handler(agent.Background(), []byte(`{"query":"x"}`))
+		},
+		"update": func() (string, error) {
+			return NewUpdateTool(store).Handler(agent.Background(), []byte(`{"id":"x","content":"y"}`))
+		},
+		"forget": func() (string, error) { return NewForgetTool(store).Handler(agent.Background(), []byte(`{"id":"x"}`)) },
+	} {
+		if _, err := tl(); !errors.Is(err, memory.ErrMissingIdentity) {
+			t.Errorf("%s without identity: err = %v, want ErrMissingIdentity", name, err)
+		}
+	}
+}
+
+type redisQueryTestEntry struct {
+	ID       string    `db:"id,pk"`
+	Tenant   string    `db:"tenant,identifier"`
+	Content  string    `db:"content,content"`
+	Category string    `db:"category,tag"`
+	Rank     int       `db:"rank,numeric"`
+	Created  time.Time `db:"created,numeric"`
+}
+
+func newQueryTestRedisStore(t *testing.T, client *fakeRedisClient) *Store[redisQueryTestEntry] {
+	t.Helper()
+	schema, err := parseRedisSchema[redisQueryTestEntry]()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Store[redisQueryTestEntry]{
+		client:    client,
+		indexName: "memory-index",
+		dim:       1,
+		embedder:  redisTestEmbedder{},
+		schema:    schema,
+	}
+}
+
+func TestRecallValidatesPortableQuery(t *testing.T) {
+	store := newQueryTestRedisStore(t, &fakeRedisClient{})
+	cases := []struct {
+		name  string
+		query memory.RecallQuery
+	}{
+		{name: "empty text", query: memory.RecallQuery{Limit: 1}},
+		{name: "negative limit", query: memory.RecallQuery{Text: "query", Limit: -1}},
+		{name: "negative similarity", query: memory.RecallQuery{Text: "query", Limit: 1, MinSimilarity: -0.1}},
+		{name: "similarity above one", query: memory.RecallQuery{Text: "query", Limit: 1, MinSimilarity: 1.1}},
+		{name: "NaN similarity", query: memory.RecallQuery{Text: "query", Limit: 1, MinSimilarity: math.NaN()}},
+		{name: "infinite similarity", query: memory.RecallQuery{Text: "query", Limit: 1, MinSimilarity: math.Inf(1)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := store.Recall(context.Background(), "tenant", tc.query)
+			if !errors.Is(err, memory.ErrInvalidRecallQuery) {
+				t.Fatalf("Recall error = %v, want ErrInvalidRecallQuery", err)
+			}
+		})
+	}
+}
+
+func TestRecallRejectsUnsupportedPortableFeatures(t *testing.T) {
+	store := newQueryTestRedisStore(t, &fakeRedisClient{})
+	cases := []struct {
+		name  string
+		query memory.RecallQuery
+		want  error
+	}{
+		{
+			name:  "unknown filter field",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Filters: []memory.Filter{{Field: "missing", Operator: memory.FilterEqual, Value: "x"}}},
+			want:  memory.ErrUnsupportedFilter,
+		},
+		{
+			name:  "text filter",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Filters: []memory.Filter{{Field: "content", Operator: memory.FilterEqual, Value: "x"}}},
+			want:  memory.ErrUnsupportedFilter,
+		},
+		{
+			name:  "TAG comparison",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Filters: []memory.Filter{{Field: "category", Operator: memory.FilterGreaterThan, Value: "x"}}},
+			want:  memory.ErrUnsupportedFilter,
+		},
+		{
+			name:  "TAG non-string",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Filters: []memory.Filter{{Field: "category", Operator: memory.FilterEqual, Value: 1}}},
+			want:  memory.ErrUnsupportedFilter,
+		},
+		{
+			name:  "NUMERIC non-number",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Filters: []memory.Filter{{Field: "rank", Operator: memory.FilterEqual, Value: "1"}}},
+			want:  memory.ErrUnsupportedFilter,
+		},
+		{
+			name:  "empty IN",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Filters: []memory.Filter{{Field: "rank", Operator: memory.FilterIn, Value: []int{}}}},
+			want:  memory.ErrUnsupportedFilter,
+		},
+		{
+			name:  "unknown order field",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Order: []memory.Order{{Field: "missing", Direction: memory.OrderAscending}}},
+			want:  memory.ErrUnsupportedOrder,
+		},
+		{
+			name:  "non-sortable order field",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Order: []memory.Order{{Field: "category", Direction: memory.OrderAscending}}},
+			want:  memory.ErrUnsupportedOrder,
+		},
+		{
+			name:  "invalid order direction",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Order: []memory.Order{{Field: "rank", Direction: memory.OrderDirection("sideways")}}},
+			want:  memory.ErrUnsupportedOrder,
+		},
+		{
+			name:  "multiple order clauses",
+			query: memory.RecallQuery{Text: "query", Limit: 1, Order: []memory.Order{{Field: "rank", Direction: memory.OrderAscending}, {Field: "created", Direction: memory.OrderDescending}}},
+			want:  memory.ErrUnsupportedOrder,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := store.Recall(context.Background(), "tenant", tc.query)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Recall error = %v, want errors.Is(_, %v)", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildRecallFilterMapsPortableFiltersSafely(t *testing.T) {
+	store := newQueryTestRedisStore(t, &fakeRedisClient{})
+	filter, err := store.buildRecallFilter(`tenant|other\\name`, []memory.Filter{
+		{Field: "category", Operator: memory.FilterIn, Value: []string{"a|b", `c\\d`}},
+		{Field: "rank", Operator: memory.FilterGreaterThanOrEqual, Value: 10},
+		{Field: "created", Operator: memory.FilterLessThan, Value: time.Unix(20, 0)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantParts := []string{
+		`(@tenant:{tenant\|other\\\\name})`,
+		`(@category:{a\|b|c\\\\d})`,
+		`(@rank:[10 +inf])`,
+		`(@created:[-inf (20])`,
+	}
+	for _, want := range wantParts {
+		if !strings.Contains(filter, want) {
+			t.Errorf("filter = %q, want safe clause %q", filter, want)
+		}
+	}
+}
+
+func TestRecallUsesPortableOrderWithoutSimilarityResort(t *testing.T) {
+	client := &fakeRedisClient{doResult: []any{
+		int64(2),
+		"first", []any{"tenant", "tenant", "content", "first", "rank", "2", "score", "0.8"},
+		"second", []any{"tenant", "tenant", "content", "second", "rank", "1", "score", "0.1"},
+	}}
+	store := newQueryTestRedisStore(t, client)
+	entries, err := store.Recall(context.Background(), "tenant", memory.RecallQuery{
+		Text:  "query",
+		Limit: 2,
+		Order: []memory.Order{{Field: "rank", Direction: memory.OrderDescending}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].ID != "first" || entries[1].ID != "second" {
+		t.Fatalf("custom ordered entries = %#v, want Redis order preserved", entries)
+	}
+	args := fmt.Sprint(client.doCalls[0])
+	if !strings.Contains(args, "SORTBY rank DESC") || !strings.Contains(args, "(@tenant:{tenant})") {
+		t.Fatalf("FT.SEARCH args = %s, want tenant filter and rank DESC", args)
+	}
+}
+
+func TestRecallLimitZeroCountsMatchesAndReturnsAll(t *testing.T) {
+	client := &fakeRedisClient{}
+	client.doFunc = func(args []any) (any, error) {
+		if len(client.doCalls) == 1 {
+			return []any{int64(2)}, nil
+		}
+		return []any{
+			int64(2),
+			"first", []any{"tenant", "tenant", "content", "first", "score", "0.2"},
+			"second", []any{"tenant", "tenant", "content", "second", "score", "0.1"},
+		}, nil
+	}
+	store := newQueryTestRedisStore(t, client)
+	entries, err := store.Recall(context.Background(), "tenant", memory.RecallQuery{Text: "query"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %#v, want both matches", entries)
+	}
+	if len(client.doCalls) != 2 {
+		t.Fatalf("Redis calls = %d, want count then search", len(client.doCalls))
+	}
+	if got := fmt.Sprint(client.doCalls[1]); !strings.Contains(got, "KNN 2") || !strings.Contains(got, "LIMIT 0 2") {
+		t.Fatalf("search args = %s, want counted KNN and limit", got)
+	}
+}
+
+func TestRecallAppliesMinimumSimilarity(t *testing.T) {
+	client := &fakeRedisClient{doResult: []any{
+		int64(2),
+		"low", []any{"tenant", "tenant", "content", "low", "score", "0.6"},
+		"high", []any{"tenant", "tenant", "content", "high", "score", "0.1"},
+	}}
+	store := newQueryTestRedisStore(t, client)
+	entries, err := store.Recall(context.Background(), "tenant", memory.RecallQuery{
+		Text:          "query",
+		Limit:         2,
+		MinSimilarity: 0.5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ID != "high" {
+		t.Fatalf("thresholded entries = %#v, want only high similarity", entries)
+	}
+}
+
+func TestRecallToolUsesPortableQueryDefaults(t *testing.T) {
+	client := &fakeRedisClient{doResult: []any{int64(0)}}
+	store := newTestRedisStore(t, client)
+	if _, err := NewRecallTool(store).Handler(agent.Background().WithIdentity("tenant"), []byte(`{"query":"find"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.doCalls) != 1 {
+		t.Fatalf("Redis calls = %d, want one recall search", len(client.doCalls))
+	}
+	args := fmt.Sprint(client.doCalls[0])
+	if !strings.Contains(args, "KNN 5") || !strings.Contains(args, "(@tenant:{tenant})") {
+		t.Fatalf("FT.SEARCH args = %s, want default limit and identity filter", args)
 	}
 }

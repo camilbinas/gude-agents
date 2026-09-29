@@ -45,10 +45,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a concise assistant. One sentence max."),
-		nil,
+		prompt.Text("You are a concise assistant. One sentence max.").String(),
 		agent.WithRateLimiter(rl),
 		auto.WithLogging(),
 	)
@@ -65,7 +64,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("  [%d] %s\n", i+1, result)
+		fmt.Printf("  [%d] %s\n", i+1, result.Text)
 	}
 
 	// ── Per-conversation mode: 2 RPM per conversation ────────────────
@@ -78,10 +77,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a2, err := agent.Default(
+	a2, err := agent.New(
 		provider,
-		prompt.Text("You are a concise assistant. One sentence max."),
-		nil,
+		prompt.Text("You are a concise assistant. One sentence max.").String(),
 		agent.WithRateLimiter(rl2),
 		auto.WithLogging(),
 	)
@@ -97,7 +95,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("    [%d] %s\n", i+1, result)
+		fmt.Printf("    [%d] %s\n", i+1, result.Text)
 	}
 
 	// Conversation B is unaffected — its own budget is fresh.
@@ -108,7 +106,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("    [%d] %s\n", i+1, result)
+		fmt.Printf("    [%d] %s\n", i+1, result.Text)
 	}
 
 	// Cleanup (optional — stale buckets auto-evict after 60s of inactivity).
@@ -130,10 +128,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a3, err := agent.Default(
+	a3, err := agent.New(
 		provider,
-		prompt.Text("You are a concise assistant. One sentence max."),
-		nil,
+		prompt.Text("You are a concise assistant. One sentence max.").String(),
 		agent.WithRateLimiter(rl3),
 		auto.WithLogging(),
 	)
@@ -150,7 +147,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("  [%d] %s\n", i+1, result)
+		fmt.Printf("  [%d] %s\n", i+1, result.Text)
 	}
 
 	// ── Concurrency limiting (v2) ────────────────────────────────────
@@ -167,10 +164,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a4, err := agent.Default(
+	a4, err := agent.New(
 		provider,
-		prompt.Text("You are a concise assistant. One sentence max."),
-		nil,
+		prompt.Text("You are a concise assistant. One sentence max.").String(),
 		agent.WithRateLimiter(rl4),
 		auto.WithLogging(),
 	)
@@ -190,7 +186,7 @@ func main() {
 				fmt.Printf("  [%d] Error: %v\n", idx+1, err)
 				return
 			}
-			fmt.Printf("  [%d] %s\n", idx+1, result)
+			fmt.Printf("  [%d] %s\n", idx+1, result.Text)
 		}(i, q)
 	}
 	wg.Wait()
@@ -210,10 +206,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a5, err := agent.Default(
+	a5, err := agent.New(
 		provider,
-		prompt.Text("You are a concise assistant. One sentence max."),
-		nil,
+		prompt.Text("You are a concise assistant. One sentence max.").String(),
 		agent.WithRateLimiter(rl5),
 		auto.WithLogging(),
 	)

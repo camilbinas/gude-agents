@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
@@ -49,7 +49,7 @@ func TestNewReranker_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0", r.modelARN)
-	assert.Equal(t, 0, r.topN)
+	assert.Equal(t, 0, r.maxResults)
 }
 
 func TestNewReranker_WithFullARN(t *testing.T) {
@@ -65,10 +65,10 @@ func TestNewReranker_WithOptions(t *testing.T) {
 	r, err := NewReranker(
 		"cohere.rerank-v3-5:0",
 		WithRerankerRegion("eu-west-1"),
-		WithRerankerTopN(5),
+		WithRerankerMaxResults(5),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, 5, r.topN)
+	assert.Equal(t, 5, r.maxResults)
 	assert.Contains(t, r.modelARN, "eu-west-1")
 }
 
@@ -126,7 +126,7 @@ func TestReranker_EmptyDocsSlice(t *testing.T) {
 		client:   bedrockagentruntime.New(bedrockagentruntime.Options{}),
 		modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
 	}
-	docs, err := r.Rerank(context.Background(), "query", []agent.Document{})
+	docs, err := r.Rerank(context.Background(), "query", []rag.Document{})
 	require.NoError(t, err)
 	assert.Empty(t, docs)
 }
@@ -161,7 +161,7 @@ func TestReranker_ReordersDocuments(t *testing.T) {
 		modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
 	}
 
-	docs := []agent.Document{
+	docs := []rag.Document{
 		{Content: "doc-0"},
 		{Content: "doc-1"},
 		{Content: "doc-2"},
@@ -187,7 +187,7 @@ func TestReranker_APIErrorWrapping(t *testing.T) {
 		modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
 	}
 
-	docs := []agent.Document{{Content: "hello"}}
+	docs := []rag.Document{{Content: "hello"}}
 	_, err := r.Rerank(context.Background(), "query", docs)
 	require.Error(t, err)
 	assert.True(t, strings.HasPrefix(err.Error(), "bedrock reranker: "),
@@ -214,7 +214,7 @@ func TestReranker_RequestFormat(t *testing.T) {
 		modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
 	}
 
-	docs := []agent.Document{{Content: "test doc"}}
+	docs := []rag.Document{{Content: "test doc"}}
 	_, err := r.Rerank(context.Background(), "test query", docs)
 	require.NoError(t, err)
 
@@ -234,7 +234,7 @@ func TestReranker_RequestFormat(t *testing.T) {
 	assert.Equal(t, "BEDROCK_RERANKING_MODEL", rerankConfig["type"])
 }
 
-func TestReranker_TopNSetsNumberOfResults(t *testing.T) {
+func TestReranker_MaxResultsSetsNumberOfResults(t *testing.T) {
 	var capturedBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -250,12 +250,12 @@ func TestReranker_TopNSetsNumberOfResults(t *testing.T) {
 	defer srv.Close()
 
 	r := &Reranker{
-		client:   testAgentRuntimeClient(t, srv.URL),
-		modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
-		topN:     3,
+		client:     testAgentRuntimeClient(t, srv.URL),
+		modelARN:   "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
+		maxResults: 3,
 	}
 
-	docs := []agent.Document{
+	docs := []rag.Document{
 		{Content: "a"}, {Content: "b"}, {Content: "c"}, {Content: "d"}, {Content: "e"},
 	}
 	_, err := r.Rerank(context.Background(), "query", docs)
@@ -265,7 +265,7 @@ func TestReranker_TopNSetsNumberOfResults(t *testing.T) {
 	rerankConfig := capturedBody["rerankingConfiguration"].(map[string]interface{})
 	bedrockConfig := rerankConfig["bedrockRerankingConfiguration"].(map[string]interface{})
 	numResults, ok := bedrockConfig["numberOfResults"]
-	require.True(t, ok, "expected numberOfResults to be set when topN > 0")
+	require.True(t, ok, "expected numberOfResults to be set when maxResults > 0")
 	assert.Equal(t, float64(3), numResults)
 }
 
@@ -310,9 +310,9 @@ func TestReranker_DescendingScoreOrder(t *testing.T) {
 			modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
 		}
 
-		docs := make([]agent.Document, n)
+		docs := make([]rag.Document, n)
 		for i := range n {
-			docs[i] = agent.Document{Content: fmt.Sprintf("doc-%d", i)}
+			docs[i] = rag.Document{Content: fmt.Sprintf("doc-%d", i)}
 		}
 
 		reranked, err := rr.Rerank(context.Background(), "query", docs)
@@ -360,7 +360,7 @@ func TestReranker_PreservesMetadata(t *testing.T) {
 		modelARN: "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0",
 	}
 
-	docs := []agent.Document{
+	docs := []rag.Document{
 		{Content: "first", Metadata: map[string]string{"source": "a.pdf", "page": "1"}},
 		{Content: "second", Metadata: map[string]string{"source": "b.pdf", "page": "42"}},
 	}
@@ -379,7 +379,7 @@ func TestReranker_PreservesMetadata(t *testing.T) {
 	assert.Equal(t, "1", result[1].Metadata["page"])
 }
 
-// TestRerankerInterfaceCompat verifies that Reranker satisfies agent.Reranker
+// TestRerankerInterfaceCompat verifies that Reranker satisfies rag.Reranker
 // and can be passed to rag.WithReranker without a type assertion.
 func TestRerankerInterfaceCompat(t *testing.T) {
 	t.Setenv("AWS_REGION", "us-east-1")
@@ -387,6 +387,6 @@ func TestRerankerInterfaceCompat(t *testing.T) {
 	require.NoError(t, err)
 
 	// This assignment proves the interface is satisfied at compile time.
-	var iface agent.Reranker = r
+	var iface rag.Reranker = r
 	assert.NotNil(t, iface)
 }

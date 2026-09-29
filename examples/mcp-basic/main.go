@@ -61,8 +61,8 @@ func main() {
 		provider,
 		prompt.Text(`You are a precise assistant that uses tools to complete tasks step by step.
 When asked to perform calculations or operations, always use the available tools rather than computing yourself.
-Show your work by describing what each tool returned.`),
-		mcpTools,
+Show your work by describing what each tool returned.`).String(),
+		agent.WithTools(mcpTools...),
 		agent.WithMaxIterations(15),
 		auto.WithLogging(),
 	)
@@ -90,7 +90,7 @@ Show your work by describing what each tool returned.`),
 		log.Fatalf("invoke: %v", err)
 	}
 
-	fmt.Println(result)
+	fmt.Println(result.Text)
 	fmt.Println(strings.Repeat("-", 60))
 	fmt.Printf("Completed in %s\n", elapsed.Round(time.Millisecond))
 }

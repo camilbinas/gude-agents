@@ -49,12 +49,11 @@ func main() {
 		Source: agent.ImageSource{Data: data, MIMEType: mimeType},
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text("You are a helpful assistant with vision capabilities. Be concise."),
-		nil,
+		prompt.Text("You are a helpful assistant with vision capabilities. Be concise.").String(),
 		auto.WithLogging(),
-		agent.WithConversation(conversation.NewInMemory(), "demo"),
+		agent.WithConversationStore(conversation.NewInMemory()),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -63,15 +62,19 @@ func main() {
 	// Turn 1 — describe the image.
 	fmt.Printf("Image: %s (%s)\n", imagePath, mimeType)
 	fmt.Println(strings.Repeat("─", 60))
-	imgCtx := agent.Background().WithImages([]agent.ImageBlock{img})
-	if err := a.InvokeStream(imgCtx, "What is in this image?", func(c string) { fmt.Print(c) }); err != nil {
+	imgCtx := agent.Background().WithConversationID("demo").WithImages([]agent.ImageBlock{img})
+	result, err := a.Invoke(imgCtx, "What is in this image?")
+	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Print(result.Text)
 
 	// Turn 2 — follow-up without re-attaching the image.
 	fmt.Println("\n" + strings.Repeat("─", 60))
-	if err := a.InvokeStream(agent.Background(), "Suggest a caption for it.", func(c string) { fmt.Print(c) }); err != nil {
+	result, err = a.Invoke(agent.Background().WithConversationID("demo"), "Suggest a caption for it.")
+	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Print(result.Text)
 	fmt.Println()
 }

@@ -28,23 +28,23 @@ func NewEstimator(provider *GeminiProvider) *Estimator {
 }
 
 // EstimateTokens calls the Gemini models/{model}:countTokens API with the given
-// converse parameters and returns the exact input token count reported by the service.
+// model request and returns the exact input token count reported by the service.
 // On any API error, it returns (0, err).
-func (e *Estimator) EstimateTokens(ctx context.Context, params agent.ConverseParams) (int, error) {
-	contents, err := toGeminiContents(params.Messages)
+func (e *Estimator) EstimateTokens(ctx context.Context, req agent.ModelRequest) (int, error) {
+	contents, err := toGeminiContents(req.Messages)
 	if err != nil {
 		return 0, err
 	}
 
 	config := &genai.CountTokensConfig{}
 
-	if params.System != "" {
+	if req.System != "" {
 		config.SystemInstruction = &genai.Content{
-			Parts: []*genai.Part{genai.NewPartFromText(params.System)},
+			Parts: []*genai.Part{genai.NewPartFromText(req.System)},
 		}
 	}
 
-	if tools := toGeminiTools(params.ToolConfig); tools != nil {
+	if tools := toGeminiTools(req.Tools); tools != nil {
 		config.Tools = tools
 	}
 

@@ -7,7 +7,7 @@
 // By default, output guardrails use stream-through mode: chunks are delivered
 // in real-time and guardrails validate the full response at the end. If a
 // guardrail rejects the response, a GuardrailError is returned (but the caller
-// may have already received partial chunks via InvokeStream).
+// may have already received partial chunks via TextStream).
 //
 // For buffered mode (chunks held until guardrails pass), see the
 // guardrails-buffered example.
@@ -86,9 +86,8 @@ func maxLength(n int) agent.OutputGuardrail {
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.Default(provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
+	a, err := agent.New(provider,
+		prompt.Text("You are a helpful assistant. Be concise.").String(),
 		// Input guardrails — run in order before the LLM sees the message.
 		agent.WithInputGuardrail(sanitize),
 		agent.WithInputGuardrail(blocklist("confidential", "password", "secret")),
@@ -105,9 +104,13 @@ func main() {
 
 	// ── Stream-through: chunks arrive in real-time ────────────────────
 	fmt.Println("── Streaming with output guardrails (stream-through) ──")
-	err = a.InvokeStream(ctx, "What is the capital of France?", func(chunk string) {
-		fmt.Print(chunk) // chunks arrive immediately, not buffered
-	})
+	for chunk, streamErr := range a.TextStream(ctx, "What is the capital of France?") {
+		if streamErr != nil {
+			err = streamErr
+			break
+		}
+		fmt.Print(chunk)
+	}
 	fmt.Println()
 	if err != nil {
 		var ge *agent.GuardrailError
@@ -124,7 +127,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("Response:", result)
+	fmt.Println("Response:", result.Text)
 
 	// ── Blocked message — input guardrail rejects it ──────────────────
 	_, err = a.Invoke(ctx, "What is the password for the admin account?")

@@ -35,13 +35,7 @@ type fakeProvider struct{ name string }
 
 func (f *fakeProvider) Name() string { return f.name }
 
-func (f *fakeProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
-	fmt.Printf("→ %s: ", f.name)
-	fmt.Println("failed, falling back...")
-	return nil, fmt.Errorf("%s: service unavailable", f.name)
-}
-
-func (f *fakeProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, _ agent.StreamCallback) (*agent.ProviderResponse, error) {
+func (f *fakeProvider) Stream(_ context.Context, _ agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	fmt.Printf("→ %s: ", f.name)
 	fmt.Println("failed, falling back...")
 	return nil, fmt.Errorf("%s: service unavailable", f.name)
@@ -60,10 +54,9 @@ func main() {
 	// The agent doesn't know or care which one actually responds.
 	provider := fallback.New(primary, backup)
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
+		prompt.Text("You are a helpful assistant. Be concise.").String(),
 		auto.WithLogging(),
 	)
 	if err != nil {
@@ -78,5 +71,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println(result)
+	fmt.Println(result.Text)
 }

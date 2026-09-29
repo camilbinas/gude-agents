@@ -76,38 +76,42 @@ type InferenceConfig struct {
 	MaxTokens     *int
 }
 
-// ConverseParams holds the inputs for a Provider call.
-type ConverseParams struct {
-	Messages         []Message
-	System           string
-	ToolConfig       []tool.Spec
-	ToolChoice       *tool.Choice     // nil = provider default (auto)
-	ThinkingCallback ThinkingCallback // optional; called with thinking chunks during streaming
-	InferenceConfig  *InferenceConfig // nil = use provider defaults
-	CachingEnabled   bool             // when true, providers attach cache breakpoints automatically
+// ModelRequest holds the inputs for a Provider call.
+type ModelRequest struct {
+	Messages        []Message
+	System          string
+	Tools           []tool.Spec
+	ToolChoice      *tool.Choice     // nil = provider default (auto)
+	InferenceConfig *InferenceConfig // nil = use provider defaults
+	CachingEnabled  bool             // when true, providers attach cache breakpoints automatically
 }
 
-// ProviderResponse is the result of an LLM call.
-type ProviderResponse struct {
+// ModelResponse is the result of a model call.
+type ModelResponse struct {
 	Text      string
 	ToolCalls []tool.Call
 	Usage     TokenUsage
 	Metadata  map[string]any // optional provider-specific extras (e.g. "thinking")
 }
 
-// StreamCallback receives incremental text chunks during streaming.
-type StreamCallback func(chunk string)
+// ModelEventType identifies an incremental model output event.
+type ModelEventType string
 
-// ThinkingCallback receives incremental thinking/reasoning chunks during streaming.
-// Called in real-time as the model reasons, before the final answer is produced.
-// Only invoked when the provider has thinking enabled (e.g. WithThinking, WithReasoningEffort).
-type ThinkingCallback func(chunk string)
+const (
+	ModelEventText     ModelEventType = "text"
+	ModelEventThinking ModelEventType = "thinking"
+)
 
-// Provider abstracts an LLM backend.
+// ModelEvent is an incremental text or thinking event emitted by a Provider.
+type ModelEvent struct {
+	Type ModelEventType
+	Text string
+}
+
+// Provider abstracts an LLM backend. emit may be nil.
 type Provider interface {
 	Name() string
-	Converse(ctx context.Context, params ConverseParams) (*ProviderResponse, error)
-	ConverseStream(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error)
+	Stream(ctx context.Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error)
 }
 
 // ModelIdentifier is an optional interface a Provider can implement to
@@ -117,9 +121,9 @@ type ModelIdentifier interface {
 }
 
 // Invoker abstracts anything that can handle a user message and return a
-// text response. *Agent satisfies this interface and tests can provide fakes.
+// Result. *Agent satisfies this interface and tests can provide fakes.
 type Invoker interface {
-	Invoke(c *Context, userMessage string) (string, error)
+	Invoke(c *Context, input string) (Result, error)
 }
 
 // compile-time check: *Agent implements Invoker.

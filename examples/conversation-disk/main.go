@@ -29,7 +29,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation/disk"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
 )
@@ -43,11 +42,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Remember what the user tells you. Be concise."),
-		nil,
-		agent.WithConversation(store, "default-session"),
+		"You are a helpful assistant. Remember what the user tells you. Be concise.",
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -57,7 +55,8 @@ func main() {
 	fmt.Println("Conversations are saved to ./tmp/conversations/")
 	fmt.Println()
 
-	utils.Chat(agent.Background(), a, utils.ChatOptions{
+	ctx := agent.Background().WithConversationID("default-session")
+	utils.Chat(ctx, a, utils.ChatOptions{
 		ClearFunc: utils.ClearConversation(store, "default-session"),
 	})
 }

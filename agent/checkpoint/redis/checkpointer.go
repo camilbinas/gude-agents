@@ -154,6 +154,72 @@ func (c *Checkpointer) Save(ctx context.Context, threadID string, cp checkpoint.
 	}
 }
 
+// SaveIfVersion appends a checkpoint only when expectedVersion is the latest
+// stored version. Unlike Save, concurrent mutations are reported as conflicts
+// without retrying.
+func (c *Checkpointer) SaveIfVersion(ctx context.Context, threadID string, cp checkpoint.Checkpoint, expectedVersion int) (checkpoint.Checkpoint, error) {
+	if threadID == "" {
+		return checkpoint.Checkpoint{}, checkpoint.ErrThreadIDRequired
+	}
+	if expectedVersion < 0 {
+		return checkpoint.Checkpoint{}, fmt.Errorf("redis checkpointer: save if version: expected version must be non-negative")
+	}
+
+	threadKey := c.threadKey(threadID)
+	var stored checkpoint.Checkpoint
+	err := c.client.Watch(ctx, func(tx *goredis.Tx) error {
+		latest := 0
+		versionStr, err := tx.HGet(ctx, threadKey, latestField).Result()
+		if err != nil && !errors.Is(err, goredis.Nil) {
+			return err
+		}
+		if err == nil {
+			latest, err = strconv.Atoi(versionStr)
+			if err != nil {
+				return fmt.Errorf("parse version: %w", err)
+			}
+		}
+		if latest != expectedVersion {
+			return fmt.Errorf("current version %d, expected %d: %w", latest, expectedVersion, checkpoint.ErrConflict)
+		}
+
+		stored = cp
+		stored.ThreadID = threadID
+		stored.Version = expectedVersion + 1
+		if stored.Timestamp.IsZero() {
+			stored.Timestamp = time.Now()
+		}
+
+		data, err := json.Marshal(stored)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+
+		_, err = tx.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+			pipe.HSet(ctx, threadKey,
+				latestField, stored.Version,
+				c.versionField(stored.Version), data,
+			)
+			if c.ttl > 0 {
+				pipe.PExpire(ctx, threadKey, c.ttl)
+			} else {
+				pipe.Persist(ctx, threadKey)
+			}
+			pipe.ZAdd(ctx, c.threadsKey(), goredis.Z{Score: 0, Member: threadID})
+			return nil
+		})
+		return err
+	}, threadKey)
+
+	if err == nil {
+		return stored, nil
+	}
+	if errors.Is(err, goredis.TxFailedErr) {
+		return checkpoint.Checkpoint{}, fmt.Errorf("redis checkpointer: save if version: concurrent mutation: %w", checkpoint.ErrConflict)
+	}
+	return checkpoint.Checkpoint{}, fmt.Errorf("redis checkpointer: save if version: %w", err)
+}
+
 // Load returns the highest-versioned checkpoint for the thread.
 func (c *Checkpointer) Load(ctx context.Context, threadID string) (checkpoint.Checkpoint, error) {
 	versionStr, err := c.client.HGet(ctx, c.threadKey(threadID), latestField).Result()

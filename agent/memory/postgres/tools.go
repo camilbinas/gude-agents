@@ -3,47 +3,20 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// identifierFromContext extracts the identifier from a context.Context.
-func identifierFromContext(ctx context.Context) string {
-	if c := agent.FromContext(ctx); c != nil {
-		return c.Identifier()
-	}
-	return ""
-}
-
-// Option configures NewRememberTool or NewRecallTool. Both ToolOption and
-// RecallOption satisfy this interface, so you can pass them interchangeably.
-type Option interface {
-	applyTool(*toolConfig)
-}
-
-// ToolOption configures tool metadata (name, description).
+// ToolOption configures tool metadata and identity scope.
 type ToolOption func(*toolConfig)
-
-func (f ToolOption) applyTool(c *toolConfig) { f(c) }
-
-// recallToolOption wraps a RecallOption as an Option for NewRecallTool.
-type recallToolOption struct {
-	fn RecallOption
-}
-
-func (r recallToolOption) applyTool(c *toolConfig) {
-	c.recallOpts = append(c.recallOpts, r.fn)
-}
 
 type toolConfig struct {
 	name        string
 	description string
-	recallOpts  []memory.RecallOption
+	scope       string // named scope key; empty = use the invocation Identity()
 }
 
 // WithToolName sets the tool name. Default: "remember" / "recall".
@@ -64,26 +37,36 @@ func WithToolDescription(desc string) ToolOption {
 	}
 }
 
+// WithScope configures the tool to partition entries by a named scope on the
+// context (set with c.WithScope(key, value)) instead of the default
+// c.Identity(). Scopes are strict: if the scope is not set, the tool call
+// fails with memory.ErrMissingIdentity; it never falls back to the identity.
+func WithScope(key string) ToolOption {
+	return func(c *toolConfig) {
+		c.scope = key
+	}
+}
+
 // NewRememberTool creates a tool that stores values into a Store.
 func NewRememberTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "remember",
 		description: "Store a structured memory entry for later recall.",
 	}
 	for _, opt := range opts {
-		opt.applyTool(cfg)
+		opt(cfg)
 	}
 
 	schema := GenerateInputSchema[T]()
 
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx)
-			if id == "" {
-				return "", errors.New("postgres: identifier not found in context; use c.WithIdentifier")
+			id, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var value T
@@ -97,20 +80,21 @@ func NewRememberTool[T any](
 
 			return "Remembered.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // NewUpdateTool creates a tool that updates an existing entry by ID.
 func NewUpdateTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "update",
 		description: "Update an existing memory entry by its ID.",
 	}
 	for _, opt := range opts {
-		opt.applyTool(cfg)
+		opt(cfg)
 	}
 
 	schema := GenerateInputSchema[T]()
@@ -122,11 +106,11 @@ func NewUpdateTool[T any](
 		schema["required"] = []any{"id"}
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx)
-			if identifier == "" {
-				return "", errors.New("postgres: identifier not found in context; use c.WithIdentifier")
+			identity, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var params struct {
@@ -141,26 +125,27 @@ func NewUpdateTool[T any](
 				return "", fmt.Errorf("postgres: unmarshal: %w", err)
 			}
 
-			if err := store.Update(ctx, identifier, params.ID, value); err != nil {
+			if err := store.Update(ctx, identity, params.ID, value); err != nil {
 				return "", err
 			}
 
 			return "Updated.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // NewForgetTool creates a tool that removes a single entry by ID.
 func NewForgetTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "forget",
 		description: "Remove a specific memory entry by its ID.",
 	}
 	for _, opt := range opts {
-		opt.applyTool(cfg)
+		opt(cfg)
 	}
 
 	schema := map[string]any{
@@ -174,11 +159,11 @@ func NewForgetTool[T any](
 		"required": []any{"id"},
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			identifier := identifierFromContext(ctx)
-			if identifier == "" {
-				return "", errors.New("postgres: identifier not found in context; use c.WithIdentifier")
+			identity, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var params struct {
@@ -188,27 +173,27 @@ func NewForgetTool[T any](
 				return "", err
 			}
 
-			if err := store.Forget(ctx, identifier, params.ID); err != nil {
+			if err := store.Forget(ctx, identity, params.ID); err != nil {
 				return "", err
 			}
 
 			return "Forgotten.", nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 
 // NewRecallTool creates a tool that retrieves values from a Store.
-// RecallOptions passed here apply as default filters to every call.
 func NewRecallTool[T any](
 	store *Store[T],
-	opts ...Option,
+	opts ...ToolOption,
 ) tool.Tool {
 	cfg := &toolConfig{
 		name:        "recall",
 		description: "Retrieve relevant memory entries by semantic similarity.",
 	}
 	for _, opt := range opts {
-		opt.applyTool(cfg)
+		opt(cfg)
 	}
 
 	schema := map[string]any{
@@ -226,13 +211,11 @@ func NewRecallTool[T any](
 		"required": []any{"query"},
 	}
 
-	recallOpts := cfg.recallOpts
-
-	return tool.NewRaw(cfg.name, cfg.description, schema,
+	return tool.NewRaw(cfg.name, cfg.description,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
-			id := identifierFromContext(ctx)
-			if id == "" {
-				return "", errors.New("postgres: identifier not found in context; use c.WithIdentifier")
+			id, err := memory.ResolveIdentity(ctx, cfg.scope)
+			if err != nil {
+				return "", err
 			}
 
 			var params struct {
@@ -246,7 +229,10 @@ func NewRecallTool[T any](
 				params.Limit = 5
 			}
 
-			results, err := store.Recall(ctx, id, params.Query, params.Limit, recallOpts...)
+			results, err := store.Recall(ctx, id, memory.RecallQuery{
+				Text:  params.Query,
+				Limit: params.Limit,
+			})
 			if err != nil {
 				return "", err
 			}
@@ -257,6 +243,7 @@ func NewRecallTool[T any](
 
 			return formatResults(results), nil
 		},
+		tool.WithSchema(schema),
 	)
 }
 

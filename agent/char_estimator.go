@@ -14,16 +14,16 @@ type CharEstimator struct{}
 var _ TokenEstimator = CharEstimator{}
 
 // EstimateTokens computes the approximate token count by dividing the total
-// character count of all text content in params by 4, rounding up.
+// character count of all text content in req by 4, rounding up.
 // It never returns an error (pure computation).
-func (CharEstimator) EstimateTokens(_ context.Context, params ConverseParams) (int, error) {
+func (CharEstimator) EstimateTokens(_ context.Context, req ModelRequest) (int, error) {
 	total := 0
 
 	// Count system prompt characters.
-	total += len(params.System)
+	total += len(req.System)
 
 	// Count all TextBlock.Text characters from messages.
-	for _, msg := range params.Messages {
+	for _, msg := range req.Messages {
 		for _, block := range msg.Content {
 			if tb, ok := block.(TextBlock); ok {
 				total += len(tb.Text)
@@ -31,8 +31,8 @@ func (CharEstimator) EstimateTokens(_ context.Context, params ConverseParams) (i
 		}
 	}
 
-	// Count JSON-serialized ToolConfig spec characters.
-	for _, spec := range params.ToolConfig {
+	// Count JSON-serialized tool spec characters.
+	for _, spec := range req.Tools {
 		data, err := json.Marshal(spec)
 		if err != nil {
 			// Should never happen with well-formed specs, but if it does,

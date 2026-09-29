@@ -28,28 +28,24 @@ func newTestEstimator(serverURL string) *Estimator {
 
 func TestEstimator_ReturnsTokenCount(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify it's hitting the count_tokens endpoint.
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
 
-		resp := map[string]any{
-			"input_tokens": 25,
-		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(map[string]any{"input_tokens": 25})
 	}))
 	defer srv.Close()
 
 	est := newTestEstimator(srv.URL)
-	params := agent.ConverseParams{
+	request := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello, world!"}}},
 		},
 		System: "You are helpful.",
 	}
 
-	count, err := est.EstimateTokens(context.Background(), params)
+	count, err := est.EstimateTokens(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,12 +54,13 @@ func TestEstimator_ReturnsTokenCount(t *testing.T) {
 	}
 }
 
-func TestEstimator_WithToolConfig(t *testing.T) {
+func TestEstimator_WithTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
 
-		// Verify tools are included in the request.
 		tools, ok := body["tools"]
 		if !ok {
 			t.Error("expected tools in request body")
@@ -73,20 +70,17 @@ func TestEstimator_WithToolConfig(t *testing.T) {
 			t.Error("expected non-empty tools array")
 		}
 
-		resp := map[string]any{
-			"input_tokens": 50,
-		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(map[string]any{"input_tokens": 50})
 	}))
 	defer srv.Close()
 
 	est := newTestEstimator(srv.URL)
-	params := agent.ConverseParams{
+	request := agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Use a tool"}}},
 		},
-		ToolConfig: []tool.Spec{
+		Tools: []tool.Spec{
 			{
 				Name:        "get_weather",
 				Description: "Gets the weather for a location",
@@ -101,7 +95,7 @@ func TestEstimator_WithToolConfig(t *testing.T) {
 		},
 	}
 
-	count, err := est.EstimateTokens(context.Background(), params)
+	count, err := est.EstimateTokens(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +105,7 @@ func TestEstimator_WithToolConfig(t *testing.T) {
 }
 
 func TestEstimator_APIError_PropagatesError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -122,14 +116,11 @@ func TestEstimator_APIError_PropagatesError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	est := newTestEstimator(srv.URL)
-	params := agent.ConverseParams{
+	count, err := newTestEstimator(srv.URL).EstimateTokens(context.Background(), agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},
-	}
-
-	count, err := est.EstimateTokens(context.Background(), params)
+	})
 	if err == nil {
 		t.Fatal("expected error from API failure, got nil")
 	}
@@ -139,7 +130,7 @@ func TestEstimator_APIError_PropagatesError(t *testing.T) {
 }
 
 func TestEstimator_ServerError_PropagatesError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]any{
@@ -150,14 +141,11 @@ func TestEstimator_ServerError_PropagatesError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	est := newTestEstimator(srv.URL)
-	params := agent.ConverseParams{
+	count, err := newTestEstimator(srv.URL).EstimateTokens(context.Background(), agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello"}}},
 		},
-	}
-
-	count, err := est.EstimateTokens(context.Background(), params)
+	})
 	if err == nil {
 		t.Fatal("expected error from server failure, got nil")
 	}
@@ -170,33 +158,26 @@ func TestEstimator_WithSystemPrompt(t *testing.T) {
 	var capturedBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&capturedBody)
-
-		resp := map[string]any{
-			"input_tokens": 15,
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Errorf("decode request: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(map[string]any{"input_tokens": 15})
 	}))
 	defer srv.Close()
 
-	est := newTestEstimator(srv.URL)
-	params := agent.ConverseParams{
+	count, err := newTestEstimator(srv.URL).EstimateTokens(context.Background(), agent.ModelRequest{
 		Messages: []agent.Message{
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hi"}}},
 		},
 		System: "Be brief.",
-	}
-
-	count, err := est.EstimateTokens(context.Background(), params)
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if count != 15 {
 		t.Errorf("expected 15 tokens, got %d", count)
 	}
-
-	// Verify system prompt was included in the request.
 	if capturedBody["system"] == nil {
 		t.Error("expected system field in request body")
 	}

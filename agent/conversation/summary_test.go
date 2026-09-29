@@ -26,7 +26,6 @@ func makeMessages(n int) []agent.Message {
 
 // TestSummary_TriggersAt80Percent verifies that summarization is triggered
 // when the message count reaches 80% of the threshold.
-//
 func TestSummary_TriggersAt80Percent(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -51,7 +50,7 @@ func TestSummary_TriggersAt80Percent(t *testing.T) {
 
 	// Save 7 messages — should NOT trigger
 	msgs7 := makeMessages(7)
-	if err := s.Save(ctx, "conv", msgs7); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs7); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -64,7 +63,7 @@ func TestSummary_TriggersAt80Percent(t *testing.T) {
 
 	// Save 8 messages — should trigger
 	msgs8 := makeMessages(8)
-	if err := s.Save(ctx, "conv", msgs8); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs8); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -80,7 +79,6 @@ func TestSummary_TriggersAt80Percent(t *testing.T) {
 
 // TestSummary_SkipsWhenAlreadySummarizing verifies that a second summarization
 // is not triggered while one is already in progress.
-//
 func TestSummary_SkipsWhenAlreadySummarizing(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -113,7 +111,8 @@ func TestSummary_SkipsWhenAlreadySummarizing(t *testing.T) {
 
 	// First save triggers summarization
 	msgs := makeMessages(8)
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	revision, err := s.Save(ctx, "conv", msgs, 0)
+	if err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -126,7 +125,7 @@ func TestSummary_SkipsWhenAlreadySummarizing(t *testing.T) {
 
 	// Second save while first is in progress — should skip
 	msgs2 := makeMessages(10)
-	if err := s.Save(ctx, "conv", msgs2); err != nil {
+	if _, err := s.Save(ctx, "conv", msgs2, revision); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -145,7 +144,6 @@ func TestSummary_SkipsWhenAlreadySummarizing(t *testing.T) {
 
 // TestSummary_PreservesMessagesOnFailure verifies that when SummaryFunc returns
 // an error, the original messages remain unchanged in the store.
-//
 func TestSummary_PreservesMessagesOnFailure(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -163,7 +161,7 @@ func TestSummary_PreservesMessagesOnFailure(t *testing.T) {
 	}
 
 	msgs := makeMessages(8)
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -178,7 +176,7 @@ func TestSummary_PreservesMessagesOnFailure(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Messages should be unchanged
-	loaded, err := s.Load(ctx, "conv")
+	loaded, err := loadMessages(ctx, s, "conv")
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -190,7 +188,6 @@ func TestSummary_PreservesMessagesOnFailure(t *testing.T) {
 
 // TestSummary_MergesCorrectly verifies that after summarization completes,
 // the store contains [user summary, assistant ack] + [new messages added after cutoff].
-//
 func TestSummary_MergesCorrectly(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -212,7 +209,7 @@ func TestSummary_MergesCorrectly(t *testing.T) {
 
 	// Save 8 messages to trigger summarization (cutoff = 8)
 	msgs := makeMessages(8)
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -226,7 +223,7 @@ func TestSummary_MergesCorrectly(t *testing.T) {
 	// Give time for the save in runSummarize to complete
 	time.Sleep(100 * time.Millisecond)
 
-	loaded, err := s.Load(ctx, "conv")
+	loaded, err := loadMessages(ctx, s, "conv")
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -256,7 +253,6 @@ func TestSummary_MergesCorrectly(t *testing.T) {
 
 // TestSummary_ConcurrentLoadSaveDuringSummarization verifies that Load and Save
 // operations succeed without panics or races while summarization is in progress.
-//
 func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -280,7 +276,7 @@ func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 
 	// Trigger summarization
 	msgs := makeMessages(8)
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -299,7 +295,7 @@ func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.Load(ctx, "conv")
+			_, err := loadMessages(ctx, s, "conv")
 			if err != nil {
 				errs <- err
 			}
@@ -307,13 +303,16 @@ func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			newMsgs := makeMessages(3)
-			err := s.Save(ctx, "other-conv", newMsgs)
+			err := saveLatest(ctx, s, "other-conv", newMsgs)
 			if err != nil {
 				errs <- err
 			}
 		}(i)
 	}
 
+	// Unblock summarization so the same-conversation Loads can complete, then
+	// wait for all concurrent operations.
+	close(allowFinish)
 	wg.Wait()
 	close(errs)
 
@@ -321,16 +320,12 @@ func TestSummary_ConcurrentLoadSaveDuringSummarization(t *testing.T) {
 		t.Errorf("concurrent operation failed: %v", err)
 	}
 
-	// Unblock summarization and let it finish
-	close(allowFinish)
-
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 }
 
 // TestSummary_NoRetriggerAfterCompletion verifies that once summarization completes,
 // calling Save again at the same threshold does NOT trigger a second summarization.
-//
 func TestSummary_NoRetriggerAfterCompletion(t *testing.T) {
 	store := NewInMemory()
 	ctx := context.Background()
@@ -357,7 +352,7 @@ func TestSummary_NoRetriggerAfterCompletion(t *testing.T) {
 
 	// First Save at threshold — triggers summarization
 	msgs := makeMessages(8)
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatalf("first Save failed: %v", err)
 	}
 
@@ -381,7 +376,7 @@ func TestSummary_NoRetriggerAfterCompletion(t *testing.T) {
 	}
 
 	// Second Save at threshold — should NOT trigger again
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatalf("second Save failed: %v", err)
 	}
 
@@ -422,7 +417,8 @@ func TestSummary_MessageArrivingDuringSummarizationIsPreserved(t *testing.T) {
 	}
 
 	// Trigger summarization with 8 messages (cutoff = 8).
-	if err := s.Save(ctx, "conv", makeMessages(8)); err != nil {
+	revision, err := s.Save(ctx, "conv", makeMessages(8), 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -439,7 +435,7 @@ func TestSummary_MessageArrivingDuringSummarizationIsPreserved(t *testing.T) {
 		Role:    agent.RoleUser,
 		Content: []agent.ContentBlock{agent.TextBlock{Text: "msg9"}},
 	})
-	if err := s.Save(ctx, "conv", extra); err != nil {
+	if _, err := s.Save(ctx, "conv", extra, revision); err != nil {
 		t.Fatal(err)
 	}
 
@@ -458,7 +454,7 @@ func TestSummary_MessageArrivingDuringSummarizationIsPreserved(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	loaded, err := s.Load(ctx, "conv")
+	loaded, err := loadMessages(ctx, s, "conv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,13 +528,14 @@ func TestSummary_RetriggersWhenResultStillAboveThreshold(t *testing.T) {
 	}
 
 	// Trigger first summarization with 8 messages.
-	if err := s.Save(ctx, "conv", makeMessages(8)); err != nil {
+	revision, err := s.Save(ctx, "conv", makeMessages(8), 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// While the LLM is blocked, add 8 more messages (total 16 in store).
 	// This simulates a fast-paced conversation overflowing during summarization.
-	if err := s.Save(ctx, "conv", makeMessages(16)); err != nil {
+	if _, err := s.Save(ctx, "conv", makeMessages(16), revision); err != nil {
 		t.Fatal(err)
 	}
 
@@ -598,7 +595,7 @@ func TestSummary_PreserveRecentMessages(t *testing.T) {
 		}
 	}
 
-	if err := s.Save(ctx, "conv", msgs); err != nil {
+	if err := saveLatest(ctx, s, "conv", msgs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -615,7 +612,7 @@ func TestSummary_PreserveRecentMessages(t *testing.T) {
 		t.Fatalf("expected SummaryFunc to receive 6 messages, got %d", summarizedCount)
 	}
 
-	loaded, err := s.Load(ctx, "conv")
+	loaded, err := loadMessages(ctx, s, "conv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +661,7 @@ func TestSummary_PreserveRecentMessages_SkipsWhenAllPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.Save(ctx, "conv", makeMessages(8)); err != nil {
+	if err := saveLatest(ctx, s, "conv", makeMessages(8)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -672,5 +669,38 @@ func TestSummary_PreserveRecentMessages_SkipsWhenAllPreserved(t *testing.T) {
 
 	if called {
 		t.Fatal("SummaryFunc should not be called when all messages are within preserve window")
+	}
+}
+
+func TestSummaryFlushReportsBackgroundError(t *testing.T) {
+	want := errors.New("summary failed")
+	s, err := NewSummary(NewInMemory(), 1, func(context.Context, []agent.Message) ([2]agent.Message, error) {
+		return [2]agent.Message{}, want
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(context.Background(), "conv", makeMessages(2), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Flush error = %v, want %v", err, want)
+	}
+}
+
+func TestTokenSummaryFlushReportsBackgroundError(t *testing.T) {
+	want := errors.New("token summary failed")
+	s, err := NewTokenSummary(NewInMemory(), 1, func(context.Context, []agent.Message) ([2]agent.Message, error) {
+		return [2]agent.Message{}, want
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := agent.WithTokenUsage(context.Background(), agent.TokenUsage{InputTokens: 10})
+	if _, err := s.Save(ctx, "conv", makeMessages(2), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Flush error = %v, want %v", err, want)
 	}
 }

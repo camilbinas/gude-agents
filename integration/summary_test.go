@@ -8,7 +8,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -86,9 +85,8 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	}
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. Be very brief — one sentence max."),
-		nil,
-		agent.WithConversation(summaryStore, "summary-conv"),
+		string("You are a helpful assistant. Be very brief — one sentence max."),
+		agent.WithConversationStore(summaryStore),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +95,7 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx)
+	c := agent.NewContext(ctx).WithConversationID("summary-conv")
 
 	// Have a multi-turn conversation that exceeds the threshold.
 	turns := []string{
@@ -112,25 +110,27 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Turn %d error: %v", i+1, err)
 		}
-		t.Logf("Turn %d: %s → %s", i+1, msg, result)
+		t.Logf("Turn %d: %s → %s", i+1, msg, result.Text)
 	}
 
 	// Wait for background summarization to complete (instead of sleeping).
-	summaryStore.Wait()
+	if err := summaryStore.Flush(ctx); err != nil {
+		t.Fatalf("summary flush: %v", err)
+	}
 
 	// Check what's in the store now.
-	msgs, err := store.Load(ctx, "summary-conv")
+	snapshot, err := store.Load(ctx, "summary-conv")
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	t.Logf("Messages in store after summarization: %d", len(msgs))
+	t.Logf("Messages in store after summarization: %d", len(snapshot.Messages))
 
 	// After 4 turns we'd have 8 messages (4 user + 4 assistant).
 	// Summarization should have compressed the early messages.
 	// The exact count depends on timing, but it should be less than 8.
-	if len(msgs) >= 8 {
-		t.Logf("Warning: summarization may not have triggered yet (still %d messages)", len(msgs))
+	if len(snapshot.Messages) >= 8 {
+		t.Logf("Warning: summarization may not have triggered yet (still %d messages)", len(snapshot.Messages))
 	}
 
 	// Verify the conversation still works after summarization —
@@ -139,10 +139,10 @@ func TestIntegration_Summary_TriggersAndCompresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Post-summary invoke error: %v", err)
 	}
-	t.Logf("Post-summary response: %s", result)
+	t.Logf("Post-summary response: %s", result.Text)
 
-	if !strings.Contains(strings.ToLower(result), "bob") {
-		t.Errorf("expected agent to remember 'Bob' after summarization, got: %s", result)
+	if !strings.Contains(strings.ToLower(result.Text), "bob") {
+		t.Errorf("expected agent to remember 'Bob' after summarization, got: %s", result.Text)
 	}
 }
 
@@ -165,9 +165,8 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	}
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. Be very brief."),
-		nil,
-		agent.WithSharedConversation(summaryStore),
+		string("You are a helpful assistant. Be very brief."),
+		agent.WithConversationStore(summaryStore),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -208,19 +207,27 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 	}
 
 	// Wait for summarization to complete.
-	summaryStore.Wait()
+	if err := summaryStore.Flush(ctx); err != nil {
+		t.Fatalf("summary flush: %v", err)
+	}
 
 	// Verify conversations are isolated.
-	aliceMsgs, _ := store.Load(ctx, "conv-alice")
-	bobMsgs, _ := store.Load(ctx, "conv-bob")
+	aliceSnapshot, err := store.Load(ctx, "conv-alice")
+	if err != nil {
+		t.Fatalf("load Alice conversation: %v", err)
+	}
+	bobSnapshot, err := store.Load(ctx, "conv-bob")
+	if err != nil {
+		t.Fatalf("load Bob conversation: %v", err)
+	}
 
-	t.Logf("Alice messages: %d, Bob messages: %d", len(aliceMsgs), len(bobMsgs))
+	t.Logf("Alice messages: %d, Bob messages: %d", len(aliceSnapshot.Messages), len(bobSnapshot.Messages))
 
 	// Both should have messages (summarized or not).
-	if len(aliceMsgs) == 0 {
+	if len(aliceSnapshot.Messages) == 0 {
 		t.Error("expected alice to have messages")
 	}
-	if len(bobMsgs) == 0 {
+	if len(bobSnapshot.Messages) == 0 {
 		t.Error("expected bob to have messages")
 	}
 
@@ -234,14 +241,14 @@ func TestIntegration_Summary_IndependentConversations(t *testing.T) {
 		t.Fatalf("Bob recall error: %v", err)
 	}
 
-	t.Logf("Alice recall: %s", aliceResult)
-	t.Logf("Bob recall: %s", bobResult)
+	t.Logf("Alice recall: %s", aliceResult.Text)
+	t.Logf("Bob recall: %s", bobResult.Text)
 
-	if !strings.Contains(strings.ToLower(aliceResult), "alice") {
-		t.Errorf("expected alice's conversation to remember 'Alice', got: %s", aliceResult)
+	if !strings.Contains(strings.ToLower(aliceResult.Text), "alice") {
+		t.Errorf("expected alice's conversation to remember 'Alice', got: %s", aliceResult.Text)
 	}
-	if !strings.Contains(strings.ToLower(bobResult), "bob") {
-		t.Errorf("expected bob's conversation to remember 'Bob', got: %s", bobResult)
+	if !strings.Contains(strings.ToLower(bobResult.Text), "bob") {
+		t.Errorf("expected bob's conversation to remember 'Bob', got: %s", bobResult.Text)
 	}
 }
 
@@ -270,9 +277,9 @@ func TestIntegration_Summary_ToolCallsSurviveSummarization(t *testing.T) {
 	lookupTool := newLookupTool()
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. When asked about a city's population, use the lookup tool. Be brief."),
-		lookupTool,
-		agent.WithConversation(summaryStore, "tool-summary-conv"),
+		string("You are a helpful assistant. When asked about a city's population, use the lookup tool. Be brief."),
+		agent.WithTools(lookupTool...),
+		agent.WithConversationStore(summaryStore),
 		agent.WithMaxIterations(5),
 	)
 	if err != nil {
@@ -281,16 +288,16 @@ func TestIntegration_Summary_ToolCallsSurviveSummarization(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	c := agent.NewContext(ctx)
+	c := agent.NewContext(ctx).WithConversationID("tool-summary-conv")
 
 	// Turn 1: trigger a tool call.
 	result, err := a.Invoke(c, "What is the population of Berlin?")
 	if err != nil {
 		t.Fatalf("Turn 1 error: %v", err)
 	}
-	t.Logf("Turn 1: %s", result)
-	if !strings.Contains(strings.ToLower(result), "3") {
-		t.Logf("Warning: expected mention of population ~3.6M, got: %s", result)
+	t.Logf("Turn 1: %s", result.Text)
+	if !strings.Contains(strings.ToLower(result.Text), "3") {
+		t.Logf("Warning: expected mention of population ~3.6M, got: %s", result.Text)
 	}
 
 	// Turn 2: another tool call to push past the threshold.
@@ -298,10 +305,12 @@ func TestIntegration_Summary_ToolCallsSurviveSummarization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Turn 2 error: %v", err)
 	}
-	t.Logf("Turn 2: %s", result)
+	t.Logf("Turn 2: %s", result.Text)
 
 	// Wait for summarization.
-	summaryStore.Wait()
+	if err := summaryStore.Flush(ctx); err != nil {
+		t.Fatalf("summary flush: %v", err)
+	}
 
 	// Turn 3: this is the critical turn — if summarization left orphaned
 	// tool_result blocks, this call will fail with a provider validation error.
@@ -309,12 +318,12 @@ func TestIntegration_Summary_ToolCallsSurviveSummarization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Turn 3 (post-summary) error: %v\nThis likely means summarization left orphaned tool_result blocks.", err)
 	}
-	t.Logf("Turn 3 (post-summary): %s", result)
+	t.Logf("Turn 3 (post-summary): %s", result.Text)
 
 	// The agent should still be able to answer based on context.
-	lower := strings.ToLower(result)
+	lower := strings.ToLower(result.Text)
 	if !strings.Contains(lower, "paris") && !strings.Contains(lower, "berlin") {
-		t.Errorf("expected answer to mention Paris or Berlin, got: %s", result)
+		t.Errorf("expected answer to mention Paris or Berlin, got: %s", result.Text)
 	}
 }
 
@@ -366,9 +375,9 @@ func TestIntegration_TokenSummary_ToolCallsSurviveSummarization(t *testing.T) {
 	lookupTools := newLookupTool()
 
 	a, err := agent.New(p,
-		prompt.Text("You are a helpful assistant. When asked about a city's population, use the lookup_population tool. Be brief — one sentence max."),
-		lookupTools,
-		agent.WithConversation(tokenSummary, "token-tool-conv"),
+		string("You are a helpful assistant. When asked about a city's population, use the lookup_population tool. Be brief — one sentence max."),
+		agent.WithTools(lookupTools...),
+		agent.WithConversationStore(tokenSummary),
 		agent.WithMaxIterations(5),
 	)
 	if err != nil {
@@ -377,31 +386,33 @@ func TestIntegration_TokenSummary_ToolCallsSurviveSummarization(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	c := agent.NewContext(ctx)
+	c := agent.NewContext(ctx).WithConversationID("token-tool-conv")
 
 	// Turn 1: trigger a tool call.
 	result, err := a.Invoke(c, "What is the population of London?")
 	if err != nil {
 		t.Fatalf("Turn 1 error: %v", err)
 	}
-	t.Logf("Turn 1: %s", result)
+	t.Logf("Turn 1: %s", result.Text)
 
 	// Turn 2: another tool call to push token count past threshold.
 	result, err = a.Invoke(c, "And Berlin?")
 	if err != nil {
 		t.Fatalf("Turn 2 error: %v", err)
 	}
-	t.Logf("Turn 2: %s", result)
+	t.Logf("Turn 2: %s", result.Text)
 
 	// Turn 3: one more to ensure we're well past the threshold.
 	result, err = a.Invoke(c, "What about Paris?")
 	if err != nil {
 		t.Fatalf("Turn 3 error: %v", err)
 	}
-	t.Logf("Turn 3: %s", result)
+	t.Logf("Turn 3: %s", result.Text)
 
 	// Wait for background summarization.
-	tokenSummary.Wait()
+	if err := tokenSummary.Flush(ctx); err != nil {
+		t.Fatalf("token summary flush: %v", err)
+	}
 
 	// Turn 4: critical — if summarization left orphaned tool_result blocks,
 	// this will fail with a provider validation error.
@@ -409,10 +420,10 @@ func TestIntegration_TokenSummary_ToolCallsSurviveSummarization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Turn 4 (post-summary) error: %v\nThis likely means token summarization left orphaned tool_result blocks.", err)
 	}
-	t.Logf("Turn 4 (post-summary): %s", result)
+	t.Logf("Turn 4 (post-summary): %s", result.Text)
 
 	// Should mention London (the largest of the three).
-	if !strings.Contains(strings.ToLower(result), "london") {
-		t.Errorf("expected answer to mention London (largest), got: %s", result)
+	if !strings.Contains(strings.ToLower(result.Text), "london") {
+		t.Errorf("expected answer to mention London (largest), got: %s", result.Text)
 	}
 }

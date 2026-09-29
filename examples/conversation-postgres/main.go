@@ -7,6 +7,7 @@
 //	CREATE TABLE agent_conversations (
 //	    conversation_id TEXT PRIMARY KEY,
 //	    messages        JSONB NOT NULL,
+//	    revision        BIGINT NOT NULL DEFAULT 0,
 //	    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 //	);
 
@@ -19,7 +20,6 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation/postgres"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,15 +29,12 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	// Set POSTGRES_URL to your connection string, e.g.:
-	//   export POSTGRES_URL="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
 	pgURL := os.Getenv("POSTGRES_URL")
 	if pgURL == "" {
 		log.Fatal("POSTGRES_URL is required")
 	}
 
-	ctx := agent.Background()
-
+	ctx := agent.Background().WithConversationID("demo-conversation")
 	pool, err := pgxpool.New(ctx, pgURL)
 	if err != nil {
 		log.Fatalf("postgres connect: %v", err)
@@ -52,19 +49,16 @@ func main() {
 	defer store.Close()
 
 	provider := bedrock.Must(bedrock.Standard())
-
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithConversation(store, "demo-conversation"),
+		"You are a helpful assistant. Be concise.",
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println("Postgres chat (type 'quit' to exit, 'clear' to reset)")
-
 	utils.Chat(ctx, a, utils.ChatOptions{
 		ClearFunc: utils.ClearConversation(store, "demo-conversation"),
 	})

@@ -73,7 +73,7 @@ Return ONLY the JSON object, no other text.`
 
 	userMsg := fmt.Sprintf("Question:\n%s\n\nAnswer:\n%s\n\nRate how well the answer addresses the question.", query, actualOutput)
 
-	resp, err := r.provider.Converse(ctx, agent.ConverseParams{
+	resp, err := r.provider.Stream(ctx, agent.ModelRequest{
 		System: system,
 		Messages: []agent.Message{
 			{
@@ -81,7 +81,7 @@ Return ONLY the JSON object, no other text.`
 				Content: []agent.ContentBlock{agent.TextBlock{Text: userMsg}},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		return 0, "", fmt.Errorf("relevance: judgment failed: %w", err)
 	}

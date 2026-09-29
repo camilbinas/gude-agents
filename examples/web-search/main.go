@@ -26,7 +26,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/agent/tool/webfetch"
 	"github.com/camilbinas/gude-agents/agent/tool/websearch/tavily"
 	"github.com/camilbinas/gude-agents/examples/utils"
@@ -36,19 +35,19 @@ import (
 func main() {
 	godotenv.Load() //nolint
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.APE{
+		(prompt.APE{
 			Action:      "Search the web and fetch pages to answer questions with up-to-date information.",
 			Purpose:     "Provide accurate, current answers by using web_search before responding, then web_fetch to read the most relevant result in detail.",
 			Expectation: "Be concise. Always cite sources with URLs. If search results are sufficient, skip fetching.",
-		},
-		[]tool.Tool{
+		}).String(),
+		agent.WithTools(
 			tavily.New(os.Getenv("TAVILY_API_KEY")),
 			webfetch.New(),
-		},
+		),
 		auto.WithLogging(),
-		agent.WithParallelToolExecution(),
+		agent.WithParallelTools(),
 		agent.WithMaxIterations(10),
 	)
 	if err != nil {

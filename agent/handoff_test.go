@@ -6,151 +6,167 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-func TestHandoffTool_ReturnsErrHandoffRequested(t *testing.T) {
-	provider := newScriptedProvider(
-		// LLM calls the handoff tool.
-		&ProviderResponse{
-			ToolCalls: []tool.Call{{
-				ToolUseID: "h1",
-				Name:      "request_human_input",
-				Input:     json.RawMessage(`{"reason":"need approval","question":"Approve refund?"}`),
-			}},
-		},
-	)
-
-	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{NewHandoffTool("request_human_input", "")})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	c := Background()
-
-	err = a.InvokeStream(c, "Process refund #123", nil)
-	if !errors.Is(err, ErrHandoffRequested) {
-		t.Fatalf("expected ErrHandoffRequested, got %v", err)
-	}
-
-	hr, ok := GetHandoffRequest(c)
-	if !ok {
-		t.Fatal("expected HandoffRequest in Context")
-	}
-	if hr.Reason != "need approval" {
-		t.Errorf("reason = %q, want %q", hr.Reason, "need approval")
-	}
-	if hr.Question != "Approve refund?" {
-		t.Errorf("question = %q, want %q", hr.Question, "Approve refund?")
-	}
-	if len(hr.Messages) == 0 {
-		t.Fatal("expected messages to be preserved in HandoffRequest")
+func humanInputCall(id string) tool.Call {
+	return tool.Call{
+		ToolUseID: id,
+		Name:      "request_human_input",
+		Input:     json.RawMessage(`{"reason":"need info","question":"What is the order ID?"}`),
 	}
 }
 
-func TestResume_ContinuesAfterHandoff(t *testing.T) {
-	provider := newScriptedProvider(
-		// First invocation: LLM calls handoff tool.
-		&ProviderResponse{
-			ToolCalls: []tool.Call{{
-				ToolUseID: "h1",
-				Name:      "request_human_input",
-				Input:     json.RawMessage(`{"reason":"need info","question":"What is the order ID?"}`),
-			}},
-		},
-		// Second invocation (Resume): LLM produces final answer.
-		&ProviderResponse{Text: "Refund processed for order 456."},
-	)
-
-	counterTool := tool.NewRaw("count", "counts calls", map[string]any{"type": "object"},
-		func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "counted", nil
-		},
-	)
-
-	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{NewHandoffTool("request_human_input", ""), counterTool})
+func TestHumanInputTool_InvokeReturnsInterrupt(t *testing.T) {
+	provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}})
+	a, err := New(provider, "You are helpful.", WithTools(NewHumanInputTool("request_human_input", "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	c := Background()
-
-	err = a.InvokeStream(c, "Process a refund", nil)
-	if !errors.Is(err, ErrHandoffRequested) {
-		t.Fatalf("expected ErrHandoffRequested, got %v", err)
+	res, err := a.Invoke(Background(), "Process refund #123")
+	if err != nil {
+		t.Fatalf("Invoke error: %v", err)
 	}
+	if res.StopReason != StopInterrupt || res.Interrupt == nil {
+		t.Fatalf("result = %+v, want interrupt", res)
+	}
+	in := res.Interrupt
+	if in.Type != InterruptHumanInput || in.Input == nil || in.Approval != nil {
+		t.Fatalf("interrupt = %+v, want human_input", in)
+	}
+	if in.Input.Reason != "need info" || in.Input.Question != "What is the order ID?" {
+		t.Errorf("input = %+v", in.Input)
+	}
+	if len(in.Messages) == 0 {
+		t.Fatal("expected a message snapshot")
+	}
+	last := in.Messages[len(in.Messages)-1]
+	tr, ok := last.Content[0].(ToolResultBlock)
+	if !ok || tr.ToolUseID != "h1" || tr.Content != humanInputPausedResult {
+		t.Fatalf("last snapshot message = %#v, want paused tool result", last)
+	}
+}
 
-	hr, _ := GetHandoffRequest(c)
+func TestResume_RespondContinuesAfterHumanInput(t *testing.T) {
+	provider := &approvalBatchProvider{responses: []*ModelResponse{
+		{ToolCalls: []tool.Call{humanInputCall("h1")}},
+		{Text: "Refund processed for order 456."},
+	}}
+	a, err := New(provider, "You are helpful.", WithTools(NewHumanInputTool("request_human_input", "")),
+		WithInputGuardrail(func(_ *Context, s string) (string, error) { return s + "!", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := mustInterrupt(t, a, Background(), "Process a refund")
 
-	// Resume with human input.
-	result, err := a.ResumeInvoke(c, hr, "Order 456")
+	res, err := a.Resume(Background(), in, Respond("Order 456"))
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
-	if result != "Refund processed for order 456." {
-		t.Errorf("result = %q, want %q", result, "Refund processed for order 456.")
+	if res.Text != "Refund processed for order 456." || res.StopReason != StopEndTurn {
+		t.Errorf("result = %+v", res)
+	}
+	msgs := provider.params[1].Messages
+	last := msgs[len(msgs)-1]
+	if tb, ok := last.Content[len(last.Content)-1].(TextBlock); !ok || tb.Text != "Order 456!" {
+		t.Fatalf("resumed user message = %#v, want guardrail-processed answer", last)
 	}
 }
 
-func TestHandoff_PreservesConversationContext(t *testing.T) {
+// TestHumanInput_PreservesConversationContext verifies that earlier tool
+// results are part of the snapshot.
+func TestHumanInput_PreservesConversationContext(t *testing.T) {
+	lookup := newTestRaw("lookup", "looks up", map[string]any{"type": "object"},
+		func(context.Context, json.RawMessage) (string, error) { return "order 42 found", nil })
 	provider := newScriptedProvider(
-		// LLM calls a regular tool first.
-		&ProviderResponse{
-			ToolCalls: []tool.Call{{
-				ToolUseID: "t1",
-				Name:      "lookup",
-				Input:     json.RawMessage(`{}`),
-			}},
-		},
-		// Then calls handoff.
-		&ProviderResponse{
-			ToolCalls: []tool.Call{{
-				ToolUseID: "h1",
-				Name:      "request_human_input",
-				Input:     json.RawMessage(`{"reason":"confirm","question":"Is this correct?"}`),
-			}},
-		},
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "t1", Name: "lookup", Input: json.RawMessage(`{}`)}}},
+		&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}},
 	)
-
-	lookupTool := tool.NewRaw("lookup", "looks up data", map[string]any{"type": "object"},
-		func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "found: item ABC", nil
-		},
-	)
-
-	a, err := New(provider, prompt.Text("You are helpful."), []tool.Tool{NewHandoffTool("request_human_input", ""), lookupTool})
+	a, err := New(provider, "You are helpful.", WithTools(lookup, NewHumanInputTool("request_human_input", "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	c := Background()
-
-	err = a.InvokeStream(c, "Check item ABC", nil)
-	if !errors.Is(err, ErrHandoffRequested) {
-		t.Fatalf("expected ErrHandoffRequested, got %v", err)
+	in := mustInterrupt(t, a, Background(), "Find order")
+	found := false
+	for _, m := range in.Messages {
+		for _, b := range m.Content {
+			if tr, ok := b.(ToolResultBlock); ok && tr.Content == "order 42 found" {
+				found = true
+			}
+		}
 	}
-
-	hr, _ := GetHandoffRequest(c)
-
-	// Messages should include: user msg, assistant tool call, tool result, assistant handoff call.
-	// That's at least 4 messages (the tool work before the handoff is preserved).
-	if len(hr.Messages) < 3 {
-		t.Errorf("expected at least 3 messages in handoff context, got %d", len(hr.Messages))
+	if !found {
+		t.Fatal("earlier tool result missing from snapshot")
 	}
 }
 
-func TestGetHandoffRequest_NilContext(t *testing.T) {
-	hr, ok := GetHandoffRequest(nil)
-	if ok || hr != nil {
-		t.Error("expected nil, false for nil Context")
+// TestHumanInput_TakesPrecedenceOverPendingApproval verifies that approval
+// calls in the same batch as a human-input call are never executed.
+func TestHumanInput_TakesPrecedenceOverPendingApproval(t *testing.T) {
+	called := false
+	danger := newTestRaw("danger", "danger", map[string]any{"type": "object"},
+		func(context.Context, json.RawMessage) (string, error) { called = true; return "boom", nil },
+		tool.RequiresApproval())
+	provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{
+		{ToolUseID: "d1", Name: "danger", Input: json.RawMessage(`{}`)},
+		humanInputCall("h1"),
+	}})
+	a, err := New(provider, "x", WithTools(danger, NewHumanInputTool("request_human_input", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := mustInterrupt(t, a, Background(), "go")
+	if in.Type != InterruptHumanInput {
+		t.Fatalf("type = %q, want human_input", in.Type)
+	}
+	if called {
+		t.Fatal("approval-required tool must not run")
+	}
+	last := in.Messages[len(in.Messages)-1]
+	if len(last.Content) != 2 {
+		t.Fatalf("results = %#v, want both calls answered", last.Content)
+	}
+	if tr := last.Content[0].(ToolResultBlock); tr.ToolUseID != "d1" || !tr.IsError {
+		t.Fatalf("pending approval result = %#v, want not-executed error", tr)
 	}
 }
 
-func TestGetHandoffRequest_NoHandoff(t *testing.T) {
-	c := Background()
-	hr, ok := GetHandoffRequest(c)
-	if ok || hr != nil {
-		t.Error("expected nil, false when no handoff was requested")
+func TestHumanInput_InterruptStoreLifecycle(t *testing.T) {
+	store := newTestInterruptStore()
+	provider := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}},
+		&ModelResponse{Text: "thanks"},
+	)
+	a, err := New(provider, "x", WithTools(NewHumanInputTool("request_human_input", "")),
+		WithInterruptStore(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := mustInterrupt(t, a, Background(), "go")
+	if _, ok := store.items[in.ID]; !ok {
+		t.Fatal("interrupt was not saved")
+	}
+	loaded, err := a.LoadInterrupt(context.Background(), in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Resume(Background(), loaded, Respond("42")); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.claimed) != 1 || store.claimed[0] != in.ID {
+		t.Fatalf("claimed = %v, want [%s]", store.claimed, in.ID)
+	}
+	if _, err := a.Resume(Background(), in, Respond("again")); !errors.Is(err, ErrInterruptNotFound) {
+		t.Fatalf("human-input replay err = %v, want ErrInterruptNotFound", err)
+	}
+}
+
+func TestHumanInputTool_OutsideAgentFails(t *testing.T) {
+	ht := NewHumanInputTool("ask", "")
+	if _, err := ht.Handler(context.Background(), json.RawMessage(`{"reason":"r","question":"q"}`)); err == nil {
+		t.Fatal("expected error outside an agent tool call")
+	}
+	if _, err := ht.Handler(context.Background(), json.RawMessage(`not json`)); err == nil || errors.Is(err, context.Canceled) {
+		t.Fatal("expected invalid input error")
 	}
 }

@@ -19,8 +19,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"pgregory.net/rapid"
 )
@@ -303,153 +301,148 @@ func TestToToolConfig_MultipleTools(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// parseConverseOutput
+// stream event reduction
 // ---------------------------------------------------------------------------
 
-func TestParseConverseOutput_NilOutput(t *testing.T) {
-	resp := parseConverseOutput(&bedrockruntime.ConverseOutput{
-		Output: nil,
-	})
-	if resp.Text != "" {
-		t.Errorf("expected empty text, got %q", resp.Text)
-	}
-	if len(resp.ToolCalls) != 0 {
-		t.Errorf("expected 0 tool calls, got %d", len(resp.ToolCalls))
-	}
-}
+func TestApplyStreamEvent_TextAndThinking(t *testing.T) {
+	resp := &agent.ModelResponse{}
+	state := &streamState{}
+	var events []agent.ModelEvent
+	emit := func(event agent.ModelEvent) { events = append(events, event) }
 
-func TestParseConverseOutput_TextOnly(t *testing.T) {
-	resp := parseConverseOutput(&bedrockruntime.ConverseOutput{
-		Output: &types.ConverseOutputMemberMessage{
-			Value: types.Message{
-				Role: types.ConversationRoleAssistant,
-				Content: []types.ContentBlock{
-					&types.ContentBlockMemberText{Value: "Hello, world!"},
-				},
-			},
+	applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockDelta{
+		Value: types.ContentBlockDeltaEvent{
+			ContentBlockIndex: aws.Int32(0),
+			Delta:             &types.ContentBlockDeltaMemberText{Value: "Hello, "},
 		},
-	})
+	}, emit)
+	applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockDelta{
+		Value: types.ContentBlockDeltaEvent{
+			ContentBlockIndex: aws.Int32(0),
+			Delta:             &types.ContentBlockDeltaMemberText{Value: "world!"},
+		},
+	}, emit)
+	applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockDelta{
+		Value: types.ContentBlockDeltaEvent{
+			ContentBlockIndex: aws.Int32(1),
+			Delta: &types.ContentBlockDeltaMemberReasoningContent{Value: &types.ReasoningContentBlockDeltaMemberText{
+				Value: "check facts",
+			}},
+		},
+	}, emit)
+	applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockStop{
+		Value: types.ContentBlockStopEvent{ContentBlockIndex: aws.Int32(1)},
+	}, emit)
+	applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockDelta{
+		Value: types.ContentBlockDeltaEvent{
+			ContentBlockIndex: aws.Int32(2),
+			Delta: &types.ContentBlockDeltaMemberReasoningContent{Value: &types.ReasoningContentBlockDeltaMemberText{
+				Value: "; cite source",
+			}},
+		},
+	}, emit)
+	applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockStop{
+		Value: types.ContentBlockStopEvent{ContentBlockIndex: aws.Int32(2)},
+	}, emit)
+
 	if resp.Text != "Hello, world!" {
-		t.Errorf("expected %q, got %q", "Hello, world!", resp.Text)
+		t.Fatalf("Text = %q, want %q", resp.Text, "Hello, world!")
 	}
-	if len(resp.ToolCalls) != 0 {
-		t.Errorf("expected 0 tool calls, got %d", len(resp.ToolCalls))
+	if got := resp.Metadata["thinking"]; got != "check facts; cite source" {
+		t.Fatalf("thinking metadata = %q, want %q", got, "check facts; cite source")
+	}
+	wantEvents := []agent.ModelEvent{
+		{Type: agent.ModelEventText, Text: "Hello, "},
+		{Type: agent.ModelEventText, Text: "world!"},
+		{Type: agent.ModelEventThinking, Text: "check facts"},
+		{Type: agent.ModelEventThinking, Text: "; cite source"},
+	}
+	if len(events) != len(wantEvents) {
+		t.Fatalf("got %d events, want %d", len(events), len(wantEvents))
+	}
+	for i := range wantEvents {
+		if events[i] != wantEvents[i] {
+			t.Errorf("event %d = %#v, want %#v", i, events[i], wantEvents[i])
+		}
 	}
 }
 
-func TestParseConverseOutput_MultipleTextBlocks(t *testing.T) {
-	resp := parseConverseOutput(&bedrockruntime.ConverseOutput{
-		Output: &types.ConverseOutputMemberMessage{
-			Value: types.Message{
-				Role: types.ConversationRoleAssistant,
-				Content: []types.ContentBlock{
-					&types.ContentBlockMemberText{Value: "Hello, "},
-					&types.ContentBlockMemberText{Value: "world!"},
-				},
-			},
+func TestApplyStreamEvent_NilEmitter(t *testing.T) {
+	resp := &agent.ModelResponse{}
+	applyStreamEvent(resp, &streamState{}, &types.ConverseStreamOutputMemberContentBlockDelta{
+		Value: types.ContentBlockDeltaEvent{
+			ContentBlockIndex: aws.Int32(0),
+			Delta:             &types.ContentBlockDeltaMemberText{Value: "hello"},
 		},
-	})
-	if resp.Text != "Hello, world!" {
-		t.Errorf("expected %q, got %q", "Hello, world!", resp.Text)
+	}, nil)
+	if resp.Text != "hello" {
+		t.Fatalf("Text = %q, want hello", resp.Text)
 	}
 }
 
-func TestParseConverseOutput_ToolUse(t *testing.T) {
-	inputDoc := document.NewLazyDocument(map[string]any{"query": "test"})
-	resp := parseConverseOutput(&bedrockruntime.ConverseOutput{
-		Output: &types.ConverseOutputMemberMessage{
-			Value: types.Message{
-				Role: types.ConversationRoleAssistant,
-				Content: []types.ContentBlock{
-					&types.ContentBlockMemberToolUse{
-						Value: types.ToolUseBlock{
-							ToolUseId: aws.String("tu-123"),
-							Name:      aws.String("search"),
-							Input:     inputDoc,
-						},
+func TestApplyStreamEvent_ToolUse(t *testing.T) {
+	tests := []struct {
+		name   string
+		parts  []string
+		input  string
+		toolID string
+	}{
+		{name: "split input", parts: []string{`{"query":`, `"test"}`}, input: `{"query":"test"}`, toolID: "tu-123"},
+		{name: "empty input", input: `{}`, toolID: "tu-456"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &agent.ModelResponse{}
+			state := &streamState{}
+			applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockStart{
+				Value: types.ContentBlockStartEvent{
+					ContentBlockIndex: aws.Int32(0),
+					Start: &types.ContentBlockStartMemberToolUse{Value: types.ToolUseBlockStart{
+						Name:      aws.String("search"),
+						ToolUseId: aws.String(tt.toolID),
+					}},
+				},
+			}, nil)
+			for _, part := range tt.parts {
+				applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockDelta{
+					Value: types.ContentBlockDeltaEvent{
+						ContentBlockIndex: aws.Int32(0),
+						Delta: &types.ContentBlockDeltaMemberToolUse{Value: types.ToolUseBlockDelta{
+							Input: aws.String(part),
+						}},
 					},
-				},
-			},
-		},
-	})
-	if resp.Text != "" {
-		t.Errorf("expected empty text, got %q", resp.Text)
-	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
-	}
-	tc := resp.ToolCalls[0]
-	if tc.ToolUseID != "tu-123" {
-		t.Errorf("expected ToolUseID %q, got %q", "tu-123", tc.ToolUseID)
-	}
-	if tc.Name != "search" {
-		t.Errorf("expected Name %q, got %q", "search", tc.Name)
-	}
-	if len(tc.Input) == 0 {
-		t.Error("expected non-empty Input")
+				}, nil)
+			}
+			applyStreamEvent(resp, state, &types.ConverseStreamOutputMemberContentBlockStop{
+				Value: types.ContentBlockStopEvent{ContentBlockIndex: aws.Int32(0)},
+			}, nil)
+
+			if len(resp.ToolCalls) != 1 {
+				t.Fatalf("got %d tool calls, want 1", len(resp.ToolCalls))
+			}
+			call := resp.ToolCalls[0]
+			if call.ToolUseID != tt.toolID || call.Name != "search" || string(call.Input) != tt.input {
+				t.Fatalf("tool call = %#v, want ID %q name search input %s", call, tt.toolID, tt.input)
+			}
+		})
 	}
 }
 
-func TestParseConverseOutput_MixedTextAndToolUse(t *testing.T) {
-	inputDoc := document.NewLazyDocument(map[string]any{"q": "hello"})
-	resp := parseConverseOutput(&bedrockruntime.ConverseOutput{
-		Output: &types.ConverseOutputMemberMessage{
-			Value: types.Message{
-				Role: types.ConversationRoleAssistant,
-				Content: []types.ContentBlock{
-					&types.ContentBlockMemberText{Value: "Let me search for that."},
-					&types.ContentBlockMemberToolUse{
-						Value: types.ToolUseBlock{
-							ToolUseId: aws.String("tu-456"),
-							Name:      aws.String("lookup"),
-							Input:     inputDoc,
-						},
-					},
-				},
-			},
-		},
-	})
-	if resp.Text != "Let me search for that." {
-		t.Errorf("expected text %q, got %q", "Let me search for that.", resp.Text)
-	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
-	}
-	if resp.ToolCalls[0].Name != "lookup" {
-		t.Errorf("expected tool name %q, got %q", "lookup", resp.ToolCalls[0].Name)
-	}
-}
+func TestApplyStreamEvent_UsageAndCacheMetadata(t *testing.T) {
+	resp := &agent.ModelResponse{}
+	applyStreamEvent(resp, &streamState{}, &types.ConverseStreamOutputMemberMetadata{
+		Value: types.ConverseStreamMetadataEvent{Usage: &types.TokenUsage{
+			InputTokens:           aws.Int32(100),
+			OutputTokens:          aws.Int32(50),
+			CacheReadInputTokens:  aws.Int32(30),
+			CacheWriteInputTokens: aws.Int32(20),
+		}},
+	}, nil)
 
-func TestParseConverseOutput_ToolUseWithNilInput(t *testing.T) {
-	resp := parseConverseOutput(&bedrockruntime.ConverseOutput{
-		Output: &types.ConverseOutputMemberMessage{
-			Value: types.Message{
-				Role: types.ConversationRoleAssistant,
-				Content: []types.ContentBlock{
-					&types.ContentBlockMemberToolUse{
-						Value: types.ToolUseBlock{
-							ToolUseId: aws.String("tu-789"),
-							Name:      aws.String("no_args_tool"),
-							Input:     nil,
-						},
-					},
-				},
-			},
-		},
-	})
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
-	}
-	tc := resp.ToolCalls[0]
-	if tc.ToolUseID != "tu-789" {
-		t.Errorf("expected ToolUseID %q, got %q", "tu-789", tc.ToolUseID)
-	}
-	if tc.Name != "no_args_tool" {
-		t.Errorf("expected Name %q, got %q", "no_args_tool", tc.Name)
-	}
-	// Input should be nil/empty when the tool has no input document
-	if len(tc.Input) != 0 {
-		t.Errorf("expected empty input for nil document, got %s", string(tc.Input))
+	want := (agent.TokenUsage{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 30, CacheWriteTokens: 20})
+	if resp.Usage != want {
+		t.Fatalf("Usage = %#v, want %#v", resp.Usage, want)
 	}
 }
 
@@ -504,30 +497,11 @@ func TestProperty_BedrockTokenUsagePopulation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		inputTokens := rapid.Int32Range(0, 1_000_000).Draw(t, "inputTokens")
 		outputTokens := rapid.Int32Range(0, 1_000_000).Draw(t, "outputTokens")
-
-		// Test non-streaming: parseConverseOutput + Usage field
-		out := &bedrockruntime.ConverseOutput{
-			Output: &types.ConverseOutputMemberMessage{
-				Value: types.Message{
-					Role: types.ConversationRoleAssistant,
-					Content: []types.ContentBlock{
-						&types.ContentBlockMemberText{Value: "hello"},
-					},
-				},
-			},
-			Usage: &types.TokenUsage{
-				InputTokens:  aws.Int32(inputTokens),
-				OutputTokens: aws.Int32(outputTokens),
-			},
-		}
-
-		resp := parseConverseOutput(out)
-		// parseConverseOutput doesn't read Usage — the Converse method does.
-		// Simulate what the Converse method does after parseConverseOutput:
-		if out.Usage != nil {
-			resp.Usage.InputTokens = int(aws.ToInt32(out.Usage.InputTokens))
-			resp.Usage.OutputTokens = int(aws.ToInt32(out.Usage.OutputTokens))
-		}
+		resp := &agent.ModelResponse{}
+		applyTokenUsage(resp, &types.TokenUsage{
+			InputTokens:  aws.Int32(inputTokens),
+			OutputTokens: aws.Int32(outputTokens),
+		})
 
 		if resp.Usage.InputTokens != int(inputTokens) {
 			t.Fatalf("expected InputTokens %d, got %d", inputTokens, resp.Usage.InputTokens)

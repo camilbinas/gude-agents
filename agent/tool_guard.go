@@ -5,18 +5,8 @@ import (
 	"errors"
 )
 
-// ErrToolCallDenied is reported to MetricsHook when a tool guard denies a call.
+// ErrToolCallDenied identifies a tool call blocked by a guard.
 var ErrToolCallDenied = errors.New("tool_call_denied")
-
-// guardDenialKey is the *Context KV key for per-call denial state.
-type guardDenialKey struct{}
-
-// guardDenialState is stored under guardDenialKey when a guard denies a call.
-type guardDenialState struct {
-	Tool   string
-	Reason string
-	Result string
-}
 
 // denialResultJSON returns the canonical denial result JSON object for a
 // denied tool call.

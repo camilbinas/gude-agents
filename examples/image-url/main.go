@@ -43,10 +43,9 @@ func main() {
 		},
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text("You are a helpful assistant with vision capabilities. Describe images clearly and concisely."),
-		nil,
+		prompt.Text("You are a helpful assistant with vision capabilities. Describe images clearly and concisely.").String(),
 		auto.WithLogging(),
 	)
 	if err != nil {
@@ -58,10 +57,11 @@ func main() {
 	fmt.Printf("Image URL: %s\n", imageURL)
 	fmt.Println(strings.Repeat("─", 60))
 
-	if err := a.InvokeStream(imgCtx, "What is in this image? Describe it in detail.", func(chunk string) {
+	for chunk, err := range a.TextStream(imgCtx, "What is in this image? Describe it in detail.") {
+		if err != nil {
+			log.Fatal(err)
+		}
 		fmt.Print(chunk)
-	}); err != nil {
-		log.Fatal(err)
 	}
 	fmt.Println()
 }

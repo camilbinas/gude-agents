@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,7 +23,7 @@ func skipIfNoPostgres(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func newTestStore(t *testing.T, dim int) *VectorStore {
+func newTestStore(t *testing.T, dim int) *Store {
 	t.Helper()
 	pool := skipIfNoPostgres(t)
 	table := fmt.Sprintf("test_docs_%d", os.Getpid())
@@ -75,7 +75,7 @@ func TestNew_InvalidDim(t *testing.T) {
 func TestNew_CreatesTable(t *testing.T) {
 	s := newTestStore(t, 3)
 	if s == nil {
-		t.Fatal("expected non-nil VectorStore")
+		t.Fatal("expected non-nil Store")
 	}
 }
 
@@ -83,7 +83,7 @@ func TestUpsertAndSearch(t *testing.T) {
 	s := newTestStore(t, 3)
 	ctx := context.Background()
 
-	docs := []agent.Document{
+	docs := []rag.Document{
 		{Content: "Go is a compiled language", Metadata: map[string]string{"lang": "go"}},
 		{Content: "Python is interpreted", Metadata: map[string]string{"lang": "python"}},
 		{Content: "Rust focuses on safety", Metadata: map[string]string{"lang": "rust"}},
@@ -147,7 +147,7 @@ func TestUpsert_LengthMismatch(t *testing.T) {
 	s := newTestStore(t, 3)
 	ctx := context.Background()
 
-	docs := []agent.Document{{Content: "hello"}}
+	docs := []rag.Document{{Content: "hello"}}
 	embeddings := [][]float64{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}}
 
 	_, err := s.Upsert(ctx, docs, embeddings)
@@ -209,7 +209,7 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 
 	ctx = context.Background()
 
-	docs := []agent.Document{
+	docs := []rag.Document{
 		{Content: "near"},
 		{Content: "far"},
 	}
@@ -231,5 +231,51 @@ func TestWithDistanceMetric_L2(t *testing.T) {
 	}
 	if results[0].Document.Content != "near" {
 		t.Errorf("expected 'near' as top result, got %q", results[0].Document.Content)
+	}
+}
+
+func TestStore_ManagerLifecycle(t *testing.T) {
+	s := newTestStore(t, 3)
+	ctx := context.Background()
+
+	ids, err := s.Upsert(ctx, []rag.Document{
+		{ID: "document-1", Content: "first", Metadata: map[string]string{"group": "keep"}},
+		{Content: "generated", Metadata: map[string]string{"group": "delete"}},
+	}, [][]float64{{1, 0, 0}, {0, 1, 0}})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "document-1" || ids[1] == "" {
+		t.Fatalf("Upsert IDs = %v, want explicit and generated logical IDs", ids)
+	}
+
+	found, err := s.Find(ctx, ids[1], "missing", ids[0])
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if len(found) != 2 || found[0].ID != ids[1] || found[1].ID != ids[0] {
+		t.Fatalf("Find result = %+v, want existing documents in input-ID order", found)
+	}
+
+	if err := s.DeleteByMetadata(ctx, map[string]string{"group": "delete"}); err != nil {
+		t.Fatalf("DeleteByMetadata: %v", err)
+	}
+	found, err = s.Find(ctx, ids...)
+	if err != nil {
+		t.Fatalf("Find after DeleteByMetadata: %v", err)
+	}
+	if len(found) != 1 || found[0].ID != ids[0] {
+		t.Fatalf("Find after DeleteByMetadata = %+v, want only %q", found, ids[0])
+	}
+
+	if err := s.Delete(ctx, ids[0]); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	found, err = s.Find(ctx, ids[0])
+	if err != nil {
+		t.Fatalf("Find after Delete: %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("Find after Delete = %+v, want no documents", found)
 	}
 }

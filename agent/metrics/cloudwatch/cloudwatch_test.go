@@ -12,7 +12,6 @@ import (
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 
 	agent "github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 )
 
@@ -82,13 +81,17 @@ func dimValue(d cwtypes.MetricDatum, name string) string {
 // Unit Tests
 // ---------------------------------------------------------------------------
 
-// TestWithMetrics_InstallsHook verifies that WithMetrics sets MetricsHook on the agent.
-func TestWithMetrics_InstallsHook(t *testing.T) {
+// TestObserverCapabilities verifies that the adapter implements every metrics capability.
+func TestObserverCapabilities(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
 
-	// Verify the hook implements MetricsHook.
-	var _ agent.MetricsHook = hook
+	var _ agent.InvokeObserver = hook
+	var _ agent.IterationObserver = hook
+	var _ agent.ModelObserver = hook
+	var _ agent.ToolObserver = hook
+	var _ agent.GuardrailObserver = hook
+	var _ agent.AttachmentObserver = hook
 
 	if hook.client == nil {
 		t.Fatal("expected client to be set on hook")
@@ -105,16 +108,16 @@ func TestWithMetrics_WithClient(t *testing.T) {
 		Region: "us-east-1",
 	})
 
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 	opt, shutdown := WithMetrics(WithClient(realClient))
 
-	a, err := agent.New(prov, prompt.Text("sys"), nil, opt)
+	a, err := agent.New(prov, "sys", opt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if a.MetricsHook() == nil {
-		t.Fatal("expected MetricsHook to be set after WithMetrics with WithClient")
+	if a == nil {
+		t.Fatal("expected agent construction to succeed")
 	}
 
 	// Clean up the background goroutine.
@@ -136,8 +139,8 @@ func TestWithMetrics_ReturnsShutdown(t *testing.T) {
 	}
 
 	// Apply the option to an agent and verify shutdown works.
-	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ProviderResponse{Text: "hello"}))
-	_, err := agent.New(prov, prompt.Text("sys"), nil, opt)
+	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
+	_, err := agent.New(prov, "sys", opt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,7 +172,7 @@ func TestWithNamespace(t *testing.T) {
 	WithNamespace("MyCustomNamespace")(hook)
 
 	// Record a metric and flush.
-	hook.OnIterationStart()
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 	hook.flush(context.Background())
 
 	mock.mu.Lock()
@@ -189,14 +192,16 @@ func TestWithNamespace(t *testing.T) {
 func TestWithDimensions(t *testing.T) {
 	mock := &mockCWClient{}
 	hook := newTestHook(mock)
+	hook.agentName = "test-agent"
 	WithDimensions(map[string]string{"Environment": "production"})(hook)
 
 	// Record various metrics.
-	hook.OnIterationStart()
-	finishInvoke := hook.OnInvokeStart()
-	finishInvoke(nil, agent.TokenUsage{})
-	finishTool := hook.OnToolStart("my-tool")
-	finishTool(nil)
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = hook.ObserveInvoke(context.Background(), agent.InvokeRecord{Phase: agent.End})
+	_ = hook.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: "my-tool"})
+	_ = hook.ObserveAttachment(context.Background(), agent.AttachmentRecord{
+		Phase: agent.End, ImageCount: 2, DocumentCount: 3,
+	})
 
 	hook.flush(context.Background())
 
@@ -216,6 +221,10 @@ func TestWithDimensions(t *testing.T) {
 		if !found {
 			t.Errorf("data point %d (%s): missing Environment=production dimension",
 				i, aws.ToString(d.MetricName))
+		}
+		if got := dimValue(d, "AgentName"); got != "test-agent" {
+			t.Errorf("data point %d (%s): AgentName = %q, want test-agent",
+				i, aws.ToString(d.MetricName), got)
 		}
 	}
 }
@@ -240,14 +249,20 @@ func TestDurationStatisticSet(t *testing.T) {
 	hook := newTestHook(mock)
 
 	// Exercise all duration-recording hooks.
-	finishInvoke := hook.OnInvokeStart()
-	finishInvoke(nil, agent.TokenUsage{})
+	_ = hook.ObserveInvoke(context.Background(), agent.InvokeRecord{
+		Phase: agent.End, Duration: 2 * time.Second,
+	})
 
-	finishProvider := hook.OnProviderCallStart("test-model")
-	finishProvider(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
+	_ = hook.ObserveModel(context.Background(), agent.ModelCallRecord{
+		Phase: agent.End, ModelID: "test-model", Duration: 3 * time.Second,
+		Usage: agent.TokenUsage{
+			InputTokens: 10, OutputTokens: 5, CacheReadTokens: 4, CacheWriteTokens: 3,
+		},
+	})
 
-	finishTool := hook.OnToolStart("my-tool")
-	finishTool(nil)
+	_ = hook.ObserveTool(context.Background(), agent.ToolCallRecord{
+		Phase: agent.End, Name: "my-tool", Duration: 4 * time.Second,
+	})
 
 	hook.flush(context.Background())
 
@@ -293,6 +308,18 @@ func TestDurationStatisticSet(t *testing.T) {
 			t.Errorf("%s: expected non-negative Maximum, got %v", name, aws.ToFloat64(d.StatisticValues.Maximum))
 		}
 	}
+
+	tokens := datumsByName(data, "AgentProviderTokensTotal")
+	if len(tokens) != 4 {
+		t.Fatalf("expected input, output, cache_read, and cache_write token datums, got %d", len(tokens))
+	}
+	wantTokens := map[string]float64{"input": 10, "output": 5, "cache_read": 4, "cache_write": 3}
+	for _, datum := range tokens {
+		direction := dimValue(datum, "Direction")
+		if got, want := aws.ToFloat64(datum.Value), wantTokens[direction]; got != want {
+			t.Errorf("%s tokens = %v, want %v", direction, got, want)
+		}
+	}
 }
 
 // TestFlush_SendsBufferedData verifies Flush method triggers immediate flush.
@@ -301,9 +328,9 @@ func TestFlush_SendsBufferedData(t *testing.T) {
 	hook := newTestHook(mock)
 
 	// Buffer some data.
-	hook.OnIterationStart()
-	hook.OnIterationStart()
-	hook.OnIterationStart()
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
 	// Verify nothing sent yet.
 	mock.mu.Lock()
@@ -336,8 +363,8 @@ func TestFlush_RetainsOnError(t *testing.T) {
 	hook := newTestHook(mock)
 
 	// Buffer some data.
-	hook.OnIterationStart()
-	hook.OnIterationStart()
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
 	// First flush should fail and retain data.
 	hook.flush(context.Background())
@@ -381,8 +408,8 @@ func TestShutdown_FinalFlush(t *testing.T) {
 	go hook.flushLoop()
 
 	// Buffer some data.
-	hook.OnIterationStart()
-	hook.OnIterationStart()
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
 	// Shutdown should stop the goroutine and flush remaining data.
 	err := hook.Shutdown(context.Background())
@@ -424,7 +451,7 @@ func TestShutdown_ContextCancellation(t *testing.T) {
 	go hook.flushLoop()
 
 	// Buffer some data.
-	hook.OnIterationStart()
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
 	// Create a context that we cancel immediately.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -457,18 +484,25 @@ func TestBuffering(t *testing.T) {
 	hook := newTestHook(mock)
 
 	// Record multiple metrics without flushing.
-	hook.OnIterationStart()
+	_ = hook.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
-	finishInvoke := hook.OnInvokeStart()
-	finishInvoke(nil, agent.TokenUsage{InputTokens: 10, OutputTokens: 5})
+	_ = hook.ObserveInvoke(context.Background(), agent.InvokeRecord{
+		Phase: agent.End, Duration: time.Second,
+		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
+	})
 
-	finishProvider := hook.OnProviderCallStart("test-model")
-	finishProvider(nil, agent.TokenUsage{InputTokens: 20, OutputTokens: 10})
+	_ = hook.ObserveModel(context.Background(), agent.ModelCallRecord{
+		Phase: agent.End, ModelID: "test-model", Duration: time.Second,
+		Usage: agent.TokenUsage{InputTokens: 20, OutputTokens: 10},
+	})
 
-	finishTool := hook.OnToolStart("my-tool")
-	finishTool(nil)
+	_ = hook.ObserveTool(context.Background(), agent.ToolCallRecord{
+		Phase: agent.End, Name: "my-tool", Duration: time.Second,
+	})
 
-	hook.OnGuardrailComplete("input", true)
+	_ = hook.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+		Phase: agent.End, Direction: "input", Blocked: true,
+	})
 
 	// Verify no PutMetricData calls yet.
 	mock.mu.Lock()

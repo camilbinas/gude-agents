@@ -11,7 +11,7 @@
 //
 // Run:
 //
-//	OPENAI_API_KEY=sk-... VECTOR_STORE_ID=vs_... go run ./openai-rag
+//	OPENAI_API_KEY=sk-... VECTOR_STORE_ID=vs_... go run ./rag-openai
 
 package main
 
@@ -22,10 +22,9 @@ import (
 	"os"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	ragopenai "github.com/camilbinas/gude-agents/agent/rag/openai"
-	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/examples/utils"
 	"github.com/joho/godotenv"
 )
@@ -52,7 +51,7 @@ func main() {
 	logged := &loggingRetriever{inner: retriever}
 
 	// Wrap as a tool so the model decides when to search.
-	kbTool := agent.NewRetrieverTool(
+	kbTool := rag.NewRetrieverTool(
 		"search_knowledge_base",
 		"Search the knowledge base for relevant information.",
 		logged,
@@ -60,14 +59,10 @@ func main() {
 
 	provider := openai.Must(openai.Standard())
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. "+
-			"You MUST call the search_knowledge_base tool before answering any question. "+
-			"Answer ONLY using information returned by the tool. "+
-			"If the tool returns no relevant results, say you don't have that information in the knowledge base. "+
-			"Do NOT use your own prior knowledge or make anything up."),
-		[]tool.Tool{kbTool},
+		"You are a helpful assistant. You MUST call the search_knowledge_base tool before answering any question. Answer ONLY using information returned by the tool. If the tool returns no relevant results, say you don't have that information in the knowledge base. Do NOT use your own prior knowledge or make anything up.",
+		agent.WithTools(kbTool),
 	)
 	if err != nil {
 		log.Fatalf("agent: %v", err)
@@ -79,12 +74,12 @@ func main() {
 	utils.Chat(agent.Background(), a)
 }
 
-// loggingRetriever wraps any agent.Retriever and prints each result to stdout.
+// loggingRetriever wraps any rag.Retriever and prints each result to stdout.
 type loggingRetriever struct {
-	inner agent.Retriever
+	inner rag.Retriever
 }
 
-func (l *loggingRetriever) Retrieve(ctx context.Context, query string) ([]agent.Document, error) {
+func (l *loggingRetriever) Retrieve(ctx context.Context, query string) ([]rag.Document, error) {
 	docs, err := l.inner.Retrieve(ctx, query)
 	if err != nil {
 		return nil, err

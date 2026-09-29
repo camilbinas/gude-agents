@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"google.golang.org/genai"
 )
 
-// Embedder implements agent.Embedder using the Gemini Embeddings API.
+var _ rag.Embedder = (*Embedder)(nil)
+
+// Embedder implements rag.Embedder using the Gemini Embeddings API.
 type Embedder struct {
 	client *genai.Client
 	model  string
@@ -107,7 +110,7 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 		return nil, fmt.Errorf("gemini embedder: no embedding returned")
 	}
 
-	// Convert float32 to float64 to match the agent.Embedder interface.
+	// Convert float32 to float64 to match the rag.Embedder interface.
 	f32 := resp.Embeddings[0].Values
 	vec := make([]float64, len(f32))
 	for i, v := range f32 {

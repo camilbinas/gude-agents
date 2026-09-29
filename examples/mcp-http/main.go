@@ -76,10 +76,10 @@ func main() {
 	// --- Use the tools with an agent ---
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Use the available tools when needed. Be concise."),
-		tools,
+		prompt.Text("You are a helpful assistant. Use the available tools when needed. Be concise.").String(),
+		agent.WithTools(tools...),
 		auto.WithLogging(),
 	)
 	if err != nil {
@@ -91,7 +91,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Response:", result)
+	fmt.Println("Response:", result.Text)
 }
 
 // startLocalMCPServer starts an in-process MCP server with a demo tool

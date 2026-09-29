@@ -35,7 +35,7 @@ func main() {
 	godotenv.Load() //nolint
 
 	ctx := agent.Background()
-	instructions := prompt.Text("You are a helpful assistant. Be concise.")
+	instructions := prompt.Text("You are a helpful assistant. Be concise.").String()
 
 	// Bedrock provider with cheapest model
 	cheap := bedrock.Must(bedrock.Cheapest())
@@ -43,12 +43,12 @@ func main() {
 	// OpenAI provider with most capable model
 	smart := openai.Must(openai.Smartest())
 
-	cheapAgent, err := agent.Default(cheap, instructions, nil, auto.WithLogging())
+	cheapAgent, err := agent.New(cheap, instructions, auto.WithLogging())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	smartAgent, err := agent.Default(smart, instructions, nil, auto.WithLogging())
+	smartAgent, err := agent.New(smart, instructions, auto.WithLogging())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("A: %s\n", result)
+		fmt.Printf("A: %s\n", result.Text)
 		fmt.Printf("   [%s]\n\n", elapsed.Round(time.Millisecond))
 	}
 }

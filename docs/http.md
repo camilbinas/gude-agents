@@ -1,135 +1,40 @@
-# HTTP & Multi-Tenant Environments
+# HTTP services
 
-This guide covers how to use gude-agents in HTTP servers where a single process serves multiple concurrent users and conversations.
-
-## The Problem
-
-By default, `WithConversation(store, "conversation-123")` binds a conversation ID to the agent at construction time. This means one Agent instance = one conversation. In an HTTP server, you'd need to create a new Agent per request, which wastes resources since the provider, tools, instructions, and middleware are identical across conversations.
-
-## The Solution: Per-Request Conversation IDs
-
-Two APIs solve this:
-
-### `WithSharedConversation(c Conversation)`
-
-Configures conversation persistence without a default conversation ID. Each request must provide one via context.
+Construct agents and stores once, then create a new `agent.Context` for every request. Derive all caller-controlled IDs from authenticated server state.
 
 ```go
-store := conversation.NewInMemory() // or redis.New(...)
-
-a, err := agent.New(provider, instructions, tools,
-    agent.WithSharedConversation(store),
-)
-```
-
-### `WithConversationID` on the Context
-
-Sets the conversation ID for a single invocation via the `*Context`.
-
-```go
-c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
-result, err := a.Invoke(c, req.Message)
-```
-
-The agent resolves the conversation ID at invocation time: `*Context` value first, then the construction-time default. If neither is set and conversation persistence is configured, the conversation ID is an empty string (which still works but all requests share one conversation — probably not what you want).
-
-## HTTP Server Pattern
-
-```go
-func main() {
-    provider, _ := bedrock.Standard()
-    store := conversation.NewInMemory()
-
-    // One agent instance for the entire server.
-    a, _ := agent.New(provider,
-        prompt.Text("You are a helpful assistant."),
-        tools,
-        agent.WithSharedConversation(store),
-        agent.WithMaxIterations(10),
-    )
-
-    http.HandleFunc("/chat", handleChat(a))
-    http.ListenAndServe(":8080", nil)
-}
-
-func handleChat(a *agent.Agent) http.HandlerFunc {
+func handle(a *agent.Agent) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
-        var req ChatRequest
-        json.NewDecoder(r.Body).Decode(&req)
+        ctx := agent.NewContext(r.Context()).
+            WithConversationID(authenticatedThreadID(r)).
+            WithIdentity(authenticatedUserID(r)).
+            WithPrincipal(authenticatedPrincipal(r)).
+            WithScope("account", authenticatedAccountID(r))
 
-        // Each request gets its own conversation ID.
-        c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
-
-        result, err := a.Invoke(c, req.Message)
+        result, err := a.Invoke(ctx, r.FormValue("message"))
+        if errors.Is(err, agent.ErrConversationConflict) {
+            http.Error(w, "conversation changed; retry", http.StatusConflict)
+            return
+        }
         if err != nil {
-            http.Error(w, err.Error(), 500)
+            http.Error(w, "agent failed", http.StatusBadGateway)
             return
         }
-
-        json.NewEncoder(w).Encode(ChatResponse{Response: result})
+        writeJSON(w, result)
     }
 }
 ```
 
-## Handoffs in HTTP
+Do not accept identity, principal roles, account scope, or unrestricted conversation IDs directly from an untrusted body.
 
-When an agent triggers a handoff, the `HandoffRequest` includes the `ConversationID` so `Resume` targets the correct conversation:
+## Streaming
 
-```go
-func handleChat(a *agent.Agent) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        var req ChatRequest
-        json.NewDecoder(r.Body).Decode(&req)
+Encode each `agent.Event` from `a.Stream(ctx, input)` as SSE or WebSocket JSON. Flush after each event and stop when the request context is canceled. `EventInterrupt` is an ordinary paused outcome; `EventEnd.Result` is authoritative. Breaking iteration cancels execution, so do not stop immediately after the last text chunk if conversation persistence matters.
 
-        c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+For text-only endpoints, range over `TextStream`. Output guardrails run after live chunks have been emitted; use non-streaming `Invoke` where every byte must be validated before delivery.
 
-        _, err := a.Invoke(c, req.Message)
+## Resume endpoints
 
-        if errors.Is(err, agent.ErrHandoffRequested) {
-            hr, _ := agent.GetHandoffRequest(c)
-            // hr.ConversationID == req.ConversationID
-            // Store hr for the resume endpoint...
-            w.WriteHeader(http.StatusAccepted)
-            return
-        }
-        // ...
-    }
-}
+Persist interrupts with `WithInterruptStore`, accept an interrupt ID plus a validated decision/answer, load it with `Agent.LoadInterrupt`, then call `Resume` or `ResumeStream`. Authorize that the caller owns the interrupt's conversation before resuming.
 
-func handleResume(a *agent.Agent) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        // Load hr from storage...
-        // Resume uses hr.ConversationID automatically.
-        result, _ := a.ResumeInvoke(agent.NewContext(r.Context()), hr, req.HumanResponse)
-        // ...
-    }
-}
-```
-
-## Backward Compatibility
-
-The original `WithConversation(store, "conv-id")` still works exactly as before. `WithConversationID` on the context overrides it, so you can migrate incrementally:
-
-```go
-// Old pattern — still works, single conversation per agent.
-a, _ := agent.New(provider, instructions, tools,
-    agent.WithConversation(store, "session-1"),
-)
-
-// New pattern — same agent, multiple conversations.
-c := agent.NewContext(ctx).WithConversationID(userSessionID)
-a.Invoke(c, msg)
-```
-
-## Thread Safety
-
-All components are safe for concurrent use from multiple goroutines. A single `Agent` or conversation store can handle many simultaneous requests — conversation isolation comes from the per-request conversation ID, not from separate instances.
-
-## Production Recommendations
-
-- Use `redis.New` instead of `conversation.NewInMemory` for persistence across restarts and horizontal scaling
-- Set `WithTTL` on Redis conversation store to auto-expire idle conversations
-- Use `r.Context()` as the base context so request cancellation propagates to LLM calls
-- Set `WithTokenBudget` to prevent runaway costs from a single request
-
-See `examples/handoff-http/` for a complete working multi-tenant HTTP server.
+Call `Agent.Shutdown` during graceful server shutdown and also close provider-specific clients/exporters where required.

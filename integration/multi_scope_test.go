@@ -9,24 +9,13 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// scopeReadOnly is an input type for the scope_for tool — it just takes a
-// scope name to read.
 type scopeReadInput struct {
 	Key string `json:"key" description:"Scope name to look up" required:"true"`
 }
 
-// TestIntegration_MultiScope_ToolReadsCorrectScope verifies that
-// Context.WithScope values are visible to tool handlers via
-// agent.ScopeFrom and stay isolated per invocation.
-//
-// This is the integration test for the multi-scope memory feature
-// (commit 8fc5f43): a tool reads a named scope value, the LLM is asked
-// which scope to look up, and we verify the right scope value is
-// returned.
 func TestIntegration_MultiScope_ToolReadsCorrectScope(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
@@ -40,29 +29,31 @@ func TestIntegration_MultiScope_ToolReadsCorrectScope(t *testing.T) {
 		calls []call
 	)
 
-	scopeTool := tool.New("scope_for",
+	scopeTool := tool.New(
+		"scope_for",
 		"Look up the value of a scope key on the current request context.",
 		func(ctx context.Context, in scopeReadInput) (string, error) {
 			c := agent.FromContext(ctx)
 			if c == nil {
 				return "", fmt.Errorf("no agent context")
 			}
-			v := c.Scope(in.Key)
+			value, ok := c.Scope(in.Key)
 			mu.Lock()
-			calls = append(calls, call{key: in.Key, value: v})
+			calls = append(calls, call{key: in.Key, value: value})
 			mu.Unlock()
-			if v == "" {
-				return fmt.Sprintf("scope %q is empty", in.Key), nil
+			if !ok {
+				return fmt.Sprintf("scope %q is not set", in.Key), nil
 			}
-			return fmt.Sprintf("scope %q = %s", in.Key, v), nil
+			return fmt.Sprintf("scope %q = %s", in.Key, value), nil
 		},
 	)
 
-	a, err := agent.New(p,
-		prompt.Text(`You are a tester. The user will ask you to look up a scope.
+	a, err := agent.New(
+		p,
+		`You are a tester. The user will ask you to look up a scope.
 Use the scope_for tool with the named key, then return only the resolved value
-(no explanation). If the tool reports a value, return it verbatim.`),
-		[]tool.Tool{scopeTool},
+(no explanation). If the tool reports a value, return it verbatim.`,
+		agent.WithTools(scopeTool),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -71,47 +62,40 @@ Use the scope_for tool with the named key, then return only the resolved value
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Request 1: scope project=p-alpha
-	c1 := agent.NewContext(ctx).
+	res1, err := a.Invoke(agent.NewContext(ctx).
 		WithScope("project", "p-alpha").
-		WithScope("user", "u-1")
-	res1, err := a.Invoke(c1, "Look up scope 'project'.")
+		WithScope("user", "u-1"), "Look up scope 'project'.")
 	if err != nil {
 		t.Fatalf("invoke 1: %v", err)
 	}
-	t.Logf("invoke1 result: %s", res1)
+	t.Logf("invoke1 result: %s", res1.Text)
 
-	// Request 2: same agent, different scopes — verify isolation.
-	c2 := agent.NewContext(ctx).
+	res2, err := a.Invoke(agent.NewContext(ctx).
 		WithScope("project", "p-beta").
-		WithScope("user", "u-2")
-	res2, err := a.Invoke(c2, "Look up scope 'project'.")
+		WithScope("user", "u-2"), "Look up scope 'project'.")
 	if err != nil {
 		t.Fatalf("invoke 2: %v", err)
 	}
-	t.Logf("invoke2 result: %s", res2)
+	t.Logf("invoke2 result: %s", res2.Text)
 
-	// The tool should have been called at least twice — once per request.
 	mu.Lock()
 	defer mu.Unlock()
 	if len(calls) < 2 {
 		t.Fatalf("scope_for tool called %d times, expected at least 2", len(calls))
 	}
 
-	// Filter calls for the "project" key. There must be at least one with
-	// each value, in order, with no cross-contamination.
 	seenAlpha, seenBeta := false, false
-	for _, c := range calls {
-		if c.key != "project" {
+	for _, call := range calls {
+		if call.key != "project" {
 			continue
 		}
-		switch c.value {
+		switch call.value {
 		case "p-alpha":
 			seenAlpha = true
 		case "p-beta":
 			seenBeta = true
 		default:
-			t.Errorf("unexpected scope value for project: %q", c.value)
+			t.Errorf("unexpected scope value for project: %q", call.value)
 		}
 	}
 	if !seenAlpha {
@@ -120,36 +104,40 @@ Use the scope_for tool with the named key, then return only the resolved value
 	if !seenBeta {
 		t.Error("second invocation did not see project=p-beta")
 	}
-
-	// Loose assertion on the LLM responses — the resolved values should
-	// appear somewhere in the final text.
-	if !strings.Contains(strings.ToLower(res1), "p-alpha") {
-		t.Errorf("response 1 should include resolved scope value; got: %s", res1)
+	if !strings.Contains(strings.ToLower(res1.Text), "p-alpha") {
+		t.Errorf("response 1 should include resolved scope value; got: %s", res1.Text)
 	}
-	if !strings.Contains(strings.ToLower(res2), "p-beta") {
-		t.Errorf("response 2 should include resolved scope value; got: %s", res2)
+	if !strings.Contains(strings.ToLower(res2.Text), "p-beta") {
+		t.Errorf("response 2 should include resolved scope value; got: %s", res2.Text)
 	}
 }
 
-// TestIntegration_MultiScope_ScopeFromFallback verifies ScopeFrom falls
-// back to the Identifier when the named scope key is not set, both via
-// direct API and through a tool reading the context.
+// TestIntegration_MultiScope_ScopeFromFallback preserves the old test's intent
+// while asserting the final strict contract: a missing scope never falls back
+// to Identity, and Identity remains independently available.
 func TestIntegration_MultiScope_ScopeFromFallback(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
 
-	var captured string
-	scopeTool := tool.New("ident_or_scope",
-		"Look up an identifier with optional scope fallback.",
+	var (
+		capturedIdentity string
+		capturedScope    string
+		capturedScopeSet bool
+	)
+	scopeTool := tool.New(
+		"ident_or_scope",
+		"Look up an identity and a strict named scope.",
 		func(ctx context.Context, in scopeReadInput) (string, error) {
-			captured = agent.ScopeFrom(ctx, in.Key)
-			return captured, nil
+			capturedScope, capturedScopeSet = agent.ScopeFrom(ctx, in.Key)
+			capturedIdentity = agent.IdentityFrom(ctx)
+			return capturedIdentity, nil
 		},
 	)
 
-	a, err := agent.New(p,
-		prompt.Text(`Use the ident_or_scope tool with key="missing" and return the result.`),
-		[]tool.Tool{scopeTool},
+	a, err := agent.New(
+		p,
+		`Use the ident_or_scope tool with key="missing" and return the result.`,
+		agent.WithTools(scopeTool),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -158,12 +146,14 @@ func TestIntegration_MultiScope_ScopeFromFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx).WithIdentifier("default-user")
+	c := agent.NewContext(ctx).WithIdentity("default-user")
 	if _, err := a.Invoke(c, "Run the tool with key 'missing'."); err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
-
-	if captured != "default-user" {
-		t.Errorf("ScopeFrom with missing key should fall back to Identifier; got %q", captured)
+	if capturedScopeSet || capturedScope != "" {
+		t.Errorf("missing strict scope = (%q, %v), want (\"\", false)", capturedScope, capturedScopeSet)
+	}
+	if capturedIdentity != "default-user" {
+		t.Errorf("IdentityFrom = %q, want %q", capturedIdentity, "default-user")
 	}
 }

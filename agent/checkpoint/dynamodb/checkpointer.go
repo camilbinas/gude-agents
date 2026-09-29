@@ -129,6 +129,62 @@ func (c *Checkpointer) Save(ctx context.Context, threadID string, cp checkpoint.
 	}
 }
 
+// SaveIfVersion appends a checkpoint only when expectedVersion is the latest
+// stored version. A missing thread has latest version zero.
+func (c *Checkpointer) SaveIfVersion(ctx context.Context, threadID string, cp checkpoint.Checkpoint, expectedVersion int) (checkpoint.Checkpoint, error) {
+	if threadID == "" {
+		return checkpoint.Checkpoint{}, checkpoint.ErrThreadIDRequired
+	}
+	if expectedVersion < 0 {
+		return checkpoint.Checkpoint{}, fmt.Errorf("dynamodb checkpointer: save if version: expected version must be non-negative, got %d", expectedVersion)
+	}
+
+	pk := c.partitionKey(threadID)
+	cp.ThreadID = threadID
+	if cp.Timestamp.IsZero() {
+		cp.Timestamp = time.Now()
+	}
+
+	nextVersion, err := c.nextVersion(ctx, pk)
+	if err != nil {
+		return checkpoint.Checkpoint{}, fmt.Errorf("dynamodb checkpointer: save if version: %w", err)
+	}
+	currentVersion := nextVersion - 1
+	if currentVersion != expectedVersion {
+		return checkpoint.Checkpoint{}, fmt.Errorf(
+			"dynamodb checkpointer: save if version: expected version %d, current version %d: %w",
+			expectedVersion, currentVersion, checkpoint.ErrConflict,
+		)
+	}
+	cp.Version = expectedVersion + 1
+
+	data, err := json.Marshal(cp)
+	if err != nil {
+		return checkpoint.Checkpoint{}, fmt.Errorf("dynamodb checkpointer: save if version marshal: %w", err)
+	}
+
+	item := map[string]dbtypes.AttributeValue{
+		"thread_id": &dbtypes.AttributeValueMemberS{Value: pk},
+		"version":   &dbtypes.AttributeValueMemberN{Value: strconv.Itoa(cp.Version)},
+		"data":      &dbtypes.AttributeValueMemberS{Value: string(data)},
+	}
+
+	_, err = c.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(c.table),
+		Item:                item,
+		ConditionExpression: aws.String("attribute_not_exists(thread_id) AND attribute_not_exists(version)"),
+	})
+	if err == nil {
+		return cp, nil
+	}
+
+	var conflict *dbtypes.ConditionalCheckFailedException
+	if errors.As(err, &conflict) {
+		return checkpoint.Checkpoint{}, fmt.Errorf("dynamodb checkpointer: save if version: conditional write: %w", checkpoint.ErrConflict)
+	}
+	return checkpoint.Checkpoint{}, fmt.Errorf("dynamodb checkpointer: save if version: %w", err)
+}
+
 // Load returns the highest-versioned checkpoint for the thread.
 func (c *Checkpointer) Load(ctx context.Context, threadID string) (checkpoint.Checkpoint, error) {
 	out, err := c.client.Query(ctx, &dynamodb.QueryInput{

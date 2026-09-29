@@ -15,9 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
-	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/memory"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -29,7 +30,7 @@ type Store[T any] struct {
 	indexName string
 	keyPrefix string
 	dim       int
-	embedder  agent.Embedder
+	embedder  rag.Embedder
 	schema    *redisSchema
 }
 
@@ -132,7 +133,7 @@ type redisSchema struct {
 }
 
 // NewStore creates a Store for the given struct type T.
-func NewStore[T any](opts Options, embedder agent.Embedder, dim int, sopts ...StoreOption) (*Store[T], error) {
+func NewStore[T any](opts Options, embedder rag.Embedder, dim int, sopts ...StoreOption) (*Store[T], error) {
 	if embedder == nil {
 		return nil, errors.New("redis: embedder is required")
 	}
@@ -208,6 +209,9 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	if err != nil {
 		return fmt.Errorf("redis: embed: %w", err)
 	}
+	if err := s.validateEmbedding(embedding); err != nil {
+		return err
+	}
 
 	// Build HASH fields.
 	fields := s.buildHashFields(value)
@@ -225,60 +229,57 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 }
 
 // Recall retrieves values by semantic similarity to the query, scoped to the
-// identifier. Supports filtering and sorting via RecallOption.
+// identifier. Portable filters are translated through the parsed Redis schema;
+// unsupported fields, operators, and value types are rejected explicitly.
 //
 // Implements memory.Memory[T].
-func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, limit int, opts ...memory.RecallOption) ([]memory.Entry[T], error) {
+func (s *Store[T]) Recall(ctx context.Context, identifier string, query memory.RecallQuery) ([]memory.Entry[T], error) {
 	if identifier == "" {
 		return nil, errors.New("redis: identifier must not be empty")
 	}
-	if limit < 1 {
-		return nil, errors.New("redis: limit must be at least 1")
+	if err := validateRecallQuery(query); err != nil {
+		return nil, err
 	}
 
-	// Embed query.
-	embedding, err := s.embedder.Embed(ctx, query)
+	filterQuery, err := s.buildRecallFilter(identifier, query.Filters)
+	if err != nil {
+		return nil, err
+	}
+	order, err := s.compileOrder(query.Order)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := query.Limit
+	if limit == 0 {
+		limit, err = s.recallMatchCount(ctx, filterQuery)
+		if err != nil {
+			return nil, err
+		}
+		if limit == 0 {
+			return []memory.Entry[T]{}, nil
+		}
+	}
+
+	embedding, err := s.embedder.Embed(ctx, query.Text)
 	if err != nil {
 		return nil, fmt.Errorf("redis: embed query: %w", err)
 	}
-
-	// Apply options.
-	rc := &recallConfig{}
-	for _, o := range opts {
-		if ro, ok := o.(RecallOption); ok {
-			ro(rc)
-		}
+	if err := s.validateEmbedding(embedding); err != nil {
+		return nil, err
 	}
 
-	// Build FT.SEARCH query.
-	identField := s.schema.Fields[s.schema.IdentifierIdx].HashField
-	filterStr := s.buildFilterQuery(rc, identField, identifier)
-
-	// KNN query with pre-filter.
-	ftQuery := fmt.Sprintf("(%s)=>[KNN %d @embedding $BLOB AS score]", filterStr, limit)
-
+	ftQuery := fmt.Sprintf("(%s)=>[KNN %d @embedding $BLOB AS score]", filterQuery, limit)
+	sortField, sortDirection := "score", "ASC"
+	if order != nil {
+		sortField = order.field
+		sortDirection = order.direction
+	}
 	args := []any{"FT.SEARCH", s.indexName, ftQuery,
 		"PARAMS", "2", "BLOB", float64sToFloat32Bytes(embedding),
-		"SORTBY", "score",
-		"LIMIT", "0", fmt.Sprintf("%d", limit),
+		"SORTBY", sortField, sortDirection,
+		"LIMIT", "0", strconv.Itoa(limit),
 		"DIALECT", "2",
-	}
-
-	// Add SORTBY override if specified.
-	if len(rc.orderBy) > 0 {
-		// Replace the default SORTBY score with the user's sort.
-		o := rc.orderBy[0] // RediSearch only supports one SORTBY
-		dir := "ASC"
-		if o.dir == Desc {
-			dir = "DESC"
-		}
-		// Rebuild args with custom SORTBY.
-		args = []any{"FT.SEARCH", s.indexName, ftQuery,
-			"PARAMS", "2", "BLOB", float64sToFloat32Bytes(embedding),
-			"SORTBY", o.column, dir,
-			"LIMIT", "0", fmt.Sprintf("%d", limit),
-			"DIALECT", "2",
-		}
 	}
 
 	res, err := s.client.Do(ctx, args...).Result()
@@ -286,11 +287,10 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query string, 
 		return nil, fmt.Errorf("redis: search: %w", err)
 	}
 
-	results, err := s.parseResults(res, rc.minSimilarity)
+	results, err := s.parseResults(res, query.MinSimilarity, order == nil)
 	if err != nil {
 		return nil, err
 	}
-
 	if results == nil {
 		return []memory.Entry[T]{}, nil
 	}
@@ -324,6 +324,9 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 	embedding, err := s.embedder.Embed(ctx, content)
 	if err != nil {
 		return fmt.Errorf("redis: embed: %w", err)
+	}
+	if err := s.validateEmbedding(embedding); err != nil {
+		return err
 	}
 
 	fields := s.buildHashFields(value)
@@ -360,7 +363,7 @@ func (s *Store[T]) ForgetAll(ctx context.Context, identifier string) error {
 	}
 
 	identField := s.schema.Fields[s.schema.IdentifierIdx].HashField
-	query := fmt.Sprintf("@%s:{%s}", identField, escapeTag(identifier))
+	query := fmt.Sprintf("@%s:{%s}", escapeQueryField(identField), escapeTag(identifier))
 	keys, err := collectPagedKeys(forgetAllPageSize, func(offset, limit int) ([]string, error) {
 		res, err := s.client.Do(ctx, "FT.SEARCH", s.indexName,
 			query,
@@ -823,21 +826,265 @@ func (s *Store[T]) buildHashFields(value T) map[string]any {
 	return fields
 }
 
-func (s *Store[T]) buildFilterQuery(rc *recallConfig, identField, identifier string) string {
-	// Always filter by identifier.
-	parts := []string{fmt.Sprintf("@%s:{%s}", identField, escapeTag(identifier))}
-
-	// Add additional filters.
-	for _, f := range rc.filters {
-		parts = append(parts, f.expr) // For Redis, we build the filter string directly
+func validateRecallQuery(query memory.RecallQuery) error {
+	if query.Text == "" {
+		return fmt.Errorf("%w: text must not be empty", memory.ErrInvalidRecallQuery)
 	}
-
-	// Min similarity is handled post-search (Redis KNN doesn't support pre-filter on score).
-
-	return strings.Join(parts, " ")
+	if query.Limit < 0 {
+		return fmt.Errorf("%w: limit must not be negative", memory.ErrInvalidRecallQuery)
+	}
+	if query.MinSimilarity != 0 && (math.IsNaN(query.MinSimilarity) || math.IsInf(query.MinSimilarity, 0) || query.MinSimilarity <= 0 || query.MinSimilarity > 1) {
+		return fmt.Errorf("%w: minimum similarity must be in (0, 1]", memory.ErrInvalidRecallQuery)
+	}
+	return nil
 }
 
-func (s *Store[T]) parseResults(res any, minSimilarity *float64) ([]memory.Entry[T], error) {
+type compiledOrder struct {
+	field     string
+	direction string
+}
+
+func (s *Store[T]) buildRecallFilter(identifier string, filters []memory.Filter) (string, error) {
+	identField := s.schema.Fields[s.schema.IdentifierIdx].HashField
+	parts := []string{fmt.Sprintf("(@%s:{%s})", escapeQueryField(identField), escapeTag(identifier))}
+	for _, filter := range filters {
+		clause, err := s.compileFilter(filter)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, "("+clause+")")
+	}
+	return strings.Join(parts, " "), nil
+}
+
+func (s *Store[T]) compileFilter(filter memory.Filter) (string, error) {
+	field, ok := s.schemaField(filter.Field)
+	if !ok {
+		return "", fmt.Errorf("%w: unknown field %q", memory.ErrUnsupportedFilter, filter.Field)
+	}
+
+	var (
+		clause string
+		err    error
+	)
+	switch field.FieldType {
+	case fieldTAG:
+		clause, err = compileTagFilter(field.HashField, filter.Operator, filter.Value)
+	case fieldNUMERIC:
+		clause, err = compileNumericFilter(field.HashField, filter.Operator, filter.Value)
+	default:
+		err = fmt.Errorf("field type %s cannot be filtered", redisFieldTypeName(field.FieldType))
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: field %q: %v", memory.ErrUnsupportedFilter, filter.Field, err)
+	}
+	return clause, nil
+}
+
+func (s *Store[T]) schemaField(name string) (redisFieldInfo, bool) {
+	for _, field := range s.schema.Fields {
+		if field.HashField == name {
+			return field, true
+		}
+	}
+	return redisFieldInfo{}, false
+}
+
+func compileTagFilter(field string, operator memory.FilterOperator, value any) (string, error) {
+	field = escapeQueryField(field)
+	switch operator {
+	case memory.FilterEqual, memory.FilterNotEqual:
+		literal, err := tagLiteral(value)
+		if err != nil {
+			return "", err
+		}
+		prefix := ""
+		if operator == memory.FilterNotEqual {
+			prefix = "-"
+		}
+		return fmt.Sprintf("%s@%s:{%s}", prefix, field, literal), nil
+	case memory.FilterIn:
+		values, err := filterValues(value, tagLiteral)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("@%s:{%s}", field, strings.Join(values, "|")), nil
+	default:
+		return "", fmt.Errorf("operator %q is not supported for TAG fields", operator)
+	}
+}
+
+func compileNumericFilter(field string, operator memory.FilterOperator, value any) (string, error) {
+	field = escapeQueryField(field)
+	if operator == memory.FilterIn {
+		values, err := filterValues(value, numericLiteral)
+		if err != nil {
+			return "", err
+		}
+		clauses := make([]string, len(values))
+		for i, literal := range values {
+			clauses[i] = fmt.Sprintf("@%s:[%s %s]", field, literal, literal)
+		}
+		return "(" + strings.Join(clauses, "|") + ")", nil
+	}
+
+	literal, err := numericLiteral(value)
+	if err != nil {
+		return "", err
+	}
+	switch operator {
+	case memory.FilterEqual:
+		return fmt.Sprintf("@%s:[%s %s]", field, literal, literal), nil
+	case memory.FilterNotEqual:
+		return fmt.Sprintf("-@%s:[%s %s]", field, literal, literal), nil
+	case memory.FilterGreaterThan:
+		return fmt.Sprintf("@%s:[(%s +inf]", field, literal), nil
+	case memory.FilterGreaterThanOrEqual:
+		return fmt.Sprintf("@%s:[%s +inf]", field, literal), nil
+	case memory.FilterLessThan:
+		return fmt.Sprintf("@%s:[-inf (%s]", field, literal), nil
+	case memory.FilterLessThanOrEqual:
+		return fmt.Sprintf("@%s:[-inf %s]", field, literal), nil
+	default:
+		return "", fmt.Errorf("operator %q is not supported for NUMERIC fields", operator)
+	}
+}
+
+func filterValues(value any, encode func(any) (string, error)) ([]string, error) {
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) || rv.Len() == 0 {
+		return nil, errors.New("IN requires a non-empty slice or array")
+	}
+	values := make([]string, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		literal, err := encode(rv.Index(i).Interface())
+		if err != nil {
+			return nil, fmt.Errorf("IN value %d: %w", i, err)
+		}
+		values[i] = literal
+	}
+	return values, nil
+}
+
+func tagLiteral(value any) (string, error) {
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || rv.Kind() != reflect.String {
+		return "", fmt.Errorf("TAG value must be a string, got %T", value)
+	}
+	return escapeTag(rv.String()), nil
+}
+
+func numericLiteral(value any) (string, error) {
+	if timestamp, ok := value.(time.Time); ok {
+		return strconv.FormatInt(timestamp.Unix(), 10), nil
+	}
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() {
+		return "", errors.New("NUMERIC value must not be nil")
+	}
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(rv.Uint(), 10), nil
+	case reflect.Float32, reflect.Float64:
+		value := rv.Float()
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return "", errors.New("NUMERIC value must be finite")
+		}
+		return strconv.FormatFloat(value, 'g', -1, rv.Type().Bits()), nil
+	default:
+		return "", fmt.Errorf("NUMERIC value must be a number or time.Time, got %T", value)
+	}
+}
+
+func (s *Store[T]) compileOrder(orders []memory.Order) (*compiledOrder, error) {
+	if len(orders) == 0 {
+		return nil, nil
+	}
+	if len(orders) > 1 {
+		return nil, fmt.Errorf("%w: Redis supports one order clause, got %d", memory.ErrUnsupportedOrder, len(orders))
+	}
+	order := orders[0]
+	field, ok := s.schemaField(order.Field)
+	if !ok {
+		return nil, fmt.Errorf("%w: unknown field %q", memory.ErrUnsupportedOrder, order.Field)
+	}
+	if field.FieldType != fieldNUMERIC {
+		return nil, fmt.Errorf("%w: field %q is not sortable", memory.ErrUnsupportedOrder, order.Field)
+	}
+
+	direction := ""
+	switch order.Direction {
+	case memory.OrderAscending:
+		direction = "ASC"
+	case memory.OrderDescending:
+		direction = "DESC"
+	default:
+		return nil, fmt.Errorf("%w: direction %q", memory.ErrUnsupportedOrder, order.Direction)
+	}
+	return &compiledOrder{field: field.HashField, direction: direction}, nil
+}
+
+func (s *Store[T]) recallMatchCount(ctx context.Context, filterQuery string) (int, error) {
+	result, err := s.client.Do(ctx, "FT.SEARCH", s.indexName, filterQuery,
+		"NOCONTENT", "LIMIT", "0", "0", "DIALECT", "2").Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis: count recall matches: %w", err)
+	}
+	count, ok := searchResultCount(result)
+	if !ok || count < 0 {
+		return 0, fmt.Errorf("redis: count recall matches: unexpected response %T", result)
+	}
+	return count, nil
+}
+
+func searchResultCount(result any) (int, bool) {
+	var raw any
+	switch value := result.(type) {
+	case []any:
+		if len(value) == 0 {
+			return 0, false
+		}
+		raw = value[0]
+	case map[string]any:
+		raw = redisInfoField(value, "total_results")
+	case map[any]any:
+		raw = redisInfoField(value, "total_results")
+	default:
+		return 0, false
+	}
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), int64(int(value)) == value
+	case uint64:
+		return int(value), uint64(int(value)) == value
+	case string:
+		parsed, err := strconv.Atoi(value)
+		return parsed, err == nil
+	case []byte:
+		parsed, err := strconv.Atoi(string(value))
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func (s *Store[T]) validateEmbedding(embedding []float64) error {
+	if len(embedding) != s.dim {
+		return fmt.Errorf("redis: embedding dimension is %d, want %d", len(embedding), s.dim)
+	}
+	for i, value := range embedding {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("redis: embedding value %d must be finite", i)
+		}
+	}
+	return nil
+}
+
+func (s *Store[T]) parseResults(res any, minSimilarity float64, sortBySimilarity bool) ([]memory.Entry[T], error) {
 	var entries []memory.Entry[T]
 
 	switch v := res.(type) {
@@ -850,19 +1097,21 @@ func (s *Store[T]) parseResults(res any, minSimilarity *float64) ([]memory.Entry
 	}
 
 	// Apply min similarity filter (post-search).
-	if minSimilarity != nil {
+	if minSimilarity > 0 {
 		filtered := entries[:0]
 		for _, e := range entries {
-			if e.Score >= *minSimilarity {
+			if e.Score >= minSimilarity {
 				filtered = append(filtered, e)
 			}
 		}
 		entries = filtered
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Score > entries[j].Score
-	})
+	if sortBySimilarity {
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Score > entries[j].Score
+		})
+	}
 
 	return entries, nil
 }
@@ -979,102 +1228,6 @@ func (s *Store[T]) scanAttrs(attrs map[interface{}]interface{}) (T, float64) {
 	return result, score
 }
 
-// --- RecallOption support ---
-// Redis RecallOption reuses the same type from recall_options.go pattern.
-
-// RecallOption configures filtering for typed Redis Recall queries.
-// It satisfies memory.RecallOption so it can be passed to the interface method.
-type RecallOption func(*recallConfig)
-
-func (RecallOption) IsRecallOption() {}
-
-// Implement Option interface for tool compatibility.
-func (r RecallOption) applyTool(c *toolConfig) {
-	c.recallOpts = append(c.recallOpts, r)
-}
-
-type recallConfig struct {
-	filters       []filter
-	orderBy       []orderClause
-	minSimilarity *float64
-}
-
-type filter struct {
-	expr string // RediSearch filter expression
-}
-
-type orderClause struct {
-	column string
-	dir    SortDir
-}
-
-// SortDir is the sort direction.
-type SortDir string
-
-const (
-	Asc  SortDir = "ASC"
-	Desc SortDir = "DESC"
-)
-
-// WithFieldEquals adds a TAG filter: @field:{value}.
-func WithFieldEquals(column string, value any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			expr: fmt.Sprintf("@%s:{%s}", column, escapeTag(fmt.Sprintf("%v", value))),
-		})
-	}
-}
-
-// WithFieldGT adds a NUMERIC filter: @field:[(value +inf].
-func WithFieldGT(column string, value any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			expr: fmt.Sprintf("@%s:[(%v +inf]", column, value),
-		})
-	}
-}
-
-// WithFieldLT adds a NUMERIC filter: @field:[-inf (value].
-func WithFieldLT(column string, value any) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			expr: fmt.Sprintf("@%s:[-inf (%v]", column, value),
-		})
-	}
-}
-
-// WithTimeAfter adds a NUMERIC filter for timestamps stored as Unix epoch.
-func WithTimeAfter(column string, t time.Time) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			expr: fmt.Sprintf("@%s:[(%d +inf]", column, t.Unix()),
-		})
-	}
-}
-
-// WithTimeBefore adds a NUMERIC filter for timestamps stored as Unix epoch.
-func WithTimeBefore(column string, t time.Time) RecallOption {
-	return func(c *recallConfig) {
-		c.filters = append(c.filters, filter{
-			expr: fmt.Sprintf("@%s:[-inf (%d]", column, t.Unix()),
-		})
-	}
-}
-
-// WithMinSimilarity sets a minimum similarity threshold (applied post-search).
-func WithMinSimilarity(threshold float64) RecallOption {
-	return func(c *recallConfig) {
-		c.minSimilarity = &threshold
-	}
-}
-
-// WithOrderBy sets the SORTBY field. RediSearch supports one SORTBY per query.
-func WithOrderBy(column string, dir SortDir) RecallOption {
-	return func(c *recallConfig) {
-		c.orderBy = []orderClause{{column: column, dir: dir}}
-	}
-}
-
 // Options holds Redis connection configuration.
 type Options struct {
 	Addr      string // Default: "127.0.0.1:6379"
@@ -1093,17 +1246,24 @@ func float64sToFloat32Bytes(v []float64) []byte {
 	return buf
 }
 
-// escapeTag escapes RediSearch TAG special characters with a backslash so that
-// arbitrary strings can be used safely in @field:{...} queries.
-func escapeTag(s string) string {
-	const special = `,.<>{}[]"':;!@#$%^&*()-+=~/ `
+// escapeTag escapes every non-alphanumeric character except underscore so a
+// value remains one literal RediSearch TAG token. In particular, backslash and
+// pipe must be escaped to prevent a caller-controlled value from changing the
+// tenant predicate.
+func escapeTag(value string) string {
 	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if strings.ContainsRune(special, r) {
+	b.Grow(len(value))
+	for _, r := range value {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
 			b.WriteByte('\\')
 		}
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// escapeQueryField protects schema-defined HASH field names when used in a
+// RediSearch query. Caller-provided field names are never emitted directly.
+func escapeQueryField(value string) string {
+	return escapeTag(value)
 }

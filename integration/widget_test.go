@@ -10,20 +10,11 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // TestIntegration_WidgetBlock exercises the full WidgetBlock pipeline with a
-// real LLM. The provider is selected via MODEL_PROVIDER / MODEL_TIER env vars
-// (defaults to bedrock/standard).
-//
-// The test verifies:
-//  1. A tool handler emits a WidgetBlock via Context.EmitWidget.
-//  2. The EventWidget event appears on InvokeEventStream before EventToolCallEnd.
-//  3. The WidgetBlock is stored in conversation history (Conversation.Save).
-//  4. A follow-up turn succeeds — confirming that WidgetBlocks in history are
-//     stripped before the provider call and don't break subsequent turns.
+// real LLM. The provider is selected via MODEL_PROVIDER / MODEL_TIER env vars.
 func TestIntegration_WidgetBlock(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
@@ -38,7 +29,6 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 	}
 
 	var emittedBlock agent.WidgetBlock
-
 	reportTool := tool.New(
 		"get_sales_report",
 		"Returns a quarterly sales report for a given year.",
@@ -50,21 +40,19 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 			})
 			block := agent.WidgetBlock{Type: "chart", Payload: payload}
 			emittedBlock = block
-			if c := agent.FromContext(ctx); c != nil {
-				if err := c.EmitWidget(block); err != nil {
-					return "", err
-				}
+			if err := agent.EmitWidget(ctx, block); err != nil {
+				return "", err
 			}
 			return "Q1 €142k, Q2 €189k, Q3 €203k, Q4 €251k. Total €785k.", nil
 		},
 	)
 
 	store := conversation.NewInMemory()
-
-	a, err := agent.New(p,
-		prompt.Text("You are a sales analyst. Use get_sales_report when asked about sales data. Be very brief."),
-		[]tool.Tool{reportTool},
-		agent.WithConversation(store, "widget-integration"),
+	a, err := agent.New(
+		p,
+		"You are a sales analyst. Use get_sales_report when asked about sales data. Be very brief.",
+		agent.WithTools(reportTool),
+		agent.WithConversationStore(store),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -72,29 +60,25 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	c := agent.NewContext(ctx)
-
-	// ── Turn 1: fetch the report ──────────────────────────────────────────────
+	c := agent.NewContext(ctx).WithConversationID("widget-integration")
 
 	var (
-		widgetEvents   []agent.AgentEvent
+		widgetEvents   []agent.WidgetEvent
 		toolEndIdx     = -1
 		widgetEventIdx = -1
 		eventIdx       int
 	)
-
-	for ev := range a.InvokeEventStream(c, "Give me the sales report for 2024.") {
-		switch ev.Type {
+	for event, streamErr := range a.Stream(c, "Give me the sales report for 2024.") {
+		if streamErr != nil {
+			t.Fatalf("turn 1 error: %v", streamErr)
+		}
+		switch event.Type {
 		case agent.EventWidget:
 			widgetEventIdx = eventIdx
-			widgetEvents = append(widgetEvents, ev)
-		case agent.EventToolCallEnd:
-			if ev.ToolName == "get_sales_report" {
+			widgetEvents = append(widgetEvents, *event.Widget)
+		case agent.EventToolEnd:
+			if event.Tool.Name == "get_sales_report" {
 				toolEndIdx = eventIdx
-			}
-		case agent.EventInvokeEnd:
-			if ev.Err != nil {
-				t.Fatalf("turn 1 error: %v", ev.Err)
 			}
 		}
 		eventIdx++
@@ -104,17 +88,17 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 		t.Fatal("expected at least one EventWidget event, got none")
 	}
 	wev := widgetEvents[0]
-	if wev.WidgetType != emittedBlock.Type {
-		t.Errorf("EventWidget.WidgetType = %q, want %q", wev.WidgetType, emittedBlock.Type)
+	if wev.Type != emittedBlock.Type {
+		t.Errorf("EventWidget.Type = %q, want %q", wev.Type, emittedBlock.Type)
 	}
-	if !bytes.Equal(wev.WidgetPayload, emittedBlock.Payload) {
-		t.Errorf("EventWidget.WidgetPayload mismatch:\n  got  %s\n  want %s", wev.WidgetPayload, emittedBlock.Payload)
+	if !bytes.Equal(wev.Payload, emittedBlock.Payload) {
+		t.Errorf("EventWidget.Payload mismatch:\n  got  %s\n  want %s", wev.Payload, emittedBlock.Payload)
 	}
 	if toolEndIdx == -1 {
-		t.Fatal("EventToolCallEnd for get_sales_report not found")
+		t.Fatal("EventToolEnd for get_sales_report not found")
 	}
 	if widgetEventIdx >= toolEndIdx {
-		t.Errorf("EventWidget (idx %d) must appear before EventToolCallEnd (idx %d)", widgetEventIdx, toolEndIdx)
+		t.Errorf("EventWidget (idx %d) must appear before EventToolEnd (idx %d)", widgetEventIdx, toolEndIdx)
 	}
 
 	history, err := store.Load(ctx, "widget-integration")
@@ -122,9 +106,9 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 		t.Fatalf("conversation load: %v", err)
 	}
 	found := false
-	for _, msg := range history {
-		for _, cb := range msg.Content {
-			if wb, ok := cb.(agent.WidgetBlock); ok && wb.Type == "chart" {
+	for _, msg := range history.Messages {
+		for _, block := range msg.Content {
+			if widget, ok := block.(agent.WidgetBlock); ok && widget.Type == "chart" {
 				found = true
 			}
 		}
@@ -133,19 +117,13 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 		t.Error("WidgetBlock{Type:\"chart\"} not found in conversation history after turn 1")
 	}
 
-	// ── Turn 2: follow-up — answers from history, no tool call ───────────────
-	// Verifies that WidgetBlocks are stripped before the provider call
-	// and don't break subsequent turns.
-
 	var turn2Result strings.Builder
-	for ev := range a.InvokeEventStream(c, "Which quarter had the highest revenue?") {
-		switch ev.Type {
-		case agent.EventTextChunk:
-			turn2Result.WriteString(ev.TextChunk)
-		case agent.EventInvokeEnd:
-			if ev.Err != nil {
-				t.Fatalf("turn 2 error: %v", ev.Err)
-			}
+	for event, streamErr := range a.Stream(c, "Which quarter had the highest revenue?") {
+		if streamErr != nil {
+			t.Fatalf("turn 2 error: %v", streamErr)
+		}
+		if event.Type == agent.EventText {
+			turn2Result.WriteString(event.Text.Content)
 		}
 	}
 
@@ -156,6 +134,6 @@ func TestIntegration_WidgetBlock(t *testing.T) {
 		t.Logf("turn 2 response did not mention Q4 (may be phrased differently): %s", turn2Result.String())
 	}
 
-	t.Logf("turn 1 widget: type=%q payload=%s", wev.WidgetType, wev.WidgetPayload)
+	t.Logf("turn 1 widget: type=%q payload=%s", wev.Type, wev.Payload)
 	t.Logf("turn 2 response: %s", turn2Result.String())
 }

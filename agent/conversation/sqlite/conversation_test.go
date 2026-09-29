@@ -2,9 +2,12 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -17,66 +20,25 @@ func tempDB(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "test.db")
 }
 
-func TestNew_CreatesDatabase(t *testing.T) {
-	m, err := New(tempDB(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer m.Close()
-
-	if m == nil {
-		t.Fatal("expected non-nil SQLiteMemory")
-	}
+func textMessages(text string) []agent.Message {
+	return []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: text}}}}
 }
 
-func TestNew_InMemory(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatalf("New(:memory:): %v", err)
+func TestNew(t *testing.T) {
+	if _, err := New(""); err == nil {
+		t.Fatal("expected empty DSN error")
 	}
-	defer m.Close()
-
-	if m == nil {
-		t.Fatal("expected non-nil SQLiteMemory")
-	}
-}
-
-func TestNew_EmptyDSN(t *testing.T) {
-	_, err := New("")
-	if err == nil {
-		t.Fatal("expected error for empty dsn")
-	}
-}
-
-func TestNew_CustomTableName(t *testing.T) {
 	m, err := New(":memory:", WithTableName("custom_convos"))
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
 	defer m.Close()
-
 	if m.tableName != "custom_convos" {
-		t.Fatalf("expected table name %q, got %q", "custom_convos", m.tableName)
-	}
-
-	// Verify we can save and load with the custom table.
-	ctx := context.Background()
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-	}
-	if err := m.Save(ctx, "conv-1", msgs); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	loaded, err := m.Load(ctx, "conv-1")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(loaded) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(loaded))
+		t.Fatalf("table name = %q", m.tableName)
 	}
 }
 
-func TestSaveAndLoad(t *testing.T) {
+func TestSaveLoadRevisionAndConflict(t *testing.T) {
 	m, err := New(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -84,342 +46,135 @@ func TestSaveAndLoad(t *testing.T) {
 	defer m.Close()
 	ctx := context.Background()
 
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello"}}},
-		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi there"}}},
+	missing, err := m.Load(ctx, "missing")
+	if err != nil || missing.Messages == nil || len(missing.Messages) != 0 || missing.Revision != 0 {
+		t.Fatalf("missing snapshot = %+v, %v", missing, err)
 	}
 
-	if err := m.Save(ctx, "conv-1", msgs); err != nil {
-		t.Fatalf("Save: %v", err)
+	first := textMessages("first")
+	rev, err := m.Save(ctx, "conv", first, 0)
+	if err != nil || rev != 1 {
+		t.Fatalf("first save = %d, %v", rev, err)
+	}
+	second := textMessages("second")
+	rev, err = m.Save(ctx, "conv", second, rev)
+	if err != nil || rev != 2 {
+		t.Fatalf("second save = %d, %v", rev, err)
+	}
+	if _, err := m.Save(ctx, "conv", textMessages("stale"), 1); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("stale save error = %v", err)
 	}
 
-	loaded, err := m.Load(ctx, "conv-1")
+	snapshot, err := m.Load(ctx, "conv")
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatal(err)
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(loaded))
-	}
-	if tb, ok := loaded[0].Content[0].(agent.TextBlock); !ok || tb.Text != "hello" {
-		t.Errorf("expected 'hello', got %v", loaded[0].Content[0])
-	}
-	if tb, ok := loaded[1].Content[0].(agent.TextBlock); !ok || tb.Text != "hi there" {
-		t.Errorf("expected 'hi there', got %v", loaded[1].Content[0])
+	if snapshot.Revision != 2 || !reflect.DeepEqual(snapshot.Messages, second) {
+		t.Fatalf("snapshot = %+v", snapshot)
 	}
 }
 
-func TestLoad_NotFound(t *testing.T) {
+func TestSaveMissingWithNonzeroRevisionConflicts(t *testing.T) {
 	m, err := New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-
-	msgs, err := m.Load(context.Background(), "nonexistent")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if msgs == nil {
-		t.Fatal("expected non-nil empty slice, got nil")
-	}
-	if len(msgs) != 0 {
-		t.Errorf("expected empty slice, got %d messages", len(msgs))
+	_, err = m.Save(context.Background(), "missing", textMessages("x"), 4)
+	if !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestList(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-	ctx := context.Background()
-
-	msg := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "x"}}},
-	}
-
-	m.Save(ctx, "alpha", msg)
-	m.Save(ctx, "beta", msg)
-	m.Save(ctx, "gamma", msg)
-
-	ids, err := m.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(ids) != 3 {
-		t.Fatalf("expected 3 conversations, got %d: %v", len(ids), ids)
-	}
-}
-
-func TestDelete(t *testing.T) {
+func TestListDeleteAndToolBlocks(t *testing.T) {
 	m, err := New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
 	ctx := context.Background()
-
-	msg := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "x"}}},
-	}
-
-	m.Save(ctx, "to-delete", msg)
-
-	// Verify it exists.
-	loaded, _ := m.Load(ctx, "to-delete")
-	if len(loaded) == 0 {
-		t.Fatal("expected message before delete")
-	}
-
-	// Delete.
-	if err := m.Delete(ctx, "to-delete"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	// Verify it's gone.
-	loaded, _ = m.Load(ctx, "to-delete")
-	if len(loaded) != 0 {
-		t.Errorf("expected empty after delete, got %d", len(loaded))
-	}
-}
-
-func TestDelete_NotFound(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-
-	// Deleting a nonexistent conversation should not error.
-	if err := m.Delete(context.Background(), "ghost"); err != nil {
-		t.Fatalf("Delete nonexistent: %v", err)
-	}
-}
-
-func TestSave_Overwrite(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-	ctx := context.Background()
-
-	msgs1 := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "first"}}},
-	}
-	msgs2 := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "second"}}},
-		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "reply"}}},
-	}
-
-	m.Save(ctx, "conv", msgs1)
-	m.Save(ctx, "conv", msgs2)
-
-	loaded, _ := m.Load(ctx, "conv")
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 messages after overwrite, got %d", len(loaded))
-	}
-	if tb, ok := loaded[0].Content[0].(agent.TextBlock); !ok || tb.Text != "second" {
-		t.Errorf("expected 'second', got %v", loaded[0].Content[0])
-	}
-}
-
-func TestToolBlocks(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-	ctx := context.Background()
-
-	msgs := []agent.Message{
+	toolMessages := []agent.Message{
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{
-			agent.TextBlock{Text: "Let me look that up."},
+			agent.TextBlock{Text: "working"},
 			agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: []byte(`{"q":"test"}`)},
 		}},
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{
-			agent.ToolResultBlock{ToolUseID: "tu-1", Content: "found it", IsError: false},
+			agent.ToolResultBlock{ToolUseID: "tu-1", Content: "found", IsError: false},
 		}},
 	}
-
-	m.Save(ctx, "tools", msgs)
-	loaded, _ := m.Load(ctx, "tools")
-
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(loaded))
-	}
-
-	// Check tool use block.
-	tu, ok := loaded[0].Content[1].(agent.ToolUseBlock)
-	if !ok {
-		t.Fatalf("expected ToolUseBlock, got %T", loaded[0].Content[1])
-	}
-	if tu.Name != "search" {
-		t.Errorf("expected tool name 'search', got %q", tu.Name)
-	}
-
-	// Check tool result block.
-	tr, ok := loaded[1].Content[0].(agent.ToolResultBlock)
-	if !ok {
-		t.Fatalf("expected ToolResultBlock, got %T", loaded[1].Content[0])
-	}
-	if tr.Content != "found it" {
-		t.Errorf("expected 'found it', got %q", tr.Content)
-	}
-}
-
-func TestDeleteLeavesOtherConversations(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-	ctx := context.Background()
-
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
-	}
-
-	m.Save(ctx, "keep-me", msgs)
-	m.Save(ctx, "delete-me", msgs)
-
-	if err := m.Delete(ctx, "delete-me"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-
-	// Verify the other conversation still exists.
-	remaining, err := m.Load(ctx, "keep-me")
-	if err != nil {
-		t.Fatalf("Load(keep-me): %v", err)
-	}
-	if !reflect.DeepEqual(msgs, remaining) {
-		t.Fatalf("remaining conversation mismatch:\n  expected: %+v\n  got:      %+v", msgs, remaining)
-	}
-
-	// Verify deleted is gone from List.
-	listed, err := m.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	for _, id := range listed {
-		if id == "delete-me" {
-			t.Fatal("deleted conversation still appears in List")
+	for _, id := range []string{"alpha", "beta"} {
+		if _, err := m.Save(ctx, id, toolMessages, 0); err != nil {
+			t.Fatal(err)
 		}
 	}
-}
-
-func TestFilePersistence(t *testing.T) {
-	dbPath := tempDB(t)
-
-	// Create and save.
-	m1, err := New(dbPath)
-	if err != nil {
+	ids, err := m.List(ctx)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("List = %v, %v", ids, err)
+	}
+	if err := m.Delete(ctx, "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	msgs := []agent.Message{
-		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "persisted"}}},
+	if err := m.Delete(ctx, "alpha"); err != nil {
+		t.Fatalf("idempotent delete: %v", err)
 	}
-	if err := m1.Save(context.Background(), "conv-1", msgs); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	m1.Close()
-
-	// Reopen and load.
-	m2, err := New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m2.Close()
-
-	loaded, err := m2.Load(context.Background(), "conv-1")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(loaded) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(loaded))
-	}
-	if tb, ok := loaded[0].Content[0].(agent.TextBlock); !ok || tb.Text != "persisted" {
-		t.Errorf("expected 'persisted', got %v", loaded[0].Content[0])
+	snapshot, err := m.Load(ctx, "beta")
+	if err != nil || !reflect.DeepEqual(snapshot.Messages, toolMessages) {
+		t.Fatalf("remaining = %+v, %v", snapshot, err)
 	}
 }
 
-func TestWithOption(t *testing.T) {
-	m, err := New(":memory:")
+func TestFilePersistenceIncludesRevision(t *testing.T) {
+	path := tempDB(t)
+	m, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	rev, err := m.Save(ctx, "conv", textMessages("persisted"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err = New(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-
-	// This should compile and not panic — proves SQLiteMemory satisfies the Conversation interface.
-	opt := agent.WithConversation(m, "test-conv")
-	if opt == nil {
-		t.Fatal("expected non-nil option from WithConversation")
+	snapshot, err := m.Load(ctx, "conv")
+	if err != nil || snapshot.Revision != rev || !reflect.DeepEqual(snapshot.Messages, textMessages("persisted")) {
+		t.Fatalf("reopened snapshot = %+v, %v", snapshot, err)
 	}
 }
 
-// --- Property-Based Tests ---
+func TestConversationManagerCompatibility(t *testing.T) {
+	var _ agent.ConversationManager = (*Conversation)(nil)
+}
 
 func genMessages(t *rapid.T) []agent.Message { return testutil.GenMessages(t, 10) }
 
-func TestProperty_SaveLoadRoundTrip(t *testing.T) {
+func TestProperty_SaveLoadCASRoundTrip(t *testing.T) {
 	m, err := New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-
 	rapid.Check(t, func(t *rapid.T) {
+		id := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "id")
 		messages := genMessages(t)
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-
-		ctx := context.Background()
-
-		if err := m.Save(ctx, convID, messages); err != nil {
-			t.Fatalf("Save failed: %v", err)
+		rev, err := m.Save(context.Background(), id, messages, 0)
+		if err != nil || rev != 1 {
+			t.Fatalf("Save = %d, %v", rev, err)
 		}
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
+		snapshot, err := m.Load(context.Background(), id)
+		if err != nil || snapshot.Revision != rev || !reflect.DeepEqual(snapshot.Messages, messages) {
+			t.Fatalf("Load = %+v, %v", snapshot, err)
 		}
-
-		if !reflect.DeepEqual(messages, loaded) {
-			t.Fatalf("round-trip mismatch:\n  saved:  %+v\n  loaded: %+v", messages, loaded)
+		if err := m.Delete(context.Background(), id); err != nil {
+			t.Fatal(err)
 		}
-
-		// Clean up.
-		m.Delete(ctx, convID)
-	})
-}
-
-func TestProperty_Overwrite(t *testing.T) {
-	m, err := New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-
-	rapid.Check(t, func(t *rapid.T) {
-		convID := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, "conversationID")
-		msgs1 := genMessages(t)
-		msgs2 := genMessages(t)
-
-		ctx := context.Background()
-
-		m.Save(ctx, convID, msgs1)
-		m.Save(ctx, convID, msgs2)
-
-		loaded, err := m.Load(ctx, convID)
-		if err != nil {
-			t.Fatalf("Load failed: %v", err)
-		}
-
-		if !reflect.DeepEqual(msgs2, loaded) {
-			t.Fatalf("overwrite mismatch:\n  expected: %+v\n  got:      %+v", msgs2, loaded)
-		}
-
-		m.Delete(ctx, convID)
 	})
 }
 
@@ -429,38 +184,106 @@ func TestProperty_ListCompleteness(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-
 	rapid.Check(t, func(t *rapid.T) {
 		ctx := context.Background()
-
-		numConvs := rapid.IntRange(1, 10).Draw(t, "numConversations")
-		ids := make(map[string]bool, numConvs)
-		for i := 0; i < numConvs; i++ {
+		ids := map[string]bool{}
+		for i := 0; i < rapid.IntRange(1, 10).Draw(t, "count"); i++ {
 			id := rapid.StringMatching(`conv-[a-zA-Z0-9]{4,16}`).Draw(t, fmt.Sprintf("id_%d", i))
 			ids[id] = true
-			msgs := genMessages(t)
-			m.Save(ctx, id, msgs)
+			_, _ = m.Save(ctx, id, genMessages(t), 0)
 		}
-
 		listed, err := m.List(ctx)
 		if err != nil {
-			t.Fatalf("List failed: %v", err)
+			t.Fatal(err)
 		}
-
-		// Every saved ID should appear in the list.
-		listedSet := make(map[string]bool, len(listed))
 		for _, id := range listed {
-			listedSet[id] = true
+			delete(ids, id)
+			_ = m.Delete(ctx, id)
 		}
-		for id := range ids {
-			if !listedSet[id] {
-				t.Fatalf("saved conversation %q not found in List", id)
-			}
-		}
-
-		// Clean up.
-		for id := range ids {
-			m.Delete(ctx, id)
+		if len(ids) != 0 {
+			t.Fatalf("missing IDs: %v", ids)
 		}
 	})
+}
+
+func TestConcurrentCASOneWinner(t *testing.T) {
+	path := tempDB(t)
+	first, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, store := range []*Conversation{first, second} {
+		wg.Add(1)
+		go func(store *Conversation) {
+			defer wg.Done()
+			<-start
+			_, err := store.Save(ctx, "race", textMessages("value"), 0)
+			errs <- err
+		}(store)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	var successes, conflicts int
+	for err := range errs {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, agent.ErrConversationConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
+	}
+}
+
+func TestNewMigratesLegacyTableAndRow(t *testing.T) {
+	path := tempDB(t)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE conversations (
+		conversation_id TEXT PRIMARY KEY,
+		messages TEXT NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON := `[{"role":"user","content":[{"type":"text","text":"legacy"}]}]`
+	if _, err := db.Exec(`INSERT INTO conversations (conversation_id, messages) VALUES (?, ?)`, "legacy", legacyJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	snapshot, err := m.Load(context.Background(), "legacy")
+	if err != nil || snapshot.Revision != 0 || len(snapshot.Messages) != 1 {
+		t.Fatalf("legacy snapshot = %+v, %v", snapshot, err)
+	}
+	revision, err := m.Save(context.Background(), "legacy", textMessages("upgraded"), 0)
+	if err != nil || revision != 1 {
+		t.Fatalf("upgrade Save = %d, %v", revision, err)
+	}
+	if _, err := m.Save(context.Background(), "legacy", textMessages("stale"), 0); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("second revision-zero Save = %v", err)
+	}
 }

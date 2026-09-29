@@ -12,11 +12,8 @@ type fakeProvider struct{ name string }
 
 func (f *fakeProvider) Name() string { return "mock/" + f.name }
 
-func (f *fakeProvider) Converse(_ context.Context, _ agent.ConverseParams) (*agent.ProviderResponse, error) {
-	return &agent.ProviderResponse{Text: f.name}, nil
-}
-func (f *fakeProvider) ConverseStream(_ context.Context, _ agent.ConverseParams, _ agent.StreamCallback) (*agent.ProviderResponse, error) {
-	return &agent.ProviderResponse{Text: f.name}, nil
+func (f *fakeProvider) Stream(_ context.Context, _ agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	return &agent.ModelResponse{Text: f.name}, nil
 }
 
 func TestRegisterAndNew(t *testing.T) {
@@ -51,7 +48,7 @@ func TestRegisterAndNew(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New(%q, %q): %v", "test", tt.tier, err)
 		}
-		resp, _ := p.Converse(context.Background(), agent.ConverseParams{})
+		resp, _ := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 		if resp.Text != tt.want {
 			t.Errorf("tier %q: got %q, want %q", tt.tier, resp.Text, tt.want)
 		}
@@ -111,7 +108,7 @@ func TestNew_NilTierFactory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	resp, _ := p.Converse(context.Background(), agent.ConverseParams{})
+	resp, _ := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 	if resp.Text != "smart" {
 		t.Errorf("got %q, want %q", resp.Text, "smart")
 	}
@@ -137,7 +134,7 @@ func TestNew_CaseInsensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("case-insensitive lookup failed: %v", err)
 	}
-	resp, _ := p.Converse(context.Background(), agent.ConverseParams{})
+	resp, _ := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 	if resp.Text != "ok" {
 		t.Errorf("got %q, want %q", resp.Text, "ok")
 	}

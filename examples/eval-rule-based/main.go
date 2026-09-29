@@ -20,6 +20,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/eval"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 func main() {
@@ -73,15 +74,14 @@ func main() {
 
 	ndcg, err := eval.NewRetrievalOrdering(
 		[]string{"go-concurrency", "go-channels", "go-goroutines"},
-		func(d agent.Document) string { return d.Metadata["id"] },
+		func(d rag.Document) string { return d.Metadata["id"] },
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Perfect ordering.
 	ndcgResult, _ := ndcg.Evaluate(ctx, eval.EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Go concurrency patterns", Metadata: map[string]string{"id": "go-concurrency"}},
 			{Content: "Go channels deep dive", Metadata: map[string]string{"id": "go-channels"}},
 			{Content: "Goroutines explained", Metadata: map[string]string{"id": "go-goroutines"}},
@@ -89,9 +89,8 @@ func main() {
 	})
 	printResult(ndcgResult)
 
-	// Reversed ordering.
 	ndcgResult2, _ := ndcg.Evaluate(ctx, eval.EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			{Content: "Goroutines explained", Metadata: map[string]string{"id": "go-goroutines"}},
 			{Content: "Go channels deep dive", Metadata: map[string]string{"id": "go-channels"}},
 			{Content: "Go concurrency patterns", Metadata: map[string]string{"id": "go-concurrency"}},
@@ -106,14 +105,14 @@ func main() {
 		{
 			Query:        "List users as JSON",
 			ActualOutput: `{"name": "Alice", "age": 30, "email": "alice@example.com"}`,
-			RetrievedContext: []agent.Document{
+			RetrievedContext: []rag.Document{
 				{Content: "User data format", Metadata: map[string]string{"id": "go-concurrency"}},
 			},
 		},
 		{
 			Query:        "What is Go?",
 			ActualOutput: "Go is a language with great concurrency support using goroutines.",
-			RetrievedContext: []agent.Document{
+			RetrievedContext: []rag.Document{
 				{Content: "Go concurrency", Metadata: map[string]string{"id": "go-concurrency"}},
 				{Content: "Go channels", Metadata: map[string]string{"id": "go-channels"}},
 			},
@@ -136,7 +135,6 @@ func main() {
 			name, summary.MeanScore, summary.Passed, summary.Failed)
 	}
 
-	// Print as JSON.
 	fmt.Println("\nFull report (JSON):")
 	out, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Println(string(out))

@@ -29,23 +29,23 @@ func NewEstimator(provider *AnthropicProvider) *Estimator {
 	}
 }
 
-// EstimateTokens calls POST /v1/messages/count_tokens with the given converse
-// params and returns the exact input token count reported by the Anthropic API.
+// EstimateTokens calls POST /v1/messages/count_tokens with the given model
+// request and returns the exact input token count reported by the Anthropic API.
 // On API errors, it returns (0, err).
-func (e *Estimator) EstimateTokens(ctx context.Context, params agent.ConverseParams) (int, error) {
+func (e *Estimator) EstimateTokens(ctx context.Context, req agent.ModelRequest) (int, error) {
 	input := anthropicsdk.MessageCountTokensParams{
 		Model:    e.model,
-		Messages: toAnthropicMessages(params.Messages, false),
+		Messages: toAnthropicMessages(req.Messages, false),
 	}
 
-	if params.System != "" {
+	if req.System != "" {
 		input.System = anthropicsdk.MessageCountTokensParamsSystemUnion{
-			OfTextBlockArray: []anthropicsdk.TextBlockParam{{Text: params.System}},
+			OfTextBlockArray: []anthropicsdk.TextBlockParam{{Text: req.System}},
 		}
 	}
 
-	if len(params.ToolConfig) > 0 {
-		input.Tools = toCountTokensTools(params.ToolConfig)
+	if len(req.Tools) > 0 {
+		input.Tools = toCountTokensTools(req.Tools)
 	}
 
 	res, err := e.client.Messages.CountTokens(ctx, input)

@@ -17,7 +17,6 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/rag"
 	ragbedrock "github.com/camilbinas/gude-agents/agent/rag/bedrock"
@@ -54,11 +53,11 @@ func main() {
 
 	// 5. Two retrievers: one without reranking, one with.
 	baseRetriever := rag.NewRetriever(embedder, store,
-		rag.WithTopK(5),
+		rag.WithMaxResults(5),
 		rag.WithScoreThreshold(0.2),
 	)
 	rerankedRetriever := rag.NewRetriever(embedder, store,
-		rag.WithTopK(5),
+		rag.WithMaxResults(5),
 		rag.WithScoreThreshold(0.2),
 		rag.WithReranker(reranker),
 	)
@@ -98,11 +97,10 @@ func main() {
 
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.RAGAgent(
+	a, err := agent.New(
 		provider,
-		prompt.Text("Answer questions using only the provided context. Be concise."),
-		rerankedRetriever,
-		nil,
+		"Answer questions using only the provided context. Be concise.",
+		agent.WithRetriever(rerankedRetriever),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -113,6 +111,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Q: %s\nA: %s\n\n", q, result)
+		fmt.Printf("Q: %s\nA: %s\n\n", q, result.Text)
 	}
 }

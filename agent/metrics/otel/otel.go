@@ -2,7 +2,6 @@ package otel
 
 import (
 	"context"
-	"time"
 
 	otelglobal "go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -16,7 +15,7 @@ const defaultMeterName = "github.com/camilbinas/gude-agents"
 // llmBuckets defines histogram buckets tuned for LLM latencies.
 var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0}
 
-// otelHook implements agent.MetricsHook using OpenTelemetry metric instruments.
+// otelHook implements the observer capabilities needed for OpenTelemetry metrics.
 type otelHook struct {
 	meter     metric.Meter
 	meterName string
@@ -35,7 +34,14 @@ type otelHook struct {
 	docsAttachedTotal    metric.Int64Counter
 }
 
-var _ agent.MetricsHook = (*otelHook)(nil)
+var (
+	_ agent.InvokeObserver     = (*otelHook)(nil)
+	_ agent.IterationObserver  = (*otelHook)(nil)
+	_ agent.ModelObserver      = (*otelHook)(nil)
+	_ agent.ToolObserver       = (*otelHook)(nil)
+	_ agent.GuardrailObserver  = (*otelHook)(nil)
+	_ agent.AttachmentObserver = (*otelHook)(nil)
+)
 
 func (h *otelHook) register() error {
 	var err error
@@ -122,74 +128,82 @@ func statusAttr(err error) attribute.KeyValue {
 	return attribute.String("status", "success")
 }
 
-func (h *otelHook) OnInvokeStart() func(err error, usage agent.TokenUsage) {
-	start := time.Now()
-	return func(err error, usage agent.TokenUsage) {
-		h.invokeDuration.Record(context.Background(), time.Since(start).Seconds(), metric.WithAttributes(h.baseAttrs()...))
-		h.invokeTotal.Add(context.Background(), 1, metric.WithAttributes(append(h.baseAttrs(), statusAttr(err))...))
+func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
+	h.invokeDuration.Record(ctx, record.Duration.Seconds(), metric.WithAttributes(h.baseAttrs()...))
+	h.invokeTotal.Add(ctx, 1, metric.WithAttributes(append(h.baseAttrs(), statusAttr(record.Err))...))
+	return ctx
 }
 
-func (h *otelHook) OnIterationStart() {
-	h.iterationTotal.Add(context.Background(), 1, metric.WithAttributes(h.baseAttrs()...))
+func (h *otelHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+	if record.Phase == agent.Start {
+		h.iterationTotal.Add(ctx, 1, metric.WithAttributes(h.baseAttrs()...))
+	}
+	return ctx
 }
 
-func (h *otelHook) OnIterationEnd(toolCount int, isFinal bool) {
-	// Iteration count is already tracked in OnIterationStart.
-	// OnIterationEnd is available for custom extensions; no additional metrics emitted.
-}
-
-func (h *otelHook) OnProviderCallStart(modelID string) func(err error, usage agent.TokenUsage) {
+func (h *otelHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
+	}
+	modelID := record.ModelID
 	if modelID == "" {
 		modelID = "unknown"
 	}
-	start := time.Now()
-	return func(err error, usage agent.TokenUsage) {
-		modelAttr := attribute.String("model_id", modelID)
-		h.providerCallDuration.Record(context.Background(), time.Since(start).Seconds(), metric.WithAttributes(h.baseAttrs()...))
-		h.providerCallTotal.Add(context.Background(), 1,
-			metric.WithAttributes(append(h.baseAttrs(), modelAttr, statusAttr(err))...))
-		if err == nil {
-			h.providerTokensTotal.Add(context.Background(), int64(usage.InputTokens),
-				metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "input"))...))
-			h.providerTokensTotal.Add(context.Background(), int64(usage.OutputTokens),
-				metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "output"))...))
-			if usage.CacheReadTokens > 0 {
-				h.providerTokensTotal.Add(context.Background(), int64(usage.CacheReadTokens),
-					metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "cache_read"))...))
-			}
-			if usage.CacheWriteTokens > 0 {
-				h.providerTokensTotal.Add(context.Background(), int64(usage.CacheWriteTokens),
-					metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "cache_write"))...))
-			}
+	modelAttr := attribute.String("model_id", modelID)
+	h.providerCallDuration.Record(ctx, record.Duration.Seconds(), metric.WithAttributes(h.baseAttrs()...))
+	h.providerCallTotal.Add(ctx, 1,
+		metric.WithAttributes(append(h.baseAttrs(), modelAttr, statusAttr(record.Err))...))
+	if record.Err == nil {
+		h.providerTokensTotal.Add(ctx, int64(record.Usage.InputTokens),
+			metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "input"))...))
+		h.providerTokensTotal.Add(ctx, int64(record.Usage.OutputTokens),
+			metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "output"))...))
+		if record.Usage.CacheReadTokens > 0 {
+			h.providerTokensTotal.Add(ctx, int64(record.Usage.CacheReadTokens),
+				metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "cache_read"))...))
+		}
+		if record.Usage.CacheWriteTokens > 0 {
+			h.providerTokensTotal.Add(ctx, int64(record.Usage.CacheWriteTokens),
+				metric.WithAttributes(append(h.baseAttrs(), modelAttr, attribute.String("direction", "cache_write"))...))
 		}
 	}
+	return ctx
 }
 
-func (h *otelHook) OnToolStart(toolName string) func(err error) {
-	start := time.Now()
-	return func(err error) {
-		toolAttr := attribute.String("tool_name", toolName)
-		h.toolCallDuration.Record(context.Background(), time.Since(start).Seconds(),
-			metric.WithAttributes(append(h.baseAttrs(), toolAttr)...))
-		h.toolCallTotal.Add(context.Background(), 1,
-			metric.WithAttributes(append(h.baseAttrs(), toolAttr, statusAttr(err))...))
+func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
 	}
+	toolAttr := attribute.String("tool_name", record.Name)
+	h.toolCallDuration.Record(ctx, record.Duration.Seconds(),
+		metric.WithAttributes(append(h.baseAttrs(), toolAttr)...))
+	h.toolCallTotal.Add(ctx, 1,
+		metric.WithAttributes(append(h.baseAttrs(), toolAttr, statusAttr(record.Err))...))
+	return ctx
 }
 
-func (h *otelHook) OnGuardrailComplete(direction string, blocked bool) {
-	if blocked {
-		h.guardrailBlockTotal.Add(context.Background(), 1,
-			metric.WithAttributes(append(h.baseAttrs(), attribute.String("direction", direction))...))
+func (h *otelHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+	if record.Phase == agent.End && record.Blocked {
+		h.guardrailBlockTotal.Add(ctx, 1,
+			metric.WithAttributes(append(h.baseAttrs(), attribute.String("direction", record.Direction))...))
 	}
+	return ctx
 }
 
-func (h *otelHook) OnImagesAttached(imageCount int) {
-	h.imagesAttachedTotal.Add(context.Background(), int64(imageCount), metric.WithAttributes(h.baseAttrs()...))
-}
-
-func (h *otelHook) OnDocumentsAttached(docCount int) {
-	h.docsAttachedTotal.Add(context.Background(), int64(docCount), metric.WithAttributes(h.baseAttrs()...))
+func (h *otelHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+	if record.Phase != agent.End {
+		return ctx
+	}
+	if record.ImageCount > 0 {
+		h.imagesAttachedTotal.Add(ctx, int64(record.ImageCount), metric.WithAttributes(h.baseAttrs()...))
+	}
+	if record.DocumentCount > 0 {
+		h.docsAttachedTotal.Add(ctx, int64(record.DocumentCount), metric.WithAttributes(h.baseAttrs()...))
+	}
+	return ctx
 }
 
 // baseAttrs returns the common attributes for all metrics.
@@ -201,7 +215,7 @@ func (h *otelHook) baseAttrs() []attribute.KeyValue {
 	return nil
 }
 
-// Option configures the OTEL metrics hook.
+// Option configures the OTEL metrics observer.
 type Option func(*otelHook)
 
 // WithNamespace sets the meter instrumentation scope name.
@@ -230,7 +244,6 @@ func WithMetrics(mp metric.MeterProvider, opts ...Option) agent.Option {
 			return err
 		}
 		h.agentName = a.Name()
-		a.SetMetricsHook(h)
-		return nil
+		return agent.WithObserver(h)(a)
 	}
 }

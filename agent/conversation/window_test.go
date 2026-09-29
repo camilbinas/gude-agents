@@ -9,12 +9,10 @@ import (
 	"pgregory.net/rapid"
 )
 
-
 // TestWindowRoundTripPreservesTail verifies that for any valid message slice
 // and any positive integer N, saving then loading through Window returns a
 // slice whose length is at most N, whose messages are a suffix of the original
 // slice, and which contains no orphaned tool_result blocks.
-//
 func TestWindowRoundTripPreservesTail(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := genMessages(t)
@@ -24,11 +22,11 @@ func TestWindowRoundTripPreservesTail(t *testing.T) {
 		win := NewWindow(store, n)
 		ctx := context.Background()
 
-		if err := win.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, win, "conv", msgs); err != nil {
 			t.Fatalf("Save failed: %v", err)
 		}
 
-		loaded, err := win.Load(ctx, "conv")
+		loaded, err := loadMessages(ctx, win, "conv")
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
 		}

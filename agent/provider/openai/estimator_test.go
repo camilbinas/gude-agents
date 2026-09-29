@@ -2,135 +2,63 @@ package openai
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/tokencount/tiktoken"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-func TestEstimator_DelegatesToTiktoken(t *testing.T) {
-	tik, err := tiktoken.New("o200k_base")
-	if err != nil {
-		t.Fatalf("failed to create tiktoken estimator: %v", err)
-	}
+type stubTokenEstimator struct {
+	count int
+	err   error
+	got   agent.ModelRequest
+}
 
-	est := NewEstimator(tik)
-	params := agent.ConverseParams{
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Hello, world!"}}},
-		},
+func (s *stubTokenEstimator) EstimateTokens(_ context.Context, req agent.ModelRequest) (int, error) {
+	s.got = req
+	return s.count, s.err
+}
+
+func TestEstimator_DelegatesModelRequest(t *testing.T) {
+	delegate := &stubTokenEstimator{count: 42}
+	est := NewEstimator(delegate)
+	req := agent.ModelRequest{
+		Messages: []agent.Message{{
+			Role:    agent.RoleUser,
+			Content: []agent.ContentBlock{agent.TextBlock{Text: "Use a tool"}},
+		}},
 		System: "You are helpful.",
+		Tools: []tool.Spec{{
+			Name:        "search",
+			Description: "Search the web",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+		CachingEnabled: true,
 	}
 
-	// Get result from OpenAI estimator.
-	openaiCount, err := est.EstimateTokens(context.Background(), params)
+	got, err := est.EstimateTokens(context.Background(), req)
 	if err != nil {
-		t.Fatalf("unexpected error from OpenAI estimator: %v", err)
+		t.Fatalf("EstimateTokens() error = %v", err)
 	}
-
-	// Get result directly from tiktoken estimator.
-	tikCount, err := tik.EstimateTokens(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error from tiktoken estimator: %v", err)
+	if got != 42 {
+		t.Fatalf("EstimateTokens() = %d, want 42", got)
 	}
-
-	if openaiCount != tikCount {
-		t.Errorf("OpenAI estimator (%d) != tiktoken estimator (%d)", openaiCount, tikCount)
+	if !reflect.DeepEqual(delegate.got, req) {
+		t.Fatalf("delegated request = %#v, want %#v", delegate.got, req)
 	}
 }
 
-func TestEstimator_DelegatesWithToolConfig(t *testing.T) {
-	tik, err := tiktoken.New("o200k_base")
-	if err != nil {
-		t.Fatalf("failed to create tiktoken estimator: %v", err)
-	}
+func TestEstimator_PropagatesError(t *testing.T) {
+	wantErr := errors.New("count failed")
+	est := NewEstimator(&stubTokenEstimator{err: wantErr})
 
-	est := NewEstimator(tik)
-	params := agent.ConverseParams{
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Use a tool"}}},
-		},
-		ToolConfig: []tool.Spec{
-			{
-				Name:        "search",
-				Description: "Search the web",
-				InputSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"query": map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
+	got, err := est.EstimateTokens(context.Background(), agent.ModelRequest{})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("EstimateTokens() error = %v, want %v", err, wantErr)
 	}
-
-	openaiCount, err := est.EstimateTokens(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error from OpenAI estimator: %v", err)
-	}
-
-	tikCount, err := tik.EstimateTokens(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error from tiktoken estimator: %v", err)
-	}
-
-	if openaiCount != tikCount {
-		t.Errorf("OpenAI estimator (%d) != tiktoken estimator (%d)", openaiCount, tikCount)
-	}
-}
-
-func TestEstimator_DelegatesEmptyParams(t *testing.T) {
-	tik, err := tiktoken.New("o200k_base")
-	if err != nil {
-		t.Fatalf("failed to create tiktoken estimator: %v", err)
-	}
-
-	est := NewEstimator(tik)
-	params := agent.ConverseParams{}
-
-	openaiCount, err := est.EstimateTokens(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error from OpenAI estimator: %v", err)
-	}
-
-	tikCount, err := tik.EstimateTokens(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error from tiktoken estimator: %v", err)
-	}
-
-	if openaiCount != tikCount {
-		t.Errorf("OpenAI estimator (%d) != tiktoken estimator (%d)", openaiCount, tikCount)
-	}
-
-	// With empty params, both should return 0.
-	if openaiCount != 0 {
-		t.Errorf("expected 0 tokens for empty params, got %d", openaiCount)
-	}
-}
-
-func TestEstimator_NonNegativeResult(t *testing.T) {
-	tik, err := tiktoken.New("cl100k_base")
-	if err != nil {
-		t.Fatalf("failed to create tiktoken estimator: %v", err)
-	}
-
-	est := NewEstimator(tik)
-	params := agent.ConverseParams{
-		Messages: []agent.Message{
-			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "A longer message with multiple words to test token counting."}}},
-		},
-		System: "System prompt with some content.",
-	}
-
-	count, err := est.EstimateTokens(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count < 0 {
-		t.Errorf("expected non-negative token count, got %d", count)
-	}
-	if count == 0 {
-		t.Error("expected non-zero token count for non-empty input")
+	if got != 0 {
+		t.Fatalf("EstimateTokens() = %d, want 0", got)
 	}
 }

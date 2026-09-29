@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 )
 
-// Compile-time assertion that VectorStoreRetriever satisfies agent.Retriever.
-var _ agent.Retriever = (*VectorStoreRetriever)(nil)
+// Compile-time assertion that VectorStoreRetriever satisfies rag.Retriever.
+var _ rag.Retriever = (*VectorStoreRetriever)(nil)
 
 // VectorStoreRetriever retrieves documents from an OpenAI Vector Store.
 type VectorStoreRetriever struct {
@@ -87,7 +87,7 @@ func NewVectorStoreRetriever(vectorStoreID string, opts ...VectorStoreOption) (*
 }
 
 // Retrieve fetches relevant documents from the OpenAI Vector Store for the given query.
-func (r *VectorStoreRetriever) Retrieve(ctx context.Context, query string) ([]agent.Document, error) {
+func (r *VectorStoreRetriever) Retrieve(ctx context.Context, query string) ([]rag.Document, error) {
 	if query == "" {
 		return nil, fmt.Errorf("openai vector store: query must not be empty")
 	}
@@ -112,11 +112,11 @@ func (r *VectorStoreRetriever) Retrieve(ctx context.Context, query string) ([]ag
 	return docs, nil
 }
 
-// mapOpenAIResults maps OpenAI vector store search responses to agent.Document values.
-func mapOpenAIResults(results []openaisdk.VectorStoreSearchResponse) []agent.Document {
-	docs := make([]agent.Document, 0, len(results))
+// mapOpenAIResults maps OpenAI vector store search responses to rag.Document values.
+func mapOpenAIResults(results []openaisdk.VectorStoreSearchResponse) []rag.Document {
+	docs := make([]rag.Document, 0, len(results))
 	for _, result := range results {
-		doc := agent.Document{Metadata: make(map[string]string)}
+		doc := rag.Document{ID: result.FileID, Metadata: make(map[string]string)}
 
 		var sb strings.Builder
 		for _, block := range result.Content {
@@ -135,11 +135,11 @@ func mapOpenAIResults(results []openaisdk.VectorStoreSearchResponse) []agent.Doc
 }
 
 // filterByScore filters documents whose score metadata is below the threshold.
-func filterByScore(docs []agent.Document, threshold float64) []agent.Document {
+func filterByScore(docs []rag.Document, threshold float64) []rag.Document {
 	if threshold <= 0.0 {
 		return docs
 	}
-	result := []agent.Document{}
+	result := []rag.Document{}
 	for _, doc := range docs {
 		score, err := strconv.ParseFloat(doc.Metadata["score"], 64)
 		if err != nil {

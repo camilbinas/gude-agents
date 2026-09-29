@@ -6,7 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
@@ -87,10 +87,10 @@ func TestMapBedrockResultsProperty(t *testing.T) {
 func TestFilterByScoreProperty(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(0, 20).Draw(rt, "n")
-		docs := make([]agent.Document, n)
+		docs := make([]rag.Document, n)
 		for i := range n {
 			score := rapid.Float64Range(0.0, 1.0).Draw(rt, "score")
-			docs[i] = agent.Document{
+			docs[i] = rag.Document{
 				Content:  "doc",
 				Metadata: map[string]string{"score": strconv.FormatFloat(score, 'f', -1, 64)},
 			}
@@ -115,21 +115,21 @@ func TestNewKnowledgeBaseRetrieverDefaults(t *testing.T) {
 	r, err := NewKnowledgeBaseRetriever("kb-test-id")
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, 5, r.topK)
+	assert.Equal(t, 5, r.maxResults)
 	assert.Equal(t, 0.0, r.scoreThreshold)
 	assert.Equal(t, "kb-test-id", r.knowledgeBaseID)
 }
 
-func TestNewKnowledgeBaseRetrieverTopKValidation(t *testing.T) {
+func TestNewKnowledgeBaseRetrieverMaxResultsValidation(t *testing.T) {
 	t.Setenv("AWS_REGION", "us-east-1")
 
-	_, err := NewKnowledgeBaseRetriever("kb-id", WithKnowledgeBaseTopK(0))
+	_, err := NewKnowledgeBaseRetriever("kb-id", WithKnowledgeBaseMaxResults(0))
 	require.Error(t, err)
-	assert.Equal(t, "bedrock knowledge base: topK must be >= 1", err.Error())
+	assert.Equal(t, "bedrock knowledge base: maxResults must be >= 1", err.Error())
 
-	r, err := NewKnowledgeBaseRetriever("kb-id", WithKnowledgeBaseTopK(1))
+	r, err := NewKnowledgeBaseRetriever("kb-id", WithKnowledgeBaseMaxResults(1))
 	require.NoError(t, err)
-	assert.Equal(t, 1, r.topK)
+	assert.Equal(t, 1, r.maxResults)
 }
 
 func TestKnowledgeBaseRetrieverEmptyQuery(t *testing.T) {

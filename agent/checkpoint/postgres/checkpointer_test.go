@@ -2,13 +2,125 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/checkpoint"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestSaveIfVersion_Validation(t *testing.T) {
+	c := &Checkpointer{}
+
+	if _, err := c.SaveIfVersion(context.Background(), "", checkpoint.Checkpoint{}, 0); !errors.Is(err, checkpoint.ErrThreadIDRequired) {
+		t.Errorf("empty thread ID error = %v, want ErrThreadIDRequired", err)
+	}
+	if _, err := c.SaveIfVersion(context.Background(), "thread", checkpoint.Checkpoint{}, -1); err == nil {
+		t.Fatal("negative expected version returned nil error")
+	}
+}
+
+func TestSaveIfVersion(t *testing.T) {
+	c := newTestStore(t)
+	ctx := context.Background()
+	timestamp := time.Date(2025, time.January, 2, 3, 4, 5, 123456000, time.UTC)
+
+	first, err := c.SaveIfVersion(ctx, "conditional", checkpoint.Checkpoint{
+		Label:     "first",
+		State:     checkpoint.State{"stage": "one"},
+		Timestamp: timestamp,
+	}, 0)
+	if err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if first.Version != 1 {
+		t.Fatalf("first version = %d, want 1", first.Version)
+	}
+	if !first.Timestamp.Equal(timestamp) {
+		t.Errorf("first timestamp = %v, want %v", first.Timestamp, timestamp)
+	}
+
+	second, err := c.SaveIfVersion(ctx, "conditional", checkpoint.Checkpoint{Label: "second"}, 1)
+	if err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	if second.Version != 2 {
+		t.Fatalf("second version = %d, want 2", second.Version)
+	}
+
+	if _, err := c.SaveIfVersion(ctx, "conditional", checkpoint.Checkpoint{Label: "stale"}, 1); !errors.Is(err, checkpoint.ErrConflict) {
+		t.Fatalf("stale save error = %v, want ErrConflict", err)
+	}
+	if _, err := c.SaveIfVersion(ctx, "missing", checkpoint.Checkpoint{}, 1); !errors.Is(err, checkpoint.ErrConflict) {
+		t.Fatalf("missing thread save error = %v, want ErrConflict", err)
+	}
+
+	history, err := c.History(ctx, "conditional")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history length = %d, want 2", len(history))
+	}
+	loaded, err := c.Load(ctx, "conditional")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Version != 2 || loaded.Label != "second" {
+		t.Errorf("loaded checkpoint = version %d label %q, want version 2 label second", loaded.Version, loaded.Label)
+	}
+}
+
+func TestSaveIfVersion_ConcurrentConflict(t *testing.T) {
+	c := newTestStore(t)
+	ctx := context.Background()
+	start := make(chan struct{})
+	type result struct {
+		cp  checkpoint.Checkpoint
+		err error
+	}
+	results := make(chan result, 2)
+
+	for _, label := range []string{"one", "two"} {
+		label := label
+		go func() {
+			<-start
+			cp, err := c.SaveIfVersion(ctx, "concurrent", checkpoint.Checkpoint{Label: label}, 0)
+			results <- result{cp: cp, err: err}
+		}()
+	}
+	close(start)
+
+	successes, conflicts := 0, 0
+	for range 2 {
+		result := <-results
+		switch {
+		case result.err == nil:
+			successes++
+			if result.cp.Version != 1 {
+				t.Errorf("successful version = %d, want 1", result.cp.Version)
+			}
+		case errors.Is(result.err, checkpoint.ErrConflict):
+			conflicts++
+		default:
+			t.Errorf("unexpected save error: %v", result.err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes = %d, conflicts = %d; want 1 each", successes, conflicts)
+	}
+
+	history, err := c.History(ctx, "concurrent")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history length = %d, want 1", len(history))
+	}
+}
 
 const testTable = "checkpoints_test"
 

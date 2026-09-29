@@ -5,17 +5,17 @@ import (
 	"math"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 // idExtractor is a helper that extracts the "id" key from document metadata.
-func idExtractor(d agent.Document) string {
+func idExtractor(d rag.Document) string {
 	return d.Metadata["id"]
 }
 
-// makeDoc creates an agent.Document with the given id in its metadata.
-func makeDoc(id string) agent.Document {
-	return agent.Document{
+// makeDoc creates a rag.Document with the given id in its metadata.
+func makeDoc(id string) rag.Document {
+	return rag.Document{
 		Content:  "content for " + id,
 		Metadata: map[string]string{"id": id},
 	}
@@ -29,7 +29,7 @@ func TestRetrievalOrdering_PerfectOrdering(t *testing.T) {
 	}
 
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("a"),
 			makeDoc("b"),
 			makeDoc("c"),
@@ -55,7 +55,7 @@ func TestRetrievalOrdering_ReversedOrdering(t *testing.T) {
 	}
 
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("c"),
 			makeDoc("b"),
 			makeDoc("a"),
@@ -81,7 +81,7 @@ func TestRetrievalOrdering_NoExpectedDocumentsFound(t *testing.T) {
 	}
 
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("x"),
 			makeDoc("y"),
 			makeDoc("z"),
@@ -104,7 +104,7 @@ func TestRetrievalOrdering_SingleDocument(t *testing.T) {
 	}
 
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("a"),
 		},
 	})
@@ -126,7 +126,7 @@ func TestRetrievalOrdering_PartialOverlap(t *testing.T) {
 
 	// Only "a" and "c" are present; "b" and "d" are missing, replaced by unknowns.
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("a"),
 			makeDoc("x"),
 			makeDoc("c"),
@@ -165,7 +165,7 @@ func TestRetrievalOrdering_EmptyRetrievedContext(t *testing.T) {
 	}
 
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{},
+		RetrievedContext: []rag.Document{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected evaluate error: %v", err)
@@ -185,7 +185,7 @@ func TestRetrievalOrdering_WithCustomThreshold(t *testing.T) {
 
 	// Perfect ordering should pass even a high threshold.
 	result, err := ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("a"),
 			makeDoc("b"),
 			makeDoc("c"),
@@ -201,7 +201,7 @@ func TestRetrievalOrdering_WithCustomThreshold(t *testing.T) {
 
 	// Reversed ordering should fail with a high threshold.
 	result, err = ro.Evaluate(context.Background(), EvalCase{
-		RetrievedContext: []agent.Document{
+		RetrievedContext: []rag.Document{
 			makeDoc("c"),
 			makeDoc("b"),
 			makeDoc("a"),
@@ -223,7 +223,7 @@ func TestRetrievalOrdering_ScoreInRange(t *testing.T) {
 		t.Fatalf("unexpected constructor error: %v", err)
 	}
 
-	cases := [][]agent.Document{
+	cases := [][]rag.Document{
 		{makeDoc("a"), makeDoc("b"), makeDoc("c")},
 		{makeDoc("c"), makeDoc("b"), makeDoc("a")},
 		{makeDoc("b"), makeDoc("a"), makeDoc("c")},

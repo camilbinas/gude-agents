@@ -1,24 +1,158 @@
+// Package rag provides portable retrieval-augmented generation primitives.
 package rag
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// SplitTextE splits text into chunks of at most chunkSize runes with chunkOverlap
-// runes of overlap between consecutive chunks. Returns an error for invalid parameters.
-func SplitTextE(text string, chunkSize int, chunkOverlap int) ([]string, error) {
+// Document holds a text chunk and associated metadata.
+type Document struct {
+	ID       string // Storage-level ID. Empty on input means the store generates one.
+	Content  string
+	Metadata map[string]string
+}
+
+// ScoredDocument pairs a Document with its similarity score.
+type ScoredDocument struct {
+	Document Document
+	Score    float64
+}
+
+// Embedder converts text into a float vector.
+type Embedder interface {
+	Embed(ctx context.Context, text string) ([]float64, error)
+}
+
+// Store stores document embeddings and performs similarity search.
+type Store interface {
+	// Upsert stores documents with their embeddings. If a document's ID is empty,
+	// the store generates one. Existing IDs are replaced. Returned IDs follow
+	// input order.
+	Upsert(ctx context.Context, docs []Document, embeddings [][]float64) (ids []string, err error)
+
+	// Search returns the top-K documents by similarity. Results include IDs.
+	Search(ctx context.Context, queryEmbedding []float64, topK int) ([]ScoredDocument, error)
+
+	// Delete removes documents by ID. Missing IDs are ignored.
+	Delete(ctx context.Context, ids ...string) error
+}
+
+// Manager composes Store with document lookup and metadata-based deletion.
+type Manager interface {
+	Store
+
+	// Find returns existing documents in input-ID order.
+	Find(ctx context.Context, ids ...string) ([]Document, error)
+
+	// DeleteByMetadata deletes documents whose metadata contains every filter
+	// entry. Implementations must reject an empty filter.
+	DeleteByMetadata(ctx context.Context, filter map[string]string) error
+}
+
+// Retriever retrieves relevant documents for a query.
+type Retriever interface {
+	Retrieve(ctx context.Context, query string) ([]Document, error)
+}
+
+// Reranker re-scores a candidate set of documents for a query.
+type Reranker interface {
+	Rerank(ctx context.Context, query string, docs []Document) ([]Document, error)
+}
+
+// FulltextSearcher performs keyword-based document search.
+type FulltextSearcher interface {
+	Search(ctx context.Context, query string, limit int) ([]ScoredDocument, error)
+}
+
+// MetadataFilter represents AND-semantics metadata constraints.
+type MetadataFilter map[string]string
+
+// FilteredStore composes Store with metadata-filtered vector search.
+type FilteredStore interface {
+	Store
+	SearchWithFilter(ctx context.Context, queryEmbedding []float64, topK int, filter MetadataFilter) ([]ScoredDocument, error)
+}
+
+// FilteredFulltextSearcher composes FulltextSearcher with metadata filtering.
+type FilteredFulltextSearcher interface {
+	FulltextSearcher
+	SearchWithFilter(ctx context.Context, query string, limit int, filter MetadataFilter) ([]ScoredDocument, error)
+}
+
+// ContextFormatter formats retrieved documents for prompt injection.
+type ContextFormatter func(docs []Document) string
+
+// DefaultContextFormatter formats documents as numbered items wrapped in
+// retrieved-context tags so models treat them as external data.
+var DefaultContextFormatter ContextFormatter = func(docs []Document) string {
+	if len(docs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<retrieved_context>\n")
+	for i, doc := range docs {
+		fmt.Fprintf(&b, "[%d] %s\n", i+1, doc.Content)
+	}
+	b.WriteString("</retrieved_context>")
+	return b.String()
+}
+
+// NewRetrieverTool wraps a Retriever as a tool so the model can decide when
+// to retrieve. The first non-nil formatter is used; otherwise the default is
+// DefaultContextFormatter.
+func NewRetrieverTool(name, description string, r Retriever, formatter ...ContextFormatter) tool.Tool {
+	fmtFn := DefaultContextFormatter
+	if len(formatter) > 0 && formatter[0] != nil {
+		fmtFn = formatter[0]
+	}
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+		},
+		"required": []any{"query"},
+	}
+
+	return tool.NewRaw(name, description, func(ctx context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", err
+		}
+		docs, err := r.Retrieve(ctx, params.Query)
+		if err != nil {
+			return "", err
+		}
+		if len(docs) == 0 {
+			return "No relevant documents found.", nil
+		}
+		return fmtFn(docs), nil
+	}, tool.WithSchema(schema))
+}
+
+// SplitText splits text into chunks of at most chunkSize runes with overlap
+// runes shared by consecutive chunks. chunkSize must be positive and overlap
+// must be in [0, chunkSize).
+func SplitText(text string, chunkSize, overlap int) ([]string, error) {
 	if chunkSize < 1 {
 		return nil, fmt.Errorf("splittext: chunkSize must be >= 1, got %d", chunkSize)
 	}
-	if chunkOverlap >= chunkSize {
-		return nil, fmt.Errorf("splittext: chunkOverlap (%d) must be < chunkSize (%d)", chunkOverlap, chunkSize)
+	if overlap < 0 {
+		return nil, fmt.Errorf("splittext: overlap must be >= 0, got %d", overlap)
+	}
+	if overlap >= chunkSize {
+		return nil, fmt.Errorf("splittext: overlap (%d) must be < chunkSize (%d)", overlap, chunkSize)
 	}
 
 	runes := []rune(text)
@@ -26,8 +160,8 @@ func SplitTextE(text string, chunkSize int, chunkOverlap int) ([]string, error) 
 		return []string{}, nil
 	}
 
-	var chunks []string
-	step := chunkSize - chunkOverlap
+	chunks := make([]string, 0, (len(runes)+chunkSize-1)/chunkSize)
+	step := chunkSize - overlap
 	for i := 0; i < len(runes); i += step {
 		end := i + chunkSize
 		if end > len(runes) {
@@ -38,50 +172,26 @@ func SplitTextE(text string, chunkSize int, chunkOverlap int) ([]string, error) 
 	return chunks, nil
 }
 
-// SplitText splits text into chunks of at most chunkSize runes with chunkOverlap
-// runes of overlap. Invalid parameters are silently clamped.
-func SplitText(text string, chunkSize int, chunkOverlap int) []string {
-	if chunkSize < 1 {
-		chunkSize = 1
-	}
-	if chunkOverlap < 0 {
-		chunkOverlap = 0
-	}
-	if chunkOverlap >= chunkSize {
-		chunkOverlap = chunkSize - 1
-	}
-	chunks, _ := SplitTextE(text, chunkSize, chunkOverlap)
-	return chunks
-}
-
-// vsEntry pairs a document with its embedding vector.
-type vsEntry struct {
+type storeEntry struct {
 	id        string
-	doc       agent.Document
+	doc       Document
 	embedding []float64
 }
 
-// MemoryStore is a brute-force cosine similarity vector store
-// backed by a Go slice. Safe for concurrent use.
+// MemoryStore is a brute-force cosine-similarity Store safe for concurrent use.
 type MemoryStore struct {
 	mu      sync.RWMutex
-	entries []vsEntry
+	entries []storeEntry
 	nextID  int
 }
 
-// Compile-time check: MemoryStore must satisfy agent.VectorStoreManager.
-var _ agent.VectorStoreManager = (*MemoryStore)(nil)
+var _ Manager = (*MemoryStore)(nil)
 
 // NewMemoryStore returns an empty MemoryStore.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{}
-}
+func NewMemoryStore() *MemoryStore { return &MemoryStore{} }
 
-// Upsert stores documents with their embeddings. If a document's ID is empty,
-// the store generates one. If a document's ID already exists, the store
-// replaces the existing content, metadata, and embedding.
-// Returns the IDs of all stored documents in input order.
-func (s *MemoryStore) Upsert(ctx context.Context, docs []agent.Document, embeddings [][]float64) ([]string, error) {
+// Upsert implements Store.
+func (s *MemoryStore) Upsert(_ context.Context, docs []Document, embeddings [][]float64) ([]string, error) {
 	if len(docs) != len(embeddings) {
 		return nil, fmt.Errorf("vectorstore: docs and embeddings length mismatch: %d vs %d", len(docs), len(embeddings))
 	}
@@ -96,234 +206,191 @@ func (s *MemoryStore) Upsert(ctx context.Context, docs []agent.Document, embeddi
 		}
 		doc.ID = id
 		ids[i] = id
-
-		// Check if an entry with this ID already exists; if so, replace in-place.
 		found := false
-		for j, e := range s.entries {
-			if e.id == id {
-				s.entries[j] = vsEntry{id: id, doc: doc, embedding: embeddings[i]}
+		for j, entry := range s.entries {
+			if entry.id == id {
+				s.entries[j] = storeEntry{id: id, doc: doc, embedding: embeddings[i]}
 				found = true
 				break
 			}
 		}
 		if !found {
-			s.entries = append(s.entries, vsEntry{id: id, doc: doc, embedding: embeddings[i]})
+			s.entries = append(s.entries, storeEntry{id: id, doc: doc, embedding: embeddings[i]})
 		}
 	}
 	return ids, nil
 }
 
-// Search returns the top-K documents by cosine similarity to queryEmbedding.
-func (s *MemoryStore) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]agent.ScoredDocument, error) {
+// Search implements Store.
+func (s *MemoryStore) Search(_ context.Context, queryEmbedding []float64, topK int) ([]ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("vectorstore: topK must be >= 1, got %d", topK)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	scored := make([]agent.ScoredDocument, len(s.entries))
-	for i, e := range s.entries {
-		scored[i] = agent.ScoredDocument{
-			Document: e.doc,
-			Score:    cosineSimilarity(queryEmbedding, e.embedding),
-		}
+	scored := make([]ScoredDocument, len(s.entries))
+	for i, entry := range s.entries {
+		scored[i] = ScoredDocument{Document: entry.doc, Score: cosineSimilarity(queryEmbedding, entry.embedding)}
 	}
-
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].Score > scored[j].Score
-	})
-
+	sort.SliceStable(scored, func(i, j int) bool { return scored[i].Score > scored[j].Score })
 	if topK > len(scored) {
 		topK = len(scored)
 	}
 	return scored[:topK], nil
 }
 
-// Find retrieves documents by their IDs. Returns documents in the same
-// order as the input IDs, omitting IDs that don't exist. Returns an empty
-// slice and nil error for an empty input.
-func (s *MemoryStore) Find(ctx context.Context, ids ...string) ([]agent.Document, error) {
+// Find implements Manager.
+func (s *MemoryStore) Find(_ context.Context, ids ...string) ([]Document, error) {
 	if len(ids) == 0 {
-		return []agent.Document{}, nil
+		return []Document{}, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Build a map of id → entry for O(1) lookup.
-	idMap := make(map[string]agent.Document, len(s.entries))
-	for _, e := range s.entries {
-		idMap[e.id] = e.doc
+	byID := make(map[string]Document, len(s.entries))
+	for _, entry := range s.entries {
+		byID[entry.id] = entry.doc
 	}
-
-	// Iterate input IDs in order, collect found documents.
-	var result []agent.Document
+	result := make([]Document, 0, len(ids))
 	for _, id := range ids {
-		if doc, ok := idMap[id]; ok {
+		if doc, ok := byID[id]; ok {
 			result = append(result, doc)
 		}
-	}
-	if result == nil {
-		return []agent.Document{}, nil
 	}
 	return result, nil
 }
 
-// DeleteByMetadata deletes all documents whose metadata contains all
-// key-value pairs in the filter (AND semantics). Returns an error if the
-// filter is empty (safety guard against accidental full deletion).
-func (s *MemoryStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
+// DeleteByMetadata implements Manager.
+func (s *MemoryStore) DeleteByMetadata(_ context.Context, filter map[string]string) error {
 	if len(filter) == 0 {
 		return fmt.Errorf("vectorstore: filter must not be empty")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	filtered := s.entries[:0]
-	for _, e := range s.entries {
-		if !metadataMatchesFilter(e.doc.Metadata, filter) {
-			filtered = append(filtered, e)
+	kept := s.entries[:0]
+	for _, entry := range s.entries {
+		if !metadataMatchesFilter(entry.doc.Metadata, filter) {
+			kept = append(kept, entry)
 		}
 	}
-	s.entries = filtered
+	s.entries = kept
 	return nil
 }
 
-// metadataMatchesFilter returns true if the document's metadata contains all
-// key-value pairs in the filter.
 func metadataMatchesFilter(metadata map[string]string, filter map[string]string) bool {
-	for k, v := range filter {
-		if metadata[k] != v {
+	for key, value := range filter {
+		if metadata[key] != value {
 			return false
 		}
 	}
 	return true
 }
 
-// Delete removes documents by their IDs.
-func (s *MemoryStore) Delete(ctx context.Context, ids ...string) error {
+// Delete implements Store.
+func (s *MemoryStore) Delete(_ context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	remove := make(map[string]bool, len(ids))
+	remove := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
-		remove[id] = true
+		remove[id] = struct{}{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	filtered := s.entries[:0]
-	for _, e := range s.entries {
-		if !remove[e.id] {
-			filtered = append(filtered, e)
+	kept := s.entries[:0]
+	for _, entry := range s.entries {
+		if _, ok := remove[entry.id]; !ok {
+			kept = append(kept, entry)
 		}
 	}
-	s.entries = filtered
+	s.entries = kept
 	return nil
 }
 
-// cosineSimilarity computes dot(a,b) / (norm(a) * norm(b)).
 func cosineSimilarity(a, b []float64) float64 {
-	n := len(a)
-	if n != len(b) {
-		return 0.0
+	if len(a) != len(b) {
+		return 0
 	}
 	var dot, normA, normB float64
-	for i := 0; i < n; i++ {
+	for i := range a {
 		dot += a[i] * b[i]
 		normA += a[i] * a[i]
 		normB += b[i] * b[i]
 	}
-	magA := math.Sqrt(normA)
-	magB := math.Sqrt(normB)
+	magA, magB := math.Sqrt(normA), math.Sqrt(normB)
 	if magA == 0 || magB == 0 {
-		return 0.0
+		return 0
 	}
 	return dot / (magA * magB)
 }
 
-// DefaultContextFormatter is an alias for agent.DefaultContextFormatter.
-var DefaultContextFormatter = agent.DefaultContextFormatter
+// RetrieverOption configures the Retriever returned by NewRetriever.
+type RetrieverOption func(*storeRetriever)
 
-// RetrieverOption configures a Retriever.
-type RetrieverOption func(*Retriever)
-
-// Retriever implements agent.Retriever by embedding the query and
-// searching a VectorStore for similar documents.
-type Retriever struct {
-	embedder       agent.Embedder
-	store          agent.VectorStore
-	topK           int
+type storeRetriever struct {
+	embedder       Embedder
+	store          Store
+	maxResults     int
 	scoreThreshold float64
-	reranker       agent.Reranker
+	reranker       Reranker
 }
 
-// NewRetriever creates a new Retriever with the given embedder and store.
-// Defaults: topK=4, scoreThreshold=0.0, no reranker.
-func NewRetriever(embedder agent.Embedder, store agent.VectorStore, opts ...RetrieverOption) *Retriever {
-	r := &Retriever{
-		embedder:       embedder,
-		store:          store,
-		topK:           4,
-		scoreThreshold: 0.0,
-	}
+var _ Retriever = (*storeRetriever)(nil)
+
+// NewRetriever creates a Retriever backed by an Embedder and Store.
+// It retrieves at most four documents by default.
+func NewRetriever(embedder Embedder, store Store, opts ...RetrieverOption) Retriever {
+	r := &storeRetriever{embedder: embedder, store: store, maxResults: 4}
 	for _, opt := range opts {
 		opt(r)
 	}
 	return r
 }
 
-// WithTopK sets the maximum number of documents to retrieve.
-func WithTopK(k int) RetrieverOption {
-	return func(r *Retriever) { r.topK = k }
+// WithMaxResults sets the maximum number of documents to retrieve.
+func WithMaxResults(n int) RetrieverOption {
+	return func(r *storeRetriever) { r.maxResults = n }
 }
 
-// WithMaxResults sets the maximum number of documents to retrieve.
-// This is an alias for WithTopK.
-func WithMaxResults(k int) RetrieverOption { return WithTopK(k) }
-
 // WithScoreThreshold sets the minimum similarity score for returned documents.
-func WithScoreThreshold(t float64) RetrieverOption {
-	return func(r *Retriever) { r.scoreThreshold = t }
+func WithScoreThreshold(threshold float64) RetrieverOption {
+	return func(r *storeRetriever) { r.scoreThreshold = threshold }
 }
 
 // WithReranker attaches a Reranker to the retriever.
-func WithReranker(rr agent.Reranker) RetrieverOption {
-	return func(r *Retriever) { r.reranker = rr }
+func WithReranker(reranker Reranker) RetrieverOption {
+	return func(r *storeRetriever) { r.reranker = reranker }
 }
 
-// Retrieve embeds the query, searches the vector store, filters by score
-// threshold, and optionally reranks the results.
-func (r *Retriever) Retrieve(ctx context.Context, query string) ([]agent.Document, error) {
+func (r *storeRetriever) Retrieve(ctx context.Context, query string) ([]Document, error) {
 	if query == "" {
 		return nil, fmt.Errorf("retrieve: query must not be empty")
 	}
-
 	embedding, err := r.embedder.Embed(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-
-	scored, err := r.store.Search(ctx, embedding, r.topK)
+	scored, err := r.store.Search(ctx, embedding, r.maxResults)
 	if err != nil {
 		return nil, err
 	}
-
-	var docs []agent.Document
-	for _, sd := range scored {
-		if sd.Score >= r.scoreThreshold {
-			docs = append(docs, sd.Document)
+	docs := make([]Document, 0, len(scored))
+	for _, doc := range scored {
+		if doc.Score >= r.scoreThreshold {
+			docs = append(docs, doc.Document)
 		}
 	}
-
 	if r.reranker != nil {
 		docs, err = r.reranker.Rerank(ctx, query, docs)
 		if err != nil {
 			return nil, fmt.Errorf("reranker: %w", err)
 		}
 	}
-
 	return docs, nil
 }
 
-// IngestOption configures the Ingest pipeline.
+// IngestOption configures Ingest.
 type IngestOption func(*ingestConfig)
 
 type ingestConfig struct {
@@ -332,19 +399,13 @@ type ingestConfig struct {
 	concurrency  int
 }
 
-// WithChunkSize sets the chunk size for text splitting during ingestion.
-func WithChunkSize(n int) IngestOption {
-	return func(c *ingestConfig) { c.chunkSize = n }
-}
+// WithChunkSize sets the chunk size used during ingestion.
+func WithChunkSize(n int) IngestOption { return func(c *ingestConfig) { c.chunkSize = n } }
 
-// WithChunkOverlap sets the chunk overlap for text splitting during ingestion.
-func WithChunkOverlap(n int) IngestOption {
-	return func(c *ingestConfig) { c.chunkOverlap = n }
-}
+// WithChunkOverlap sets the chunk overlap used during ingestion.
+func WithChunkOverlap(n int) IngestOption { return func(c *ingestConfig) { c.chunkOverlap = n } }
 
-// WithConcurrency sets the number of parallel embedding calls during ingestion.
-// Default is 1 (sequential). Higher values speed up ingestion but increase
-// API request rate. A good starting point is 5–10.
+// WithConcurrency sets the maximum number of parallel embedding calls.
 func WithConcurrency(n int) IngestOption {
 	return func(c *ingestConfig) {
 		if n < 1 {
@@ -354,102 +415,75 @@ func WithConcurrency(n int) IngestOption {
 	}
 }
 
-// Ingest splits each text into chunks, embeds each chunk, and stores the
-// resulting documents and embeddings in the VectorStore.
-// Use WithConcurrency to parallelize embedding calls.
-func Ingest(
-	ctx context.Context,
-	store agent.VectorStore,
-	embedder agent.Embedder,
-	texts []string,
-	metadata []map[string]string,
-	opts ...IngestOption,
-) error {
+// Ingest splits texts, embeds each chunk, and stores the resulting documents.
+func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string, metadata []map[string]string, opts ...IngestOption) error {
 	cfg := ingestConfig{chunkSize: 512, chunkOverlap: 64, concurrency: 1}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 
-	// Build all documents first (cheap, no API calls).
 	type docChunk struct {
-		doc   agent.Document
+		doc   Document
 		chunk string
 	}
 	var chunks []docChunk
-
-	for si, text := range texts {
-		parts := SplitText(text, cfg.chunkSize, cfg.chunkOverlap)
-
-		var srcMeta map[string]string
-		if si < len(metadata) {
-			srcMeta = metadata[si]
+	for sourceIndex, text := range texts {
+		parts, err := SplitText(text, cfg.chunkSize, cfg.chunkOverlap)
+		if err != nil {
+			return fmt.Errorf("ingest: split text %d: %w", sourceIndex, err)
 		}
-
-		for ci, part := range parts {
-			merged := make(map[string]string)
-			for k, v := range srcMeta {
-				merged[k] = v
+		var sourceMetadata map[string]string
+		if sourceIndex < len(metadata) {
+			sourceMetadata = metadata[sourceIndex]
+		}
+		for chunkIndex, part := range parts {
+			merged := make(map[string]string, len(sourceMetadata)+2)
+			for key, value := range sourceMetadata {
+				merged[key] = value
 			}
-			merged["source_index"] = strconv.Itoa(si)
-			merged["chunk_index"] = strconv.Itoa(ci)
-
-			chunks = append(chunks, docChunk{
-				doc:   agent.Document{Content: part, Metadata: merged},
-				chunk: part,
-			})
+			merged["source_index"] = strconv.Itoa(sourceIndex)
+			merged["chunk_index"] = strconv.Itoa(chunkIndex)
+			chunks = append(chunks, docChunk{doc: Document{Content: part, Metadata: merged}, chunk: part})
 		}
 	}
-
 	if len(chunks) == 0 {
 		return nil
 	}
 
-	// Embed all chunks (parallel when concurrency > 1).
-	allDocs := make([]agent.Document, len(chunks))
-	allEmbeddings := make([][]float64, len(chunks))
-
+	docs := make([]Document, len(chunks))
+	embeddings := make([][]float64, len(chunks))
 	if cfg.concurrency <= 1 {
-		// Sequential path — no goroutine overhead.
-		for i, c := range chunks {
-			embedding, err := embedder.Embed(ctx, c.chunk)
+		for i, chunk := range chunks {
+			embedding, err := embedder.Embed(ctx, chunk.chunk)
 			if err != nil {
 				return fmt.Errorf("ingest: embed chunk %d: %w", i, err)
 			}
-			allDocs[i] = c.doc
-			allEmbeddings[i] = embedding
+			docs[i], embeddings[i] = chunk.doc, embedding
 		}
 	} else {
-		// Parallel path — bounded concurrency via semaphore.
 		sem := make(chan struct{}, cfg.concurrency)
 		errs := make([]error, len(chunks))
-
 		var wg sync.WaitGroup
-		for i, c := range chunks {
-			allDocs[i] = c.doc
-
+		for i, chunk := range chunks {
+			docs[i] = chunk.doc
 			wg.Add(1)
-			go func(idx int, chunk string) {
+			go func(index int, text string) {
 				defer wg.Done()
-
-				sem <- struct{}{}        // acquire
-				defer func() { <-sem }() // release
-
-				if ctx.Err() != nil {
-					errs[idx] = ctx.Err()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				if err := ctx.Err(); err != nil {
+					errs[index] = err
 					return
 				}
-
-				embedding, err := embedder.Embed(ctx, chunk)
+				embedding, err := embedder.Embed(ctx, text)
 				if err != nil {
-					errs[idx] = fmt.Errorf("ingest: embed chunk %d: %w", idx, err)
+					errs[index] = fmt.Errorf("ingest: embed chunk %d: %w", index, err)
 					return
 				}
-				allEmbeddings[idx] = embedding
-			}(i, c.chunk)
+				embeddings[index] = embedding
+			}(i, chunk.chunk)
 		}
 		wg.Wait()
-
-		// Return the first error.
 		for _, err := range errs {
 			if err != nil {
 				return err
@@ -457,26 +491,21 @@ func Ingest(
 		}
 	}
 
-	// Smart re-ingestion: delete old chunks if store supports VectorStoreManager.
-	if mgr, ok := store.(agent.VectorStoreManager); ok {
-		// Collect unique "source" values from metadata.
-		seen := make(map[string]struct{})
-		for _, m := range metadata {
-			if src, exists := m["source"]; exists && src != "" {
-				seen[src] = struct{}{}
+	if manager, ok := store.(Manager); ok {
+		sources := make(map[string]struct{})
+		for _, item := range metadata {
+			if source := item["source"]; source != "" {
+				sources[source] = struct{}{}
 			}
 		}
-		// For each unique source, delete old chunks before upserting new ones.
-		for src := range seen {
-			if err := mgr.DeleteByMetadata(ctx, map[string]string{"source": src}); err != nil {
+		for source := range sources {
+			if err := manager.DeleteByMetadata(ctx, map[string]string{"source": source}); err != nil {
 				return fmt.Errorf("ingest: delete old chunks: %w", err)
 			}
 		}
 	}
-
-	if _, err := store.Upsert(ctx, allDocs, allEmbeddings); err != nil {
+	if _, err := store.Upsert(ctx, docs, embeddings); err != nil {
 		return fmt.Errorf("ingest: store.Upsert: %w", err)
 	}
-
 	return nil
 }

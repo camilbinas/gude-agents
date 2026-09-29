@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,8 +11,11 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// compile-time check
-var _ agent.Conversation = (*Summary)(nil)
+// compile-time checks
+var (
+	_ agent.ConversationStore = (*Summary)(nil)
+	_ agent.Flusher           = (*Summary)(nil)
+)
 
 // SummaryFunc condenses a slice of messages into a user+assistant turn.
 // The first element must be a user-role message containing the summary text.
@@ -109,11 +113,11 @@ type summaryState struct {
 	cutoffIndex int
 }
 
-// Summary wraps a Conversation and triggers background summarization when the
+// Summary wraps a ConversationStore and triggers background summarization when the
 // summarizable message count (total minus preserved) reaches the configured
 // trigger percentage of the threshold.
 type Summary struct {
-	inner          agent.Conversation
+	inner          agent.ConversationStore
 	threshold      int
 	triggerPct     int // percentage of threshold at which to trigger (default 80)
 	summarize      SummaryFunc
@@ -131,7 +135,10 @@ type Summary struct {
 	summarizing    map[string]bool // per-conversation summarization lock
 	summarizedAt   map[string]int  // message count after last summarization; re-triggers when exceeded
 	pendingSummary map[string]*summaryState
-	wg             sync.WaitGroup // tracks all in-flight summarization goroutines
+	workDone       map[string]chan struct{} // closed when the accepted chain for a conversation completes
+	flushErr       error
+	pending        int
+	idle           chan struct{} // closed whenever all accepted summary work is complete
 }
 
 // NewSummary creates a Summary strategy that triggers background summarization
@@ -139,7 +146,7 @@ type Summary struct {
 // (default 80%) of the threshold. The threshold is specified in turns
 // (user+assistant exchanges). Preserved messages are excluded from the trigger
 // count — only the summarizable portion is compared against the threshold.
-func NewSummary(inner agent.Conversation, threshold int, fn SummaryFunc, opts ...SummaryOption) (*Summary, error) {
+func NewSummary(inner agent.ConversationStore, threshold int, fn SummaryFunc, opts ...SummaryOption) (*Summary, error) {
 	if inner == nil {
 		return nil, fmt.Errorf("inner conversation must not be nil")
 	}
@@ -160,7 +167,10 @@ func NewSummary(inner agent.Conversation, threshold int, fn SummaryFunc, opts ..
 		summarizing:    make(map[string]bool),
 		summarizedAt:   make(map[string]int),
 		pendingSummary: make(map[string]*summaryState),
+		workDone:       make(map[string]chan struct{}),
+		idle:           make(chan struct{}),
 	}
+	close(s.idle)
 	for _, opt := range opts {
 		if err := opt(s); err != nil {
 			return nil, err
@@ -193,13 +203,13 @@ func NewSummaryFunc(provider agent.Provider, systemPrompt string) SummaryFunc {
 			sb.WriteString("\n")
 		}
 
-		resp, err := provider.Converse(ctx, agent.ConverseParams{
+		resp, err := provider.Stream(ctx, agent.ModelRequest{
 			System: systemPrompt,
 			Messages: []agent.Message{{
 				Role:    agent.RoleUser,
 				Content: []agent.ContentBlock{agent.TextBlock{Text: sb.String()}},
 			}},
-		})
+		}, nil)
 		if err != nil {
 			return [2]agent.Message{}, fmt.Errorf("summary func: %w", err)
 		}
@@ -232,10 +242,10 @@ func DefaultSummaryFunc(provider agent.Provider) SummaryFunc {
 // text-only equivalents.
 func NewMediaSummaryFunc(provider agent.Provider, systemPrompt string) MediaSummaryFunc {
 	return func(ctx context.Context, msg agent.Message) (agent.Message, error) {
-		resp, err := provider.Converse(ctx, agent.ConverseParams{
+		resp, err := provider.Stream(ctx, agent.ModelRequest{
 			System:   systemPrompt,
 			Messages: []agent.Message{msg},
-		})
+		}, nil)
 		if err != nil {
 			return agent.Message{}, fmt.Errorf("media summary: %w", err)
 		}
@@ -257,9 +267,20 @@ func DefaultMediaSummaryFunc(provider agent.Provider) MediaSummaryFunc {
 	)
 }
 
-// Load delegates to the inner store and returns the current state,
-// whether summarized or not.
-func (s *Summary) Load(ctx context.Context, conversationID string) ([]agent.Message, error) {
+// Load waits for summary work that was already accepted for this conversation,
+// then returns the current state. Workers use inner.Load directly so they never
+// wait on their own barrier.
+func (s *Summary) Load(ctx context.Context, conversationID string) (agent.ConversationSnapshot, error) {
+	s.mu.Lock()
+	done := s.workDone[conversationID]
+	s.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return agent.ConversationSnapshot{}, ctx.Err()
+		}
+	}
 	return s.inner.Load(ctx, conversationID)
 }
 
@@ -273,14 +294,21 @@ func (s *Summary) triggerThreshold() int {
 // summarization should be triggered. The trigger compares the summarizable
 // message count (total minus preserved) against the configured threshold
 // percentage.
-func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.Message) error {
-	if err := s.inner.Save(ctx, conversationID, msgs); err != nil {
-		return err
+func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.Message, expectedRevision uint64) (uint64, error) {
+	revision, err := s.inner.Save(ctx, conversationID, msgs, expectedRevision)
+	if err != nil {
+		return 0, err
 	}
 
 	// Don't trigger summarization if closed.
 	if s.ctx.Err() != nil {
-		return nil
+		return revision, nil
+	}
+
+	// Approval and human-input checkpoints leave tool calls unresolved. Keep the
+	// full transcript intact until every tool use has a corresponding result.
+	if hasUnresolvedToolCalls(msgs) {
+		return revision, nil
 	}
 
 	trigger := s.triggerThreshold()
@@ -290,33 +318,36 @@ func (s *Summary) Save(ctx context.Context, conversationID string, msgs []agent.
 	if summarizable < trigger {
 		delete(s.summarizedAt, conversationID)
 		s.mu.Unlock()
-		return nil
+		return revision, nil
 	}
 
 	if s.summarizing[conversationID] {
 		s.mu.Unlock()
-		return nil
+		return revision, nil
 	}
 
 	// Skip if the conversation hasn't grown since the last summarization.
 	if lastCount, ok := s.summarizedAt[conversationID]; ok && len(msgs) <= lastCount {
 		s.mu.Unlock()
-		return nil
+		return revision, nil
 	}
 	s.summarizing[conversationID] = true
 	cutoff := len(msgs)
 	s.pendingSummary[conversationID] = &summaryState{cutoffIndex: cutoff}
+	s.workDone[conversationID] = make(chan struct{})
+	if s.pending == 0 {
+		s.idle = make(chan struct{})
+	}
+	s.pending++
 	s.mu.Unlock()
 
-	s.wg.Add(1)
 	go s.runSummarize(conversationID, cutoff)
 
-	return nil
+	return revision, nil
 }
 
 // runSummarize performs background summarization for a conversation.
 func (s *Summary) runSummarize(conversationID string, cutoff int) {
-	defer s.wg.Done()
 	ctx := s.ctx
 	if s.timeout > 0 {
 		var cancel context.CancelFunc
@@ -328,26 +359,37 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 
 	defer func() {
 		s.mu.Lock()
-		// Only clear summarizing if we didn't spawn a new goroutine to replace us.
+		// A replacement worker inherits both the summarizing lock and the open
+		// per-conversation barrier. Only the terminal worker releases them.
 		if !reTriggered {
 			delete(s.summarizing, conversationID)
+			if done := s.workDone[conversationID]; done != nil {
+				close(done)
+				delete(s.workDone, conversationID)
+			}
 		}
 		delete(s.pendingSummary, conversationID)
 		if success && !reTriggered {
 			s.summarizedAt[conversationID] = cutoff
+		}
+		s.pending--
+		if s.pending == 0 {
+			close(s.idle)
 		}
 		s.mu.Unlock()
 	}()
 
 	// Load the messages that existed when summarization was triggered.
 	// We snapshot up to cutoff — anything beyond that arrived after the trigger.
-	preSummarize, err := s.inner.Load(ctx, conversationID)
+	preSnapshot, err := s.inner.Load(ctx, conversationID)
 	if err != nil {
+		s.recordError(fmt.Errorf("summary: load %q: %w", conversationID, err))
 		if s.logger != nil {
 			s.logger.Printf("summary: failed to load messages for %s: %v", conversationID, err)
 		}
 		return
 	}
+	preSummarize := preSnapshot.Messages
 
 	// Guard against cutoff exceeding current message count.
 	if cutoff > len(preSummarize) {
@@ -364,6 +406,18 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 		return
 	}
 
+	if summarizeUntil < len(preSummarize) && preSummarize[summarizeUntil].Role == agent.RoleAssistant {
+		// Keep the tail at a complete user/assistant turn boundary instead of
+		// dropping an assistant message during merge.
+		summarizeUntil--
+	}
+	if summarizeUntil <= 0 {
+		if s.logger != nil {
+			s.logger.Printf("summary: skipping summarization for %s — no complete turn before preserve_recent window", conversationID)
+		}
+		return
+	}
+
 	// Preprocess media messages: summarize non-text content into text-only equivalents.
 	toSummarize := preSummarize[:summarizeUntil]
 	if s.mediaSummaryFunc != nil {
@@ -374,62 +428,47 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 	// This may be slow (LLM call) — no locks held during this.
 	summaryPair, err := s.summarize(ctx, toSummarize)
 	if err != nil {
+		s.recordError(fmt.Errorf("summary: summarize %q: %w", conversationID, err))
 		if s.logger != nil {
 			s.logger.Printf("summary: summarization failed for %s: %v", conversationID, err)
 		}
 		return
 	}
 
-	// Re-load to capture any messages that arrived after the cutoff while
-	// the LLM was running. This happens outside the mutex to avoid blocking
-	// Save() calls from other conversations on a slow backend read.
-	latest, loadErr := s.inner.Load(ctx, conversationID)
-	if loadErr != nil {
-		if s.logger != nil {
-			s.logger.Printf("summary: failed to re-load messages for %s: %v", conversationID, loadErr)
+	// Re-load immediately before each CAS attempt. If another writer wins after
+	// the load, retry against its snapshot so no newly appended turn is lost.
+	var newMsgs []agent.Message
+	for attempt := 0; ; attempt++ {
+		latest, loadErr := s.inner.Load(ctx, conversationID)
+		if loadErr != nil {
+			s.recordError(fmt.Errorf("summary: reload %q: %w", conversationID, loadErr))
+			if s.logger != nil {
+				s.logger.Printf("summary: failed to re-load messages for %s: %v", conversationID, loadErr)
+			}
+			return
 		}
-		return
+		newMsgs = mergeSummary(latest.Messages, summarizeUntil, summaryPair)
+		if _, saveErr := s.inner.Save(ctx, conversationID, newMsgs, latest.Revision); saveErr != nil {
+			if errors.Is(saveErr, agent.ErrConversationConflict) {
+				if ctx.Err() != nil {
+					s.recordError(ctx.Err())
+					return
+				}
+				if attempt >= 15 {
+					s.recordError(fmt.Errorf("summary: save %q after CAS retries: %w", conversationID, saveErr))
+					return
+				}
+				continue
+			}
+			s.recordError(fmt.Errorf("summary: save %q: %w", conversationID, saveErr))
+			if s.logger != nil {
+				s.logger.Printf("summary: failed to save summarized messages for %s: %v", conversationID, saveErr)
+			}
+			return
+		}
+		break
 	}
 
-	// Anything in latest beyond summarizeUntil is preserved verbatim after the summary:
-	// - messages in [summarizeUntil, cutoff) are the preserved-recent window
-	// - messages beyond cutoff arrived while the LLM was running
-	preserveFrom := min(summarizeUntil, len(latest))
-	tail := latest[preserveFrom:]
-
-	// Ensure the tail starts with a user message so it alternates correctly
-	// after the summary pair (which ends with an assistant message).
-	// If the tail starts with an assistant message, include it in the
-	// summarized portion by advancing preserveFrom by one.
-	if len(tail) > 0 && tail[0].Role == agent.RoleAssistant {
-		preserveFrom++
-		if preserveFrom <= len(latest) {
-			tail = latest[preserveFrom:]
-		} else {
-			tail = nil
-		}
-	}
-
-	// Use safeTruncate to advance past any orphaned tool_result blocks whose
-	// corresponding tool_use blocks were removed during summarization.
-	tail = safeTruncate(latest, preserveFrom)
-
-	// Build the new message list: summary pair + preserved tail.
-	newMsgs := make([]agent.Message, 0, 2+len(tail))
-	summaryUserMsg := summaryPair[0]
-	newMsgs = append(newMsgs, summaryUserMsg, summaryPair[1])
-	newMsgs = append(newMsgs, tail...)
-
-	// Save the summarized conversation. The mutex is not held during I/O —
-	// the bookkeeping maps are updated in the deferred cleanup.
-	saveErr := s.inner.Save(ctx, conversationID, newMsgs)
-
-	if saveErr != nil {
-		if s.logger != nil {
-			s.logger.Printf("summary: failed to save summarized messages for %s: %v", conversationID, saveErr)
-		}
-		return
-	}
 	success = true
 	if s.logger != nil {
 		s.logger.Printf("summary: condensed %d messages → %d (conversation %q)", cutoff, len(newMsgs), conversationID)
@@ -441,16 +480,50 @@ func (s *Summary) runSummarize(conversationID string, cutoff int) {
 	// (e.g., only the summary turn remains outside the preserve window).
 	trigger := s.triggerThreshold()
 	summarizable := len(newMsgs) - s.preserveRecent
-	if summarizable >= trigger && summarizable > 2 {
+	if summarizable >= trigger && summarizable > 2 && !hasUnresolvedToolCalls(newMsgs) {
 		newCutoff := len(newMsgs)
 		s.mu.Lock()
 		reTriggered = true
 		// summarizing[conv] stays true — the new goroutine inherits it.
 		s.pendingSummary[conversationID] = &summaryState{cutoffIndex: newCutoff}
+		s.pending++
 		s.mu.Unlock()
-		s.wg.Add(1)
 		go s.runSummarize(conversationID, newCutoff)
 	}
+}
+
+func mergeSummary(latest []agent.Message, summarizeUntil int, summaryPair [2]agent.Message) []agent.Message {
+	preserveFrom := min(summarizeUntil, len(latest))
+	tail := safeTruncate(latest, preserveFrom)
+	newMsgs := make([]agent.Message, 0, 2+len(tail))
+	newMsgs = append(newMsgs, summaryPair[0], summaryPair[1])
+	return append(newMsgs, tail...)
+}
+
+// hasUnresolvedToolCalls reports whether any requested tool use lacks a later
+// result with the same ID. Results only resolve earlier unmatched uses.
+func hasUnresolvedToolCalls(msgs []agent.Message) bool {
+	unmatched := make(map[string]int)
+	unresolved := 0
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			switch block := block.(type) {
+			case agent.ToolUseBlock:
+				unmatched[block.ToolUseID]++
+				unresolved++
+			case agent.ToolResultBlock:
+				if unmatched[block.ToolUseID] == 0 {
+					continue
+				}
+				unmatched[block.ToolUseID]--
+				unresolved--
+				if unmatched[block.ToolUseID] == 0 {
+					delete(unmatched, block.ToolUseID)
+				}
+			}
+		}
+	}
+	return unresolved > 0
 }
 
 // hasNonTextContent reports whether msg contains any ImageBlock or DocumentBlock.
@@ -538,26 +611,54 @@ func (s *Summary) preprocessMediaMessages(ctx context.Context, msgs []agent.Mess
 	return processed
 }
 
-// Close cancels in-flight summarization goroutines and waits for them to finish.
-// After Close returns, no new summarization will be triggered. Safe to call
-// multiple times.
+// Close cancels in-flight summarization and waits for it to finish.
 func (s *Summary) Close() {
 	s.cancel()
-	s.wg.Wait()
+	_ = s.Flush(context.Background())
 }
 
-// Wait blocks until all in-flight background summarization goroutines have
-// finished. Unlike Close, it does not cancel them — it just waits.
-func (s *Summary) Wait() {
-	s.wg.Wait()
+// Flush waits for in-flight summarization and reports background or nested
+// store failures. Context cancellation bounds the wait.
+func (s *Summary) Flush(ctx context.Context) error {
+	s.mu.Lock()
+	idle := s.idle
+	s.mu.Unlock()
+	select {
+	case <-idle:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	s.mu.Lock()
+	err := s.flushErr
+	s.flushErr = nil
+	s.mu.Unlock()
+	if flusher, ok := s.inner.(agent.Flusher); ok {
+		err = errors.Join(err, flusher.Flush(ctx))
+	}
+	return err
 }
 
-// List delegates to the inner store.
+func (s *Summary) recordError(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	s.flushErr = errors.Join(s.flushErr, err)
+	s.mu.Unlock()
+}
+
 func (s *Summary) List(ctx context.Context) ([]string, error) {
-	return s.inner.List(ctx)
+	manager, ok := s.inner.(agent.ConversationManager)
+	if !ok {
+		return nil, fmt.Errorf("conversation: inner store does not support List")
+	}
+	return manager.List(ctx)
 }
 
-// Delete delegates to the inner store.
 func (s *Summary) Delete(ctx context.Context, conversationID string) error {
-	return s.inner.Delete(ctx, conversationID)
+	manager, ok := s.inner.(agent.ConversationManager)
+	if !ok {
+		return fmt.Errorf("conversation: inner store does not support Delete")
+	}
+	return manager.Delete(ctx, conversationID)
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"pgregory.net/rapid"
 )
 
@@ -20,7 +20,7 @@ func TestProperty_NDCGRangeAndPerfect(t *testing.T) {
 			expectedIDs[i] = fmt.Sprintf("doc_%d_%s", i, suffix)
 		}
 
-		extractID := func(d agent.Document) string {
+		extractID := func(d rag.Document) string {
 			return d.Metadata["id"]
 		}
 
@@ -53,9 +53,9 @@ func TestProperty_NDCGRangeAndPerfect(t *testing.T) {
 		}
 
 		// Build retrieved context documents.
-		retrievedDocs := make([]agent.Document, len(shuffled))
+		retrievedDocs := make([]rag.Document, len(shuffled))
 		for i, id := range shuffled {
-			retrievedDocs[i] = agent.Document{
+			retrievedDocs[i] = rag.Document{
 				Content:  "content for " + id,
 				Metadata: map[string]string{"id": id},
 			}
@@ -82,9 +82,9 @@ func TestProperty_NDCGRangeAndPerfect(t *testing.T) {
 		// --- Part 2: Perfect ordering yields score == 1.0 ---
 
 		// Build retrieved context in the exact expected order.
-		perfectDocs := make([]agent.Document, numExpected)
+		perfectDocs := make([]rag.Document, numExpected)
 		for i, id := range expectedIDs {
-			perfectDocs[i] = agent.Document{
+			perfectDocs[i] = rag.Document{
 				Content:  "content for " + id,
 				Metadata: map[string]string{"id": id},
 			}

@@ -10,7 +10,7 @@ func nopHandler(_ context.Context, _ json.RawMessage) (string, error) { return "
 
 // TestAllowWhen_AttrCheckPasses verifies that AllowWhen permits when the condition returns true.
 func TestAllowWhen_AttrCheckPasses(t *testing.T) {
-	tl := NewRaw("t", "desc", nil, nopHandler,
+	tl := NewRaw("t", "desc", nopHandler,
 		AllowWhen(func(attrs map[string]string) bool { return attrs["org"] == "acme" }),
 	)
 	if !tl.AllowedWithAttrs(nil, map[string]string{"org": "acme"}) {
@@ -20,7 +20,7 @@ func TestAllowWhen_AttrCheckPasses(t *testing.T) {
 
 // TestAllowWhen_AttrCheckFails verifies that AllowWhen denies when the condition returns false.
 func TestAllowWhen_AttrCheckFails(t *testing.T) {
-	tl := NewRaw("t", "desc", nil, nopHandler,
+	tl := NewRaw("t", "desc", nopHandler,
 		AllowWhen(func(attrs map[string]string) bool { return attrs["org"] == "acme" }),
 	)
 	if tl.AllowedWithAttrs(nil, map[string]string{"org": "other"}) {
@@ -30,7 +30,7 @@ func TestAllowWhen_AttrCheckFails(t *testing.T) {
 
 // TestAllowWhen_CombinedRoleAndAttr verifies that both role and attr must pass.
 func TestAllowWhen_CombinedRoleAndAttr(t *testing.T) {
-	tl := NewRaw("t", "desc", nil, nopHandler,
+	tl := NewRaw("t", "desc", nopHandler,
 		AllowRoles("admin"),
 		AllowWhen(func(attrs map[string]string) bool { return attrs["org"] == "acme" }),
 	)
@@ -51,7 +51,7 @@ func TestAllowWhen_CombinedRoleAndAttr(t *testing.T) {
 
 // TestAllowWhen_MultipleConditionsANDed verifies that multiple AllowWhen conditions are ANDed.
 func TestAllowWhen_MultipleConditionsANDed(t *testing.T) {
-	tl := NewRaw("t", "desc", nil, nopHandler,
+	tl := NewRaw("t", "desc", nopHandler,
 		AllowWhen(func(attrs map[string]string) bool { return attrs["org"] == "acme" }),
 		AllowWhen(func(attrs map[string]string) bool { return attrs["tier"] == "premium" }),
 	)
@@ -67,7 +67,7 @@ func TestAllowWhen_MultipleConditionsANDed(t *testing.T) {
 
 // TestAllowWhen_NoPolicyAlwaysAllowed verifies no-policy tools are always allowed.
 func TestAllowWhen_NoPolicyAlwaysAllowed(t *testing.T) {
-	tl := NewRaw("t", "desc", nil, nopHandler)
+	tl := NewRaw("t", "desc", nopHandler)
 	if !tl.AllowedWithAttrs(nil, nil) {
 		t.Error("tool with no policy should always be allowed")
 	}
@@ -77,7 +77,7 @@ func TestAllowWhen_NoPolicyAlwaysAllowed(t *testing.T) {
 }
 
 func TestDenyWhen_BlocksOnMatch(t *testing.T) {
-	restricted := NewRaw("api", "api", map[string]any{"type": "object"},
+	restricted := NewRaw("api", "api",
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
 		DenyWhen(func(attrs map[string]string) bool { return attrs["region"] == "restricted" }),
 	)
@@ -90,7 +90,7 @@ func TestDenyWhen_BlocksOnMatch(t *testing.T) {
 }
 
 func TestDenyWhen_TakesPrecedenceOverAllowWhen(t *testing.T) {
-	t1 := NewRaw("api", "api", map[string]any{"type": "object"},
+	t1 := NewRaw("api", "api",
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
 		AllowWhen(func(attrs map[string]string) bool { return attrs["plan"] == "enterprise" }),
 		DenyWhen(func(attrs map[string]string) bool { return attrs["suspended"] == "true" }),
@@ -108,7 +108,7 @@ func TestDenyWhen_TakesPrecedenceOverAllowWhen(t *testing.T) {
 // TestDenyWhen_ORSemantics_AnyMatchDenies explicitly documents that multiple
 // DenyWhen conditions use OR semantics — any single match is enough to deny.
 func TestDenyWhen_ORSemantics_AnyMatchDenies(t *testing.T) {
-	tl := NewRaw("api", "api", map[string]any{"type": "object"},
+	tl := NewRaw("api", "api",
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
 		DenyWhen(func(attrs map[string]string) bool { return attrs["x"] == "1" }),
 		DenyWhen(func(attrs map[string]string) bool { return attrs["y"] == "1" }),

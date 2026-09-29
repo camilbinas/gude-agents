@@ -2,18 +2,16 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// TestIntegration_EventHook_FullLifecycle verifies that EventHook methods fire
-// correctly during a real LLM invocation with tool calls.
+// TestIntegration_EventHook_FullLifecycle verifies that detailed lifecycle and
+// tool events are emitted correctly during a real LLM invocation with tool calls.
 func TestIntegration_EventHook_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
@@ -26,90 +24,87 @@ func TestIntegration_EventHook_FullLifecycle(t *testing.T) {
 		return "42", nil
 	})
 
-	a, err := agent.New(p,
-		prompt.Text("You are a calculator. Always use the calculate tool for math. Be very brief."),
-		[]tool.Tool{calcTool},
+	a, err := agent.New(
+		p,
+		"You are a calculator. Always use the calculate tool for math. Be very brief.",
+		agent.WithTools(calcTool),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hook := &lifecycleHook{}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	c := agent.NewContext(ctx).WithEventHook(hook)
-	result, err := a.Invoke(c, "What is 7 times 6?")
-	if err != nil {
-		t.Fatalf("Invoke error: %v", err)
+	counts := lifecycleCounts{}
+	c := agent.NewContext(ctx).WithDetailedEvents()
+	var result *agent.Result
+	for event, streamErr := range a.Stream(c, "What is 7 times 6?") {
+		if streamErr != nil {
+			t.Fatalf("Stream error: %v", streamErr)
+		}
+		switch event.Type {
+		case agent.EventModelStart:
+			counts.modelStartCount++
+		case agent.EventModelEnd:
+			counts.modelEndCount++
+			counts.stopReasons = append(counts.stopReasons, event.Lifecycle.StopReason)
+		case agent.EventToolStart:
+			counts.toolStartCount++
+			counts.toolNames = append(counts.toolNames, event.Tool.Name)
+		case agent.EventToolEnd:
+			counts.toolEndCount++
+		case agent.EventEnd:
+			result = event.Result
+		}
 	}
-	if !strings.Contains(result, "42") {
-		t.Logf("Warning: expected '42' in response, got: %s", result)
+	if result == nil {
+		t.Fatal("stream ended without a result")
+	}
+	if !strings.Contains(result.Text, "42") {
+		t.Logf("Warning: expected '42' in response, got: %s", result.Text)
 	}
 
-	// OnModelStart should fire at least twice (tool call + final response).
-	if hook.modelStartCount < 2 {
-		t.Errorf("expected OnModelStart >= 2, got %d", hook.modelStartCount)
+	// Model start should fire at least twice (tool call + final response).
+	if counts.modelStartCount < 2 {
+		t.Errorf("expected model_start >= 2, got %d", counts.modelStartCount)
 	}
-	if hook.modelEndCount != hook.modelStartCount {
-		t.Errorf("OnModelStart=%d != OnModelEnd=%d", hook.modelStartCount, hook.modelEndCount)
+	if counts.modelEndCount != counts.modelStartCount {
+		t.Errorf("model_start=%d != model_end=%d", counts.modelStartCount, counts.modelEndCount)
 	}
-	// OnToolCallStart should fire at least once.
-	if hook.toolStartCount < 1 {
-		t.Errorf("expected OnToolCallStart >= 1, got %d", hook.toolStartCount)
+	if counts.toolStartCount < 1 {
+		t.Errorf("expected tool_start >= 1, got %d", counts.toolStartCount)
 	}
-	if hook.toolEndCount != hook.toolStartCount {
-		t.Errorf("OnToolCallStart=%d != OnToolCallEnd=%d", hook.toolStartCount, hook.toolEndCount)
+	if counts.toolEndCount != counts.toolStartCount {
+		t.Errorf("tool_start=%d != tool_end=%d", counts.toolStartCount, counts.toolEndCount)
 	}
 
-	// Verify stop reasons include both tool_use and end_turn.
 	hasToolUse := false
 	hasEndTurn := false
-	for _, r := range hook.stopReasons {
-		if r == "tool_use" {
+	for _, reason := range counts.stopReasons {
+		if reason == "tool_use" {
 			hasToolUse = true
 		}
-		if r == "end_turn" {
+		if reason == "end_turn" {
 			hasEndTurn = true
 		}
 	}
 	if !hasToolUse {
-		t.Error("expected at least one OnModelEnd with stop_reason=tool_use")
+		t.Error("expected at least one model_end with stop_reason=tool_use")
 	}
 	if !hasEndTurn {
-		t.Error("expected at least one OnModelEnd with stop_reason=end_turn")
+		t.Error("expected at least one model_end with stop_reason=end_turn")
 	}
 
-	t.Logf("EventHook: modelStart=%d, modelEnd=%d, toolStart=%d, toolEnd=%d, stopReasons=%v",
-		hook.modelStartCount, hook.modelEndCount, hook.toolStartCount, hook.toolEndCount, hook.stopReasons)
+	t.Logf("Events: modelStart=%d, modelEnd=%d, toolStart=%d, toolEnd=%d, stopReasons=%v",
+		counts.modelStartCount, counts.modelEndCount, counts.toolStartCount, counts.toolEndCount, counts.stopReasons)
 }
 
-// lifecycleHook tracks EventHook invocations for verification.
-type lifecycleHook struct {
-	agent.BaseEventHook
+type lifecycleCounts struct {
 	modelStartCount int
 	modelEndCount   int
 	toolStartCount  int
 	toolEndCount    int
 	stopReasons     []string
 	toolNames       []string
-}
-
-func (h *lifecycleHook) OnModelStart(_ *agent.Context) {
-	h.modelStartCount++
-}
-
-func (h *lifecycleHook) OnModelEnd(_ *agent.Context, stopReason string) {
-	h.modelEndCount++
-	h.stopReasons = append(h.stopReasons, stopReason)
-}
-
-func (h *lifecycleHook) OnToolCallStart(_ *agent.Context, toolName string, _ json.RawMessage) {
-	h.toolStartCount++
-	h.toolNames = append(h.toolNames, toolName)
-}
-
-func (h *lifecycleHook) OnToolCallEnd(_ *agent.Context, _ string, _ string, _ error, _ time.Duration) {
-	h.toolEndCount++
 }

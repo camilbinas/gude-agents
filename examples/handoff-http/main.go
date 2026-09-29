@@ -1,13 +1,11 @@
-// Example: Human handoff in a multi-tenant HTTP environment.
+// Example: Human input in a multi-tenant HTTP environment.
 //
-// A single Agent instance serves multiple concurrent conversations.
-// Each request provides a conversation_id, which is passed via
-// c.WithConversationID on the context. The agent uses WithSharedMemory
-// so it doesn't bind to a single conversation at construction time.
+// A single Agent instance serves multiple concurrent conversations. Each
+// request supplies a conversation ID through its invocation Context.
 //
 // Flow:
 //
-//	POST /chat          → 200 (normal) or 202 (handoff pending)
+//	POST /chat          → 200 (normal) or 202 (human input pending)
 //	POST /chat/resume   → 200 (agent continues with human input)
 //
 // Run:
@@ -19,7 +17,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -27,35 +24,40 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// pendingHandoffs stores handoff requests keyed by conversation ID.
-// In production, use Redis/DB instead of in-memory.
+// pendingInterrupts stores resumable interrupts keyed by conversation ID.
+// In production, configure an InterruptStore backed by Redis or a database.
 var (
-	pendingHandoffs = map[string]*agent.HandoffRequest{}
-	handoffMu       sync.Mutex
+	pendingInterrupts = map[string]*agent.Interrupt{}
+	interruptMu       sync.Mutex
 )
 
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
-
 	store := conversation.NewInMemory()
 
-	// Single agent instance shared across all requests.
-	// WithSharedMemory means no hardcoded conversationID — each request
-	// provides its own via c.WithConversationID on the context.
-	a, err := agent.New(provider, prompt.Text(
+	lookup := tool.NewRaw(
+		"lookup",
+		"Look up data",
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			return `{"found":true}`, nil
+		},
+		tool.WithSchema(map[string]any{"type": "object"}),
+	)
+
+	a, err := agent.New(
+		provider,
 		"You are a support agent. Use request_human_input when you need approval.",
-	), []tool.Tool{
-		agent.NewHandoffTool("request_human_input", ""),
-		tool.NewRaw("lookup", "Look up data", map[string]any{"type": "object"},
-			func(ctx context.Context, input json.RawMessage) (string, error) {
-				return `{"found": true}`, nil
-			}),
-	}, agent.WithSharedConversation(store), agent.WithMaxIterations(10))
+		agent.WithTools(
+			agent.NewHumanInputTool("request_human_input", ""),
+			lookup,
+		),
+		agent.WithConversationStore(store),
+		agent.WithMaxIterations(10),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -99,38 +101,31 @@ func handleChat(a *agent.Agent) http.HandlerFunc {
 			http.Error(w, "conversation_id is required", http.StatusBadRequest)
 			return
 		}
-
-		// Per-request conversation ID — the key to multi-tenancy.
-		c := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
-
-		result, err := a.Invoke(c, req.Message)
-
-		if errors.Is(err, agent.ErrHandoffRequested) {
-			hr, _ := agent.GetHandoffRequest(c)
-
-			handoffMu.Lock()
-			pendingHandoffs[req.ConversationID] = hr
-			handoffMu.Unlock()
-
-			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(chatResponse{
-				ConversationID: req.ConversationID,
-				Handoff: &handoffResponse{
-					Reason:   hr.Reason,
-					Question: hr.Question,
-				},
-			})
+		if req.Message == "" {
+			http.Error(w, "message is required", http.StatusBadRequest)
 			return
 		}
 
+		ctx := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+		result, err := a.Invoke(ctx, req.Message)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		json.NewEncoder(w).Encode(chatResponse{
+		if result.StopReason == agent.StopInterrupt {
+			if !isHumanInput(result.Interrupt) {
+				http.Error(w, "agent returned an unexpected interrupt", http.StatusInternalServerError)
+				return
+			}
+			storePending(req.ConversationID, result.Interrupt)
+			writeInterrupt(w, req.ConversationID, result.Interrupt)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, chatResponse{
 			ConversationID: req.ConversationID,
-			Response:       result,
+			Response:       result.Text,
 		})
 	}
 }
@@ -142,30 +137,85 @@ func handleResume(a *agent.Agent) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		handoffMu.Lock()
-		hr, ok := pendingHandoffs[req.ConversationID]
-		if ok {
-			delete(pendingHandoffs, req.ConversationID)
+		if req.ConversationID == "" {
+			http.Error(w, "conversation_id is required", http.StatusBadRequest)
+			return
 		}
-		handoffMu.Unlock()
-
-		if !ok {
-			http.Error(w, "no pending handoff for this conversation", http.StatusNotFound)
+		if req.HumanResponse == "" {
+			http.Error(w, "human_response is required", http.StatusBadRequest)
 			return
 		}
 
-		// Resume uses the ConversationID stored in the HandoffRequest.
-		c := agent.NewContext(r.Context())
-		result, err := a.ResumeInvoke(c, hr, req.HumanResponse)
+		interrupt, ok := loadPending(req.ConversationID)
+		if !ok {
+			http.Error(w, "no pending human input for this conversation", http.StatusNotFound)
+			return
+		}
+
+		ctx := agent.NewContext(r.Context()).WithConversationID(req.ConversationID)
+		result, err := a.Resume(ctx, interrupt, agent.Respond(req.HumanResponse))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		json.NewEncoder(w).Encode(chatResponse{
+		deletePending(req.ConversationID, interrupt)
+		if result.StopReason == agent.StopInterrupt {
+			if !isHumanInput(result.Interrupt) {
+				http.Error(w, "agent returned an unexpected interrupt", http.StatusInternalServerError)
+				return
+			}
+			storePending(req.ConversationID, result.Interrupt)
+			writeInterrupt(w, req.ConversationID, result.Interrupt)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, chatResponse{
 			ConversationID: req.ConversationID,
-			Response:       result,
+			Response:       result.Text,
 		})
+	}
+}
+
+func isHumanInput(in *agent.Interrupt) bool {
+	return in != nil && in.Type == agent.InterruptHumanInput && in.Input != nil
+}
+
+func storePending(conversationID string, in *agent.Interrupt) {
+	interruptMu.Lock()
+	defer interruptMu.Unlock()
+	pendingInterrupts[conversationID] = in
+}
+
+func loadPending(conversationID string) (*agent.Interrupt, bool) {
+	interruptMu.Lock()
+	defer interruptMu.Unlock()
+	in, ok := pendingInterrupts[conversationID]
+	return in, ok
+}
+
+func deletePending(conversationID string, expected *agent.Interrupt) {
+	interruptMu.Lock()
+	defer interruptMu.Unlock()
+	if pendingInterrupts[conversationID] == expected {
+		delete(pendingInterrupts, conversationID)
+	}
+}
+
+func writeInterrupt(w http.ResponseWriter, conversationID string, in *agent.Interrupt) {
+	writeJSON(w, http.StatusAccepted, chatResponse{
+		ConversationID: conversationID,
+		Handoff: &handoffResponse{
+			Reason:   in.Input.Reason,
+			Question: in.Input.Question,
+		},
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		log.Printf("encode response: %v", err)
 	}
 }

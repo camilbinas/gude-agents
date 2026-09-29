@@ -12,7 +12,7 @@ import (
 // Feature: token-estimation, Property 5: Pre-flight budget check correctness
 // **Validates: Requirements 5.4, 5.5**
 
-// TestProperty_PreFlightBudgetCheck verifies that for any ConverseParams and any
+// TestProperty_PreFlightBudgetCheck verifies that for any ModelRequest and any
 // remaining TPM capacity, the RateLimiter.PreFlightCheck returns ErrRateLimitExceeded
 // if and only if the estimated input tokens exceed the remaining capacity. When
 // estimated tokens are within capacity, it returns nil.
@@ -26,8 +26,8 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 			// or 0 to tpmCapacity to allow full exhaustion).
 			priorUsage := rapid.IntRange(0, tpmCapacity).Draw(rt, "priorUsage")
 
-			// Generate random ConverseParams.
-			params := drawConverseParams(rt)
+			// Generate random ModelRequest.
+			params := drawModelRequest(rt)
 
 			// Use CharEstimator (deterministic, no errors) to compute expected estimate.
 			estimator := CharEstimator{}
@@ -83,8 +83,8 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 			// Generate a random TPM capacity (1–100000).
 			tpmCapacity := rapid.IntRange(1, 100000).Draw(rt, "tpmCapacity")
 
-			// Generate random ConverseParams.
-			params := drawConverseParams(rt)
+			// Generate random ModelRequest.
+			params := drawModelRequest(rt)
 
 			// Use CharEstimator to compute expected estimate.
 			estimator := CharEstimator{}
@@ -141,8 +141,8 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 			// Generate a random TPM capacity (1–50000).
 			tpmCapacity := rapid.IntRange(1, 50000).Draw(rt, "tpmCapacity")
 
-			// Generate random ConverseParams.
-			params := drawConverseParams(rt)
+			// Generate random ModelRequest.
+			params := drawModelRequest(rt)
 
 			// Use CharEstimator to compute expected estimate.
 			estimator := CharEstimator{}
@@ -200,8 +200,8 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 			// Generate a random TPM capacity (1–50000).
 			tpmCapacity := rapid.IntRange(1, 50000).Draw(rt, "tpmCapacity")
 
-			// Generate random ConverseParams.
-			params := drawConverseParams(rt)
+			// Generate random ModelRequest.
+			params := drawModelRequest(rt)
 
 			// Use CharEstimator to compute expected estimate.
 			estimator := CharEstimator{}

@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -20,11 +21,11 @@ func TestStore_LoadSaveRoundTrip(t *testing.T) {
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi there"}}},
 	}
 
-	if err := store.Save(ctx, "conv-1", msgs); err != nil {
+	if err := saveLatest(ctx, store, "conv-1", msgs); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	loaded, err := store.Load(ctx, "conv-1")
+	loaded, err := loadMessages(ctx, store, "conv-1")
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestStore_LoadSaveRoundTrip(t *testing.T) {
 
 func TestStore_LoadReturnsEmptyForUnknownID(t *testing.T) {
 	store := NewInMemory()
-	loaded, err := store.Load(context.Background(), "nonexistent")
+	loaded, err := loadMessages(context.Background(), store, "nonexistent")
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -64,13 +65,13 @@ func TestStore_SaveReturnsCopy(t *testing.T) {
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "original"}}},
 	}
 
-	if err := store.Save(ctx, "conv-1", msgs); err != nil {
+	if err := saveLatest(ctx, store, "conv-1", msgs); err != nil {
 		t.Fatal(err)
 	}
 
 	msgs[0] = agent.Message{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "mutated"}}}
 
-	loaded, err := store.Load(ctx, "conv-1")
+	loaded, err := loadMessages(ctx, store, "conv-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,12 +82,10 @@ func TestStore_SaveReturnsCopy(t *testing.T) {
 	}
 }
 
-
 // TestStoreListReturnsAllSavedConversationIDs verifies that for any set of
 // distinct conversation IDs saved to a Store, calling List returns a slice
 // containing exactly those IDs (in any order), with no duplicates and no
 // missing entries.
-//
 func TestStoreListReturnsAllSavedConversationIDs(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		numConvs := rapid.IntRange(1, 20).Draw(t, "numConversations")
@@ -106,7 +105,7 @@ func TestStoreListReturnsAllSavedConversationIDs(t *testing.T) {
 			msgs := []agent.Message{
 				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hello from " + id}}},
 			}
-			if err := store.Save(ctx, id, msgs); err != nil {
+			if err := saveLatest(ctx, store, id, msgs); err != nil {
 				t.Fatalf("Save failed for %q: %v", id, err)
 			}
 		}
@@ -134,12 +133,10 @@ func TestStoreListReturnsAllSavedConversationIDs(t *testing.T) {
 	})
 }
 
-
 // TestStoreDeleteRemovesExactlyTargetConversation verifies that for any Store
 // containing a set of conversations, deleting one conversation by ID causes
 // that ID to no longer appear in List results and its messages to no longer be
 // loadable, while all other conversations remain unchanged.
-//
 func TestStoreDeleteRemovesExactlyTargetConversation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		numConvs := rapid.IntRange(2, 10).Draw(t, "numConversations")
@@ -165,7 +162,7 @@ func TestStoreDeleteRemovesExactlyTargetConversation(t *testing.T) {
 				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "msg for " + id}}},
 			}
 			savedMsgs[id] = msgs
-			if err := store.Save(ctx, id, msgs); err != nil {
+			if err := saveLatest(ctx, store, id, msgs); err != nil {
 				t.Fatalf("Save failed for %q: %v", id, err)
 			}
 		}
@@ -194,7 +191,7 @@ func TestStoreDeleteRemovesExactlyTargetConversation(t *testing.T) {
 		}
 
 		// Assert target Load returns empty.
-		loaded, err := store.Load(ctx, targetID)
+		loaded, err := loadMessages(ctx, store, targetID)
 		if err != nil {
 			t.Fatalf("Load failed for deleted %q: %v", targetID, err)
 		}
@@ -210,7 +207,7 @@ func TestStoreDeleteRemovesExactlyTargetConversation(t *testing.T) {
 			if !listedSet[id] {
 				t.Fatalf("non-deleted conversation %q missing from List", id)
 			}
-			loaded, err := store.Load(ctx, id)
+			loaded, err := loadMessages(ctx, store, id)
 			if err != nil {
 				t.Fatalf("Load failed for %q: %v", id, err)
 			}
@@ -219,4 +216,85 @@ func TestStoreDeleteRemovesExactlyTargetConversation(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestInMemoryCASConformance(t *testing.T) {
+	store := NewInMemory()
+	ctx := context.Background()
+	messages := []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "first"}}}}
+
+	revision, err := store.Save(ctx, "conv", messages, 0)
+	if err != nil || revision != 1 {
+		t.Fatalf("first Save = (%d, %v), want (1, nil)", revision, err)
+	}
+	if _, err := store.Save(ctx, "conv", messages, 0); !errors.Is(err, agent.ErrConversationConflict) {
+		t.Fatalf("stale Save error = %v, want ErrConversationConflict", err)
+	}
+	snapshot, err := store.Load(ctx, "conv")
+	if err != nil || snapshot.Revision != 1 {
+		t.Fatalf("Load = (%+v, %v), want revision 1", snapshot, err)
+	}
+}
+
+func TestInMemoryCASConcurrentOneWinner(t *testing.T) {
+	store := NewInMemory()
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for i := range 2 {
+		go func(i int) {
+			<-start
+			_, err := store.Save(ctx, "conv", []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: fmt.Sprint(i)}}}}, 0)
+			errs <- err
+		}(i)
+	}
+	close(start)
+	var successes, conflicts int
+	for range 2 {
+		err := <-errs
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, agent.ErrConversationConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected Save error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
+	}
+}
+
+func TestStore_DeepCopiesMutableContentBlocks(t *testing.T) {
+	store := NewInMemory()
+	ctx := context.Background()
+	input := []byte(`{"query":"original"}`)
+	messages := []agent.Message{{Role: agent.RoleAssistant, Content: []agent.ContentBlock{
+		agent.ToolUseBlock{ToolUseID: "call", Name: "search", Input: input},
+		agent.WidgetBlock{Type: "chart", Payload: []byte(`{"value":1}`)},
+	}}}
+	if _, err := store.Save(ctx, "conv", messages, 0); err != nil {
+		t.Fatal(err)
+	}
+	input[10] = 'X'
+	messages[0].Content[1].(agent.WidgetBlock).Payload[9] = '9'
+
+	snapshot, err := store.Load(ctx, "conv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolInput := snapshot.Messages[0].Content[0].(agent.ToolUseBlock).Input
+	widgetPayload := snapshot.Messages[0].Content[1].(agent.WidgetBlock).Payload
+	if string(toolInput) != `{"query":"original"}` || string(widgetPayload) != `{"value":1}` {
+		t.Fatalf("mutable content aliased: tool=%s widget=%s", toolInput, widgetPayload)
+	}
+	toolInput[0] = '['
+	again, err := store.Load(ctx, "conv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(again.Messages[0].Content[0].(agent.ToolUseBlock).Input); got != `{"query":"original"}` {
+		t.Fatalf("loaded mutation leaked: %s", got)
+	}
 }

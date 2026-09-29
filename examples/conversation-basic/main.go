@@ -10,28 +10,24 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
-
 	store := conversation.NewInMemory()
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a friendly assistant. Remember details the user shares."),
-		nil,
-		agent.WithConversation(store, "chat-session-1"),
+		"You are a friendly assistant. Remember details the user shares.",
+		agent.WithConversationStore(store),
 		agent.WithMaxIterations(10),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := agent.Background()
-
+	ctx := agent.Background().WithConversationID("chat-session-1")
 	turns := []string{
 		"Hi, my name is Alice and I love hiking.",
 		"What's a good trail for beginners?",
@@ -43,6 +39,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Turn %d: %s\n\n", i+1, result)
+		fmt.Printf("Turn %d: %s\n\n", i+1, result.Text)
 	}
 }

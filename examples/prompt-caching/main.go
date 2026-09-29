@@ -124,10 +124,9 @@ direct the customer to contact support@acmecorp.example.`
 func main() {
 	godotenv.Load() //nolint
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text(productCatalog),
-		nil,
+		prompt.Text(productCatalog).String(),
 		agent.WithCaching(),
 		auto.WithLogging(),
 	)
@@ -140,19 +139,21 @@ func main() {
 	// caches the system prompt. First call writes, subsequent calls read.
 	fmt.Println("── Call 1: system prompt written to cache ──")
 	ctx1 := agent.Background()
-	if err := a.InvokeStream(ctx1, "What is the price of Product C?", func(chunk string) {
+	for chunk, err := range a.TextStream(ctx1, "What is the price of Product C?") {
+		if err != nil {
+			log.Fatal(err)
+		}
 		fmt.Print(chunk)
-	}); err != nil {
-		log.Fatal(err)
 	}
 	fmt.Println()
 
 	fmt.Println("\n── Call 2: system prompt served from cache ──")
 	ctx2 := agent.Background()
-	if err := a.InvokeStream(ctx2, "Does the Industrial Widget come with a warranty?", func(chunk string) {
+	for chunk, err := range a.TextStream(ctx2, "Does the Industrial Widget come with a warranty?") {
+		if err != nil {
+			log.Fatal(err)
+		}
 		fmt.Print(chunk)
-	}); err != nil {
-		log.Fatal(err)
 	}
 	fmt.Println()
 }

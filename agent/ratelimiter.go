@@ -1047,17 +1047,17 @@ func (rl *RateLimiter) Len() int {
 	return len(rl.buckets)
 }
 
-// PreFlightCheck estimates token usage for the given params and checks whether
+// PreFlightCheck estimates token usage for the given request and checks whether
 // the estimated input tokens fit within the remaining TPM budget for key.
 // Returns ErrRateLimitExceeded if the estimate exceeds remaining capacity.
 // Returns nil (allows the call) if no TokenEstimator is configured, or if the
 // estimator returns an error (fail-open).
-func (rl *RateLimiter) PreFlightCheck(ctx context.Context, key string, params ConverseParams) error {
+func (rl *RateLimiter) PreFlightCheck(ctx context.Context, key string, req ModelRequest) error {
 	if rl.tokenEstimator == nil {
 		return nil
 	}
 
-	estimate, err := rl.tokenEstimator.EstimateTokens(ctx, params)
+	estimate, err := rl.tokenEstimator.EstimateTokens(ctx, req)
 	if err != nil {
 		// Fail-open: allow the call when estimation fails.
 		return nil

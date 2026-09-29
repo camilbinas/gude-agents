@@ -8,12 +8,10 @@ import (
 	"pgregory.net/rapid"
 )
 
-
 // TestFilterRoundTripRetainsOnlyTextBlocks verifies that for any valid message
 // slice, saving then loading through Filter returns messages containing only
 // TextBlock content blocks. Every TextBlock from the original messages appears
 // in the result, and messages that contained no TextBlock are omitted entirely.
-//
 func TestFilterRoundTripRetainsOnlyTextBlocks(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		msgs := genMessages(t)
@@ -22,11 +20,11 @@ func TestFilterRoundTripRetainsOnlyTextBlocks(t *testing.T) {
 		filter := NewFilter(store)
 		ctx := context.Background()
 
-		if err := filter.Save(ctx, "conv", msgs); err != nil {
+		if err := saveLatest(ctx, filter, "conv", msgs); err != nil {
 			t.Fatalf("Save failed: %v", err)
 		}
 
-		loaded, err := filter.Load(ctx, "conv")
+		loaded, err := loadMessages(ctx, filter, "conv")
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
 		}

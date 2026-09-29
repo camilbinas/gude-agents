@@ -1,156 +1,16 @@
-# OpenAI Provider
-
-The `openai` package uses the OpenAI Chat Completions API via the official `openai-go` SDK. It also works with any OpenAI-compatible endpoint (e.g., local models, Azure OpenAI) via `WithBaseURL`.
-
-Import: `github.com/camilbinas/gude-agents/agent/provider/openai`
-
-## Constructor
+# OpenAI provider
 
 ```go
-func New(model string, opts ...Option) (*OpenAIProvider, error)
-```
+import "github.com/camilbinas/gude-agents/agent/provider/openai"
 
-Creates a provider for any OpenAI model name. By default, reads the API key from the `OPENAI_API_KEY` environment variable.
-
-## Options
-
-### `WithAPIKey`
-
-```go
-func WithAPIKey(key string) Option
-```
-
-Sets the OpenAI API key programmatically. If not set, the SDK reads from the `OPENAI_API_KEY` environment variable.
-
-### `WithBaseURL`
-
-```go
-func WithBaseURL(url string) Option
-```
-
-Sets a custom base URL for OpenAI-compatible endpoints. Use this to point at Azure OpenAI, local model servers, or any API that implements the OpenAI Chat Completions format.
-
-### `WithMaxTokens`
-
-```go
-func WithMaxTokens(n int64) Option
-```
-
-Sets the maximum number of tokens the model can generate in a response.
-
-### `WithThinking`
-
-```go
-func WithThinking(effort pvdr.ThinkingEffort) Option
-```
-
-Sets the reasoning effort for o-series and reasoning-capable models. Mapped to OpenAI's `reasoning_effort` parameter. Use the shared constants from the `provider` package:
-
-```go
-import pvdr "github.com/camilbinas/gude-agents/agent/provider"
-
-provider, _ := openai.O4Mini(openai.WithThinking(pvdr.ThinkingHigh))
-```
-
-See [Extended Thinking](../providers.md#extended-thinking) for details.
-
-## Model Constructors
-
-**GPT Models**
-
-| Function | Model ID |
-|---|---|
-| `GPT4o()` | `gpt-4o` |
-| `GPT4oMini()` | `gpt-4o-mini` |
-| `GPT4_1()` | `gpt-4.1` |
-| `GPT4_1Mini()` | `gpt-4.1-mini` |
-| `GPT4_1Nano()` | `gpt-4.1-nano` |
-| `GPT5()` | `gpt-5` |
-| `GPT5Mini()` | `gpt-5-mini` |
-| `GPT5Nano()` | `gpt-5-nano` |
-| `GPT5_4()` | `gpt-5.4` |
-| `GPT5_4Mini()` | `gpt-5.4-mini` |
-| `GPT5_4Nano()` | `gpt-5.4-nano` |
-| `GPT5_5()` | `gpt-5.5` |
-| `GPT5_6()` | `gpt-5.6` (routes to Sol) |
-| `GPT5_6Sol()` | `gpt-5.6-sol` |
-| `GPT5_6Terra()` | `gpt-5.6-terra` |
-| `GPT5_6Luna()` | `gpt-5.6-luna` |
-
-In the GPT-5.6 family, Sol, Terra and Luna are durable capability tiers that replace the older unsuffixed/mini/nano naming: Sol is the flagship, Terra balances cost and intelligence, Luna is the cheapest.
-
-The `gpt-4o`, `gpt-4.1`, `gpt-5` and o-series constructors above are retained for compatibility but no longer appear in OpenAI's current pricing table.
-
-**Not available through this provider:** `gpt-5.5-pro`, `gpt-5.4-pro` and `gpt-5.3-codex` are served only by the Responses API. This provider uses Chat Completions, where those models return HTTP 404. There are deliberately no constructors for them.
-
-**Reasoning Models**
-
-| Function | Model ID |
-|---|---|
-| `O3()` | `o3` |
-| `O3Mini()` | `o3-mini` |
-| `O4Mini()` | `o4-mini` |
-
-> **Embedder functions** (`EmbeddingSmall`, `EmbeddingLarge`) have moved to `github.com/camilbinas/gude-agents/agent/rag/openai`. See [RAG Pipeline](../rag.md) for usage.
-
-## Tier Aliases
-
-All three map to the GPT-5.6 family:
-
-| Function | Model | Description |
-|---|---|---|
-| `Cheapest()` | GPT-5.6 Luna | Fastest, lowest cost |
-| `Standard()` | GPT-5.6 Terra | Balanced |
-| `Smartest()` | GPT-5.6 Sol | Flagship, most capable |
-
-```go
-provider, err := openai.Standard() // GPT-5.6 Terra
-```
-
-## Code Example
-
-```go
-package main
-
-import (
-	"fmt"
-	"log"
-
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/openai"
+prov, err := openai.New("gpt-4o-mini",
+    openai.WithMaxTokens(4096),
 )
-
-func main() {
-	// Uses OPENAI_API_KEY from the environment.
-	provider, err := openai.GPT4_1(
-		openai.WithMaxTokens(2048),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant."),
-		nil,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	result, err := a.Invoke(agent.Background(), "Explain channels in Go.")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-}
+a, err := agent.New(prov, "Answer clearly.")
 ```
 
-## See Also
+Credentials default to `OPENAI_API_KEY`; `WithAPIKey` overrides it. `WithBaseURL` targets compatible APIs. Other options configure maximum tokens, portable thinking effort for supported models, and system-prompt caching usage reporting.
 
-- [LLM Providers Overview](../providers.md) — interfaces, extended thinking, direct SDK access, custom providers
-- [Fallback Provider](../fallback-provider.md) — automatic failover across providers
-- [RAG Pipeline](../rag.md) — OpenAI embedder implementations
-- [Ollama Provider](ollama.md) — local Ollama server (uses this provider internally)
-- [vLLM Provider](vllm.md) — local vLLM server (uses this provider internally)
+Compatible endpoints differ in tool calling, streaming event shape, usage reporting, images, and sampling parameters. Verify those capabilities before relying on them. Prefer the dedicated [Ollama](ollama.md) or [vLLM](vllm.md) provider when its local-server behavior is required.
+
+OpenAI embedding/vector integrations are available under `agent/rag/openai`. See [Providers](../providers.md).

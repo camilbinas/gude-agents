@@ -1,20 +1,50 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 )
 
-// AuditConfig bundles an AuditHook implementation with content-capture preferences.
-// Pass it to WithAuditHook when constructing an Agent.
-type AuditConfig struct {
-	Hook           AuditHook
-	CaptureContent bool
+// AuditSink receives stable JSON-serializable audit records.
+type AuditSink interface {
+	WriteAudit(context.Context, any)
+}
+
+// AuditOption configures the internal audit observer.
+type AuditOption func(*auditOptions)
+
+type auditOptions struct {
+	captureContent bool
+}
+
+// WithAuditContent enables user-message, response, tool-input and tool-output
+// capture. Audit content is redacted by default.
+func WithAuditContent() AuditOption {
+	return func(options *auditOptions) { options.captureContent = true }
+}
+
+// WithAudit registers an internal invoke/tool/interrupt observer that writes
+// stable records to sink.
+func WithAudit(sink AuditSink, options ...AuditOption) Option {
+	return func(a *Agent) error {
+		if sink == nil || (reflect.ValueOf(sink).Kind() == reflect.Ptr && reflect.ValueOf(sink).IsNil()) {
+			return fmt.Errorf("WithAudit: sink must not be nil")
+		}
+		cfg := auditOptions{}
+		for _, option := range options {
+			if option != nil {
+				option(&cfg)
+			}
+		}
+		a.observers = append(a.observers, &auditObserver{sink: sink, captureContent: cfg.captureContent})
+		return nil
+	}
 }
 
 // AuditEventType is the discriminator field present on all audit records.
-// It identifies which hook method a record was emitted from.
 type AuditEventType = string
 
 const (
@@ -25,20 +55,20 @@ const (
 	AuditEventApprovalRequest AuditEventType = "approval_request"
 )
 
-// AuditRecord is emitted after every tool call when an AuditHook is configured.
-// The struct is JSON-serializable: Err is encoded as "error" (omitted when nil),
-// and Duration is encoded as "duration_ms" (milliseconds).
+// AuditRecord is the stable tool-call audit wire record.
 type AuditRecord struct {
-	Event          AuditEventType  `json:"event"` // always "tool_call"
+	Event          AuditEventType  `json:"event"`
 	Principal      Principal       `json:"principal"`
+	CallID         string          `json:"call_id,omitempty"`
 	ToolName       string          `json:"tool_name"`
-	ToolInput      json.RawMessage `json:"tool_input,omitempty"`  // nil when CaptureContent is false
-	ToolOutput     string          `json:"tool_output,omitempty"` // empty when CaptureContent is false
-	Err            error           `json:"-"`                     // encoded as "error" by MarshalJSON
+	ToolInput      json.RawMessage `json:"tool_input,omitempty"`
+	ToolOutput     string          `json:"tool_output,omitempty"`
+	ResultIsError  bool            `json:"result_is_error,omitempty"`
+	Err            error           `json:"-"`
 	Allowed        bool            `json:"allowed"`
-	DenialReason   string          `json:"denial_reason,omitempty"`   // empty when Allowed is true
-	ConversationID string          `json:"conversation_id,omitempty"` // empty when no conversation ID is resolved
-	Duration       time.Duration   `json:"-"`                         // encoded as "duration_ms" by MarshalJSON
+	DenialReason   string          `json:"denial_reason,omitempty"`
+	ConversationID string          `json:"conversation_id,omitempty"`
+	Duration       time.Duration   `json:"-"`
 	Timestamp      time.Time       `json:"timestamp"`
 }
 
@@ -46,9 +76,11 @@ func (r AuditRecord) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Event          AuditEventType  `json:"event"`
 		Principal      Principal       `json:"principal"`
+		CallID         string          `json:"call_id,omitempty"`
 		ToolName       string          `json:"tool_name"`
 		ToolInput      json.RawMessage `json:"tool_input,omitempty"`
 		ToolOutput     string          `json:"tool_output,omitempty"`
+		ResultIsError  bool            `json:"result_is_error,omitempty"`
 		Error          string          `json:"error,omitempty"`
 		Allowed        bool            `json:"allowed"`
 		DenialReason   string          `json:"denial_reason,omitempty"`
@@ -56,39 +88,25 @@ func (r AuditRecord) MarshalJSON() ([]byte, error) {
 		DurationMS     int64           `json:"duration_ms"`
 		Timestamp      time.Time       `json:"timestamp"`
 	}
-	var errStr string
+	var errorText string
 	if r.Err != nil {
-		errStr = r.Err.Error()
+		errorText = r.Err.Error()
 	}
-	return json.Marshal(wire{
-		Event:          r.Event,
-		Principal:      r.Principal,
-		ToolName:       r.ToolName,
-		ToolInput:      r.ToolInput,
-		ToolOutput:     r.ToolOutput,
-		Error:          errStr,
-		Allowed:        r.Allowed,
-		DenialReason:   r.DenialReason,
-		ConversationID: r.ConversationID,
-		DurationMS:     r.Duration.Milliseconds(),
-		Timestamp:      r.Timestamp,
-	})
+	return json.Marshal(wire{r.Event, r.Principal, r.CallID, r.ToolName, r.ToolInput, r.ToolOutput,
+		r.ResultIsError, errorText, r.Allowed, r.DenialReason, r.ConversationID, r.Duration.Milliseconds(), r.Timestamp})
 }
 
-// InvokeAuditRecord carries audit data for a single Invoke / InvokeStream lifetime.
-// It is emitted by OnInvokeStart at invocation start and by OnInvokeEnd at invocation end.
-// The struct is JSON-serializable: Err is encoded as "error" (omitted when nil),
-// and Duration is encoded as "duration_ms" (milliseconds).
+// InvokeAuditRecord is the stable invocation audit wire record.
 type InvokeAuditRecord struct {
-	Event          AuditEventType `json:"event"` // "invoke_start" or "invoke_end"
+	Event          AuditEventType `json:"event"`
 	Principal      Principal      `json:"principal"`
 	ConversationID string         `json:"conversation_id,omitempty"`
 	AgentName      string         `json:"agent_name,omitempty"`
-	UserMessage    string         `json:"user_message,omitempty"` // empty when CaptureContent is false
-	Response       string         `json:"response,omitempty"`     // populated in OnInvokeEnd when CaptureContent is true
-	Err            error          `json:"-"`                      // encoded as "error" by MarshalJSON
+	UserMessage    string         `json:"user_message,omitempty"`
+	Response       string         `json:"response,omitempty"`
+	Err            error          `json:"-"`
 	Usage          TokenUsage     `json:"usage"`
-	Duration       time.Duration  `json:"-"` // encoded as "duration_ms" by MarshalJSON
+	Duration       time.Duration  `json:"-"`
 	Timestamp      time.Time      `json:"timestamp"`
 }
 
@@ -105,117 +123,105 @@ func (r InvokeAuditRecord) MarshalJSON() ([]byte, error) {
 		DurationMS     int64          `json:"duration_ms,omitempty"`
 		Timestamp      time.Time      `json:"timestamp"`
 	}
-	var errStr string
+	var errorText string
 	if r.Err != nil {
-		errStr = r.Err.Error()
+		errorText = r.Err.Error()
 	}
-	return json.Marshal(wire{
-		Event:          r.Event,
-		Principal:      r.Principal,
-		ConversationID: r.ConversationID,
-		AgentName:      r.AgentName,
-		UserMessage:    r.UserMessage,
-		Response:       r.Response,
-		Error:          errStr,
-		Usage:          r.Usage,
-		DurationMS:     r.Duration.Milliseconds(),
-		Timestamp:      r.Timestamp,
-	})
+	return json.Marshal(wire{r.Event, r.Principal, r.ConversationID, r.AgentName, r.UserMessage,
+		r.Response, errorText, r.Usage, r.Duration.Milliseconds(), r.Timestamp})
 }
 
-// HandoffAuditRecord carries audit data for a human-handoff pause event.
-// It is emitted by OnHandoff when the agent enters the isHandoffResult branch.
+// HandoffAuditRecord is the stable human-input interrupt audit wire record.
 type HandoffAuditRecord struct {
-	Event          AuditEventType `json:"event"` // always "handoff"
+	Event          AuditEventType `json:"event"`
 	Principal      Principal      `json:"principal"`
 	ConversationID string         `json:"conversation_id,omitempty"`
+	InterruptID    string         `json:"interrupt_id,omitempty"`
 	Reason         string         `json:"reason,omitempty"`
 	Question       string         `json:"question,omitempty"`
 	Timestamp      time.Time      `json:"timestamp"`
 }
 
-// ApprovalAuditRecord carries audit data for a tool-approval pause event.
-// It is emitted by OnApprovalRequest when the agent enters the isApprovalResult branch.
+// ApprovalAuditRecord is the stable per-call approval audit wire record.
 type ApprovalAuditRecord struct {
-	Event          AuditEventType  `json:"event"` // always "approval_request"
+	Event          AuditEventType  `json:"event"`
 	Principal      Principal       `json:"principal"`
 	ConversationID string          `json:"conversation_id,omitempty"`
+	InterruptID    string          `json:"interrupt_id,omitempty"`
+	CallID         string          `json:"call_id,omitempty"`
 	ToolName       string          `json:"tool_name,omitempty"`
-	ToolInput      json.RawMessage `json:"tool_input,omitempty"` // nil when CaptureContent is false
+	ToolInput      json.RawMessage `json:"tool_input,omitempty"`
 	Timestamp      time.Time       `json:"timestamp"`
 }
 
-// AuditHook receives audit events from the agent.
-// Embed NoopAuditHook to satisfy the interface without implementing every method.
-type AuditHook interface {
-	// OnToolCall is called after every tool call.
-	OnToolCall(record AuditRecord)
-	// OnInvokeStart is called at the start of every Invoke / InvokeStream.
-	OnInvokeStart(record InvokeAuditRecord)
-	// OnInvokeEnd is called at the end of every Invoke / InvokeStream.
-	OnInvokeEnd(record InvokeAuditRecord)
-	// OnHandoff is called when the agent pauses for human input.
-	OnHandoff(record HandoffAuditRecord)
-	// OnApprovalRequest is called when a tool requires explicit approval.
-	OnApprovalRequest(record ApprovalAuditRecord)
+const (
+	DenialReasonRolePolicy         = "role_policy"
+	DenialReasonAttrCondition      = "attr_condition"
+	DenialReasonGuard              = "guard"
+	DenialReasonToolApprovalDenied = "tool_approval_denied"
+)
+
+type auditObserver struct {
+	sink           AuditSink
+	captureContent bool
 }
 
-// NoopAuditHook provides empty implementations of all AuditHook methods.
-// Embed it in custom hook types to satisfy the interface without implementing every method.
-//
-//	type MySIEMHook struct {
-//	    agent.NoopAuditHook        // free pass on OnInvokeStart, OnInvokeEnd, OnHandoff, OnApprovalRequest
-//	}
-//	func (h *MySIEMHook) OnToolCall(r agent.AuditRecord) { /* ... */ }
-type NoopAuditHook struct{}
+func (o *auditObserver) ObserveInvoke(ctx context.Context, record InvokeRecord) context.Context {
+	event := AuditEventInvokeStart
+	if record.Phase == End {
+		event = AuditEventInvokeEnd
+	}
+	out := InvokeAuditRecord{
+		Event: event, Principal: record.Principal, ConversationID: record.ConversationID,
+		AgentName: record.AgentName, Err: record.Err, Usage: record.Usage,
+		Duration: record.Duration, Timestamp: record.Timestamp,
+	}
+	if o.captureContent {
+		out.UserMessage, out.Response = record.UserMessage, record.Response
+	}
+	o.sink.WriteAudit(ctx, out)
+	return ctx
+}
 
-func (NoopAuditHook) OnToolCall(AuditRecord)                {}
-func (NoopAuditHook) OnInvokeStart(InvokeAuditRecord)       {}
-func (NoopAuditHook) OnInvokeEnd(InvokeAuditRecord)         {}
-func (NoopAuditHook) OnHandoff(HandoffAuditRecord)          {}
-func (NoopAuditHook) OnApprovalRequest(ApprovalAuditRecord) {}
+func (o *auditObserver) ObserveTool(ctx context.Context, record ToolCallRecord) context.Context {
+	if record.Phase != End {
+		return ctx
+	}
+	out := AuditRecord{
+		Event: AuditEventToolCall, Principal: record.Principal, CallID: record.CallID,
+		ToolName: record.Name, ResultIsError: record.ResultIsError, Err: record.Err,
+		Allowed: record.Allowed, DenialReason: record.DenialReason,
+		ConversationID: record.ConversationID, Duration: record.Duration, Timestamp: record.Timestamp,
+	}
+	if o.captureContent {
+		out.ToolInput, out.ToolOutput = cloneRaw(record.Input), record.Output
+	}
+	o.sink.WriteAudit(ctx, out)
+	return ctx
+}
 
-// DenialReasonRolePolicy is set when the caller's roles did not satisfy the tool's role policy.
-const DenialReasonRolePolicy = "role_policy"
-
-// DenialReasonAttrCondition is set when the caller's attributes did not satisfy an AllowWhen condition.
-const DenialReasonAttrCondition = "attr_condition"
-
-// DenialReasonGuard is set when a tool Guard function returned a denial decision.
-const DenialReasonGuard = "guard"
-
-// DenialReasonToolApprovalDenied is set when a human reviewer denied a pending tool call via ResumeWithApproval.
-const DenialReasonToolApprovalDenied = "tool_approval_denied"
-
-// WithAuditHook attaches an AuditHook to the agent.
-// Returns an error if cfg.Hook is nil.
-//
-// Set CaptureContent: true to include ToolInput, ToolOutput, UserMessage, and
-// Response in audit records. The default (false) omits all payloads — use this
-// in production to avoid logging sensitive data.
-func WithAuditHook(cfg AuditConfig) Option {
-	return func(a *Agent) error {
-		if cfg.Hook == nil {
-			return fmt.Errorf("WithAuditHook: Hook must not be nil")
+func (o *auditObserver) ObserveInterrupt(ctx context.Context, record InterruptRecord) context.Context {
+	if record.Phase != End {
+		return ctx
+	}
+	switch record.Type {
+	case InterruptHumanInput:
+		o.sink.WriteAudit(ctx, HandoffAuditRecord{
+			Event: AuditEventHandoff, Principal: record.Principal, ConversationID: record.ConversationID,
+			InterruptID: record.InterruptID, Reason: record.Reason, Question: record.Question, Timestamp: record.Timestamp,
+		})
+	case InterruptApproval:
+		for _, call := range record.ApprovalCalls {
+			input := json.RawMessage(nil)
+			if o.captureContent {
+				input = cloneRaw(call.Input)
+			}
+			o.sink.WriteAudit(ctx, ApprovalAuditRecord{
+				Event: AuditEventApprovalRequest, Principal: record.Principal, ConversationID: record.ConversationID,
+				InterruptID: record.InterruptID, CallID: call.CallID, ToolName: call.Name,
+				ToolInput: input, Timestamp: record.Timestamp,
+			})
 		}
-		a.auditHook = cfg.Hook
-		a.auditCaptureContent = cfg.CaptureContent
-		return nil
 	}
-}
-
-// inputForAudit returns input for an audit record, or nil when capture is disabled.
-func inputForAudit(input json.RawMessage, capture bool) json.RawMessage {
-	if !capture {
-		return nil
-	}
-	return input
-}
-
-// outputForAudit returns output for an audit record, or "" when capture is disabled.
-func outputForAudit(output string, capture bool) string {
-	if !capture {
-		return ""
-	}
-	return output
+	return ctx
 }

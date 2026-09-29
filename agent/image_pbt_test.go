@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"pgregory.net/rapid"
 )
 
@@ -89,14 +88,14 @@ func TestProperty_LoopPrependsImagesToFirstUserMessage(t *testing.T) {
 		msg := rapid.String().Draw(rt, "msg")
 
 		// Create a capturing provider that returns a simple text response.
-		cp := newCapturingProvider(&ProviderResponse{Text: "ok"})
-		a, err := New(cp, prompt.Text("sys"), nil)
+		cp := newCapturingProvider(&ModelResponse{Text: "ok"})
+		a, err := New(cp, "sys")
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}
 
 		// Invoke with images attached to the context.
-		ctx := Background().WithImages(images)
+		ctx := Background().WithConversationID("conv-pbt").WithImages(images)
 		_, invokeErr := a.Invoke(ctx, msg)
 		if invokeErr != nil {
 			rt.Fatalf("unexpected error: %v", invokeErr)
@@ -200,22 +199,22 @@ func TestProperty_LoopWithImagesPersistsImageBlocksInMemory(t *testing.T) {
 
 		// Set up an in-memory store and a scripted provider that returns a simple text response.
 		store := newInMemoryStore()
-		sp := newScriptedProvider(&ProviderResponse{Text: "ok"})
+		sp := newScriptedProvider(&ModelResponse{Text: "ok"})
 
-		a, err := New(sp, prompt.Text("sys"), nil, WithConversation(store, "conv-pbt"))
+		a, err := New(sp, "sys", WithConversationStore(store))
 		if err != nil {
 			rt.Fatalf("failed to create agent: %v", err)
 		}
 
 		// Invoke with images attached to the context.
-		ctx := Background().WithImages(images)
+		ctx := Background().WithConversationID("conv-pbt").WithImages(images)
 		_, invokeErr := a.Invoke(ctx, "hello")
 		if invokeErr != nil {
 			rt.Fatalf("unexpected error: %v", invokeErr)
 		}
 
 		// Load the saved messages from the store.
-		saved, loadErr := store.Load(context.Background(), "conv-pbt")
+		saved, loadErr := testLoadMessages(context.Background(), store, "conv-pbt")
 		if loadErr != nil {
 			rt.Fatalf("failed to load messages: %v", loadErr)
 		}

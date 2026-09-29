@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -22,8 +23,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
+	"github.com/camilbinas/gude-agents/agent/memory"
 	memoryredis "github.com/camilbinas/gude-agents/agent/memory/redis"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/camilbinas/gude-agents/agent/tool/webfetch"
@@ -42,6 +43,11 @@ type Preference struct {
 	Value    string    `json:"value" db:"value" description:"The preference value or setting" required:"true"`
 	Priority float64   `json:"priority" db:"priority,numeric" description:"How important this preference is 0.0-1.0" required:"true"`
 	SavedAt  time.Time `json:"saved_at" db:"saved_at,noinput"`
+}
+
+type recallInput struct {
+	Query string `json:"query" description:"A natural-language query describing what to recall." required:"true"`
+	Limit int    `json:"limit" description:"Maximum number of results to return. Defaults to 5."`
 }
 
 func main() {
@@ -65,7 +71,6 @@ func main() {
 	}
 	defer mem.Close()
 
-	// Create tools — recall filters by priority.
 	rememberTool := memoryredis.NewRememberTool(mem,
 		memoryredis.WithToolName("save_preference"),
 		memoryredis.WithToolDescription("Store any user information: name, preferences, settings, facts, decisions, or context they share."),
@@ -74,11 +79,7 @@ func main() {
 		memoryredis.WithToolName("update_preference"),
 		memoryredis.WithToolDescription("Update an existing memory entry by its ID when the user corrects or changes a preference."),
 	)
-	recallTool := memoryredis.NewRecallTool(mem,
-		memoryredis.WithToolName("get_preferences"),
-		memoryredis.WithToolDescription("Retrieve relevant user information and preferences by semantic similarity."),
-		memoryredis.WithFieldGT("priority", 0.2),
-	)
+	recallTool := newRecallTool(mem)
 	forgetTool := memoryredis.NewForgetTool(mem,
 		memoryredis.WithToolName("forget_preference"),
 		memoryredis.WithToolDescription("Remove a specific memory entry when the user asks to forget something."),
@@ -86,25 +87,18 @@ func main() {
 
 	store := conversation.NewWindow(conversation.NewInMemory(), 20)
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
-		prompt.Text(
-			"You are a personal assistant that remembers everything the user tells you about themselves. "+
-				"Use save_preference to store ANY personal information: name, preferences, settings, facts about the user, decisions, or context they share. "+
-				"Use update_preference to correct or change an existing preference by its ID when the user updates something. "+
-				"Use get_preferences to retrieve relevant information when answering questions or before making suggestions. "+
-				"ALWAYS save when the user shares personal info (name, role, preferences, tools they use, etc). "+
-				"ALWAYS recall before answering questions about the user.",
-		),
-		[]tool.Tool{rememberTool, updateTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()},
-		agent.WithConversation(store, "preferences-session"),
+		"You are a personal assistant that remembers everything the user tells you about themselves. Use save_preference to store ANY personal information: name, preferences, settings, facts about the user, decisions, or context they share. Use update_preference to correct or change an existing preference by its ID when the user updates something. Use get_preferences to retrieve relevant information when answering questions or before making suggestions. ALWAYS save when the user shares personal info (name, role, preferences, tools they use, etc). ALWAYS recall before answering questions about the user.",
+		agent.WithTools(rememberTool, updateTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()),
+		agent.WithConversationStore(store),
 		auto.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := agent.Background().WithIdentifier("user-123")
+	ctx := agent.Background().WithIdentity("user-123").WithConversationID("preferences-session")
 
 	fmt.Println()
 	fmt.Println("Personal assistant with Redis memory. Type 'quit' to exit, 'clear' to forget all.")
@@ -116,8 +110,40 @@ func main() {
 			if err := store.Delete(ctx, "preferences-session"); err != nil {
 				return err
 			}
-
 			return mem.ForgetAll(ctx, "user-123")
 		},
 	})
+}
+
+func newRecallTool(mem *memoryredis.Store[Preference]) tool.Tool {
+	return tool.New("get_preferences", "Retrieve relevant user information and preferences by semantic similarity.",
+		func(ctx context.Context, input recallInput) (string, error) {
+			identity, err := memory.ResolveIdentity(ctx, "")
+			if err != nil {
+				return "", err
+			}
+			limit := input.Limit
+			if limit == 0 {
+				limit = 5
+			}
+			results, err := mem.Recall(ctx, identity, memory.RecallQuery{
+				Text:  input.Query,
+				Limit: limit,
+				Filters: []memory.Filter{{
+					Field: "priority", Operator: memory.FilterGreaterThan, Value: 0.2,
+				}},
+			})
+			if err != nil {
+				return "", err
+			}
+			if len(results) == 0 {
+				return "No relevant memories found.", nil
+			}
+			data, err := json.Marshal(results)
+			if err != nil {
+				return "", fmt.Errorf("marshal recalled preferences: %w", err)
+			}
+			return string(data), nil
+		},
+	)
 }

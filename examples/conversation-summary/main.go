@@ -10,18 +10,14 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
-
-	ctx := agent.Background()
+	ctx := agent.Background().WithConversationID("summary-demo")
 
 	// Threshold of 10 turns — summarization triggers at 80% (16 messages).
-	// WithPreserveRecentMessages(1) keeps the last turn out of the
-	// SummaryFunc, so it always appears verbatim after the summary.
 	store := conversation.NewInMemory()
 	summarized, err := conversation.NewSummary(
 		store, 10, conversation.DefaultSummaryFunc(provider),
@@ -32,11 +28,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a, err := agent.Default(
+	a, err := agent.New(
 		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-		agent.WithConversation(summarized, "summary-demo"),
+		"You are a helpful assistant. Be concise.",
+		agent.WithConversationStore(summarized),
 		agent.WithSyncConversation(),
 	)
 	if err != nil {
@@ -59,24 +54,22 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Turn %d: %s\n", i+1, result)
+		fmt.Printf("Turn %d: %s\n", i+1, result.Text)
 	}
 
-	// With WithSyncConversation(), each Invoke blocks until background
-	// summarization finishes before returning — no manual Wait() needed.
-	// This demonstrates that summarization is transparent: the agent still
-	// knows everything about Bob despite the condensed message count.
+	// WithSyncConversation makes each invocation wait for summarization.
 	result, err := a.Invoke(ctx, "Remind me what city I live in.")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Turn %d: %s\n", len(questions)+1, result)
+	fmt.Printf("Turn %d: %s\n", len(questions)+1, result.Text)
 
-	// Inspect the store — should show the summarized + recent messages,
-	// not the full original history.
-	msgs, _ := store.Load(ctx, "summary-demo")
-	fmt.Printf("\nMessages in store after Turn %d: %d\n", len(questions)+1, len(msgs))
-	for i, m := range msgs {
+	snapshot, err := store.Load(ctx, "summary-demo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("\nMessages in store after Turn %d: %d\n", len(questions)+1, len(snapshot.Messages))
+	for i, m := range snapshot.Messages {
 		for _, b := range m.Content {
 			if tb, ok := b.(agent.TextBlock); ok {
 				preview := tb.Text

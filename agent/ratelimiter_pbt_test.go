@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"pgregory.net/rapid"
 )
 
@@ -1389,16 +1388,16 @@ func TestProperty_ErrRateLimitExceededShortCircuitsRetries(t *testing.T) {
 			// Track provider calls
 			var providerCalls atomic.Int32
 			countingProvider := &funcProvider{
-				fn: func(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+				fn: func(ctx context.Context, params ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 					providerCalls.Add(1)
-					return &ProviderResponse{Text: "should not be called"}, nil
+					return &ModelResponse{Text: "should not be called"}, nil
 				},
 			}
 
 			// Create an agent with the exhausted rate limiter and retry configured
-			a, err := New(countingProvider, prompt.Text("sys"), nil,
+			a, err := New(countingProvider, "sys",
 				WithRateLimiter(rl),
-				WithRetry(retryMax, 10*time.Millisecond),
+				WithProviderRetry(retryMax, 10*time.Millisecond),
 			)
 			if err != nil {
 				rt.Fatalf("New() returned error: %v", err)
@@ -1447,16 +1446,16 @@ func TestProperty_ErrRateLimitExceededShortCircuitsRetries(t *testing.T) {
 			// Track provider calls — always fail to trigger retry
 			var providerCalls atomic.Int32
 			failingProvider := &funcProvider{
-				fn: func(ctx context.Context, params ConverseParams, cb StreamCallback) (*ProviderResponse, error) {
+				fn: func(ctx context.Context, params ModelRequest, cb func(ModelEvent)) (*ModelResponse, error) {
 					providerCalls.Add(1)
 					return nil, errors.New("transient error")
 				},
 			}
 
 			// Create an agent with the rate limiter (RPM=1) and retry configured
-			a, err := New(failingProvider, prompt.Text("sys"), nil,
+			a, err := New(failingProvider, "sys",
 				WithRateLimiter(rl),
-				WithRetry(retryMax, 1*time.Millisecond),
+				WithProviderRetry(retryMax, 1*time.Millisecond),
 			)
 			if err != nil {
 				rt.Fatalf("New() returned error: %v", err)

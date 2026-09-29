@@ -1,102 +1,14 @@
-# vLLM Provider
-
-The `vllm` package provides a provider for [vLLM](https://docs.vllm.ai) model servers. It delegates to the OpenAI provider since vLLM exposes an OpenAI-compatible Chat Completions API.
-
-Import: `github.com/camilbinas/gude-agents/agent/provider/vllm`
-
-## Constructor
+# vLLM provider
 
 ```go
-func New(model string, opts ...Option) (*VLLMProvider, error)
+import "github.com/camilbinas/gude-agents/agent/provider/vllm"
+
+prov, err := vllm.New("mistralai/Mistral-7B-Instruct-v0.2")
+a, err := agent.New(prov, "Answer clearly.")
 ```
 
-Creates a provider targeting a vLLM server. The `model` parameter is the HuggingFace model ID (e.g. `"mistralai/Mistral-7B-Instruct-v0.2"`).
+The provider targets `VLLM_BASE_URL` when configured. The model argument is the served Hugging Face model ID and must match the server deployment.
 
-The server address is read from the `VLLM_BASE_URL` environment variable, defaulting to `http://localhost:8000/v1`.
+Validate the server's chat template, tool parser, context length, tensor parallelism, and structured-output support. Model/server combinations may accept the transport while differing in tool-call and usage semantics.
 
-## Options
-
-### `WithBaseURL`
-
-```go
-var WithBaseURL = openai.WithBaseURL
-```
-
-Overrides the vLLM server URL. Takes precedence over `VLLM_BASE_URL`.
-
-### `WithMaxTokens`
-
-```go
-var WithMaxTokens = openai.WithMaxTokens
-```
-
-Sets the maximum number of tokens the model can generate in a response.
-
-## Helper Functions
-
-### `Must`
-
-```go
-func Must(p *VLLMProvider, err error) *VLLMProvider
-```
-
-Wraps a call to `New` and panics on error. Useful for examples and scripts.
-
-## Environment Variables
-
-| Variable | Description | Default |
-|---|---|---|
-| `VLLM_BASE_URL` | vLLM server address (including `/v1`) | `http://localhost:8000/v1` |
-
-## Code Example
-
-```go
-package main
-
-import (
-	"fmt"
-	"log"
-
-	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
-	"github.com/camilbinas/gude-agents/agent/provider/vllm"
-)
-
-func main() {
-	provider, err := vllm.New("mistralai/Mistral-7B-Instruct-v0.2")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := agent.Default(
-		provider,
-		prompt.Text("You are a helpful assistant. Be concise."),
-		nil,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	result, err := a.Invoke(agent.Background(), "What is the capital of France?")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-}
-```
-
-## vLLM vs Ollama
-
-vLLM is better suited for production deployments:
-
-- **Request batching** — handles concurrent requests efficiently
-- **Higher throughput** — optimized for serving, not just inference
-- **PagedAttention** — better GPU memory utilization
-
-Ollama is better for local development — simpler setup, built-in model management.
-
-## See Also
-
-- [LLM Providers Overview](../providers.md) — interfaces, registry, custom providers
-- [OpenAI Provider](openai.md) — the underlying provider implementation
-- [Ollama Provider](ollama.md) — alternative local model server
+Use [Ollama](ollama.md) for an Ollama daemon or [OpenAI](openai.md) for other compatible endpoints. See [Providers](../providers.md) for the common contract.

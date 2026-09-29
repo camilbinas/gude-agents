@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -17,9 +16,9 @@ import (
 func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 	// Child agent: responds with a fixed answer on the first call.
 	childProvider := newScriptedProvider(
-		&ProviderResponse{Text: "child answer"},
+		&ModelResponse{Text: "child answer"},
 	)
-	child, err := New(childProvider, prompt.Text("child system prompt"), nil)
+	child, err := New(childProvider, "child system prompt")
 	if err != nil {
 		t.Fatalf("failed to create child agent: %v", err)
 	}
@@ -29,7 +28,7 @@ func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 
 	// Parent agent: first call triggers the sub_agent tool, second call returns final text.
 	parentProvider := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{
 				{
 					ToolUseID: "tc1",
@@ -38,10 +37,10 @@ func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 				},
 			},
 		},
-		&ProviderResponse{Text: "parent done"},
+		&ModelResponse{Text: "parent done"},
 	)
 
-	parent, err := New(parentProvider, prompt.Text("parent system prompt"), []tool.Tool{wrappedTool})
+	parent, err := New(parentProvider, "parent system prompt", WithTools(wrappedTool))
 	if err != nil {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
@@ -50,8 +49,8 @@ func TestAgentAsTool_ChildReceivesMessageAndReturnsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "parent done" {
-		t.Errorf("expected %q, got %q", "parent done", result)
+	if result.Text != "parent done" {
+		t.Errorf("expected %q, got %q", "parent done", result.Text)
 	}
 }
 
@@ -61,15 +60,15 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 	// Child agent: provider always returns tool calls, causing max iterations
 	// to be exceeded (maxIterations=1 means it loops once then errors).
 	childProvider := newScriptedProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{toolCall("ctc1", "child_tool")},
 		},
 	)
-	childTool := tool.NewRaw("child_tool", "a child tool", map[string]any{"type": "object"},
+	childTool := tool.NewRaw("child_tool", "a child tool",
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "ok", nil
 		})
-	child, err := New(childProvider, prompt.Text("child sys"), []tool.Tool{childTool}, WithMaxIterations(1))
+	child, err := New(childProvider, "child sys", WithTools(childTool), WithMaxIterations(1))
 	if err != nil {
 		t.Fatalf("failed to create child agent: %v", err)
 	}
@@ -78,7 +77,7 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 
 	// Use capturingProvider so we can inspect the tool result sent to the parent.
 	parentProvider := newCapturingProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{
 				{
 					ToolUseID: "tc1",
@@ -87,10 +86,10 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 				},
 			},
 		},
-		&ProviderResponse{Text: "parent recovered"},
+		&ModelResponse{Text: "parent recovered"},
 	)
 
-	parent, err := New(parentProvider, prompt.Text("parent sys"), []tool.Tool{wrappedTool})
+	parent, err := New(parentProvider, "parent sys", WithTools(wrappedTool))
 	if err != nil {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
@@ -99,8 +98,8 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parent should not abort when child fails, got: %v", err)
 	}
-	if result != "parent recovered" {
-		t.Errorf("expected %q, got %q", "parent recovered", result)
+	if result.Text != "parent recovered" {
+		t.Errorf("expected %q, got %q", "parent recovered", result.Text)
 	}
 
 	// The second provider call must have received a ToolResultBlock with IsError=true.
@@ -125,7 +124,7 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 	// Child agent: provider returns an error immediately.
 	errProvider := &erroringProvider{err: fmt.Errorf("provider exploded")}
-	child, err := New(errProvider, prompt.Text("child sys"), nil)
+	child, err := New(errProvider, "child sys")
 	if err != nil {
 		t.Fatalf("failed to create child agent: %v", err)
 	}
@@ -134,7 +133,7 @@ func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 
 	// Use capturingProvider so we can inspect the tool result sent to the parent.
 	parentProvider := newCapturingProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{
 				{
 					ToolUseID: "tc1",
@@ -143,10 +142,10 @@ func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 				},
 			},
 		},
-		&ProviderResponse{Text: "parent ok"},
+		&ModelResponse{Text: "parent ok"},
 	)
 
-	parent, err := New(parentProvider, prompt.Text("parent sys"), []tool.Tool{wrappedTool})
+	parent, err := New(parentProvider, "parent sys", WithTools(wrappedTool))
 	if err != nil {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
@@ -155,8 +154,8 @@ func TestAgentAsTool_ChildErrorFromProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parent should not abort when child provider fails, got: %v", err)
 	}
-	if result != "parent ok" {
-		t.Errorf("expected %q, got %q", "parent ok", result)
+	if result.Text != "parent ok" {
+		t.Errorf("expected %q, got %q", "parent ok", result.Text)
 	}
 
 	// The second provider call must have received a ToolResultBlock with IsError=true.
@@ -183,7 +182,7 @@ func TestAgentAsTool_ErrorIsToolError(t *testing.T) {
 	// Child agent: provider always errors.
 	childErr := fmt.Errorf("provider exploded")
 	errProvider := &erroringProvider{err: childErr}
-	child, err := New(errProvider, prompt.Text("child sys"), nil)
+	child, err := New(errProvider, "child sys")
 	if err != nil {
 		t.Fatalf("failed to create child agent: %v", err)
 	}
@@ -191,7 +190,7 @@ func TestAgentAsTool_ErrorIsToolError(t *testing.T) {
 	wrappedTool := AgentAsTool("sub_agent", "A sub-agent with broken provider", child)
 
 	parentProvider := newCapturingProvider(
-		&ProviderResponse{
+		&ModelResponse{
 			ToolCalls: []tool.Call{
 				{
 					ToolUseID: "tc1",
@@ -200,10 +199,10 @@ func TestAgentAsTool_ErrorIsToolError(t *testing.T) {
 				},
 			},
 		},
-		&ProviderResponse{Text: "parent ok"},
+		&ModelResponse{Text: "parent ok"},
 	)
 
-	parent, err := New(parentProvider, prompt.Text("parent sys"), []tool.Tool{wrappedTool})
+	parent, err := New(parentProvider, "parent sys", WithTools(wrappedTool))
 	if err != nil {
 		t.Fatalf("failed to create parent agent: %v", err)
 	}
@@ -256,10 +255,6 @@ type erroringProvider struct {
 
 func (p *erroringProvider) Name() string { return "mock" }
 
-func (p *erroringProvider) Converse(_ context.Context, _ ConverseParams) (*ProviderResponse, error) {
-	return nil, p.err
-}
-
-func (p *erroringProvider) ConverseStream(_ context.Context, _ ConverseParams, _ StreamCallback) (*ProviderResponse, error) {
+func (p *erroringProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return nil, p.err
 }

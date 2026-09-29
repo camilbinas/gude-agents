@@ -6,15 +6,13 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 func TestDeriveCard_Basic(t *testing.T) {
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("I help with testing tasks."),
-		nil,
+		"I help with testing tasks.",
 		agent.WithName("test-helper"),
 	)
 	if err != nil {
@@ -39,15 +37,15 @@ func TestDeriveCard_Basic(t *testing.T) {
 
 func TestDeriveCard_WithTools(t *testing.T) {
 	tools := []tool.Tool{
-		tool.NewSimple("greet", "Greets the user", func(_ context.Context) (string, error) {
+		tool.New[struct{}]("greet", "Greets the user", func(_ context.Context, _ struct{}) (string, error) {
 			return "hi", nil
 		}),
 	}
 
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("Agent with tools"),
-		tools,
+		"Agent with tools",
+		agent.WithTools(tools...),
 		agent.WithName("tool-agent"),
 	)
 	if err != nil {
@@ -70,8 +68,7 @@ func TestDeriveCard_WithTools(t *testing.T) {
 func TestDeriveCard_WithOptions(t *testing.T) {
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("Short instructions"),
-		nil,
+		"Short instructions",
 		agent.WithName("my-agent"),
 	)
 	if err != nil {
@@ -106,8 +103,7 @@ func TestDeriveCard_TruncatesLongDescription(t *testing.T) {
 
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text(longInstructions),
-		nil,
+		longInstructions,
 		agent.WithName("verbose-agent"),
 	)
 	if err != nil {
@@ -124,8 +120,7 @@ func TestDeriveCard_TruncatesLongDescription(t *testing.T) {
 func TestWithCardSkills(t *testing.T) {
 	a, err := agent.New(
 		&fakeProvider{response: "ok"},
-		prompt.Text("Agent"),
-		nil,
+		"Agent",
 		agent.WithName("agent"),
 	)
 	if err != nil {

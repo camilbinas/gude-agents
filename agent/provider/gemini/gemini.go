@@ -27,6 +27,8 @@ type GeminiProvider struct {
 	cachingEnabled bool                // true = surface CachedContentTokenCount in usage
 }
 
+var _ agent.Provider = (*GeminiProvider)(nil)
+
 // Name returns a human-readable identifier for this provider instance.
 func (p *GeminiProvider) Name() string { return "gemini" }
 
@@ -84,7 +86,8 @@ func WithSystemPromptCaching() Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	a, err := agent.Default(gemini.Must(gemini.Standard()), instructions, tools)
+//	provider := gemini.Must(gemini.Standard())
+//	a, err := agent.New(provider, instructions)
 func Must(p *GeminiProvider, err error) *GeminiProvider {
 	if err != nil {
 		panic("gemini: " + err.Error())
@@ -134,106 +137,23 @@ func (p *GeminiProvider) ModelID() string { return p.model }
 // not exposed through the agent.Provider interface.
 func (p *GeminiProvider) Client() *genai.Client { return p.client }
 
-// ---------------------------------------------------------------------------
-// Converse (non-streaming)
-// ---------------------------------------------------------------------------
-
-func (p *GeminiProvider) Converse(ctx context.Context, params agent.ConverseParams) (*agent.ProviderResponse, error) {
-	config := buildConfig(p, params)
-	contents, err := toGeminiContents(params.Messages)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := p.client.Models.GenerateContent(ctx, p.model, contents, config)
-	if err != nil {
-		return nil, &agent.ProviderError{Cause: err}
-	}
-
-	return parseResponse(resp), nil
-}
-
-// ---------------------------------------------------------------------------
-// ConverseStream (streaming)
-// ---------------------------------------------------------------------------
-
-func (p *GeminiProvider) ConverseStream(ctx context.Context, params agent.ConverseParams, cb agent.StreamCallback) (*agent.ProviderResponse, error) {
-	config := buildConfig(p, params)
-	contents, err := toGeminiContents(params.Messages)
+// Stream sends a streaming Gemini request and accumulates its final response.
+// Text and thinking deltas are emitted when emit is non-nil.
+func (p *GeminiProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	config := buildConfig(p, req)
+	contents, err := toGeminiContents(req.Messages)
 	if err != nil {
 		return nil, err
 	}
 
 	iter := p.client.Models.GenerateContentStream(ctx, p.model, contents, config)
-
-	result := &agent.ProviderResponse{}
+	result := &agent.ModelResponse{}
 
 	for resp, err := range iter {
 		if err != nil {
 			return nil, &agent.ProviderError{Cause: err}
 		}
-
-		if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
-			// Extract usage from chunks that have no candidate content.
-			if resp != nil && resp.UsageMetadata != nil {
-				result.Usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
-				result.Usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
-				result.Usage.CacheReadTokens = int(resp.UsageMetadata.CachedContentTokenCount)
-			}
-			continue
-		}
-
-		for _, part := range resp.Candidates[0].Content.Parts {
-			if part == nil {
-				continue
-			}
-
-			// Thinking/thought parts.
-			if part.Thought && part.Text != "" {
-				if result.Metadata == nil {
-					result.Metadata = map[string]any{}
-				}
-				existing, _ := result.Metadata["thinking"].(string)
-				result.Metadata["thinking"] = existing + part.Text
-				if params.ThinkingCallback != nil {
-					params.ThinkingCallback(part.Text)
-				}
-				continue
-			}
-
-			// Text parts.
-			if part.Text != "" {
-				result.Text += part.Text
-				if cb != nil {
-					cb(part.Text)
-				}
-				continue
-			}
-
-			// Function call parts.
-			if part.FunctionCall != nil {
-				args := part.FunctionCall.Args
-				if args == nil {
-					args = map[string]any{}
-				}
-				argsJSON, err := json.Marshal(args)
-				if err != nil {
-					argsJSON = []byte(`{}`)
-				}
-				result.ToolCalls = append(result.ToolCalls, tool.Call{
-					ToolUseID: uuid.New().String(),
-					Name:      part.FunctionCall.Name,
-					Input:     json.RawMessage(argsJSON),
-				})
-			}
-		}
-
-		// Extract usage from every chunk (last one wins).
-		if resp.UsageMetadata != nil {
-			result.Usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
-			result.Usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
-			result.Usage.CacheReadTokens = int(resp.UsageMetadata.CachedContentTokenCount)
-		}
+		appendResponse(result, resp, emit)
 	}
 
 	return result, nil
@@ -243,15 +163,18 @@ func (p *GeminiProvider) ConverseStream(ctx context.Context, params agent.Conver
 // Response parsing
 // ---------------------------------------------------------------------------
 
-// parseResponse converts a Gemini GenerateContentResponse to a framework ProviderResponse.
-func parseResponse(resp *genai.GenerateContentResponse) *agent.ProviderResponse {
-	result := &agent.ProviderResponse{}
+// parseResponse converts a Gemini GenerateContentResponse to a framework ModelResponse.
+func parseResponse(resp *genai.GenerateContentResponse) *agent.ModelResponse {
+	result := &agent.ModelResponse{}
+	appendResponse(result, resp, nil)
+	return result
+}
 
+func appendResponse(result *agent.ModelResponse, resp *genai.GenerateContentResponse, emit func(agent.ModelEvent)) {
 	if resp == nil {
-		return result
+		return
 	}
 
-	// Extract usage metadata.
 	if resp.UsageMetadata != nil {
 		result.Usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
 		result.Usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
@@ -259,7 +182,7 @@ func parseResponse(resp *genai.GenerateContentResponse) *agent.ProviderResponse 
 	}
 
 	if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
-		return result
+		return
 	}
 
 	for _, part := range resp.Candidates[0].Content.Parts {
@@ -267,23 +190,26 @@ func parseResponse(resp *genai.GenerateContentResponse) *agent.ProviderResponse 
 			continue
 		}
 
-		// Thinking/thought parts.
 		if part.Thought && part.Text != "" {
 			if result.Metadata == nil {
 				result.Metadata = map[string]any{}
 			}
 			existing, _ := result.Metadata["thinking"].(string)
 			result.Metadata["thinking"] = existing + part.Text
+			if emit != nil {
+				emit(agent.ModelEvent{Type: agent.ModelEventThinking, Text: part.Text})
+			}
 			continue
 		}
 
-		// Text parts.
 		if part.Text != "" {
 			result.Text += part.Text
+			if emit != nil {
+				emit(agent.ModelEvent{Type: agent.ModelEventText, Text: part.Text})
+			}
 			continue
 		}
 
-		// Function call parts.
 		if part.FunctionCall != nil {
 			args := part.FunctionCall.Args
 			if args == nil {
@@ -300,8 +226,6 @@ func parseResponse(resp *genai.GenerateContentResponse) *agent.ProviderResponse 
 			})
 		}
 	}
-
-	return result
 }
 
 // ---------------------------------------------------------------------------
@@ -585,14 +509,14 @@ func (p *GeminiProvider) resolveThinkingBudget() int64 {
 	return 0
 }
 
-// buildConfig assembles a GenerateContentConfig from provider state and converse params.
-func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.GenerateContentConfig {
+// buildConfig assembles a GenerateContentConfig from provider state and a model request.
+func buildConfig(p *GeminiProvider, req agent.ModelRequest) *genai.GenerateContentConfig {
 	// Determine maxTokens: per-call override > provider-level > 0 (omit).
 	var maxTokens int32
 	if p.maxTokens != nil {
 		maxTokens = *p.maxTokens
 	}
-	if cfg := params.InferenceConfig; cfg != nil && cfg.MaxTokens != nil {
+	if cfg := req.InferenceConfig; cfg != nil && cfg.MaxTokens != nil {
 		maxTokens = int32(*cfg.MaxTokens)
 	}
 	thinkingBudget := int32(p.resolveThinkingBudget())
@@ -606,15 +530,15 @@ func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.Generate
 	}
 
 	config := &genai.GenerateContentConfig{
-		Tools:      toGeminiTools(params.ToolConfig),
-		ToolConfig: toGeminiToolConfig(params.ToolChoice),
+		Tools:      toGeminiTools(req.Tools),
+		ToolConfig: toGeminiToolConfig(req.ToolChoice),
 	}
 	if maxTokens > 0 {
 		config.MaxOutputTokens = maxTokens
 	}
-	if params.System != "" {
+	if req.System != "" {
 		config.SystemInstruction = &genai.Content{
-			Parts: []*genai.Part{genai.NewPartFromText(params.System)},
+			Parts: []*genai.Part{genai.NewPartFromText(req.System)},
 		}
 	}
 	if thinkingBudget > 0 {
@@ -623,7 +547,7 @@ func buildConfig(p *GeminiProvider, params agent.ConverseParams) *genai.Generate
 		}
 	}
 	// Apply inference config overrides (excluding MaxTokens — already applied above).
-	if cfg := params.InferenceConfig; cfg != nil {
+	if cfg := req.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
 			config.Temperature = ptr(float32(*cfg.Temperature))
 		}

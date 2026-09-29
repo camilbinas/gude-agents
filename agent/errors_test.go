@@ -1,6 +1,5 @@
 package agent
 
-
 import (
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 
 // TestProperty5 verifies that errors.As succeeds at every wrapping depth
 // for ProviderError, ToolError, and GuardrailError.
-//
 func TestProperty5(t *testing.T) {
 	t.Run("ProviderError", func(t *testing.T) {
 		rapid.Check(t, func(t *rapid.T) {
