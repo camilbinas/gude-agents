@@ -3,9 +3,9 @@ module github.com/camilbinas/gude-agents/agent/provider/openai
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v0.85.1
-	github.com/camilbinas/gude-agents/agent/rag/openai v0.85.1
-	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.85.1
+	github.com/camilbinas/gude-agents v1.0.0
+	github.com/camilbinas/gude-agents/agent/rag/openai v1.0.0
+	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v1.0.0
 	github.com/openai/openai-go/v3 v3.31.0
 	pgregory.net/rapid v1.2.0
 )
