@@ -905,7 +905,6 @@ func TestToolSpan_ParallelToolsShareParent(t *testing.T) {
 
 	a, err := agent.New(prov, "sys",
 		agent.WithTools(dummyTool("alpha", "a"), dummyTool("beta", "b"), dummyTool("gamma", "g")),
-		agent.WithParallelTools(),
 		WithTracing(tp),
 	)
 	if err != nil {
@@ -1433,7 +1432,6 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 
 	a, err := agent.New(prov, "sys",
 		agent.WithTools(makeTool("a"), makeTool("b"), makeTool("c")),
-		agent.WithParallelTools(),
 		WithTracing(tp),
 	)
 	if err != nil {

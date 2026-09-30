@@ -59,7 +59,6 @@ func main() {
 		bedrock.Must(bedrock.Standard()),
 		"You are a helpful assistant with access to a weather tool. Be concise.",
 		agent.WithTools(weatherTool),
-		agent.WithParallelTools(),
 		agent.WithTemperature(0.3),
 		agent.WithTopP(0.9),
 		sentrytrace.WithSentry(tracing.WithContentCapture()),

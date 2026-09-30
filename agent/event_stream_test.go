@@ -498,7 +498,7 @@ func TestStream_ParallelToolsIsolatedScratch(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{toolCall("id-a", "a"), toolCall("id-b", "b")}},
 		&ModelResponse{Text: "both done"},
 	)
-	a, err := New(p, "sys", WithTools(mk("a"), mk("b")), WithParallelTools(), WithConversationStore(conv))
+	a, err := New(p, "sys", WithTools(mk("a"), mk("b")), WithConversationStore(conv))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func TestStream_ParallelToolsIsolatedGuardState(t *testing.T) {
 		}},
 		&ModelResponse{Text: "done"},
 	)
-	a, err := New(p, "sys", WithTools(guarded), WithParallelTools())
+	a, err := New(p, "sys", WithTools(guarded))
 	if err != nil {
 		t.Fatal(err)
 	}

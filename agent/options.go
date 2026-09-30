@@ -63,10 +63,13 @@ func WithToolRegistry(registry *tool.Registry) Option {
 	}
 }
 
-// WithParallelTools enables concurrent tool execution.
-func WithParallelTools() Option {
+// WithSequentialTools disables concurrent tool execution, running each call
+// in a batch one at a time in provider order. Tool calls run in parallel by
+// default; use this option when tool handlers are not safe to run
+// concurrently or must observe each other's side effects in order.
+func WithSequentialTools() Option {
 	return func(a *Agent) error {
-		a.parallelTools = true
+		a.parallelTools = false
 		return nil
 	}
 }

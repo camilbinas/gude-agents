@@ -102,8 +102,8 @@ func TestNewAgent_ValidConstruction(t *testing.T) {
 	if a.maxIterations != 10 {
 		t.Errorf("expected default maxIterations=10, got %d", a.maxIterations)
 	}
-	if a.parallelTools {
-		t.Error("expected parallelTools=false by default")
+	if !a.parallelTools {
+		t.Error("expected parallelTools=true by default")
 	}
 }
 
@@ -112,7 +112,7 @@ func TestNewAgent_WithOptions(t *testing.T) {
 
 	a, err := New(mockProvider{}, "sys", WithTools(tools...),
 		WithMaxIterations(5),
-		WithParallelTools(),
+		WithSequentialTools(),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -120,8 +120,8 @@ func TestNewAgent_WithOptions(t *testing.T) {
 	if a.maxIterations != 5 {
 		t.Errorf("expected maxIterations=5, got %d", a.maxIterations)
 	}
-	if !a.parallelTools {
-		t.Error("expected parallelTools=true after WithParallelToolExecution")
+	if a.parallelTools {
+		t.Error("expected parallelTools=false after WithSequentialTools")
 	}
 }
 
@@ -255,7 +255,9 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 		})
 	}
 
-	a, err := New(sp, "sys", WithTools(makeTool("first"), makeTool("second")))
+	// WithSequentialTools opts out of the default concurrent execution so
+	// order is preserved.
+	a, err := New(sp, "sys", WithTools(makeTool("first"), makeTool("second")), WithSequentialTools())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +270,6 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 		t.Errorf("expected %q, got %q", "all done", result.Text)
 	}
 
-	// Sequential by default — order must be preserved.
 	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
 		t.Errorf("expected sequential order [first, second], got %v", order)
 	}
@@ -307,9 +308,9 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		})
 	}
 
+	// Tool calls run in parallel by default.
 	a, err := New(sp, "sys",
 		WithTools(makeTool("a"), makeTool("b"), makeTool("c")),
-		WithParallelTools(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -473,10 +474,9 @@ func TestInvoke_MultiToolCallsResultOrderPreserved(t *testing.T) {
 		})
 	}
 
-	// Use parallel execution to stress order preservation.
+	// Parallel execution (the default) stresses order preservation.
 	a, err := New(sp, "sys",
 		WithTools(makeTool("alpha", "A"), makeTool("beta", "B"), makeTool("gamma", "C")),
-		WithParallelTools(),
 	)
 	if err != nil {
 		t.Fatal(err)

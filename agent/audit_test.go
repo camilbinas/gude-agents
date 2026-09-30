@@ -241,7 +241,7 @@ func TestToolObserver_ConcurrentCallsAreComplete(t *testing.T) {
 		time.Sleep(time.Millisecond)
 		return "ok", nil
 	})
-	a, err := New(provider, "sys", WithTools(echo), WithParallelTools(), WithObserver(observer))
+	a, err := New(provider, "sys", WithTools(echo), WithObserver(observer))
 	if err != nil {
 		t.Fatal(err)
 	}

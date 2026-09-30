@@ -63,6 +63,7 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 		instructions:   instructions,
 		toolRegistry:   &tool.Registry{},
 		maxIterations:  10,
+		parallelTools:  true,
 		interruptStore: newMemoryInterruptStore(),
 	}
 	for _, opt := range opts {

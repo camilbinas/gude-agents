@@ -17,9 +17,10 @@ type toolOutcome struct {
 	humanInput *InputInterrupt // set when the call requested human input
 }
 
-// executeBatch runs a batch of tool calls through the canonical pipeline,
-// in parallel when enabled. decisions, when non-nil, carries the human
-// approval decision for each call of a resumed approval interrupt.
+// executeBatch runs a batch of tool calls through the canonical pipeline, in
+// parallel unless disabled via WithSequentialTools. decisions, when non-nil,
+// carries the human approval decision for each call of a resumed approval
+// interrupt.
 func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]tool.Tool, decisions []*tool.Decision) []toolOutcome {
 	outcomes := make([]toolOutcome, len(calls))
 	exec := func(i int, async bool) {

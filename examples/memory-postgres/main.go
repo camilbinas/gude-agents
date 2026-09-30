@@ -119,7 +119,6 @@ func main() {
 		agent.WithTools(rememberTool, updateTool, recallTool, forgetTool),
 		agent.WithConversationStore(store),
 		auto.WithLogging(),
-		agent.WithParallelTools(),
 	)
 	if err != nil {
 		log.Fatal(err)

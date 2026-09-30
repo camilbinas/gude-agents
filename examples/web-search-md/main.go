@@ -46,7 +46,6 @@ func main() {
 			webfetch.New(webfetch.WithFormatter(markdown.Formatter())),
 		),
 		auto.WithLogging(),
-		agent.WithParallelTools(),
 		agent.WithMaxIterations(10),
 	)
 	if err != nil {

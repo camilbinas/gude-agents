@@ -10,8 +10,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// TestIntegration_ParallelToolExecution verifies that WithParallelTools
-// correctly executes multiple tool calls concurrently with a real LLM.
+// TestIntegration_ParallelToolExecution verifies that tool calls execute
+// concurrently (the default) with a real LLM.
 func TestIntegration_ParallelToolExecution(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
@@ -39,7 +39,6 @@ func TestIntegration_ParallelToolExecution(t *testing.T) {
 		p,
 		"You are a weather assistant. When asked about multiple cities, call get_weather for EACH city. Be very brief.",
 		agent.WithTools(weatherTool),
-		agent.WithParallelTools(),
 	)
 	if err != nil {
 		t.Fatal(err)

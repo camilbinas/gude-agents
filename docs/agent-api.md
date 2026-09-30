@@ -20,7 +20,7 @@ a, err := agent.New(prov, "You are a support assistant.",
 )
 ```
 
-Common options include `WithToolRegistry`, `WithMaxIterations`, `WithParallelTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithSyncConversation`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithInterruptStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; parallel tool execution is off.
+Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithSyncConversation`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithInterruptStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
 
 ## Invocation
 

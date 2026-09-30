@@ -91,7 +91,8 @@ func main() {
 
 	// ── Orchestrator ──────────────────────────────────────────────────────────
 	// Routes to the right specialist(s) and synthesizes the answer.
-	// WithParallelTools lets independent specialist calls run simultaneously.
+	// Tool calls run in parallel by default, so independent specialist calls
+	// run simultaneously.
 	orchestrator, err := agent.New(
 		sonnet,
 		prompt.COSTAR{
@@ -122,7 +123,6 @@ func main() {
 				teamLookup,
 			),
 		),
-		agent.WithParallelTools(),
 		agent.WithConversationStore(
 			conversation.NewWindow(conversation.NewInMemory(), 20),
 		),

@@ -47,7 +47,6 @@ func main() {
 			webfetch.New(),
 		),
 		auto.WithLogging(),
-		agent.WithParallelTools(),
 		agent.WithMaxIterations(10),
 	)
 	if err != nil {
