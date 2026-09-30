@@ -139,6 +139,28 @@ func (p *iteratingProvider) Stream(_ context.Context, _ ModelRequest, cb func(Mo
 	return &ModelResponse{Text: text}, nil
 }
 
+func TestRAGAgent_NilRetrieverErrors(t *testing.T) {
+	_, err := RAGAgent(mockProvider{}, "sys", nil)
+	if err == nil {
+		t.Fatal("expected error for nil retriever, got nil")
+	}
+}
+
+func TestRAGAgent_SetsRetrieverAndAppliesOpts(t *testing.T) {
+	retriever := &countingRetriever{docs: []rag.Document{{Content: "ctx"}}}
+
+	a, err := RAGAgent(mockProvider{}, "sys", retriever, WithMaxIterations(3))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.retriever != retriever {
+		t.Error("expected RAGAgent to configure the given retriever")
+	}
+	if a.maxIterations != 3 {
+		t.Errorf("expected maxIterations=3 from opts, got %d", a.maxIterations)
+	}
+}
+
 func TestAgent_RetrieverCalledOnce(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		toolIterations := rapid.IntRange(1, 5).Draw(t, "toolIterations")

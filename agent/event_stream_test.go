@@ -240,7 +240,9 @@ func TestStream_ToolStartEndShareCallID(t *testing.T) {
 		}},
 		&ModelResponse{Text: "done"},
 	)
-	a, err := New(p, "sys", WithTools(widgetTool))
+	// Sequential execution so start/widget/end ordering across the two calls
+	// is deterministic.
+	a, err := New(p, "sys", WithTools(widgetTool), WithSequentialTools())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,11 +23,12 @@ retriever := rag.NewRetriever(embedder, store,
     rag.WithMaxResults(6),
     rag.WithScoreThreshold(0.75),
 )
-a, err := agent.New(prov, instructions,
-    agent.WithRetriever(retriever),
+a, err := agent.RAGAgent(prov, instructions, retriever,
     agent.WithContextFormatter(rag.DefaultContextFormatter),
 )
 ```
+
+`agent.RAGAgent` is a thin wrapper around `agent.New` that requires a non-nil `rag.Retriever`, so a RAG agent missing retrieval fails at construction instead of silently skipping context injection. It is equivalent to calling `agent.New` with `agent.WithRetriever(retriever)` plus any other options — no other defaults are applied.
 
 The engine retrieves before the provider call and injects formatted context transiently. Retrieved context is not persisted into conversation history.
 

@@ -91,6 +91,14 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 	return a, nil
 }
 
+// RAGAgent creates an Agent with a required rag.Retriever.
+func RAGAgent(provider Provider, instructions string, retriever rag.Retriever, opts ...Option) (*Agent, error) {
+	if retriever == nil {
+		return nil, errors.New("agent: RAG retriever is required")
+	}
+	return New(provider, instructions, append([]Option{WithRetriever(retriever)}, opts...)...)
+}
+
 // Name returns the configured agent name.
 func (a *Agent) Name() string { return a.name }
 
