@@ -2,12 +2,12 @@ module github.com/camilbinas/gude-agents/agent/provider/ollama
 
 go 1.25.0
 
-require github.com/camilbinas/gude-agents/agent/provider/openai v1.0.0
+require github.com/camilbinas/gude-agents/agent/provider/openai v1.1.0
 
 require (
-	github.com/camilbinas/gude-agents v1.0.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/openai v1.0.0 // indirect
-	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v1.0.0 // indirect
+	github.com/camilbinas/gude-agents v1.1.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v1.1.0 // indirect
+	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v1.1.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
