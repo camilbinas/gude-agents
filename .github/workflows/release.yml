@@ -296,6 +296,19 @@ jobs:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: echo "Dry run completed for ${NEW_VERSION}; no release was published."
 
+      # The verification step above can run for several minutes, during which
+      # master may move (another push, a manually merged PR, etc). A bare
+      # push would then be rejected as non-fast-forward and fail the whole
+      # run. Retry by fetching and rebasing our release commit onto the new
+      # tip before pushing again, bounded to a few attempts.
+      #
+      # Known limitation: NEW_VERSION was computed earlier from the commit
+      # log as it stood at checkout. If master gained its own conventional
+      # commits while this job ran, rebasing replays our release commit
+      # correctly but does not recompute the version bump against those new
+      # commits. A conflicting go.mod change (e.g. a concurrent release
+      # already landed) is treated as unrecoverable here rather than resolved
+      # automatically.
       - name: Commit, tag, and push atomically
         if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
         env:
@@ -317,11 +330,48 @@ jobs:
 
           refs=(HEAD:master)
           while read -r tag; do
-            git tag "$tag"
             refs+=("refs/tags/${tag}:refs/tags/${tag}")
           done < "$RUNNER_TEMP/tags.txt"
 
-          git push --atomic origin "${refs[@]}"
+          tag_refs() {
+            while read -r tag; do
+              git tag -f "$tag" >/dev/null
+            done < "$RUNNER_TEMP/tags.txt"
+          }
+          tag_refs
+
+          max_attempts=5
+          attempt=1
+          push_output="$RUNNER_TEMP/push-output.txt"
+          while true; do
+            if git push --atomic origin "${refs[@]}" 2> "$push_output"; then
+              cat "$push_output" >&2
+              break
+            fi
+            cat "$push_output" >&2
+
+            if grep -q 'already exists' "$push_output"; then
+              echo "::error::A target tag already exists on origin — a concurrent release likely published the same version. Not retrying."
+              exit 1
+            fi
+
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::Push rejected after $max_attempts attempts; giving up."
+              exit 1
+            fi
+
+            echo "Push rejected (attempt $attempt/$max_attempts) — fetching and rebasing onto origin/master..."
+            git fetch origin master
+            if ! git rebase origin/master; then
+              git rebase --abort
+              echo "::error::Rebase onto origin/master failed, likely a conflicting go.mod change from a concurrent release. Manual intervention required."
+              exit 1
+            fi
+            tag_refs
+
+            attempt=$((attempt + 1))
+            sleep 2
+          done
 
       - name: Create GitHub release
         if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
