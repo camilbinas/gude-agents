@@ -103,27 +103,23 @@ func TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization(t *testing.T) {
 		ctx := context.Background()
 
 		var callCount int64
-		var mu sync.Mutex
-		started := make(chan struct{}, 1)
+		var startedOnce sync.Once
+		started := make(chan struct{})
 		allowFinish := make(chan struct{})
-		firstStarted := false
 
 		fn := func(_ context.Context, msgs []agent.Message) ([2]agent.Message, error) {
-			mu.Lock()
-			if !firstStarted {
-				firstStarted = true
-				select {
-				case started <- struct{}{}:
-				default:
-				}
-			}
-			mu.Unlock()
-
+			startedOnce.Do(func() { close(started) })
 			atomic.AddInt64(&callCount, 1)
-			// Block until test allows finish, to keep goroutine alive during concurrent saves
+			// Hold the goroutine open briefly so concurrent Save calls observe
+			// summarizing[conv] == true. Release is signaled by the test as
+			// soon as summarization has started — NOT after every concurrent
+			// caller finishes. Save's CAS retry loop calls Load again on a
+			// revision conflict, and Load blocks on this same conversation's
+			// in-flight-work barrier, so waiting for all callers to finish
+			// before releasing them here would deadlock.
 			select {
 			case <-allowFinish:
-			case <-time.After(3 * time.Second):
+			case <-time.After(2 * time.Second):
 			}
 			return [2]agent.Message{
 				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "Here is a summary of our previous conversation: summary"}}},
@@ -146,13 +142,23 @@ func TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization(t *testing.T) {
 				_ = saveLatest(ctx, s, "conv", msgs)
 			}()
 		}
-		wg.Wait()
 
-		// Allow the summarization goroutine to finish
+		// Wait for the first summarization attempt to start, give the
+		// scheduler a moment to let other concurrent Save calls observe the
+		// in-flight state, then release it. Do not wait on wg here — some of
+		// those goroutines may be blocked in Load behind this very call.
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			rt.Fatal("summarization never started")
+		}
+		time.Sleep(5 * time.Millisecond)
 		close(allowFinish)
 
-		// Wait for goroutine to complete
-		deadline := time.Now().Add(3 * time.Second)
+		wg.Wait()
+
+		// Wait for the summarization goroutine to fully finish.
+		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			s.mu.Lock()
 			running := s.summarizing["conv"]
@@ -160,7 +166,7 @@ func TestProperty4_ConcurrentSaveTriggersAtMostOneSummarization(t *testing.T) {
 			if !running {
 				break
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(1 * time.Millisecond)
 		}
 
 		if got := atomic.LoadInt64(&callCount); got > 1 {
