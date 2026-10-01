@@ -58,7 +58,7 @@ func TestAuditPBT_ToolMetadataAndContentPolicy(t *testing.T) {
 			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: callID, Name: "echo", Input: input}}},
 			&ModelResponse{Text: "done"},
 		)
-		echo := tool.NewRaw("echo", "echo", func(context.Context, json.RawMessage) (string, error) { return output, nil })
+		echo := tool.NewRaw("echo", "echo", nil, func(context.Context, json.RawMessage) (string, error) { return output, nil })
 		a, err := New(provider, "sys", WithTools(echo), WithAudit(sink, options...))
 		if err != nil {
 			rt.Fatal(err)

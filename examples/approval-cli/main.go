@@ -17,7 +17,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -101,51 +100,28 @@ func streamResult(a *agent.Agent, c *agent.Context, input string) (agent.Result,
 	return result, nil
 }
 
+// orderInput is the typed input shared by both order tools.
+type orderInput struct {
+	OrderID string `json:"order_id" description:"The order ID" required:"true"`
+}
+
 func lookupOrderTool() tool.Tool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"order_id": map[string]any{"type": "string", "description": "The order ID"},
-		},
-		"required": []string{"order_id"},
-	}
-	return tool.NewRaw(
+	return tool.New(
 		"lookup_order",
 		"Look up order details by ID",
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				OrderID string `json:"order_id"`
-			}
-			if err := json.Unmarshal(input, &p); err != nil {
-				return "", fmt.Errorf("decode order lookup: %w", err)
-			}
-			return fmt.Sprintf(`{"order_id":%q,"status":"active","total":"$249.99","items":["Laptop Stand","USB Hub"]}`, p.OrderID), nil
+		func(_ context.Context, in orderInput) (string, error) {
+			return fmt.Sprintf(`{"order_id":%q,"status":"active","total":"$249.99","items":["Laptop Stand","USB Hub"]}`, in.OrderID), nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 
 func deleteOrderTool() tool.Tool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"order_id": map[string]any{"type": "string", "description": "The order ID to delete"},
-		},
-		"required": []string{"order_id"},
-	}
-	return tool.NewRaw(
+	return tool.New(
 		"delete_order",
 		"Permanently cancel and delete an order",
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var p struct {
-				OrderID string `json:"order_id"`
-			}
-			if err := json.Unmarshal(input, &p); err != nil {
-				return "", fmt.Errorf("decode order deletion: %w", err)
-			}
-			return fmt.Sprintf(`{"deleted":true,"order_id":%q}`, p.OrderID), nil
+		func(_ context.Context, in orderInput) (string, error) {
+			return fmt.Sprintf(`{"deleted":true,"order_id":%q}`, in.OrderID), nil
 		},
-		tool.WithSchema(schema),
 		tool.RequiresApproval(),
 	)
 }

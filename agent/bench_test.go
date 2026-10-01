@@ -163,7 +163,10 @@ func (p *benchToolProvider) Stream(_ context.Context, _ ModelRequest, _ func(Mod
 }
 
 func newEchoTool() tool.Tool {
-	return tool.NewRaw("echo", "echo",
+	return tool.NewRaw(
+		"echo",
+		"echo",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
 	)
 }

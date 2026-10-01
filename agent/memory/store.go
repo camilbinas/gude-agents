@@ -252,7 +252,10 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 		o(cfg)
 	}
 	schema := generateMemSchema[T]()
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			id, err := ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -264,7 +267,6 @@ func NewRememberTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			}
 			return "Remembered.", store.Remember(ctx, id, value)
 		},
-		tool.WithSchema(schema),
 	)
 }
 
@@ -282,7 +284,10 @@ func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 	} else {
 		schema["required"] = []any{"id"}
 	}
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			identity, err := ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -303,7 +308,6 @@ func NewUpdateTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			}
 			return "Updated.", nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 
@@ -321,7 +325,10 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 		},
 		"required": []any{"query"},
 	}
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			id, err := ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -354,7 +361,6 @@ func NewRecallTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			}
 			return b.String(), nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 
@@ -371,7 +377,10 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 		},
 		"required": []any{"id"},
 	}
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			identity, err := ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -385,7 +394,6 @@ func NewForgetTool[T any](store *Store[T], opts ...ToolOption) tool.Tool {
 			}
 			return "Forgotten.", store.Forget(ctx, identity, params.ID)
 		},
-		tool.WithSchema(schema),
 	)
 }
 

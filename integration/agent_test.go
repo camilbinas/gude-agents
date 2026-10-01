@@ -251,20 +251,25 @@ func TestIntegration_InvocationContext(t *testing.T) {
 		return fmt.Sprintf("stored: %s", in.Text), nil
 	})
 
-	readTool := tool.NewRaw("read_value", "Read the previously stored value", func(ctx context.Context, _ json.RawMessage) (string, error) {
-		c := agent.FromContext(ctx)
-		if c == nil {
-			return "error: no invocation context", nil
-		}
-		v, ok := c.Get("stored")
-		if !ok {
-			return "nothing stored yet", nil
-		}
-		return fmt.Sprintf("read: %s", v), nil
-	}, tool.WithSchema(map[string]any{
-		"type":       "object",
-		"properties": map[string]any{},
-	}))
+	readTool := tool.NewRaw(
+		"read_value",
+		"Read the previously stored value",
+		map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+		func(ctx context.Context, _ json.RawMessage) (string, error) {
+			c := agent.FromContext(ctx)
+			if c == nil {
+				return "error: no invocation context", nil
+			}
+			v, ok := c.Get("stored")
+			if !ok {
+				return "nothing stored yet", nil
+			}
+			return fmt.Sprintf("read: %s", v), nil
+		},
+	)
 
 	a, err := agent.New(p,
 		string("You are a test assistant. When asked to store something, use store_value first, then use read_value to confirm. Be very brief."),

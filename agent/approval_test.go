@@ -26,6 +26,7 @@ func deleteOrderTool() tool.Tool {
 	return tool.NewRaw(
 		"delete_order",
 		"Permanently deletes an order",
+		schema,
 		func(_ context.Context, input json.RawMessage) (string, error) {
 			var p struct {
 				OrderID string `json:"order_id"`
@@ -33,7 +34,6 @@ func deleteOrderTool() tool.Tool {
 			json.Unmarshal(input, &p)
 			return `{"deleted":true,"order_id":"` + p.OrderID + `"}`, nil
 		},
-		tool.WithSchema(schema),
 		tool.RequiresApproval(),
 	)
 }
@@ -172,10 +172,16 @@ func TestResume_ApproveRunsTool(t *testing.T) {
 // the loop continues without running the handler.
 func TestResume_DenySkipsHandler(t *testing.T) {
 	handlerCalled := false
-	dt := tool.NewRaw("delete_order", "Permanently deletes an order", func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return `{"deleted":true}`, nil
-	}, tool.RequiresApproval())
+	dt := tool.NewRaw(
+		"delete_order",
+		"Permanently deletes an order",
+		nil,
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			handlerCalled = true
+			return `{"deleted":true}`, nil
+		},
+		tool.RequiresApproval(),
+	)
 	provider := &approvalBatchProvider{responses: []*ModelResponse{
 		{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{}`)}}},
 		{Text: "I couldn't delete the order."},
@@ -219,7 +225,7 @@ func TestResume_DenySkipsHandler(t *testing.T) {
 // TestRequiresApproval_NormalToolUnaffected verifies that tools without
 // RequiresApproval still execute normally.
 func TestRequiresApproval_NormalToolUnaffected(t *testing.T) {
-	normalTool := tool.NewRaw("get_info", "Gets some info", func(_ context.Context, _ json.RawMessage) (string, error) { return `{"info":"ok"}`, nil })
+	normalTool := tool.NewRaw("get_info", "Gets some info", nil, func(_ context.Context, _ json.RawMessage) (string, error) { return `{"info":"ok"}`, nil })
 	provider := newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "get_info", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "Here is the info."},
@@ -240,14 +246,20 @@ func TestRequiresApproval_NormalToolUnaffected(t *testing.T) {
 func TestResume_RerunsExecutionChecks(t *testing.T) {
 	t.Run("schema", func(t *testing.T) {
 		handlerCalled := false
-		strictTool := tool.NewRaw("strict", "requires an id", func(_ context.Context, _ json.RawMessage) (string, error) {
-			handlerCalled = true
-			return "ok", nil
-		}, tool.WithSchema(map[string]any{
-			"type":       "object",
-			"required":   []string{"id"},
-			"properties": map[string]any{"id": map[string]any{"type": "string"}},
-		}), tool.RequiresApproval())
+		strictTool := tool.NewRaw(
+			"strict",
+			"requires an id",
+			map[string]any{
+				"type":       "object",
+				"required":   []string{"id"},
+				"properties": map[string]any{"id": map[string]any{"type": "string"}},
+			},
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				handlerCalled = true
+				return "ok", nil
+			},
+			tool.RequiresApproval(),
+		)
 		provider := newScriptedProvider(
 			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "schema-1", Name: "strict", Input: json.RawMessage(`{"id":"original"}`)}}},
 			&ModelResponse{Text: "schema rejected"},
@@ -271,10 +283,17 @@ func TestResume_RerunsExecutionChecks(t *testing.T) {
 
 	t.Run("role", func(t *testing.T) {
 		handlerCalled := false
-		restricted := tool.NewRaw("restricted", "admin only", func(_ context.Context, _ json.RawMessage) (string, error) {
-			handlerCalled = true
-			return "secret", nil
-		}, tool.RequiresApproval(), tool.AllowRoles("admin"))
+		restricted := tool.NewRaw(
+			"restricted",
+			"admin only",
+			nil,
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				handlerCalled = true
+				return "secret", nil
+			},
+			tool.RequiresApproval(),
+			tool.AllowRoles("admin"),
+		)
 		provider := newScriptedProvider(
 			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "role-1", Name: "restricted", Input: json.RawMessage(`{}`)}}},
 			&ModelResponse{Text: "role rejected"},
@@ -295,13 +314,20 @@ func TestResume_RerunsExecutionChecks(t *testing.T) {
 
 	t.Run("guard and middleware", func(t *testing.T) {
 		var calls []string
-		guarded := tool.NewRaw("guarded", "guarded tool", func(_ context.Context, _ json.RawMessage) (string, error) {
-			calls = append(calls, "handler")
-			return "ok", nil
-		}, tool.RequiresApproval(), tool.WithGuard(func(_ context.Context, _ json.RawMessage) (tool.Decision, error) {
-			calls = append(calls, "guard")
-			return tool.Allow(), nil
-		}))
+		guarded := tool.NewRaw(
+			"guarded",
+			"guarded tool",
+			nil,
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				calls = append(calls, "handler")
+				return "ok", nil
+			},
+			tool.RequiresApproval(),
+			tool.WithGuard(func(_ context.Context, _ json.RawMessage) (tool.Decision, error) {
+				calls = append(calls, "guard")
+				return tool.Allow(), nil
+			}),
+		)
 		middleware := func(next ToolHandlerFunc) ToolHandlerFunc {
 			return func(ctx context.Context, call ToolCall) (ToolResult, error) {
 				calls = append(calls, "before middleware")
@@ -420,9 +446,9 @@ func TestResume_DecideBatchOrderedSequentialAndParallel(t *testing.T) {
 					return out, nil
 				}
 			}
-			allowed := tool.NewRaw("allowed", "allowed", record("allowed", "allowed result"), tool.RequiresApproval())
-			free := tool.NewRaw("free", "free", record("free", "free result"))
-			denied := tool.NewRaw("denied", "denied", record("denied", "denied result"), tool.RequiresApproval())
+			allowed := tool.NewRaw("allowed", "allowed", nil, record("allowed", "allowed result"), tool.RequiresApproval())
+			free := tool.NewRaw("free", "free", nil, record("free", "free result"))
+			denied := tool.NewRaw("denied", "denied", nil, record("denied", "denied result"), tool.RequiresApproval())
 			opts := []Option{WithTools(allowed, free, denied)}
 			if !parallel {
 				opts = append(opts, WithSequentialTools())
@@ -489,10 +515,16 @@ func TestResume_DenyAppliesToEveryCallInBatch(t *testing.T) {
 		t.Run(map[bool]string{false: "sequential", true: "parallel"}[parallel], func(t *testing.T) {
 			var handlerCalls atomic.Int32
 			mk := func(name string) tool.Tool {
-				return tool.NewRaw(name, name, func(context.Context, json.RawMessage) (string, error) {
-					handlerCalls.Add(1)
-					return "ran", nil
-				}, tool.RequiresApproval())
+				return tool.NewRaw(
+					name,
+					name,
+					nil,
+					func(context.Context, json.RawMessage) (string, error) {
+						handlerCalls.Add(1)
+						return "ran", nil
+					},
+					tool.RequiresApproval(),
+				)
 			}
 			provider := &approvalBatchProvider{responses: []*ModelResponse{
 				{ToolCalls: []tool.Call{
@@ -561,10 +593,16 @@ func TestResume_DenyAppliesToEveryCallInBatch(t *testing.T) {
 func TestResume_InvalidResponsesRunNoHandlers(t *testing.T) {
 	called := 0
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name, func(_ context.Context, _ json.RawMessage) (string, error) {
-			called++
-			return "unexpected", nil
-		}, tool.RequiresApproval())
+		return tool.NewRaw(
+			name,
+			name,
+			nil,
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				called++
+				return "unexpected", nil
+			},
+			tool.RequiresApproval(),
+		)
 	}
 	provider := &approvalBatchProvider{}
 	a, err := New(provider, "helpful", WithTools(makeTool("first"), makeTool("second")))
@@ -601,10 +639,16 @@ func TestResume_InvalidResponsesRunNoHandlers(t *testing.T) {
 
 func TestResume_InvalidResponseDoesNotConsumeInterrupt(t *testing.T) {
 	var handlerCalls atomic.Int32
-	approved := tool.NewRaw("approved", "approved", func(context.Context, json.RawMessage) (string, error) {
-		handlerCalls.Add(1)
-		return "ok", nil
-	}, tool.RequiresApproval())
+	approved := tool.NewRaw(
+		"approved",
+		"approved",
+		nil,
+		func(context.Context, json.RawMessage) (string, error) {
+			handlerCalls.Add(1)
+			return "ok", nil
+		},
+		tool.RequiresApproval(),
+	)
 	provider := newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "done"},
@@ -633,10 +677,16 @@ func TestResume_StatelessApprovalReplayHasOneWinner(t *testing.T) {
 	newAgent := func(t *testing.T) (*Agent, *Interrupt, *atomic.Int32, *scriptedProvider) {
 		t.Helper()
 		var handlerCalls atomic.Int32
-		approved := tool.NewRaw("approved", "approved", func(context.Context, json.RawMessage) (string, error) {
-			handlerCalls.Add(1)
-			return "ok", nil
-		}, tool.RequiresApproval())
+		approved := tool.NewRaw(
+			"approved",
+			"approved",
+			nil,
+			func(context.Context, json.RawMessage) (string, error) {
+				handlerCalls.Add(1)
+				return "ok", nil
+			},
+			tool.RequiresApproval(),
+		)
 		provider := newScriptedProvider(
 			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}}},
 			&ModelResponse{Text: "done"},
@@ -1002,10 +1052,16 @@ func (o *recordingInterruptObserver) count() int {
 
 func TestResume_RejectsSameMessagesAtNewerRevision(t *testing.T) {
 	var handlerCalls atomic.Int32
-	approved := tool.NewRaw("approved", "approved", func(context.Context, json.RawMessage) (string, error) {
-		handlerCalls.Add(1)
-		return "ran", nil
-	}, tool.RequiresApproval())
+	approved := tool.NewRaw(
+		"approved",
+		"approved",
+		nil,
+		func(context.Context, json.RawMessage) (string, error) {
+			handlerCalls.Add(1)
+			return "ran", nil
+		},
+		tool.RequiresApproval(),
+	)
 	provider := &approvalBatchProvider{responses: []*ModelResponse{
 		{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}}},
 		{Text: "should not run"},
@@ -1040,11 +1096,17 @@ func TestResume_RejectsSameMessagesAtNewerRevision(t *testing.T) {
 func TestResume_ChainedInterruptConsumesPredecessorBeforeReplacement(t *testing.T) {
 	makeAgent := func(t *testing.T, store *testInterruptStore) (*Agent, *failingSaveConversation) {
 		t.Helper()
-		ask := tool.NewRaw("needs_human", "needs human", func(ctx context.Context, _ json.RawMessage) (string, error) {
-			callCtx := FromContext(ctx)
-			callCtx.call.setHumanInput(&InputInterrupt{Reason: "review", Question: "continue?"})
-			return humanInputPausedResult, nil
-		}, tool.RequiresApproval())
+		ask := tool.NewRaw(
+			"needs_human",
+			"needs human",
+			nil,
+			func(ctx context.Context, _ json.RawMessage) (string, error) {
+				callCtx := FromContext(ctx)
+				callCtx.call.setHumanInput(&InputInterrupt{Reason: "review", Question: "continue?"})
+				return humanInputPausedResult, nil
+			},
+			tool.RequiresApproval(),
+		)
 		provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{
 			ToolUseID: "tc-1", Name: "needs_human", Input: json.RawMessage(`{}`),
 		}}})
@@ -1119,10 +1181,17 @@ func TestResume_CanonicalMiddlewarePipelineSupportsEveryToolKind(t *testing.T) {
 		{
 			name: "plain",
 			build: func(done chan struct{}) tool.Tool {
-				return tool.NewRaw("work", "plain work", func(context.Context, json.RawMessage) (string, error) {
-					close(done)
-					return "plain result", nil
-				}, objectSchema, tool.RequiresApproval())
+				return tool.NewRaw(
+					"work",
+					"plain work",
+					nil,
+					func(context.Context, json.RawMessage) (string, error) {
+						close(done)
+						return "plain result", nil
+					},
+					objectSchema,
+					tool.RequiresApproval(),
+				)
 			},
 		},
 		{
@@ -1219,10 +1288,16 @@ func TestMemoryInterruptStoreRejectsConsumedIDReuse(t *testing.T) {
 
 func TestResume_PostClaimFailureRemainsConsumed(t *testing.T) {
 	var handlerCalls atomic.Int32
-	approved := tool.NewRaw("approved", "approved", func(context.Context, json.RawMessage) (string, error) {
-		handlerCalls.Add(1)
-		return "ok", nil
-	}, tool.RequiresApproval())
+	approved := tool.NewRaw(
+		"approved",
+		"approved",
+		nil,
+		func(context.Context, json.RawMessage) (string, error) {
+			handlerCalls.Add(1)
+			return "ok", nil
+		},
+		tool.RequiresApproval(),
+	)
 	provider := &approvalBatchProvider{responses: []*ModelResponse{{
 		ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}},
 	}}}
@@ -1249,10 +1324,16 @@ func TestResume_PostClaimFailureRemainsConsumed(t *testing.T) {
 func TestResume_ApprovedToolErrorIsNotReplayable(t *testing.T) {
 	var handlerCalls atomic.Int32
 	toolErr := errors.New("tool failed after side effect boundary")
-	approved := tool.NewRaw("approved", "approved", func(context.Context, json.RawMessage) (string, error) {
-		handlerCalls.Add(1)
-		return "", toolErr
-	}, tool.RequiresApproval())
+	approved := tool.NewRaw(
+		"approved",
+		"approved",
+		nil,
+		func(context.Context, json.RawMessage) (string, error) {
+			handlerCalls.Add(1)
+			return "", toolErr
+		},
+		tool.RequiresApproval(),
+	)
 	provider := &approvalBatchProvider{responses: []*ModelResponse{{
 		ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}},
 	}}}

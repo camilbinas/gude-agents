@@ -39,13 +39,12 @@ func main() {
 	provider := bedrock.Must(bedrock.Standard())
 	store := conversation.NewInMemory()
 
-	lookup := tool.NewRaw(
+	lookup := tool.NewSimple(
 		"lookup",
 		"Look up data",
-		func(_ context.Context, _ json.RawMessage) (string, error) {
+		func(_ context.Context) (string, error) {
 			return `{"found":true}`, nil
 		},
-		tool.WithSchema(map[string]any{"type": "object"}),
 	)
 
 	a, err := agent.New(

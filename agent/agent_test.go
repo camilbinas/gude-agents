@@ -65,7 +65,7 @@ func dummyHandler(_ context.Context, _ json.RawMessage) (string, error) {
 }
 
 func dummyTool(name, desc string) tool.Tool {
-	return tool.NewRaw(name, desc, dummyHandler)
+	return tool.NewRaw(name, desc, nil, dummyHandler)
 }
 
 // textStreamCB drains TextStream, forwarding each chunk to cb (if non-nil).
@@ -214,10 +214,14 @@ func TestInvoke_SingleToolCall(t *testing.T) {
 		&ModelResponse{Text: "done"},
 	)
 
-	echoTool := tool.NewRaw("echo", "echoes input",
+	echoTool := tool.NewRaw(
+		"echo",
+		"echoes input",
+		nil,
 		func(_ context.Context, input json.RawMessage) (string, error) {
 			return "echoed", nil
-		})
+		},
+	)
 
 	a, err := New(sp, "sys", WithTools(echoTool))
 	if err != nil {
@@ -247,12 +251,17 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 	var order []string
 
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", func(_ context.Context, _ json.RawMessage) (string, error) {
-			mu.Lock()
-			order = append(order, name)
-			mu.Unlock()
-			return name + " result", nil
-		})
+		return tool.NewRaw(
+			name,
+			name+" tool",
+			nil,
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				mu.Lock()
+				order = append(order, name)
+				mu.Unlock()
+				return name + " result", nil
+			},
+		)
 	}
 
 	// WithSequentialTools opts out of the default concurrent execution so
@@ -297,15 +306,20 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 	executed := map[string]bool{}
 
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", func(_ context.Context, _ json.RawMessage) (string, error) {
-			barrier.Done()
-			barrier.Wait() // blocks until all 3 tools are running
-			time.Sleep(toolSleep)
-			mu.Lock()
-			executed[name] = true
-			mu.Unlock()
-			return name + " ok", nil
-		})
+		return tool.NewRaw(
+			name,
+			name+" tool",
+			nil,
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				barrier.Done()
+				barrier.Wait() // blocks until all 3 tools are running
+				time.Sleep(toolSleep)
+				mu.Lock()
+				executed[name] = true
+				mu.Unlock()
+				return name + " ok", nil
+			},
+		)
 	}
 
 	// Tool calls run in parallel by default.
@@ -349,10 +363,14 @@ func TestInvoke_ToolErrorReturnedAsResultText(t *testing.T) {
 		&ModelResponse{Text: "recovered"},
 	)
 
-	failTool := tool.NewRaw("fail_tool", "always fails",
+	failTool := tool.NewRaw(
+		"fail_tool",
+		"always fails",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "", fmt.Errorf("something broke")
-		})
+		},
+	)
 
 	a, err := New(sp, "sys", WithTools(failTool))
 	if err != nil {
@@ -374,10 +392,14 @@ func TestInvoke_MaxIterationError(t *testing.T) {
 	alwaysToolCall := &ModelResponse{ToolCalls: []tool.Call{toolCall("tc", "loop")}}
 	sp := newScriptedProvider(alwaysToolCall, alwaysToolCall, alwaysToolCall)
 
-	loopTool := tool.NewRaw("loop", "loops forever",
+	loopTool := tool.NewRaw(
+		"loop",
+		"loops forever",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "looping", nil
-		})
+		},
+	)
 
 	a, err := New(sp, "sys", WithTools(loopTool), WithMaxIterations(2))
 	if err != nil {
@@ -431,10 +453,14 @@ func TestTextStream_SuppressesChunksDuringToolIteration(t *testing.T) {
 		&ModelResponse{Text: "final answer"},
 	)
 
-	workTool := tool.NewRaw("work", "does work",
+	workTool := tool.NewRaw(
+		"work",
+		"does work",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "worked", nil
-		})
+		},
+	)
 
 	a, err := New(sp, "sys", WithTools(workTool))
 	if err != nil {
@@ -469,9 +495,14 @@ func TestInvoke_MultiToolCallsResultOrderPreserved(t *testing.T) {
 	)
 
 	makeTool := func(name, result string) tool.Tool {
-		return tool.NewRaw(name, name+" tool", func(_ context.Context, _ json.RawMessage) (string, error) {
-			return result, nil
-		})
+		return tool.NewRaw(
+			name,
+			name+" tool",
+			nil,
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				return result, nil
+			},
+		)
 	}
 
 	// Parallel execution (the default) stresses order preservation.
@@ -564,10 +595,14 @@ func TestInvoke_ProviderErrorWrapped(t *testing.T) {
 func TestInvoke_ToolErrorWrapped(t *testing.T) {
 	cause := fmt.Errorf("tool exploded")
 
-	boomTool := tool.NewRaw("boom", "always errors",
+	boomTool := tool.NewRaw(
+		"boom",
+		"always errors",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "", cause
-		})
+		},
+	)
 
 	// Use capturingProvider (defined in guardrail_test.go) to inspect what the
 	// second provider call receives as tool results.
@@ -914,7 +949,7 @@ func newTestBackgroundRaw(name, description, ack string, schema map[string]any, 
 // newTestRaw adapts hand-written schema fixtures to the canonical raw constructor.
 func newTestRaw(name, description string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), opts ...tool.Option) tool.Tool {
 	opts = append(opts, tool.WithSchema(schema))
-	return tool.NewRaw(name, description, handler, opts...)
+	return tool.NewRaw(name, description, nil, handler, opts...)
 }
 
 // contains is shared by root agent tests that assert error text.

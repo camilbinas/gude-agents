@@ -150,16 +150,21 @@ func TestProperty8_HandlerNotCalledOnInvalidInput(t *testing.T) {
 		field := rapid.StringMatching(`[a-z][a-z0-9]{0,7}`).Draw(rt, "field")
 
 		handlerCalled := false
-		strictTool := tool.NewRaw("strict", "requires a field", func(_ context.Context, _ json.RawMessage) (string, error) {
-			handlerCalled = true
-			return "ok", nil
-		}, tool.WithSchema(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				field: map[string]any{"type": "string"},
+		strictTool := tool.NewRaw(
+			"strict",
+			"requires a field",
+			map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					field: map[string]any{"type": "string"},
+				},
+				"required": []any{field},
 			},
-			"required": []any{field},
-		}))
+			func(_ context.Context, _ json.RawMessage) (string, error) {
+				handlerCalled = true
+				return "ok", nil
+			},
+		)
 
 		sp := newScriptedProvider(
 			&ModelResponse{ToolCalls: []tool.Call{

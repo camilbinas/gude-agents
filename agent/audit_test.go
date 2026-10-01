@@ -66,7 +66,7 @@ func TestAudit_DefaultRedactionAndStableJSON(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call-1", Name: "echo", Input: json.RawMessage(`{"secret":"input"}`)}}},
 		&ModelResponse{Text: "final response", Usage: TokenUsage{InputTokens: 3, OutputTokens: 4}},
 	)
-	echo := tool.NewRaw("echo", "echo", func(context.Context, json.RawMessage) (string, error) { return "secret output", nil })
+	echo := tool.NewRaw("echo", "echo", nil, func(context.Context, json.RawMessage) (string, error) { return "secret output", nil })
 	a, err := New(provider, "sys", WithName("audited"), WithTools(echo), WithAudit(sink))
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestAudit_WithAuditContentCapturesFinalResponseAndToolContent(t *testing.T)
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call-2", Name: "echo", Input: input}}},
 		&ModelResponse{Text: "complete"},
 	)
-	echo := tool.NewRaw("echo", "echo", func(context.Context, json.RawMessage) (string, error) { return "output", nil })
+	echo := tool.NewRaw("echo", "echo", nil, func(context.Context, json.RawMessage) (string, error) { return "output", nil })
 	a, err := New(provider, "sys", WithTools(echo), WithAudit(sink, WithAuditContent()))
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestAudit_WithAuditContentCapturesFinalResponseAndToolContent(t *testing.T)
 
 func TestAudit_RecordsDenialAndErrorJSON(t *testing.T) {
 	sink := &recordingAuditSink{}
-	restricted := tool.NewRaw("secret", "secret", func(context.Context, json.RawMessage) (string, error) { return "", nil }, tool.AllowRoles("admin"))
+	restricted := tool.NewRaw("secret", "secret", nil, func(context.Context, json.RawMessage) (string, error) { return "", nil }, tool.AllowRoles("admin"))
 	provider := newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "denied", Name: "secret", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "done"},
@@ -190,7 +190,7 @@ func TestAudit_InterruptRecordsAndApprovalRedaction(t *testing.T) {
 		provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{
 			ToolUseID: "approve-1", Name: "approve", Input: json.RawMessage(`{"secret":true}`),
 		}}})
-		approval := tool.NewRaw("approve", "approve", func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
+		approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
 		a, err := New(provider, "sys", WithTools(approval), WithAudit(sink))
 		if err != nil {
 			t.Fatal(err)
@@ -237,10 +237,15 @@ func TestToolObserver_ConcurrentCallsAreComplete(t *testing.T) {
 		{ToolUseID: "two", Name: "echo", Input: json.RawMessage(`{"n":2}`)},
 	}
 	provider := newScriptedProvider(&ModelResponse{ToolCalls: calls}, &ModelResponse{Text: "done"})
-	echo := tool.NewRaw("echo", "echo", func(context.Context, json.RawMessage) (string, error) {
-		time.Sleep(time.Millisecond)
-		return "ok", nil
-	})
+	echo := tool.NewRaw(
+		"echo",
+		"echo",
+		nil,
+		func(context.Context, json.RawMessage) (string, error) {
+			time.Sleep(time.Millisecond)
+			return "ok", nil
+		},
+	)
 	a, err := New(provider, "sys", WithTools(echo), WithObserver(observer))
 	if err != nil {
 		t.Fatal(err)

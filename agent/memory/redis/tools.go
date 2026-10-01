@@ -65,7 +65,10 @@ func NewRememberTool[T any](
 
 	schema := generateRedisInputSchema[T]()
 
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			id, err := memory.ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -83,7 +86,6 @@ func NewRememberTool[T any](
 
 			return "Remembered.", nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 
@@ -109,7 +111,10 @@ func NewUpdateTool[T any](
 		schema["required"] = []any{"id"}
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			identity, err := memory.ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -134,7 +139,6 @@ func NewUpdateTool[T any](
 
 			return "Updated.", nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 
@@ -166,7 +170,10 @@ func NewRecallTool[T any](
 		"required": []any{"query"},
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			id, err := memory.ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -198,7 +205,6 @@ func NewRecallTool[T any](
 
 			return formatTypedResults(results), nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 
@@ -226,7 +232,10 @@ func NewForgetTool[T any](
 		"required": []any{"id"},
 	}
 
-	return tool.NewRaw(cfg.name, cfg.description,
+	return tool.NewRaw(
+		cfg.name,
+		cfg.description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			identity, err := memory.ResolveIdentity(ctx, cfg.scope)
 			if err != nil {
@@ -246,7 +255,6 @@ func NewForgetTool[T any](
 
 			return "Forgotten.", nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 

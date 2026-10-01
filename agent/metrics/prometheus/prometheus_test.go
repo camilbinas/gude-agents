@@ -408,10 +408,14 @@ func TestAgentLoop_MetricsObserverCalled(t *testing.T) {
 	))
 
 	// Register a simple tool that the mock provider will invoke.
-	myTool := tool.NewRaw("my-tool", "A test tool",
+	myTool := tool.NewRaw(
+		"my-tool",
+		"A test tool",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "result", nil
-		})
+		},
+	)
 
 	a, err := agent.New(prov, "sys",
 		agent.WithTools(myTool),
@@ -532,10 +536,14 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 		},
 	))
 
-	myTool := tool.NewRaw("my-tool", "A test tool",
+	myTool := tool.NewRaw(
+		"my-tool",
+		"A test tool",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "result", nil
-		})
+		},
+	)
 
 	observer := &recordingObserver{}
 

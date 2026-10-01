@@ -267,10 +267,14 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 			},
 		)
 
-		theTool := tool.NewRaw(toolName, "a tool",
+		theTool := tool.NewRaw(
+			toolName,
+			"a tool",
+			nil,
 			func(_ context.Context, _ json.RawMessage) (string, error) {
 				return "ok", nil
-			})
+			},
+		)
 
 		a, err := agent.New(prov, "sys", agent.WithTools(theTool), WithTracing(tp))
 		if err != nil {

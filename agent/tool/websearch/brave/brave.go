@@ -100,6 +100,7 @@ func New(apiKey string, opts ...Option) tool.Tool {
 	return tool.NewRaw(
 		"web_search",
 		"Search the web for current information. Returns titles, URLs, and content snippets.",
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var req struct {
 				Query string `json:"query"`
@@ -116,7 +117,6 @@ func New(apiKey string, opts ...Option) tool.Tool {
 			log.Logf("got results")
 			return result, nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 

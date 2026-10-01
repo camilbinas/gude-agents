@@ -72,16 +72,21 @@ func TestValidateToolInput_EnumFieldAbsent_OK(t *testing.T) {
 // returns IsError=true with a ToolError when a required field is missing.
 func TestExecuteTools_SchemaValidation_MissingRequired(t *testing.T) {
 	handlerCalled := false
-	greetTool := tool.NewRaw("greet", "greets someone", func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return "hello", nil
-	}, tool.WithSchema(map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name": map[string]any{"type": "string"},
+	greetTool := tool.NewRaw(
+		"greet",
+		"greets someone",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+			},
+			"required": []any{"name"},
 		},
-		"required": []any{"name"},
-	}))
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			handlerCalled = true
+			return "hello", nil
+		},
+	)
 
 	sp := newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{
@@ -136,16 +141,21 @@ func TestExecuteTools_SchemaValidation_MissingRequired(t *testing.T) {
 // TestExecuteTools_SchemaValidation_InvalidEnum verifies IsError=true for bad enum value.
 func TestExecuteTools_SchemaValidation_InvalidEnum(t *testing.T) {
 	handlerCalled := false
-	colorTool := tool.NewRaw("paint", "paints a color", func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return "painted", nil
-	}, tool.WithSchema(map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"color": map[string]any{"type": "string", "enum": []any{"red", "green", "blue"}},
+	colorTool := tool.NewRaw(
+		"paint",
+		"paints a color",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"color": map[string]any{"type": "string", "enum": []any{"red", "green", "blue"}},
+			},
+			"required": []any{"color"},
 		},
-		"required": []any{"color"},
-	}))
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			handlerCalled = true
+			return "painted", nil
+		},
+	)
 
 	cp := newCapturingProvider(
 		&ModelResponse{ToolCalls: []tool.Call{
@@ -181,16 +191,21 @@ func TestExecuteTools_SchemaValidation_InvalidEnum(t *testing.T) {
 // TestExecuteTools_SchemaValidation_ValidPayload verifies handler IS called for valid input.
 func TestExecuteTools_SchemaValidation_ValidPayload(t *testing.T) {
 	handlerCalled := false
-	greetTool := tool.NewRaw("greet", "greets someone", func(_ context.Context, _ json.RawMessage) (string, error) {
-		handlerCalled = true
-		return "hello alice", nil
-	}, tool.WithSchema(map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name": map[string]any{"type": "string"},
+	greetTool := tool.NewRaw(
+		"greet",
+		"greets someone",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+			},
+			"required": []any{"name"},
 		},
-		"required": []any{"name"},
-	}))
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			handlerCalled = true
+			return "hello alice", nil
+		},
+	)
 
 	sp := newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{

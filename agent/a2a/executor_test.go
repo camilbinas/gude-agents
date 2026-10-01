@@ -499,11 +499,16 @@ func TestExecutor_ApprovalInterrupt_ApproveAndDeny(t *testing.T) {
 	} {
 		t.Run(tc.reply, func(t *testing.T) {
 			var ran atomic.Bool
-			del := tool.NewRaw("delete_order", "deletes",
+			del := tool.NewRaw(
+				"delete_order",
+				"deletes",
+				map[string]any{"type": "object"},
 				func(context.Context, json.RawMessage) (string, error) {
 					ran.Store(true)
 					return "deleted", nil
-				}, tool.WithSchema(map[string]any{"type": "object"}), tool.RequiresApproval())
+				},
+				tool.RequiresApproval(),
+			)
 			provider := testutil.NewMockProvider(testutil.WithResponses(
 				&agent.ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "c-1", Name: "delete_order", Input: json.RawMessage(`{}`)}}},
 				&agent.ModelResponse{Text: "done"},

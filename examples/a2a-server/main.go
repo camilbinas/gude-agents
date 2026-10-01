@@ -22,7 +22,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os/signal"
@@ -37,25 +36,15 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Standard())
 
-	weather := tool.NewRaw(
+	type weatherInput struct {
+		City string `json:"city" description:"City name" required:"true"`
+	}
+	weather := tool.New(
 		"get_weather",
 		"Get current weather for a city",
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var params struct {
-				City string `json:"city"`
-			}
-			if err := json.Unmarshal(input, &params); err != nil {
-				return "", fmt.Errorf("decode weather input: %w", err)
-			}
-			return fmt.Sprintf("Weather in %s: 22°C, partly cloudy", params.City), nil
+		func(_ context.Context, in weatherInput) (string, error) {
+			return fmt.Sprintf("Weather in %s: 22°C, partly cloudy", in.City), nil
 		},
-		tool.WithSchema(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"city": map[string]any{"type": "string", "description": "City name"},
-			},
-			"required": []string{"city"},
-		}),
 	)
 
 	a, err := agent.New(

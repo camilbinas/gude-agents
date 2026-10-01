@@ -43,26 +43,16 @@ func main() {
 
 	provider := bedrock.Must(bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow)))
 
-	weather := tool.NewRaw(
+	type weatherInput struct {
+		City string `json:"city" description:"City name" required:"true"`
+	}
+	weather := tool.New(
 		"get_weather",
 		"Get current weather for a city",
-		func(_ context.Context, input json.RawMessage) (string, error) {
-			var params struct {
-				City string `json:"city"`
-			}
-			if err := json.Unmarshal(input, &params); err != nil {
-				return "", fmt.Errorf("decode weather input: %w", err)
-			}
+		func(_ context.Context, in weatherInput) (string, error) {
 			time.Sleep(100 * time.Millisecond) // simulate latency
-			return fmt.Sprintf(`{"city":"%s","temp":"22°C","condition":"sunny"}`, params.City), nil
+			return fmt.Sprintf(`{"city":"%s","temp":"22°C","condition":"sunny"}`, in.City), nil
 		},
-		tool.WithSchema(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"city": map[string]any{"type": "string", "description": "City name"},
-			},
-			"required": []string{"city"},
-		}),
 	)
 
 	// Shared agent — created once, used by all requests.

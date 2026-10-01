@@ -138,6 +138,7 @@ func New(opts ...Option) tool.Tool {
 		"web_fetch",
 		"Fetch a web page and return its text content. "+
 			"Use after a web search to read a specific result in detail.",
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var req struct {
 				URL string `json:"url"`
@@ -154,7 +155,6 @@ func New(opts ...Option) tool.Tool {
 			log.Logf("fetched %d chars", len(result))
 			return result, nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 

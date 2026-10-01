@@ -410,15 +410,15 @@ func TestAgentPersistsLoadsAndResumesInterrupt(t *testing.T) {
 	deleteOrder := tool.NewRaw(
 		"delete_order",
 		"Permanently deletes an order",
+		map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"order_id": map[string]any{"type": "string"}},
+			"required":   []string{"order_id"},
+		},
 		func(context.Context, json.RawMessage) (string, error) {
 			ran.Store(true)
 			return `{"deleted":true}`, nil
 		},
-		tool.WithSchema(map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"order_id": map[string]any{"type": "string"}},
-			"required":   []string{"order_id"},
-		}),
 		tool.RequiresApproval(),
 	)
 	provider := testutil.NewMockProvider(testutil.WithResponses(

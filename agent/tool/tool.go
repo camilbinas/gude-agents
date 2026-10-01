@@ -72,7 +72,9 @@ const (
 )
 
 // Tool pairs a provider-facing specification with one canonical handler adapter.
-// Tools should be created with New, NewRaw, NewRich, or NewBackground.
+// Tools should be created with NewSimple (no input), New (typed input),
+// NewRich (typed input, rich output), NewBackground (typed input, background
+// execution), or NewRaw (raw JSON with an explicit schema).
 type Tool struct {
 	Spec Spec
 
@@ -93,7 +95,9 @@ func RequiresApproval() Option {
 	return func(t *Tool) { t.needsApproval = true }
 }
 
-// WithSchema replaces the generated/default input schema.
+// WithSchema replaces the generated/default input schema. Options run after
+// the constructor sets its schema, so WithSchema also overrides the
+// positional schema passed to NewRaw.
 func WithSchema(schema map[string]any) Option {
 	return func(t *Tool) {
 		if schema == nil {
@@ -148,9 +152,29 @@ func New[T any](name, description string, handler Handler[T], opts ...Option) To
 	return newPlain(name, description, GenerateSchema[T](), adaptString(handler), executionPlain, "", opts...)
 }
 
-// NewRaw creates a Tool whose handler receives unprocessed JSON.
-func NewRaw(name, description string, handler Handler[json.RawMessage], opts ...Option) Tool {
-	return newPlain(name, description, map[string]any{"type": "object"}, handler, executionPlain, "", opts...)
+// NewSimple creates a Tool that takes no input. Its provider-facing schema is
+// {"type":"object"}; the handler receives only the context. It runs through
+// the same canonical pipeline (RBAC, schema validation, guard, approval,
+// middleware) as every other tool, and accepts all normal options.
+func NewSimple(name, description string, handler func(context.Context) (string, error), opts ...Option) Tool {
+	var h func(context.Context, json.RawMessage) (string, error)
+	if handler != nil {
+		h = func(ctx context.Context, _ json.RawMessage) (string, error) {
+			return handler(ctx)
+		}
+	}
+	return newPlain(name, description, map[string]any{"type": "object"}, h, executionPlain, "", opts...)
+}
+
+// NewRaw creates a Tool whose handler receives unprocessed JSON and whose
+// provider-facing schema is supplied explicitly. A nil schema becomes
+// {"type":"object"}. Options are applied after the positional schema, so a
+// WithSchema option overrides it.
+func NewRaw(name, description string, schema map[string]any, handler Handler[json.RawMessage], opts ...Option) Tool {
+	if schema == nil {
+		schema = map[string]any{"type": "object"}
+	}
+	return newPlain(name, description, schema, handler, executionPlain, "", opts...)
 }
 
 // NewRich creates a Tool from a typed rich-output handler.

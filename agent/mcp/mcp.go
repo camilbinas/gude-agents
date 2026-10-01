@@ -235,7 +235,10 @@ func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error
 	exposedName := prefix + mcpName
 	description := mcpTool.Description
 
-	return tool.NewRaw(exposedName, description,
+	return tool.NewRaw(
+		exposedName,
+		description,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var args map[string]any
 			if len(input) > 0 {
@@ -260,7 +263,6 @@ func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error
 
 			return text, nil
 		},
-		tool.WithSchema(schema),
 	), nil
 }
 

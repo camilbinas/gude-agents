@@ -262,6 +262,7 @@ func NewHumanInputTool(name, description string) tool.Tool {
 	return tool.NewRaw(
 		name,
 		base,
+		schema,
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			var params struct {
 				Reason   string `json:"reason"`
@@ -277,7 +278,6 @@ func NewHumanInputTool(name, description string) tool.Tool {
 			c.call.setHumanInput(&InputInterrupt{Reason: params.Reason, Question: params.Question})
 			return humanInputPausedResult, nil
 		},
-		tool.WithSchema(schema),
 	)
 }
 

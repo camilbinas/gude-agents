@@ -51,11 +51,15 @@ func newMissingIDFixture(t *testing.T) *missingIDFixture {
 		store:     &failingSaveConversation{},
 		retriever: &countingRetriever{docs: []rag.Document{{Content: "doc"}}},
 	}
-	sideEffect := tool.NewRaw("side_effect", "external side effect",
+	sideEffect := tool.NewRaw(
+		"side_effect",
+		"external side effect",
+		map[string]any{"type": "object"},
 		func(context.Context, json.RawMessage) (string, error) {
 			f.toolCalls.Add(1)
 			return "done", nil
-		}, tool.WithSchema(map[string]any{"type": "object"}))
+		},
+	)
 	a, err := New(f.provider, "sys",
 		WithConversationStore(f.store),
 		WithSyncConversation(),

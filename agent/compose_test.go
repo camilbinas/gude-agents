@@ -64,10 +64,14 @@ func TestAgentAsTool_ChildErrorPropagatedAsIsError(t *testing.T) {
 			ToolCalls: []tool.Call{toolCall("ctc1", "child_tool")},
 		},
 	)
-	childTool := tool.NewRaw("child_tool", "a child tool",
+	childTool := tool.NewRaw(
+		"child_tool",
+		"a child tool",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "ok", nil
-		})
+		},
+	)
 	child, err := New(childProvider, "child sys", WithTools(childTool), WithMaxIterations(1))
 	if err != nil {
 		t.Fatalf("failed to create child agent: %v", err)

@@ -182,10 +182,14 @@ func tc(id, name string) tool.Call {
 }
 
 func dummyTool(name, desc string) tool.Tool {
-	return tool.NewRaw(name, desc,
+	return tool.NewRaw(
+		name,
+		desc,
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "ok", nil
-		})
+		},
+	)
 }
 
 // ===========================================================================
@@ -269,8 +273,12 @@ func TestZeroOverhead_NoTracingNoSpans(t *testing.T) {
 		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "echo")}},
 		&agent.ModelResponse{Text: "done"},
 	)
-	echoTool := tool.NewRaw("echo", "echoes",
-		func(_ context.Context, _ json.RawMessage) (string, error) { return "echoed", nil })
+	echoTool := tool.NewRaw(
+		"echo",
+		"echoes",
+		nil,
+		func(_ context.Context, _ json.RawMessage) (string, error) { return "echoed", nil },
+	)
 
 	a, err := agent.New(prov, "sys", agent.WithTools(echoTool),
 		agent.WithConversationStore(mem),
@@ -827,13 +835,18 @@ func TestToolSpan_ErrorOnValidationFailure(t *testing.T) {
 		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "strict")}},
 		&agent.ModelResponse{Text: "done"},
 	)
-	strictTool := tool.NewRaw("strict", "strict tool", func(_ context.Context, _ json.RawMessage) (string, error) {
-		return "ok", nil
-	}, tool.WithSchema(map[string]any{
-		"type":       "object",
-		"properties": map[string]any{"name": map[string]any{"type": "string"}},
-		"required":   []any{"name"},
-	}))
+	strictTool := tool.NewRaw(
+		"strict",
+		"strict tool",
+		map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"name": map[string]any{"type": "string"}},
+			"required":   []any{"name"},
+		},
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			return "ok", nil
+		},
+	)
 
 	a, err := agent.New(prov, "sys", agent.WithTools(strictTool), WithTracing(tp))
 	if err != nil {
@@ -864,10 +877,14 @@ func TestToolSpan_ErrorOnHandlerError(t *testing.T) {
 		&agent.ModelResponse{ToolCalls: []tool.Call{tc("tc1", "fail")}},
 		&agent.ModelResponse{Text: "recovered"},
 	)
-	failTool := tool.NewRaw("fail", "always fails",
+	failTool := tool.NewRaw(
+		"fail",
+		"always fails",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			return "", fmt.Errorf("tool exploded")
-		})
+		},
+	)
 
 	a, err := agent.New(prov, "sys", agent.WithTools(failTool), WithTracing(tp))
 	if err != nil {
@@ -1421,13 +1438,17 @@ func TestParallelToolExecution_WithOtelTracing(t *testing.T) {
 	barrier.Add(3)
 
 	makeTool := func(name string) tool.Tool {
-		return tool.NewRaw(name, name+" tool",
+		return tool.NewRaw(
+			name,
+			name+" tool",
+			nil,
 			func(_ context.Context, _ json.RawMessage) (string, error) {
 				barrier.Done()
 				barrier.Wait()
 				time.Sleep(toolSleep)
 				return name + " ok", nil
-			})
+			},
+		)
 	}
 
 	a, err := agent.New(prov, "sys",

@@ -82,7 +82,7 @@ func TestMiddleware_IntegrationWithAgentIncludesProviderCallID(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "provider-id", Name: "greet", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "done"},
 	)
-	greet := tool.NewRaw("greet", "says hello", func(context.Context, json.RawMessage) (string, error) { return "hello", nil })
+	greet := tool.NewRaw("greet", "says hello", nil, func(context.Context, json.RawMessage) (string, error) { return "hello", nil })
 	var got ToolCall
 	mw := func(next ToolHandlerFunc) ToolHandlerFunc {
 		return func(ctx context.Context, call ToolCall) (ToolResult, error) {

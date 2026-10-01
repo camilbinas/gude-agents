@@ -123,22 +123,27 @@ func NewRetrieverTool(name, description string, r Retriever, formatter ...Contex
 		"required": []any{"query"},
 	}
 
-	return tool.NewRaw(name, description, func(ctx context.Context, input json.RawMessage) (string, error) {
-		var params struct {
-			Query string `json:"query"`
-		}
-		if err := json.Unmarshal(input, &params); err != nil {
-			return "", err
-		}
-		docs, err := r.Retrieve(ctx, params.Query)
-		if err != nil {
-			return "", err
-		}
-		if len(docs) == 0 {
-			return "No relevant documents found.", nil
-		}
-		return fmtFn(docs), nil
-	}, tool.WithSchema(schema))
+	return tool.NewRaw(
+		name,
+		description,
+		schema,
+		func(ctx context.Context, input json.RawMessage) (string, error) {
+			var params struct {
+				Query string `json:"query"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", err
+			}
+			docs, err := r.Retrieve(ctx, params.Query)
+			if err != nil {
+				return "", err
+			}
+			if len(docs) == 0 {
+				return "No relevant documents found.", nil
+			}
+			return fmtFn(docs), nil
+		},
+	)
 }
 
 // SplitText splits text into chunks of at most chunkSize runes with overlap

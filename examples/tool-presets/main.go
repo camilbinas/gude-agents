@@ -1,7 +1,7 @@
 // Example: Typed tool constructors for common patterns.
 //
-// Demonstrates tool.New with an empty input struct and with a single required
-// string field. The agent plays a customer-support role with an interactive
+// Demonstrates tool.NewSimple for a no-input tool and tool.New with a single
+// required string field. The agent plays a customer-support role with an interactive
 // chat loop.
 //
 // Run:
@@ -28,10 +28,9 @@ import (
 func main() {
 	provider := bedrock.Must(bedrock.Cheapest())
 
-	// Typed constructors cover both no-input and single-string tools.
-	type timeInput struct{}
-	timeTool := tool.New("current_time", "Returns the current server time",
-		func(context.Context, timeInput) (string, error) {
+	// NewSimple covers no-input tools; New covers structured input.
+	timeTool := tool.NewSimple("current_time", "Returns the current server time",
+		func(context.Context) (string, error) {
 			return time.Now().Format(time.RFC3339), nil
 		},
 	)

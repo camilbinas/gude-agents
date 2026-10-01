@@ -12,7 +12,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -84,36 +83,27 @@ func streamResult(a *agent.Agent, c *agent.Context, input string) (agent.Result,
 	return result, nil
 }
 
+// orderInput is the typed input shared by both order tools.
+type orderInput struct {
+	OrderID string `json:"order_id" description:"The order ID" required:"true"`
+}
+
 func lookupOrderTool() tool.Tool {
-	return tool.NewRaw(
+	return tool.New(
 		"lookup_order",
 		"Look up order details by ID",
-		func(_ context.Context, _ json.RawMessage) (string, error) {
+		func(_ context.Context, _ orderInput) (string, error) {
 			return `{"order_id":"1234","amount":"$89.99","status":"delivered","item":"Wireless Headphones"}`, nil
 		},
-		tool.WithSchema(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"order_id": map[string]any{"type": "string", "description": "The order ID"},
-			},
-			"required": []string{"order_id"},
-		}),
 	)
 }
 
 func processRefundTool() tool.Tool {
-	return tool.NewRaw(
+	return tool.New(
 		"process_refund",
 		"Process a refund for an order",
-		func(_ context.Context, _ json.RawMessage) (string, error) {
+		func(_ context.Context, _ orderInput) (string, error) {
 			return `{"status":"refunded","amount":"$89.99"}`, nil
 		},
-		tool.WithSchema(map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"order_id": map[string]any{"type": "string"},
-			},
-			"required": []string{"order_id"},
-		}),
 	)
 }

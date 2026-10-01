@@ -26,7 +26,7 @@ Conversation stores protect writes with revisions. Memory and RAG solve differen
 
 ## Tools
 
-Use `WithTools` for a fixed set and `WithToolRegistry` for a dynamic, concurrency-safe set. Prefer typed `tool.New`; use `NewRaw` only when raw JSON is required, `NewRich` for images, and `NewBackground` for durable asynchronous re-entry that survives caller cancellation.
+Use `WithTools` for a fixed set and `WithToolRegistry` for a dynamic, concurrency-safe set. Prefer `tool.NewSimple` for no-input tools and typed `tool.New` otherwise; use `NewRaw` (positional schema) only when raw JSON is required, `NewRich` for images, and `NewBackground` for durable asynchronous re-entry that survives caller cancellation.
 
 Use tool options for schema, guard, role policy, and approval. Use middleware for cross-cutting execution behavior and observers for telemetry.
 

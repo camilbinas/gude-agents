@@ -153,9 +153,8 @@ func supportTool() tool.Tool {
 
 // acmeOnlyTool requires support or admin role AND org == "acme" (ABAC).
 func acmeOnlyTool() tool.Tool {
-	type input struct{}
-	return tool.New("acme_report", "Generate an Acme-exclusive report",
-		func(_ context.Context, _ input) (string, error) {
+	return tool.NewSimple("acme_report", "Generate an Acme-exclusive report",
+		func(_ context.Context) (string, error) {
 			return `{"report":"acme-q1","status":"generated"}`, nil
 		},
 		tool.AllowRoles("support", "admin"),

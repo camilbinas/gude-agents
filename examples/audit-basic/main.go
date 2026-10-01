@@ -74,21 +74,16 @@ func main() {
 }
 
 func adminRefundTool() tool.Tool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"order_id": map[string]any{"type": "string"},
-			"amount":   map[string]any{"type": "string"},
-		},
-		"required": []string{"order_id", "amount"},
+	type input struct {
+		OrderID string `json:"order_id" required:"true"`
+		Amount  string `json:"amount" required:"true"`
 	}
-	return tool.NewRaw(
+	return tool.New(
 		"process_refund",
 		"Process a refund for an order (admin only)",
-		func(context.Context, json.RawMessage) (string, error) {
+		func(context.Context, input) (string, error) {
 			return `{"status":"refunded","amount":"$49.99"}`, nil
 		},
-		tool.WithSchema(schema),
 		tool.AllowRoles("admin"),
 	)
 }

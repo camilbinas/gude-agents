@@ -202,10 +202,14 @@ func TestAgent_RetrieverCalledOnce(t *testing.T) {
 
 		provider := &iteratingProvider{toolIterations: toolIterations}
 
-		noopTool := tool.NewRaw("noop", "does nothing",
+		noopTool := tool.NewRaw(
+			"noop",
+			"does nothing",
+			nil,
 			func(_ context.Context, _ json.RawMessage) (string, error) {
 				return "ok", nil
-			})
+			},
+		)
 
 		a, err := New(provider, "system prompt",
 			WithTools(noopTool),
@@ -521,11 +525,15 @@ func TestAgent_RAGAndToolsCoexistence(t *testing.T) {
 	)
 
 	var toolCalled bool
-	searchTool := tool.NewRaw("search", "search tool",
+	searchTool := tool.NewRaw(
+		"search",
+		"search tool",
+		nil,
 		func(_ context.Context, _ json.RawMessage) (string, error) {
 			toolCalled = true
 			return "search result", nil
-		})
+		},
+	)
 
 	a, err := New(provider, "system prompt",
 		WithTools(searchTool),

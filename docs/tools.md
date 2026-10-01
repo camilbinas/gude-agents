@@ -4,13 +4,34 @@ Tools expose a JSON schema to the model and execute through one authorization, g
 
 ## Constructors
 
-There are four constructors. Every constructor accepts named `tool.Option` values.
+There are five constructors. Every constructor accepts named `tool.Option` values, and every tool runs through the same pipeline.
 
 ```go
+func NewSimple(name, description string, handler func(context.Context) (string, error), opts ...tool.Option) tool.Tool
 func New[T any](name, description string, handler tool.Handler[T], opts ...tool.Option) tool.Tool
-func NewRaw(name, description string, handler tool.Handler[json.RawMessage], opts ...tool.Option) tool.Tool
 func NewRich[T any](name, description string, handler tool.RichHandler[T], opts ...tool.Option) tool.Tool
 func NewBackground[T any](name, description, ack string, handler tool.BackgroundHandler[T], opts ...tool.Option) tool.Tool
+func NewRaw(name, description string, schema map[string]any, handler tool.Handler[json.RawMessage], opts ...tool.Option) tool.Tool
+```
+
+Choose in this order:
+
+| Constructor | Use for |
+|---|---|
+| `NewSimple` | no input |
+| `New[T]` | ordinary structured Go input |
+| `NewRich[T]` | structured input + text/image output |
+| `NewBackground[T]` | structured input + background execution |
+| `NewRaw` | manually controlled JSON and schema (dynamic schemas, adapters, MCP-style tools) |
+
+`NewSimple` exposes the schema `{"type":"object"}`:
+
+```go
+health := tool.NewSimple("health", "Check service health",
+    func(ctx context.Context) (string, error) {
+        return "healthy", nil
+    },
+)
 ```
 
 Typed tools generate schema from `T`:
@@ -30,7 +51,25 @@ search := tool.New("search", "Search the catalog",
 )
 ```
 
-Use `NewRaw` with `tool.WithSchema(schema)` when input must remain raw JSON. Use the same `json.RawMessage` type parameter plus `WithSchema` for rich/background raw input.
+Use `NewRaw` when input must remain raw JSON. For a raw tool the schema is part of the definition, so it is a positional argument; `nil` becomes `{"type":"object"}`:
+
+```go
+deleteOrder := tool.NewRaw("delete_order", "Delete an order permanently",
+    map[string]any{
+        "type": "object",
+        "properties": map[string]any{
+            "order_id": map[string]any{"type": "string"},
+        },
+        "required": []string{"order_id"},
+    },
+    func(ctx context.Context, input json.RawMessage) (string, error) {
+        return deleteOrderFromJSON(ctx, input)
+    },
+    tool.RequiresApproval(),
+)
+```
+
+For rich or background tools that need raw input, use `json.RawMessage` as the type parameter plus `WithSchema`.
 
 `NewRich` returns `*tool.Output` with text and optional images. `NewBackground` acknowledges immediately, runs the handler on a detached context outside the originating model turn, persists completion, and triggers a conversation re-entry turn. It requires a non-empty acknowledgement and an agent conversation store (enforced by `agent.New`). Because a store-backed Agent requires a non-empty conversation ID on every invocation, an invocation without one fails with `agent.ErrConversationIDRequired` before the model runs, so a background tool can never be dispatched without a conversation.
 
@@ -39,7 +78,7 @@ Use `NewRaw` with `tool.WithSchema(schema)` when input must remain raw JSON. Use
 - `RequiresApproval()` pauses before execution.
 - `WithGuard(fn)` performs tool-specific policy validation.
 - `AllowRoles(...)`, `DenyRoles(...)`, and `AllowWhen(...)` apply authorization policy.
-- `WithSchema(schema)` replaces generated/default JSON schema.
+- `WithSchema(schema)` replaces the generated/default JSON schema. Options apply after the constructor, so on `NewRaw` a `WithSchema` option overrides the positional schema.
 
 ## Registration
 

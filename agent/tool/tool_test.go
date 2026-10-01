@@ -280,9 +280,14 @@ func TestNew_InvalidJSON(t *testing.T) {
 }
 
 func TestNewRaw_Handler(t *testing.T) {
-	tl := NewRaw("echo", "Echo input", func(_ context.Context, input json.RawMessage) (string, error) {
-		return string(input), nil
-	})
+	tl := NewRaw(
+		"echo",
+		"Echo input",
+		nil,
+		func(_ context.Context, input json.RawMessage) (string, error) {
+			return string(input), nil
+		},
+	)
 
 	if tl.Spec.Name != "echo" {
 		t.Fatalf("expected name %q, got %q", "echo", tl.Spec.Name)
@@ -323,7 +328,7 @@ func TestRegistryDynamicAndConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			name := fmt.Sprintf("tool-%02d", i)
-			if err := registry.Register(NewRaw(name, "dynamic", func(context.Context, json.RawMessage) (string, error) { return name, nil })); err != nil {
+			if err := registry.Register(NewRaw(name, "dynamic", nil, func(context.Context, json.RawMessage) (string, error) { return name, nil })); err != nil {
 				t.Errorf("Register: %v", err)
 			}
 			registry.Lookup(name)
