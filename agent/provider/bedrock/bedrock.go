@@ -38,6 +38,7 @@ const (
 	thinkingStyleNone   thinkingStyle = iota // model does not support thinking
 	thinkingStyleClaude                      // {"thinking": {"type": "enabled", "budget_tokens": N}}
 	thinkingStyleNova2                       // {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": "..."}}
+	thinkingStyleGrok                        // {"reasoning_effort": "..."}
 
 	defaultURLFetchTimeout          = 30 * time.Second
 	defaultURLFetchMaxResponseBytes = int64(10 * 1024 * 1024)
@@ -527,6 +528,14 @@ func (p *BedrockProvider) buildAdditionalFields(cfg *agent.InferenceConfig) docu
 					"type":               "enabled",
 					"maxReasoningEffort": string(p.thinkingEffort),
 				},
+			}
+		}
+	case thinkingStyleGrok:
+		// Grok takes a flat "reasoning_effort" string on Converse. Budget is
+		// not applicable. Reasoning is always on; this only controls effort.
+		if p.thinkingEffort != "" {
+			thinkingFields = map[string]any{
+				"reasoning_effort": string(p.thinkingEffort),
 			}
 		}
 	}

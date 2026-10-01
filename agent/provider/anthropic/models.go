@@ -36,10 +36,16 @@ func ClaudeOpus5(opts ...Option) (*AnthropicProvider, error) {
 func ClaudeFable5(opts ...Option) (*AnthropicProvider, error) {
 	return New("claude-fable-5", opts...)
 }
+func ClaudeOpus5_5(opts ...Option) (*AnthropicProvider, error) {
+	return New("claude-opus-5-5", opts...)
+}
+func ClaudeSonnet5_5(opts ...Option) (*AnthropicProvider, error) {
+	return New("claude-sonnet-5-5", opts...)
+}
 
 // Tier aliases — provider-agnostic shortcuts for common use cases.
-// Smartest is Opus 5 rather than Fable 5: Fable refuses far more often, which is
+// Smartest is Opus 5.5 rather than Fable 5: Fable refuses far more often, which is
 // poor behaviour for a default.
 func Cheapest(opts ...Option) (*AnthropicProvider, error) { return ClaudeHaiku4_5(opts...) }
-func Standard(opts ...Option) (*AnthropicProvider, error) { return New("claude-sonnet-5", opts...) }
-func Smartest(opts ...Option) (*AnthropicProvider, error) { return New("claude-opus-5", opts...) }
+func Standard(opts ...Option) (*AnthropicProvider, error) { return New("claude-sonnet-5-5", opts...) }
+func Smartest(opts ...Option) (*AnthropicProvider, error) { return New("claude-opus-5-5", opts...) }

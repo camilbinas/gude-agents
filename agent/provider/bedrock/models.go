@@ -35,6 +35,15 @@ func GlobalClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
 func GlobalClaudeFable5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-fable-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func GlobalClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
+	return New("global.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+
+// Claude Sonnet 5.5 is Global-only on Bedrock — no us./eu. inference profile
+// exists for this model as of this writing.
+func GlobalClaudeSonnet5_5(opts ...Option) (*BedrockProvider, error) {
+	return New("global.anthropic.claude-sonnet-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
 
 // Amazon Nova models (Global cross-region inference).
 func GlobalNova2Lite(opts ...Option) (*BedrockProvider, error) {
@@ -72,6 +81,12 @@ func US_ClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
 func US_ClaudeFable5(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-fable-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func US_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
+	return New("us.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+
+// Claude Sonnet 5.5 has no US geo inference profile on Bedrock — only Global.
+// Use GlobalClaudeSonnet5_5 instead.
 
 // Anthropic Claude models (US cross-region inference).
 func US_Nova2Lite(opts ...Option) (*BedrockProvider, error) {
@@ -120,8 +135,23 @@ func EU_ClaudeOpus4_8(opts ...Option) (*BedrockProvider, error) {
 func EU_ClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
+func EU_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
+	return New("eu.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+
+// Claude Opus 5.5 also has AU and JP geo inference profiles on Bedrock, unlike
+// any earlier Claude model in this file.
+func AU_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
+	return New("au.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
+func JP_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
+	return New("jp.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+}
 
 // Fable 5 has no EU geo route.
+
+// Claude Sonnet 5.5 has no US or EU geo inference profile on Bedrock — only
+// Global. Use GlobalClaudeSonnet5_5 instead.
 
 // Amazon Nova models (on-demand).
 func NovaMicro(opts ...Option) (*BedrockProvider, error) {
@@ -215,6 +245,42 @@ func GLM5(opts ...Option) (*BedrockProvider, error) {
 	return New("zai.glm-5", opts...)
 }
 
+// OpenAI chat models on Bedrock (Global cross-region inference). These are
+// distinct from the on-demand GPT-OSS models above — Astra, Sol, and Luna
+// are served only through inference profiles, not on-demand throughput.
+func GlobalGPT6Astra(opts ...Option) (*BedrockProvider, error) {
+	return New("global.openai.gpt-6-astra", opts...)
+}
+func GlobalGPT6Luna(opts ...Option) (*BedrockProvider, error) {
+	return New("global.openai.gpt-6-luna", opts...)
+}
+
+// GPT-6.1 Sol has no Global inference profile on Bedrock at launch — only US.
+// Use US_GPT6_1Sol instead.
+
+// OpenAI chat models on Bedrock (US cross-region inference).
+func US_GPT6Astra(opts ...Option) (*BedrockProvider, error) {
+	return New("us.openai.gpt-6-astra", opts...)
+}
+func US_GPT6_1Sol(opts ...Option) (*BedrockProvider, error) {
+	return New("us.openai.gpt-6.1-sol", opts...)
+}
+func US_GPT6Luna(opts ...Option) (*BedrockProvider, error) {
+	return New("us.openai.gpt-6-luna", opts...)
+}
+
+// xAI models on Bedrock (Global cross-region inference). Reasoning is always
+// on; effort is configurable via WithThinking (low, medium, high, xhigh).
+func GlobalGrok4_6(opts ...Option) (*BedrockProvider, error) {
+	return New("global.xai.grok-4.6", append([]Option{withThinkingStyle(thinkingStyleGrok)}, opts...)...)
+}
+
+// xAI models on Bedrock (US cross-region inference). Grok 4.6 has no EU geo
+// inference profile on Bedrock — only US and Global.
+func US_Grok4_6(opts ...Option) (*BedrockProvider, error) {
+	return New("us.xai.grok-4.6", append([]Option{withThinkingStyle(thinkingStyleGrok)}, opts...)...)
+}
+
 // MustEmbedder is a helper that wraps a (*rag.Embedder, error) call and panics on error.
 // Forwards to agent/rag/bedrock.MustEmbedder.
 func MustEmbedder(e *rag.Embedder, err error) *rag.Embedder {
@@ -258,8 +324,8 @@ func Cheapest(opts ...Option) (*BedrockProvider, error) {
 	return GlobalClaudeHaiku4_5(opts...)
 }
 func Standard(opts ...Option) (*BedrockProvider, error) {
-	return GlobalClaudeSonnet5(opts...)
+	return GlobalClaudeSonnet5_5(opts...)
 }
 func Smartest(opts ...Option) (*BedrockProvider, error) {
-	return GlobalClaudeOpus5(opts...)
+	return GlobalClaudeOpus5_5(opts...)
 }

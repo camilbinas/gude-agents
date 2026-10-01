@@ -27,6 +27,12 @@ func Gemini35FlashLite(opts ...Option) (*GeminiProvider, error) {
 func Gemini36Flash(opts ...Option) (*GeminiProvider, error) {
 	return New("gemini-3.6-flash", opts...)
 }
+func Gemini37Flash(opts ...Option) (*GeminiProvider, error) {
+	return New("gemini-3.7-flash", opts...)
+}
+func Gemini38Flash(opts ...Option) (*GeminiProvider, error) {
+	return New("gemini-3.8-flash", opts...)
+}
 
 // Gemini embedding models.
 // These forward to agent/rag/gemini — import that package directly for
@@ -42,5 +48,5 @@ func GeminiEmbedding002(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 // Smartest is a preview ID because Gemini 3.5 Pro has not shipped and 3.1 Pro is
 // the newest Pro-tier model.
 func Cheapest(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.5-flash-lite", opts...) }
-func Standard(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.6-flash", opts...) }
+func Standard(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.8-flash", opts...) }
 func Smartest(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.1-pro-preview", opts...) }

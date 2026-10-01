@@ -22,6 +22,11 @@ func GPT5_6Sol(opts ...Option) (*OpenAIProvider, error)   { return New("gpt-5.6-
 func GPT5_6Terra(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.6-terra", opts...) }
 func GPT5_6Luna(opts ...Option) (*OpenAIProvider, error)  { return New("gpt-5.6-luna", opts...) }
 
+func GPT6Astra(opts ...Option) (*OpenAIProvider, error) { return New("gpt-6-astra", opts...) }
+func GPT6Sol(opts ...Option) (*OpenAIProvider, error)   { return New("gpt-6-sol", opts...) }
+func GPT6_1Sol(opts ...Option) (*OpenAIProvider, error) { return New("gpt-6.1-sol", opts...) }
+func GPT6Luna(opts ...Option) (*OpenAIProvider, error)  { return New("gpt-6-luna", opts...) }
+
 // Omitted: gpt-5.5-pro, gpt-5.4-pro and gpt-5.3-codex are Responses API-only and
 // 404 on Chat Completions.
 
@@ -39,6 +44,8 @@ func EmbeddingLarge(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 }
 
 // Tier aliases — provider-agnostic shortcuts for common use cases.
-func Cheapest(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.6-luna", opts...) }
-func Standard(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.6-terra", opts...) }
-func Smartest(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.6-sol", opts...) }
+// Standard uses GPT-6.1 Sol rather than GPT-6 Sol: it supersedes GPT-6 Sol with
+// near-Astra performance at a fraction of Astra's cost.
+func Cheapest(opts ...Option) (*OpenAIProvider, error) { return New("gpt-6-luna", opts...) }
+func Standard(opts ...Option) (*OpenAIProvider, error) { return New("gpt-6.1-sol", opts...) }
+func Smartest(opts ...Option) (*OpenAIProvider, error) { return New("gpt-6-astra", opts...) }

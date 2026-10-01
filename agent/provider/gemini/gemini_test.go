@@ -147,6 +147,8 @@ func TestModelConstructors(t *testing.T) {
 		{"Gemini35Flash", Gemini35Flash, "gemini-3.5-flash"},
 		{"Gemini35FlashLite", Gemini35FlashLite, "gemini-3.5-flash-lite"},
 		{"Gemini36Flash", Gemini36Flash, "gemini-3.6-flash"},
+		{"Gemini37Flash", Gemini37Flash, "gemini-3.7-flash"},
+		{"Gemini38Flash", Gemini38Flash, "gemini-3.8-flash"},
 	}
 
 	for _, tt := range tests {
@@ -171,7 +173,7 @@ func TestTierAliases(t *testing.T) {
 		wantModel string
 	}{
 		{"Cheapest", Cheapest, "gemini-3.5-flash-lite"},
-		{"Standard", Standard, "gemini-3.6-flash"},
+		{"Standard", Standard, "gemini-3.8-flash"},
 		{"Smartest", Smartest, "gemini-3.1-pro-preview"},
 	}
 
