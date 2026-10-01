@@ -38,6 +38,12 @@ The schema is generated from `T`. Structured invocation reuses the normal agent 
 
 Token usage is accumulated before output decoding. If cumulative usage is greater than `WithTokenBudget`, invocation returns `agent.ErrTokenBudgetExceeded` before output guardrails, decoding, or conversation persistence. Usage exactly equal to the budget is allowed. On any error, the generic result still carries the underlying `Run`, including usage accumulated before the failure; callers should inspect both values when accounting matters.
 
-Handle malformed or non-conforming model output as `*agent.StructuredOutputError`.
+Handle malformed or non-conforming model output as `*agent.StructuredOutputError`. After output guardrails run, the JSON is checked in this order, all before the turn is persisted:
+
+1. It must be valid JSON. Otherwise `Reason` is `"deserialize"`.
+2. It must satisfy the schema within the supported subset. Otherwise `Reason` is `"schema_validation"`.
+3. It must decode into `T`. Otherwise `Reason` is `"deserialize"`.
+
+Schema validation uses `agent.ValidateToolInput`, which enforces a subset of JSON Schema, not the full specification. Enforced keywords: `type` (including unions such as `["string", "null"]`), `enum`, `required`, `properties`, and `items`, applied recursively. Other keywords (for example `minimum`, `maxLength`, `pattern`, `additionalProperties`, `oneOf`) are sent to the model as guidance but are not enforced. For schemas generated from `T`, Go decoding still rejects values whose types don't fit `T`, such as map values of the wrong type. Check any other constraints yourself after `Invoke` returns.
 
 Use pointer/optional fields when omission is valid and JSON tags for stable names. Keep schemas reasonably small and descriptions unambiguous.

@@ -10,7 +10,11 @@ import (
 const structuredOutputToolName = "structured_output"
 
 // InvokeSchema runs the shared structured-output lifecycle for a JSON schema.
-// decode is called before conversation persistence so invalid output is never saved.
+// The model's output is checked against the supported schema subset (see
+// ValidateToolInput: JSON validity, type, enum, required, properties, items)
+// and then passed to decode; both happen before conversation persistence, so
+// output that fails either check is never saved. Other JSON Schema keywords
+// are sent to the model but not enforced.
 // Most callers should use structured.Invoke[T] from package agent/structured.
 func (a *Agent) InvokeSchema(c *Context, userMessage string, schema map[string]any, decode func(json.RawMessage) error) (Result, error) {
 	if c == nil {
@@ -101,8 +105,10 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, decode f
 	// Validate the final (guardrail-processed) JSON against the requested
 	// schema before decoding or persisting it. Provider-native structured
 	// output is not trusted: a successful structured invocation guarantees the
-	// returned JSON both conforms to schema and decodes into the target.
-	// Syntactically invalid JSON is a decode failure, not a schema violation.
+	// returned JSON satisfies the supported schema subset (ValidateToolInput)
+	// and decodes into the target. Keywords outside that subset are not
+	// enforced. Syntactically invalid JSON is a decode failure, not a schema
+	// violation.
 	if !json.Valid([]byte(rawText)) {
 		return Result{}, &StructuredOutputError{Reason: "deserialize", Cause: fmt.Errorf("invalid JSON")}
 	}

@@ -488,8 +488,10 @@ func (s *Store[T]) Close() error {
 // --- Internal helpers ---
 
 func parseRedisSchema[T any]() (*redisSchema, error) {
-	var zero T
-	t := reflect.TypeOf(zero)
+	return parseRedisSchemaType(reflect.TypeOf((*T)(nil)).Elem())
+}
+
+func parseRedisSchemaType(t reflect.Type) (*redisSchema, error) {
 	if t.Kind() == reflect.Ptr {
 		return nil, fmt.Errorf("redis: T must be a non-pointer struct; got %s", t)
 	}
@@ -516,41 +518,29 @@ func parseRedisSchema[T any]() (*redisSchema, error) {
 			continue
 		}
 
-		info := redisFieldInfo{
-			FieldIndex: i,
-			HashField:  hashField,
-			FieldType:  inferRedisFieldType(field.Type),
-		}
-
-		for _, p := range parts[1:] {
-			switch strings.TrimSpace(p) {
-			case "pk":
-				info.IsPK = true
-				info.NoInput = true
-				schema.PKIdx = len(schema.Fields)
-			case "identifier":
-				info.IsIdent = true
-				info.NoInput = true
-				info.FieldType = fieldTAG
-				schema.IdentifierIdx = len(schema.Fields)
-			case "content":
-				info.IsContent = true
-				info.FieldType = fieldTEXT
-				schema.ContentIdx = len(schema.Fields)
-			case "jsonb":
-				info.IsJSONB = true
-				info.FieldType = fieldTEXT
-			case "noinput":
-				info.NoInput = true
-			case "tag":
-				info.FieldType = fieldTAG
-			case "numeric":
-				info.FieldType = fieldNUMERIC
-			}
-		}
-
-		if err := validateRedisFieldKind(field, info); err != nil {
+		info, err := parseRedisFieldTag(field, i, hashField, parts[1:])
+		if err != nil {
 			return nil, err
+		}
+
+		idx := len(schema.Fields)
+		roles := []struct {
+			set  bool
+			slot *int
+			name string
+		}{
+			{info.IsPK, &schema.PKIdx, "pk"},
+			{info.IsIdent, &schema.IdentifierIdx, "identifier"},
+			{info.IsContent, &schema.ContentIdx, "content"},
+		}
+		for _, role := range roles {
+			if !role.set {
+				continue
+			}
+			if *role.slot != -1 {
+				return nil, fmt.Errorf("redis: field %s: only one field may be tagged %q", field.Name, role.name)
+			}
+			*role.slot = idx
 		}
 
 		schema.Fields = append(schema.Fields, info)
@@ -566,19 +556,93 @@ func parseRedisSchema[T any]() (*redisSchema, error) {
 	return schema, nil
 }
 
+// parseRedisFieldTag turns the modifiers of one `db` tag into field info.
+// Contradictory combinations are rejected rather than letting modifier order
+// decide the storage type:
+//   - at most one role (pk, identifier, content) per field;
+//   - roles cannot be jsonb: identifier must be a string TAG and content a
+//     string TEXT field, and pk is used verbatim in the Redis key;
+//   - at most one storage modifier (jsonb, tag, numeric);
+//   - identifier accepts only tag, content accepts none.
+func parseRedisFieldTag(field reflect.StructField, index int, hashField string, modifiers []string) (redisFieldInfo, error) {
+	info := redisFieldInfo{FieldIndex: index, HashField: hashField}
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("redis: field %s (%s): %s", field.Name, field.Type, fmt.Sprintf(format, args...))
+	}
+
+	var roles, storage []string
+	for _, raw := range modifiers {
+		switch m := strings.TrimSpace(raw); m {
+		case "pk":
+			info.IsPK = true
+			roles = append(roles, m)
+		case "identifier":
+			info.IsIdent = true
+			roles = append(roles, m)
+		case "content":
+			info.IsContent = true
+			roles = append(roles, m)
+		case "jsonb":
+			info.IsJSONB = true
+			storage = append(storage, m)
+		case "tag", "numeric":
+			storage = append(storage, m)
+		case "noinput":
+			info.NoInput = true
+		}
+	}
+	if len(roles) > 1 {
+		return info, invalid("conflicting roles %v", roles)
+	}
+	if len(storage) > 1 {
+		return info, invalid("conflicting storage modifiers %v", storage)
+	}
+	if len(roles) == 1 && info.IsJSONB {
+		return info, invalid("%s field cannot be jsonb", roles[0])
+	}
+	if info.IsContent && len(storage) == 1 {
+		return info, invalid("content field cannot be %s", storage[0])
+	}
+	if info.IsIdent && len(storage) == 1 && storage[0] != "tag" {
+		return info, invalid("identifier field cannot be %s", storage[0])
+	}
+
+	switch {
+	case info.IsContent, info.IsJSONB:
+		info.FieldType = fieldTEXT
+	case info.IsIdent:
+		info.FieldType = fieldTAG
+	case len(storage) == 1 && storage[0] == "tag":
+		info.FieldType = fieldTAG
+	case len(storage) == 1 && storage[0] == "numeric":
+		info.FieldType = fieldNUMERIC
+	default:
+		info.FieldType = inferRedisFieldType(field.Type)
+	}
+	if info.IsPK || info.IsIdent {
+		info.NoInput = true
+	}
+
+	if err := validateRedisFieldKind(field, info); err != nil {
+		return info, err
+	}
+	return info, nil
+}
+
 // validateRedisFieldKind rejects Go field types that cannot round-trip
 // through a HASH field, so they fail at construction instead of decoding to
 // zero values on Recall. Complex types must opt into JSON with ",jsonb".
+// Role constraints are checked first so jsonb cannot bypass them.
 func validateRedisFieldKind(field reflect.StructField, info redisFieldInfo) error {
-	if info.IsJSONB {
-		return nil
-	}
 	t := field.Type
 	unsupported := func(reason string) error {
 		return fmt.Errorf("redis: field %s (%s) %s", field.Name, t, reason)
 	}
 	if (info.IsIdent || info.IsContent) && t.Kind() != reflect.String {
 		return unsupported("must be a string")
+	}
+	if info.IsJSONB {
+		return nil
 	}
 	if t == timeType {
 		if info.FieldType != fieldNUMERIC {

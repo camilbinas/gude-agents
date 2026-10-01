@@ -6,9 +6,27 @@ import (
 	"strings"
 )
 
-// ValidateToolInput checks that the JSON payload strictly satisfies the tool's
-// declared schema. It validates recursively: required fields, type checking,
-// enum constraints, nested objects, and array item types.
+// supportedSchemaKeywords lists the JSON Schema keywords ValidateToolInput
+// enforces. Keep it in sync with validateValue, the ValidateToolInput doc
+// comment, and docs/structured-output.md; validate_contract_test.go checks
+// that this list matches observed behavior.
+var supportedSchemaKeywords = []string{"type", "enum", "required", "properties", "items"}
+
+// ValidateToolInput checks a JSON payload against the framework's supported
+// JSON Schema subset. It is not a general JSON Schema validator.
+//
+// Enforced, recursively through nested objects and arrays:
+//   - the payload is valid JSON;
+//   - "type", including union arrays such as ["string", "null"];
+//   - "enum";
+//   - "required";
+//   - "properties" (each present property against its subschema);
+//   - "items" (each element against a single item schema).
+//
+// Any other keyword (for example minimum, maxLength, pattern,
+// additionalProperties, oneOf, $ref) is not enforced: it is passed to the
+// model as guidance only. Callers that depend on such constraints must
+// check them after decoding.
 func ValidateToolInput(schema map[string]any, input json.RawMessage) error {
 	var payload any
 	if err := json.Unmarshal(input, &payload); err != nil {

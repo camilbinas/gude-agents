@@ -10,7 +10,13 @@
 // A reservation spanning several counters (per-key and global) reserves them
 // one at a time and refunds earlier reservations when a later one is rejected
 // or fails. Concurrent callers therefore can never push any counter past its
-// limit. If a refund itself fails, that counter stays over-counted until the
+// limit.
+//
+// A script error is treated as an ambiguous outcome: Redis may have executed
+// the write before the client observed a network error or timeout. The
+// attempted member is therefore refunded along with every earlier one. Refunds
+// are ZREMs of unique members, so removing a member that was never written is
+// harmless. If a refund itself fails, that counter stays over-counted until the
 // event leaves its window: the limiter errs toward rejecting, never toward
 // exceeding a limit.
 package redis
@@ -165,7 +171,8 @@ return total
 
 type placed struct{ key, member string }
 
-// refund removes events recorded earlier in a failed multi-counter operation.
+// refund removes events recorded by a failed multi-counter operation. It is
+// idempotent: ZREM of a member that was never written is a no-op.
 func (s *Store) refund(ctx context.Context, done []placed) error {
 	if len(done) == 0 {
 		return nil
@@ -190,7 +197,8 @@ func validWindow(w time.Duration) error {
 
 // ReserveRequests implements agent.RateLimitStore. Each counter is checked
 // and charged by one atomic script; earlier charges are refunded when a later
-// counter rejects or errors, so the outcome is all-or-nothing.
+// counter rejects, and earlier plus the attempted charge are refunded when a
+// script errors, so the outcome is all-or-nothing.
 func (s *Store) ReserveRequests(ctx context.Context, reservations []agent.RequestReservation) (bool, error) {
 	for _, r := range reservations {
 		if err := validWindow(r.Window); err != nil {
@@ -203,21 +211,24 @@ func (s *Store) ReserveRequests(ctx context.Context, reservations []agent.Reques
 	}
 	var done []placed
 	for i, r := range reservations {
-		key := s.requestKey(r.Key)
-		ok, err := reserveScript.Run(ctx, s.client, []string{key}, r.Window.Milliseconds(), r.Limit, members[i]).Int()
+		current := placed{key: s.requestKey(r.Key), member: members[i]}
+		ok, err := reserveScript.Run(ctx, s.client, []string{current.key}, r.Window.Milliseconds(), r.Limit, current.member).Int()
 		if err != nil {
-			return false, errors.Join(err, s.refund(ctx, done))
+			// Ambiguous: the script may have written current before the
+			// error reached us, so refund it too.
+			return false, errors.Join(err, s.refund(ctx, append(done, current)))
 		}
 		if ok != 1 {
+			// A rejecting script never writes its own member.
 			return false, s.refund(ctx, done)
 		}
-		done = append(done, placed{key: key, member: members[i]})
+		done = append(done, current)
 	}
 	return true, nil
 }
 
 // RecordTokens implements agent.RateLimitStore. Usage is recorded on every
-// counter; if one write fails, earlier writes are refunded.
+// counter; if one write errors, it and all earlier writes are refunded.
 func (s *Store) RecordTokens(ctx context.Context, counters []agent.TokenCounter, amount int) error {
 	for _, c := range counters {
 		if err := validWindow(c.Window); err != nil {
@@ -233,12 +244,13 @@ func (s *Store) RecordTokens(ctx context.Context, counters []agent.TokenCounter,
 	}
 	var done []placed
 	for i, c := range counters {
-		key := s.tokenKey(c.Key)
-		member := ids[i] + ":" + strconv.Itoa(amount)
-		if err := recordScript.Run(ctx, s.client, []string{key}, c.Window.Milliseconds(), member).Err(); err != nil {
-			return errors.Join(err, s.refund(ctx, done))
+		current := placed{key: s.tokenKey(c.Key), member: ids[i] + ":" + strconv.Itoa(amount)}
+		if err := recordScript.Run(ctx, s.client, []string{current.key}, c.Window.Milliseconds(), current.member).Err(); err != nil {
+			// Ambiguous: the script may have written current before the
+			// error reached us, so refund it too.
+			return errors.Join(err, s.refund(ctx, append(done, current)))
 		}
-		done = append(done, placed{key: key, member: member})
+		done = append(done, current)
 	}
 	return nil
 }

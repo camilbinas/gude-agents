@@ -467,3 +467,98 @@ func TestRememberPropagatesPrimaryKeyRNGFailure(t *testing.T) {
 		t.Fatalf("Remember with explicit ID: %v", err)
 	}
 }
+
+func sf(name string, typ any, tag string) reflect.StructField {
+	return reflect.StructField{Name: name, Type: reflect.TypeOf(typ), Tag: reflect.StructTag(`db:"` + tag + `"`)}
+}
+
+var (
+	baseIdent   = sf("Tenant", "", "tenant,identifier")
+	baseContent = sf("Content", "", "content,content")
+)
+
+func TestParseRedisSchemaRejectsInvalidTagCombinations(t *testing.T) {
+	cases := []struct {
+		name   string
+		fields []reflect.StructField
+	}{
+		{"identifier+jsonb", []reflect.StructField{sf("Tenant", "", "tenant,identifier,jsonb"), baseContent}},
+		{"jsonb+identifier", []reflect.StructField{sf("Tenant", "", "tenant,jsonb,identifier"), baseContent}},
+		{"content+jsonb", []reflect.StructField{baseIdent, sf("Content", "", "content,content,jsonb")}},
+		{"jsonb+content", []reflect.StructField{baseIdent, sf("Content", "", "content,jsonb,content")}},
+		{"content+jsonb non-string", []reflect.StructField{baseIdent, sf("Content", []string{}, "content,content,jsonb")}},
+		{"pk+jsonb", []reflect.StructField{sf("ID", "", "id,pk,jsonb"), baseIdent, baseContent}},
+		{"jsonb+numeric", []reflect.StructField{baseIdent, baseContent, sf("Rank", 0.0, "rank,jsonb,numeric")}},
+		{"numeric+jsonb", []reflect.StructField{baseIdent, baseContent, sf("Rank", 0.0, "rank,numeric,jsonb")}},
+		{"jsonb+tag", []reflect.StructField{baseIdent, baseContent, sf("Tags", []string{}, "tags,jsonb,tag")}},
+		{"tag+jsonb", []reflect.StructField{baseIdent, baseContent, sf("Tags", []string{}, "tags,tag,jsonb")}},
+		{"tag+numeric", []reflect.StructField{baseIdent, baseContent, sf("Rank", 0, "rank,tag,numeric")}},
+		{"identifier+numeric", []reflect.StructField{sf("Tenant", "", "tenant,identifier,numeric"), baseContent}},
+		{"content+tag", []reflect.StructField{baseIdent, sf("Content", "", "content,content,tag")}},
+		{"content+numeric", []reflect.StructField{baseIdent, sf("Content", "", "content,content,numeric")}},
+		{"identifier+content", []reflect.StructField{sf("Tenant", "", "tenant,identifier,content")}},
+		{"pk+identifier", []reflect.StructField{sf("Tenant", "", "tenant,pk,identifier"), baseContent}},
+		{"non-string identifier", []reflect.StructField{sf("Tenant", 0, "tenant,identifier"), baseContent}},
+		{"non-string content", []reflect.StructField{baseIdent, sf("Content", 0, "content,content")}},
+		{"duplicate identifier", []reflect.StructField{baseIdent, sf("Other", "", "other,identifier"), baseContent}},
+		{"duplicate content", []reflect.StructField{baseIdent, baseContent, sf("Body", "", "body,content")}},
+		{"duplicate pk", []reflect.StructField{sf("ID", "", "id,pk"), sf("Key", "", "key,pk"), baseIdent, baseContent}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			schema, err := parseRedisSchemaType(reflect.StructOf(tc.fields))
+			if err == nil {
+				t.Fatalf("parseRedisSchemaType succeeded with %+v, want error", schema.Fields)
+			}
+		})
+	}
+}
+
+func TestParseRedisSchemaAcceptsValidTagCombinations(t *testing.T) {
+	cases := []struct {
+		name      string
+		field     reflect.StructField
+		wantType  redisFieldType
+		wantJSONB bool
+	}{
+		{"jsonb slice", sf("Tags", []string{}, "tags,jsonb"), fieldTEXT, true},
+		{"jsonb map", sf("Meta", map[string]int{}, "meta,jsonb"), fieldTEXT, true},
+		{"jsonb struct", sf("Inner", struct{ A int }{}, "inner,jsonb"), fieldTEXT, true},
+		{"jsonb pointer", sf("Ptr", (*int)(nil), "ptr,jsonb"), fieldTEXT, true},
+		{"jsonb string", sf("Raw", "", "raw,jsonb"), fieldTEXT, true},
+		{"jsonb noinput", sf("Audit", []string{}, "audit,jsonb,noinput"), fieldTEXT, true},
+		{"explicit numeric", sf("Rank", 0, "rank,numeric"), fieldNUMERIC, false},
+		{"inferred numeric", sf("Rank", 0, "rank"), fieldNUMERIC, false},
+		{"tag on int", sf("Code", 0, "code,tag"), fieldTAG, false},
+		{"time numeric", sf("At", time.Time{}, "at"), fieldNUMERIC, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			schema, err := parseRedisSchemaType(reflect.StructOf([]reflect.StructField{baseIdent, baseContent, tc.field}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := schema.Fields[2]
+			if got.FieldType != tc.wantType || got.IsJSONB != tc.wantJSONB {
+				t.Fatalf("field = %+v, want type %v jsonb %v", got, tc.wantType, tc.wantJSONB)
+			}
+		})
+	}
+
+	// Roles keep their required Redis types regardless of modifier order.
+	schema, err := parseRedisSchemaType(reflect.StructOf([]reflect.StructField{
+		sf("ID", "", "id,pk"), sf("Tenant", "", "tenant,tag,identifier"), baseContent,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := schema.Fields[schema.IdentifierIdx]; f.FieldType != fieldTAG || !f.NoInput {
+		t.Fatalf("identifier = %+v, want TAG and noinput", f)
+	}
+	if f := schema.Fields[schema.ContentIdx]; f.FieldType != fieldTEXT {
+		t.Fatalf("content = %+v, want TEXT", f)
+	}
+	if f := schema.Fields[schema.PKIdx]; !f.NoInput || f.IsJSONB {
+		t.Fatalf("pk = %+v, want noinput, not jsonb", f)
+	}
+}
