@@ -70,9 +70,8 @@ The `conversation` package provides window, token, filter, summary, and token-su
 
 ## Backends and schema migration
 
-Available implementations include memory, disk, Redis, PostgreSQL, SQLite, and DynamoDB. Production backends must persist both serialized messages and a monotonic revision:
+Available implementations include memory, Redis, PostgreSQL, SQLite, and DynamoDB. Production backends must persist both serialized messages and a monotonic revision:
 
-- **Disk**: lock the record and atomically rename the new file.
 - **Redis**: update messages and revision in one atomic script/transaction.
 - **PostgreSQL/SQLite**: keep a non-null revision column and use conditional insert/update.
 - **DynamoDB**: use a condition expression on the revision attribute.
