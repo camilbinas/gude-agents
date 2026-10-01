@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/rag/gemini
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v1.4.0
+	github.com/camilbinas/gude-agents v1.4.1
 	google.golang.org/genai v1.54.0
 )
 
