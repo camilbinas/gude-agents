@@ -26,8 +26,15 @@ type Executor struct {
 	// verifyPrincipal is an optional hook called after extracting principal headers.
 	// Use it to validate signatures, look up principals in a DB, or strip untrusted
 	// fields. Return an error to reject the request with a failed task status.
-	// When nil, headers are trusted as-is — safe for internal service meshes.
+	// When set, this takes precedence over trustForwardedPrincipal.
 	verifyPrincipal func(agent.Principal) (agent.Principal, error)
+	// trustForwardedPrincipal explicitly opts into trusting raw
+	// X-Agent-Principal-* headers with no verification. It only has an effect
+	// when verifyPrincipal is nil. This is unsafe unless the server sits
+	// behind a trusted boundary (e.g. an internal service mesh) that strips
+	// or authenticates these headers before they reach the agent — see
+	// NewExecutorWithTrustedForwardedPrincipal.
+	trustForwardedPrincipal bool
 	// pending holds the interrupt each input-required task is paused on,
 	// keyed by a2a.TaskID. It is process-local: a task paused in one process
 	// cannot be resumed by another.
@@ -36,6 +43,12 @@ type Executor struct {
 
 // NewExecutor creates an Executor that delegates to the given agent.
 // If logger is nil, slog.Default() is used.
+//
+// By default, forwarded X-Agent-Principal-* headers are ignored: a caller
+// cannot set a Principal on the agent context by sending these headers
+// alone. Use NewExecutorWithVerify to validate forwarded identity, or
+// NewExecutorWithTrustedForwardedPrincipal to explicitly opt into trusting
+// it unverified.
 func NewExecutor(a *agent.Agent, logger *slog.Logger) *Executor {
 	if logger == nil {
 		logger = slog.Default()
@@ -51,6 +64,21 @@ func NewExecutor(a *agent.Agent, logger *slog.Logger) *Executor {
 func NewExecutorWithVerify(a *agent.Agent, logger *slog.Logger, verify func(agent.Principal) (agent.Principal, error)) *Executor {
 	e := NewExecutor(a, logger)
 	e.verifyPrincipal = verify
+	return e
+}
+
+// NewExecutorWithTrustedForwardedPrincipal creates an Executor that trusts
+// raw X-Agent-Principal-* headers as-is, with no verification.
+//
+// This is unsafe on a public or default deployment: any caller that can set
+// HTTP headers can assign itself arbitrary roles/attributes. Only use this
+// when the server sits behind a trusted boundary that authenticates the
+// caller and strips/rewrites these headers itself (e.g. an internal service
+// mesh where the sidecar is the only thing allowed to set them). Prefer
+// NewExecutorWithVerify when possible.
+func NewExecutorWithTrustedForwardedPrincipal(a *agent.Agent, logger *slog.Logger) *Executor {
+	e := NewExecutor(a, logger)
+	e.trustForwardedPrincipal = true
 	return e
 }
 
@@ -80,9 +108,18 @@ func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		// 4. Prepare agent context with conversation ID and multimodal content.
 		agentCtx := agent.NewContext(ctx).WithConversationID(string(execCtx.TaskID))
 
-		// Propagate principal from inbound headers if present.
+		// Propagate principal from inbound headers, subject to trust policy.
+		//
+		// Raw X-Agent-Principal-* headers are never trusted by default: a
+		// caller could otherwise set X-Agent-Principal-Roles: admin and be
+		// treated as an admin. The principal is only attached to the agent
+		// context when either a verifier is configured (verifyPrincipal) or
+		// the executor was explicitly constructed to trust forwarded
+		// identity (trustForwardedPrincipal). Otherwise the headers are
+		// parsed for observability but discarded.
 		if p, ok := principalFromServiceParams(execCtx.ServiceParams); ok {
-			if e.verifyPrincipal != nil {
+			switch {
+			case e.verifyPrincipal != nil:
 				verified, err := e.verifyPrincipal(p)
 				if err != nil {
 					msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("principal verification failed: "+err.Error()))
@@ -91,9 +128,12 @@ func (e *Executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 					}
 					return
 				}
-				p = verified
+				agentCtx = agentCtx.WithPrincipal(verified)
+			case e.trustForwardedPrincipal:
+				agentCtx = agentCtx.WithPrincipal(p)
+			default:
+				// Untrusted and unverified: ignore the forwarded headers.
 			}
-			agentCtx = agentCtx.WithPrincipal(p)
 		}
 
 		if len(result.Images) > 0 {
@@ -284,6 +324,13 @@ func principalFromServiceParams(sp *a2asrv.ServiceParams) (agent.Principal, bool
 // PrincipalFromRequest extracts an agent.Principal from inbound HTTP request
 // headers set by an A2A client that propagated identity. Returns false if the
 // X-Agent-Principal-ID header is absent.
+//
+// This performs no verification: the returned Principal is only as
+// trustworthy as the headers themselves. Callers building custom transports
+// or middleware are responsible for verifying or stripping these headers at
+// a trust boundary before treating the result as authorization state — the
+// same policy enforced by Executor via WithPrincipalVerifier /
+// WithTrustedForwardedPrincipal for the standard A2A server.
 func PrincipalFromRequest(r *http.Request) (agent.Principal, bool) {
 	id := r.Header.Get("X-Agent-Principal-ID")
 	if id == "" {

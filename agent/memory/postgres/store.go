@@ -57,6 +57,20 @@ func WithEmbeddingColumn(name string) StoreOption {
 
 // WithDistanceMetric sets the distance metric for vector queries.
 // Supported: "cosine" (default), "l2", "inner_product".
+//
+// The similarity Score returned by Recall, and the RecallQuery.MinSimilarity
+// threshold, are metric-specific:
+//   - cosine: score = 1 - cosine_distance, roughly in [0, 1] for normalized
+//     embeddings.
+//   - inner_product: score is the plain (unbounded) inner product; it is
+//     not confined to [0, 1] and its usable range depends on embedding
+//     magnitudes.
+//   - l2: score = 1 / (1 + l2_distance), bounded to (0, 1] and monotonically
+//     decreasing as distance grows, since Euclidean distance has no upper
+//     bound and "1 - distance" is not a valid similarity for it.
+//
+// Choose MinSimilarity thresholds with the configured metric's score range
+// in mind.
 func WithDistanceMetric(metric string) StoreOption {
 	return func(c *storeConfig) {
 		if metric != "" {
@@ -501,6 +515,29 @@ func pgvectorOp(metric string) string {
 		return "<#>"
 	default:
 		return "<=>"
+	}
+}
+
+// scoreExpr returns the SQL expression that computes this store's
+// similarity score for the configured metric, given the embedding column
+// name, the distance operator, and the query-vector parameter placeholder
+// (e.g. "$1"). See the postgres RAG vectorstore's scoreExpr for the metric
+// semantics this mirrors:
+//
+//   - cosine: score = 1 - cosine_distance
+//   - inner_product: score = -(negative_inner_product), i.e. the plain
+//     (unbounded) inner product
+//   - l2: score = 1 / (1 + l2_distance), bounded to (0, 1] and monotonically
+//     decreasing in distance, since "1 - distance" has no valid upper bound
+//     for Euclidean distance.
+func scoreExpr(embeddingCol, op, param string) string {
+	switch op {
+	case "<->": // l2
+		return fmt.Sprintf("1 / (1 + (%s %s %s))", embeddingCol, op, param)
+	case "<#>": // inner_product
+		return fmt.Sprintf("-(%s %s %s)", embeddingCol, op, param)
+	default: // cosine ("<=>")
+		return fmt.Sprintf("1 - (%s %s %s)", embeddingCol, op, param)
 	}
 }
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ValidateToolInput checks that the JSON payload strictly satisfies the tool's
@@ -23,9 +24,10 @@ func validateValue(schema map[string]any, value any, path string) error {
 		return nil
 	}
 
-	// Type check.
-	if schemaType, ok := schema["type"].(string); ok {
-		if err := checkType(schemaType, value, path); err != nil {
+	// Type check. "type" may be a single string ("string") or a union of
+	// types expressed as an array ("["string","null"]"), per JSON Schema.
+	if types, ok := schemaTypes(schema); ok {
+		if err := checkType(types, value, path); err != nil {
 			return err
 		}
 	}
@@ -112,17 +114,72 @@ func validateValue(schema map[string]any, value any, path string) error {
 	return nil
 }
 
-// checkType verifies that value matches the expected JSON Schema type.
-func checkType(schemaType string, value any, path string) error {
-	if value == nil {
-		// null is only valid for nullable types; for now we allow it to avoid
-		// breaking existing behaviour where optional fields may be null.
-		return nil
+// schemaTypes extracts the "type" constraint from a schema node, normalizing
+// both the plain-string form ("type": "string") and the union/array form
+// ("type": ["string", "null"]) into a slice of type names. ok is false when
+// "type" is absent or not a recognizable shape, meaning no type constraint
+// applies.
+func schemaTypes(schema map[string]any) ([]string, bool) {
+	switch t := schema["type"].(type) {
+	case string:
+		return []string{t}, true
+	case []any:
+		types := make([]string, 0, len(t))
+		for _, v := range t {
+			if s, ok := v.(string); ok {
+				types = append(types, s)
+			}
+		}
+		if len(types) == 0 {
+			return nil, false
+		}
+		return types, true
+	case []string:
+		if len(t) == 0 {
+			return nil, false
+		}
+		return t, true
+	default:
+		return nil, false
 	}
+}
+
+// checkType verifies that value matches one of the expected JSON Schema
+// types. null only satisfies the constraint when "null" is explicitly one of
+// the allowed types (either as the sole type or as part of a union such as
+// ["string", "null"]); otherwise a null value is rejected.
+func checkType(types []string, value any, path string) error {
 	label := path
 	if label == "" {
 		label = "value"
 	}
+
+	if value == nil {
+		for _, t := range types {
+			if t == "null" {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s: expected %s, got null", label, strings.Join(types, " or "))
+	}
+
+	var lastErr error
+	for _, t := range types {
+		if err := checkSingleType(t, value, label); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return nil
+}
+
+// checkSingleType verifies that value matches a single JSON Schema type
+// name. Unrecognized type names impose no constraint.
+func checkSingleType(schemaType string, value any, label string) error {
 	switch schemaType {
 	case "string":
 		if _, ok := value.(string); !ok {
@@ -152,6 +209,10 @@ func checkType(schemaType string, value any, path string) error {
 	case "object":
 		if _, ok := value.(map[string]any); !ok {
 			return fmt.Errorf("%s: expected object, got %T", label, value)
+		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s: expected null, got %T", label, value)
 		}
 	}
 	return nil

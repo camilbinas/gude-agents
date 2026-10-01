@@ -11,7 +11,6 @@ use (
 	./agent/conversation/postgres
 	./agent/conversation/redis
 	./agent/conversation/sqlite
-	./agent/eval
 	./agent/logging/debug
 	./agent/logging/slog
 	./agent/mcp

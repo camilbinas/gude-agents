@@ -9,7 +9,6 @@ require (
 	github.com/camilbinas/gude-agents/agent/conversation/dynamodb v0.82.0
 	github.com/camilbinas/gude-agents/agent/conversation/postgres v0.82.0
 	github.com/camilbinas/gude-agents/agent/conversation/redis v0.82.0
-	github.com/camilbinas/gude-agents/agent/eval v0.82.0
 	github.com/camilbinas/gude-agents/agent/logging/debug v0.82.0
 	github.com/camilbinas/gude-agents/agent/logging/slog v0.82.0
 	github.com/camilbinas/gude-agents/agent/mcp v0.82.0

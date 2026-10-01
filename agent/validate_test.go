@@ -358,3 +358,94 @@ func TestValidateToolInput_EnumOnNestedField(t *testing.T) {
 		t.Fatalf("expected no error for valid enum value, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Null validation tests
+// ---------------------------------------------------------------------------
+
+func TestValidateToolInput_NullRejectedForString(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+		"required": []any{"name"},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"name": null}`))
+	if err == nil {
+		t.Fatal("expected error for null where string expected, got nil")
+	}
+}
+
+func TestValidateToolInput_NullRejectedForInteger(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"count": map[string]any{"type": "integer"},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"count": null}`))
+	if err == nil {
+		t.Fatal("expected error for null where integer expected, got nil")
+	}
+}
+
+func TestValidateToolInput_NullAllowedForExplicitNullType(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "null"},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"name": null}`))
+	if err != nil {
+		t.Fatalf("expected no error for null against explicit null type, got: %v", err)
+	}
+}
+
+func TestValidateToolInput_NullAllowedForUnionType(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": []any{"string", "null"}},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"name": null}`))
+	if err != nil {
+		t.Fatalf("expected no error for null against [\"string\",\"null\"] union, got: %v", err)
+	}
+}
+
+func TestValidateToolInput_UnionTypeAcceptsMatchingNonNullValue(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": []any{"string", "null"}},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"name": "alice"}`))
+	if err != nil {
+		t.Fatalf("expected no error for string against [\"string\",\"null\"] union, got: %v", err)
+	}
+}
+
+func TestValidateToolInput_UnionTypeRejectsMismatchedNonNullValue(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": []any{"string", "null"}},
+		},
+	}
+	err := ValidateToolInput(schema, json.RawMessage(`{"name": 42}`))
+	if err == nil {
+		t.Fatal("expected error for integer against [\"string\",\"null\"] union, got nil")
+	}
+}
+
+func TestValidateToolInput_NullAllowedAtTopLevelWhenTyped(t *testing.T) {
+	schema := map[string]any{"type": []any{"object", "null"}}
+	err := ValidateToolInput(schema, json.RawMessage(`null`))
+	if err != nil {
+		t.Fatalf("expected no error for null at top level against [\"object\",\"null\"], got: %v", err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -22,6 +23,17 @@ type Conversation struct {
 	tableName string
 }
 
+// sqliteIdentifier quotes name as a SQLite double-quoted identifier,
+// doubling any embedded double quotes. database/sql (and the modernc.org/sqlite
+// driver used here) has no identifier-escaping helper equivalent to
+// pgx.Identifier.Sanitize, so this mirrors that behavior by hand. Callers
+// must interpolate the result directly into identifier position (e.g. via
+// fmt.Sprintf), never re-quote it, and never accept this quoted form as a
+// bound parameter value.
+func sqliteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 // New creates a SQLite conversation store. The dsn is normally a file path or
 // ":memory:". The conversations table is created automatically.
 func New(dsn string, opts ...Option) (*Conversation, error) {
@@ -33,6 +45,20 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 	for _, o := range opts {
 		o(cfg)
 	}
+
+	if cfg.tableName == "" || strings.ContainsRune(cfg.tableName, 0) {
+		return nil, fmt.Errorf("sqlite conversation: identifier %q is invalid", cfg.tableName)
+	}
+	// pragma_table_info(?) below takes the bare (unquoted) table name as a
+	// bound parameter, not an identifier, so the raw name is kept for that
+	// query. Every other query built with fmt.Sprintf uses cfg.tableName
+	// after quoting: database/sql has no identifier-escaping helper
+	// equivalent to pgx.Identifier.Sanitize, so table names are quoted here
+	// using SQLite's standard double-quoted identifier syntax (embedded
+	// quotes doubled), ensuring no configured name can break out of the
+	// identifier position.
+	rawTableName := cfg.tableName
+	cfg.tableName = sqliteIdentifier(cfg.tableName)
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -61,8 +87,11 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite conversation: create table: %w", err)
 	}
+	// pragma_table_info takes the bare (unquoted) table name as a bound
+	// value, not an identifier position, so it uses rawTableName rather than
+	// the quoted cfg.tableName used in the Sprintf-built DDL/DML below.
 	var hasRevision bool
-	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name = 'revision')`, cfg.tableName).Scan(&hasRevision); err != nil {
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name = 'revision')`, rawTableName).Scan(&hasRevision); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("sqlite conversation: inspect revision column: %w", err)
 	}

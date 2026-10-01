@@ -214,3 +214,90 @@ func TestNewMigratesLegacyTableAndRow(t *testing.T) {
 		t.Fatalf("second revision-zero Save = %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Identifier hardening regression tests
+// ---------------------------------------------------------------------------
+
+// TestNew_TableNameWithSpaceQuoteAndReservedWord verifies that table names
+// containing quotes, spaces, and SQL reserved words are safely sanitized via
+// pgx.Identifier.Sanitize and remain usable end to end.
+func TestNew_TableNameWithSpaceQuoteAndReservedWord(t *testing.T) {
+	for _, name := range []string{
+		`weird"table`,
+		"my conversations",
+		"select",
+		"order",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Conversation.Close() closes the underlying pool, so use a
+			// dedicated pool per subtest rather than the shared one, and
+			// drop the table before closing (mirrors TestCustomColumns).
+			subPool := skipIfNoPostgres(t)
+
+			sanitized := pgx.Identifier{name}.Sanitize()
+			ddl := fmt.Sprintf(`CREATE TABLE %s (
+				conversation_id TEXT PRIMARY KEY,
+				messages JSONB NOT NULL,
+				revision BIGINT NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			)`, sanitized)
+			if _, err := subPool.Exec(context.Background(), ddl); err != nil {
+				t.Fatalf("create table: %v", err)
+			}
+			defer func() {
+				_, _ = subPool.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", sanitized))
+				subPool.Close()
+			}()
+
+			m, err := New(subPool, WithTableName(name))
+			if err != nil {
+				t.Fatalf("New(%q): %v", name, err)
+			}
+
+			ctx := context.Background()
+			if _, err := m.Save(ctx, "conv", pgMessages("hello"), 0); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			snapshot, err := m.Load(ctx, "conv")
+			if err != nil || !reflect.DeepEqual(snapshot.Messages, pgMessages("hello")) {
+				t.Fatalf("Load = %+v, %v", snapshot, err)
+			}
+		})
+	}
+}
+
+// TestNew_SanitizesTableNameForDDLInterpolation verifies that a
+// SQL-fragment-shaped table name cannot break out of the identifier
+// position in the ALTER TABLE migration issued by New.
+func TestNew_SanitizesTableNameForDDLInterpolation(t *testing.T) {
+	pool := skipIfNoPostgres(t)
+
+	maliciousName := `evil"; DROP TABLE pg_catalog.pg_tables; --`
+	sanitized := pgx.Identifier{maliciousName}.Sanitize()
+	ddl := fmt.Sprintf(`CREATE TABLE %s (
+		conversation_id TEXT PRIMARY KEY,
+		messages JSONB NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`, sanitized)
+	if _, err := pool.Exec(context.Background(), ddl); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", sanitized))
+		pool.Close()
+	}()
+
+	// New() runs an ALTER TABLE ... ADD COLUMN IF NOT EXISTS migration using
+	// the sanitized table name. If sanitization were broken, this call would
+	// either error out or execute injected SQL; here it must simply succeed
+	// against the literal table.
+	m, err := New(pool, WithTableName(maliciousName))
+	if err != nil {
+		t.Fatalf("New(%q): %v", maliciousName, err)
+	}
+
+	if _, err := m.Save(context.Background(), "conv", pgMessages("safe"), 0); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+}

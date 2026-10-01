@@ -50,19 +50,52 @@ func (p Principal) Credential(key string) string {
 	return p.Credentials[key]
 }
 
+// clonePrincipal returns a deep copy of p: Roles, Attrs, and Credentials are
+// copied into new backing storage so the clone shares no mutable state with
+// p. Use this at every boundary where a Principal enters or leaves
+// framework-owned state (WithPrincipal, Principal, background dispatch,
+// etc.) so callers can't observe or cause mutation through aliased
+// slices/maps, including across concurrent goroutines.
+func clonePrincipal(p Principal) Principal {
+	clone := Principal{ID: p.ID}
+	if p.Roles != nil {
+		clone.Roles = append([]string(nil), p.Roles...)
+	}
+	if p.Attrs != nil {
+		clone.Attrs = make(map[string]string, len(p.Attrs))
+		for k, v := range p.Attrs {
+			clone.Attrs[k] = v
+		}
+	}
+	if p.Credentials != nil {
+		clone.Credentials = make(map[string]string, len(p.Credentials))
+		for k, v := range p.Credentials {
+			clone.Credentials[k] = v
+		}
+	}
+	return clone
+}
+
 // WithPrincipal attaches a Principal to the invocation. Tool role policies,
-// ToolFilters, and middleware can retrieve it via PrincipalFrom.
+// ToolFilters, and middleware can retrieve it via PrincipalFrom. The
+// Principal is deep-copied on the way in: later mutation of p's Roles,
+// Attrs, or Credentials by the caller does not affect the invocation's
+// stored principal.
 func (c *Context) WithPrincipal(p Principal) *Context {
-	c.cfg.principal = &p
+	cloned := clonePrincipal(p)
+	c.cfg.principal = &cloned
 	return c
 }
 
-// Principal returns the invocation's Principal and whether one was set.
+// Principal returns the invocation's Principal and whether one was set. The
+// returned Principal is a deep copy: mutating its Roles, Attrs, or
+// Credentials does not affect the invocation's stored principal or any other
+// caller holding a reference to the same context/config.
 func (c *Context) Principal() (Principal, bool) {
 	if c.cfg.principal == nil {
 		return Principal{}, false
 	}
-	return *c.cfg.principal, true
+	return clonePrincipal(*c.cfg.principal), true
 }
 
 // PrincipalFrom extracts the Principal from a context.
@@ -160,5 +193,8 @@ func (c *Context) WithNarrowedRoles(allowed ...string) *Context {
 		}
 	}
 	p.Roles = narrowed
+	// c.Principal() above already returned a deep copy, and WithPrincipal
+	// deep-copies again on the way in, so Attrs/Credentials are fully
+	// independent of the original principal here too.
 	return c.Clone().WithPrincipal(p)
 }

@@ -33,7 +33,8 @@ func TestNew(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if m.tableName != "custom_convos" {
+	// tableName is stored quoted (sanitized) for safe SQL interpolation.
+	if m.tableName != `"custom_convos"` {
 		t.Fatalf("table name = %q", m.tableName)
 	}
 }
@@ -285,5 +286,85 @@ func TestNewMigratesLegacyTableAndRow(t *testing.T) {
 	}
 	if _, err := m.Save(context.Background(), "legacy", textMessages("stale"), 0); !errors.Is(err, agent.ErrConversationConflict) {
 		t.Fatalf("second revision-zero Save = %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Identifier hardening regression tests
+// ---------------------------------------------------------------------------
+
+func TestNew_RejectsNULByteTableName(t *testing.T) {
+	_, err := New(":memory:", WithTableName("evil\x00name"))
+	if err == nil {
+		t.Fatal("expected error for NUL byte in table name")
+	}
+}
+
+func TestNew_RejectsEmptyTableName(t *testing.T) {
+	_, err := New(":memory:", WithTableName(""))
+	if err == nil {
+		t.Fatal("expected error for empty table name")
+	}
+}
+
+// TestNew_TableNameWithEmbeddedQuoteIsSafe verifies that a table name
+// containing a double quote and SQL-fragment-shaped content does not break
+// out of the identifier position: the store still creates exactly one table
+// (the quoted, literally-named one) and behaves normally against it.
+func TestNew_TableNameWithEmbeddedQuoteIsSafe(t *testing.T) {
+	maliciousName := `evil"; DROP TABLE sqlite_master; --`
+	m, err := New(":memory:", WithTableName(maliciousName))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer m.Close()
+
+	ctx := context.Background()
+	if _, err := m.Save(ctx, "conv", textMessages("hello"), 0); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	snapshot, err := m.Load(ctx, "conv")
+	if err != nil || !reflect.DeepEqual(snapshot.Messages, textMessages("hello")) {
+		t.Fatalf("Load = %+v, %v", snapshot, err)
+	}
+
+	// The literal table (with the embedded quote in its name) must exist.
+	var tableCount int
+	row := m.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, maliciousName)
+	if err := row.Scan(&tableCount); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if tableCount != 1 {
+		t.Fatalf("expected exactly one table named %q, got count=%d", maliciousName, tableCount)
+	}
+}
+
+// TestNew_TableNameWithSpaceAndReservedWord verifies table names containing
+// spaces or SQL reserved words are safely quoted and usable.
+func TestNew_TableNameWithSpaceAndReservedWord(t *testing.T) {
+	for _, name := range []string{"my conversations", "select", "table", "order"} {
+		t.Run(name, func(t *testing.T) {
+			m, err := New(":memory:", WithTableName(name))
+			if err != nil {
+				t.Fatalf("New(%q): %v", name, err)
+			}
+			defer m.Close()
+
+			ctx := context.Background()
+			if _, err := m.Save(ctx, "conv", textMessages("x"), 0); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if _, err := m.Load(ctx, "conv"); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+		})
+	}
+}
+
+func TestSqliteIdentifier_DoublesEmbeddedQuotes(t *testing.T) {
+	got := sqliteIdentifier(`ta"ble`)
+	want := `"ta""ble"`
+	if got != want {
+		t.Errorf("sqliteIdentifier(%q) = %q, want %q", `ta"ble`, got, want)
 	}
 }

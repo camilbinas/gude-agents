@@ -29,10 +29,12 @@ type Server struct {
 type ServerOption func(*serverConfig)
 
 type serverConfig struct {
-	logger          *slog.Logger
-	cardOpts        []CardOption
-	handlerOpts     []a2asrv.RequestHandlerOption
-	gracefulTimeout time.Duration
+	logger                  *slog.Logger
+	cardOpts                []CardOption
+	handlerOpts             []a2asrv.RequestHandlerOption
+	gracefulTimeout         time.Duration
+	verifyPrincipal         func(agent.Principal) (agent.Principal, error)
+	trustForwardedPrincipal bool
 }
 
 // WithLogger sets the server's logger.
@@ -56,6 +58,37 @@ func WithGracefulTimeout(d time.Duration) ServerOption {
 	}
 }
 
+// WithPrincipalVerifier configures the server to verify forwarded
+// X-Agent-Principal-* headers through verify before attaching them to the
+// agent context. verify can validate a signature, look up the caller in an
+// identity store, or strip untrusted fields; return an error to reject the
+// task. This is the recommended way to accept forwarded identity on an A2A
+// server.
+//
+// Without this option (and without WithTrustedForwardedPrincipal), forwarded
+// principal headers are ignored — a caller cannot set its own roles/attrs
+// merely by sending headers.
+func WithPrincipalVerifier(verify func(agent.Principal) (agent.Principal, error)) ServerOption {
+	return func(cfg *serverConfig) {
+		cfg.verifyPrincipal = verify
+	}
+}
+
+// WithTrustedForwardedPrincipal explicitly opts into trusting raw
+// X-Agent-Principal-* headers with no verification.
+//
+// This is unsafe on a public or default deployment: any caller that can set
+// HTTP headers can assign itself arbitrary roles/attributes. Only enable
+// this when the server sits behind a trusted boundary that authenticates the
+// caller and strips/rewrites these headers itself (e.g. an internal service
+// mesh). Prefer WithPrincipalVerifier when possible. If both this option and
+// WithPrincipalVerifier are set, the verifier takes precedence.
+func WithTrustedForwardedPrincipal() ServerOption {
+	return func(cfg *serverConfig) {
+		cfg.trustForwardedPrincipal = true
+	}
+}
+
 // NewServer creates a new A2A server wrapping the given agent.
 // CardOption values customize the auto-derived Agent Card.
 // ServerOption values configure the server behavior.
@@ -72,7 +105,15 @@ func NewServer(a *agent.Agent, cardOpts []CardOption, serverOpts ...ServerOption
 		opt(cfg)
 	}
 
-	executor := NewExecutor(a, cfg.logger)
+	var executor *Executor
+	switch {
+	case cfg.verifyPrincipal != nil:
+		executor = NewExecutorWithVerify(a, cfg.logger, cfg.verifyPrincipal)
+	case cfg.trustForwardedPrincipal:
+		executor = NewExecutorWithTrustedForwardedPrincipal(a, cfg.logger)
+	default:
+		executor = NewExecutor(a, cfg.logger)
+	}
 	card := DeriveCard(a, cardOpts...)
 
 	// Build SDK handler options.

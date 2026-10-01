@@ -31,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/google/uuid"
@@ -66,6 +67,38 @@ func (s *Store) distanceOp() string {
 	}
 }
 
+// scoreExpr returns the SQL expression that computes this store's
+// similarity score for the configured metric, referencing the embedding
+// column and the query vector bound to $1. Score semantics are
+// metric-specific:
+//
+//   - cosine: score = 1 - cosine_distance, in [0, 2] (typically [0, 1] for
+//     normalized embeddings). Higher is more similar.
+//   - inner_product: pgvector's <#> operator returns the *negative* inner
+//     product; score negates it back to the plain inner product. It is not
+//     bounded to [0, 1] — its range depends on embedding magnitudes. Higher
+//     is more similar.
+//   - l2: Euclidean distance has no natural upper bound, so "1 - distance"
+//     is not a valid similarity score. score = 1 / (1 + distance), which is
+//     bounded to (0, 1] and monotonically decreasing in distance (higher is
+//     still more similar), so MinSimilarity thresholds and ORDER BY compose
+//     consistently with the other metrics.
+//
+// Nearest-neighbor ordering itself uses the raw distance operator directly
+// (see Search), not this score expression, since ascending pgvector
+// distance already yields nearest-first for every supported metric.
+func (s *Store) scoreExpr() string {
+	op := s.distanceOp()
+	switch s.distMetric {
+	case "l2":
+		return fmt.Sprintf("1 / (1 + (%s %s $1))", s.colEmbed, op)
+	case "inner_product":
+		return fmt.Sprintf("-(%s %s $1)", s.colEmbed, op)
+	default: // cosine
+		return fmt.Sprintf("1 - (%s %s $1)", s.colEmbed, op)
+	}
+}
+
 // New creates a new Store. The pool should be a connected pgxpool.Pool
 // and dim is the embedding dimension (e.g. 1536 for OpenAI text-embedding-3-small).
 // The table must already exist with the expected schema.
@@ -87,6 +120,26 @@ func New(pool *pgxpool.Pool, dim int, opts ...Option) (*Store, error) {
 	}
 	for _, o := range opts {
 		o(cfg)
+	}
+
+	// Validate and sanitize identifiers for safe SQL interpolation. colMeta
+	// may legitimately be empty (no metadata column configured), so it is
+	// skipped rather than rejected.
+	required := []string{cfg.tableName, cfg.colID, cfg.colContent, cfg.colEmbed}
+	for _, name := range required {
+		if name == "" || strings.ContainsRune(name, 0) {
+			return nil, fmt.Errorf("postgres vectorstore: identifier %q is invalid", name)
+		}
+	}
+	if cfg.colMeta != "" && strings.ContainsRune(cfg.colMeta, 0) {
+		return nil, fmt.Errorf("postgres vectorstore: identifier %q is invalid", cfg.colMeta)
+	}
+	cfg.tableName = pgx.Identifier{cfg.tableName}.Sanitize()
+	cfg.colID = pgx.Identifier{cfg.colID}.Sanitize()
+	cfg.colContent = pgx.Identifier{cfg.colContent}.Sanitize()
+	cfg.colEmbed = pgx.Identifier{cfg.colEmbed}.Sanitize()
+	if cfg.colMeta != "" {
+		cfg.colMeta = pgx.Identifier{cfg.colMeta}.Sanitize()
 	}
 
 	return &Store{
@@ -232,23 +285,24 @@ func (s *Store) Search(ctx context.Context, queryEmbedding []float64, topK int) 
 	}
 
 	op := s.distanceOp()
+	scoreExpr := s.scoreExpr()
 	vec := float64sToFloat32(queryEmbedding)
 
 	var query string
 	if s.colMeta != "" {
 		query = fmt.Sprintf(`
-			SELECT %s, %s, %s, 1 - (%s %s $1) AS similarity
+			SELECT %s, %s, %s, %s AS similarity
 			FROM %s
 			ORDER BY %s %s $1
 			LIMIT $2
-		`, s.colID, s.colContent, s.colMeta, s.colEmbed, op, s.tableName, s.colEmbed, op)
+		`, s.colID, s.colContent, s.colMeta, scoreExpr, s.tableName, s.colEmbed, op)
 	} else {
 		query = fmt.Sprintf(`
-			SELECT %s, %s, 1 - (%s %s $1) AS similarity
+			SELECT %s, %s, %s AS similarity
 			FROM %s
 			ORDER BY %s %s $1
 			LIMIT $2
-		`, s.colID, s.colContent, s.colEmbed, op, s.tableName, s.colEmbed, op)
+		`, s.colID, s.colContent, scoreExpr, s.tableName, s.colEmbed, op)
 	}
 
 	rows, err := s.pool.Query(ctx, query, pgvector.NewVector(vec), topK)

@@ -223,6 +223,14 @@ func (r *run) dispatchBackground(c *Context, t tool.Tool, tc tool.Call, input js
 	}
 	cfg := c.cfg
 	cfg.images, cfg.documents = nil, nil
+	if cfg.principal != nil {
+		// Deep-copy the principal before crossing into the detached
+		// background goroutine: cfg.principal currently aliases the
+		// invocation's principal, and the background handler may run
+		// concurrently with the rest of this invocation.
+		cloned := clonePrincipal(*cfg.principal)
+		cfg.principal = &cloned
+	}
 	if err := a.backgroundRegistry.dispatch(backgroundDispatch{
 		toolName:       tc.Name,
 		toolUseID:      tc.ToolUseID,

@@ -116,3 +116,83 @@ func TestServer_ListenAndServe_Shutdown(t *testing.T) {
 		t.Fatalf("ListenAndServe returned error: %v", err)
 	}
 }
+
+// TestNewServer_DefaultIgnoresForwardedPrincipal verifies that a Server built
+// with no principal options does not trust raw X-Agent-Principal-* headers.
+func TestNewServer_DefaultIgnoresForwardedPrincipal(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+
+	srv, err := NewServer(a, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.executor.verifyPrincipal != nil {
+		t.Error("expected no verifier configured by default")
+	}
+	if srv.executor.trustForwardedPrincipal {
+		t.Error("expected trustForwardedPrincipal to be false by default")
+	}
+}
+
+// TestNewServer_WithPrincipalVerifier verifies the verifier is wired through
+// to the executor.
+func TestNewServer_WithPrincipalVerifier(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+
+	called := false
+	srv, err := NewServer(a, nil, WithPrincipalVerifier(func(p agent.Principal) (agent.Principal, error) {
+		called = true
+		return p, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.executor.verifyPrincipal == nil {
+		t.Fatal("expected verifier to be wired through to the executor")
+	}
+	if _, err := srv.executor.verifyPrincipal(agent.Principal{ID: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("expected verifier to be invoked")
+	}
+}
+
+// TestNewServer_WithTrustedForwardedPrincipal verifies the trust opt-in is
+// wired through to the executor.
+func TestNewServer_WithTrustedForwardedPrincipal(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+
+	srv, err := NewServer(a, nil, WithTrustedForwardedPrincipal())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !srv.executor.trustForwardedPrincipal {
+		t.Fatal("expected trustForwardedPrincipal to be true")
+	}
+	if srv.executor.verifyPrincipal != nil {
+		t.Error("expected no verifier configured")
+	}
+}
+
+// TestNewServer_VerifierTakesPrecedenceOverTrust verifies that when both
+// WithPrincipalVerifier and WithTrustedForwardedPrincipal are given, the
+// verifier is used.
+func TestNewServer_VerifierTakesPrecedenceOverTrust(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+
+	srv, err := NewServer(a, nil,
+		WithTrustedForwardedPrincipal(),
+		WithPrincipalVerifier(func(p agent.Principal) (agent.Principal, error) { return p, nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.executor.verifyPrincipal == nil {
+		t.Fatal("expected verifier to take precedence and be wired through")
+	}
+}

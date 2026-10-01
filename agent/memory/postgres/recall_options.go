@@ -31,20 +31,21 @@ func (s *Store[T]) buildRecallQuery(query memory.RecallQuery) (string, []any, er
 	}
 
 	op := s.distanceOp()
+	score := scoreExpr(s.embeddingCol, op, "$1")
 	identifierCol := s.schema.Columns[s.schema.IdentifierIdx].Column
 	selectCols := strings.Join(s.schema.columnNames(), ", ")
 
 	var sql strings.Builder
 	fmt.Fprintf(
 		&sql,
-		"SELECT %s, 1 - (%s %s $1) AS _similarity FROM %s WHERE %s = $2",
-		selectCols, s.embeddingCol, op, s.tableName, identifierCol,
+		"SELECT %s, %s AS _similarity FROM %s WHERE %s = $2",
+		selectCols, score, s.tableName, identifierCol,
 	)
 
 	args := make([]any, 0, len(query.Filters)+2)
 	paramIdx := 3
 	if query.MinSimilarity != 0 {
-		fmt.Fprintf(&sql, " AND 1 - (%s %s $1) >= $%d", s.embeddingCol, op, paramIdx)
+		fmt.Fprintf(&sql, " AND %s >= $%d", score, paramIdx)
 		args = append(args, query.MinSimilarity)
 		paramIdx++
 	}

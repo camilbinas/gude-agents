@@ -3,6 +3,7 @@ package a2a
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -587,4 +588,145 @@ func TestExecutor_ConsumerBreakStopsCleanly(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("got %d events before break, want 3", n)
 	}
+}
+
+// --- Principal trust tests ---
+
+// principalCapturingProvider captures the agent.Principal set on the
+// invocation context during Stream, so tests can assert what the executor
+// actually attached (or didn't attach) from forwarded headers.
+type principalCapturingProvider struct {
+	response     string
+	captured     agent.Principal
+	hasPrincipal bool
+}
+
+func (p *principalCapturingProvider) Name() string { return "principal-capturing" }
+
+func (p *principalCapturingProvider) Stream(ctx context.Context, _ agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	if pr, ok := agent.PrincipalFrom(ctx); ok {
+		p.captured = pr
+		p.hasPrincipal = true
+	}
+	if emit != nil && p.response != "" {
+		emit(agent.ModelEvent{Type: agent.ModelEventText, Text: p.response})
+	}
+	return &agent.ModelResponse{Text: p.response}, nil
+}
+
+func spoofedPrincipalExecCtx() *a2asrv.ExecutorContext {
+	sp := a2asrv.NewServiceParams(map[string][]string{
+		"X-Agent-Principal-ID":    {"attacker"},
+		"X-Agent-Principal-Roles": {"admin"},
+	})
+	return &a2asrv.ExecutorContext{
+		Message:       a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi")),
+		TaskID:        a2a.NewTaskID(),
+		ServiceParams: sp,
+	}
+}
+
+// TestExecutor_DefaultIgnoresForwardedPrincipal verifies that a plain
+// NewExecutor (no verifier, no trust opt-in) does not attach a Principal
+// built from spoofable X-Agent-Principal-* headers to the agent context.
+func TestExecutor_DefaultIgnoresForwardedPrincipal(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+	executor := NewExecutor(a, nil)
+
+	collectEvents(t, executor, spoofedPrincipalExecCtx())
+
+	if provider.hasPrincipal {
+		t.Fatalf("expected no principal on context by default, got %+v", provider.captured)
+	}
+}
+
+// TestExecutor_VerifierReceivesForwardedPrincipal verifies that when a
+// verifier is configured, it receives the principal parsed from forwarded
+// headers.
+func TestExecutor_VerifierReceivesForwardedPrincipal(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+
+	var gotID string
+	var gotRoles []string
+	executor := NewExecutorWithVerify(a, nil, func(p agent.Principal) (agent.Principal, error) {
+		gotID = p.ID
+		gotRoles = p.Roles
+		return agent.Principal{ID: p.ID, Roles: []string{"verified-user"}}, nil
+	})
+
+	collectEvents(t, executor, spoofedPrincipalExecCtx())
+
+	if gotID != "attacker" {
+		t.Errorf("verifier received ID = %q, want %q", gotID, "attacker")
+	}
+	if len(gotRoles) != 1 || gotRoles[0] != "admin" {
+		t.Errorf("verifier received Roles = %v, want [admin]", gotRoles)
+	}
+	if !provider.hasPrincipal {
+		t.Fatal("expected verified principal on context")
+	}
+	if provider.captured.ID != "attacker" {
+		t.Errorf("captured principal ID = %q, want %q", provider.captured.ID, "attacker")
+	}
+	if !provider.captured.HasRole("verified-user") {
+		t.Errorf("captured principal roles = %v, want [verified-user]", provider.captured.Roles)
+	}
+	if provider.captured.HasRole("admin") {
+		t.Error("captured principal should not retain the spoofed admin role rejected by the verifier")
+	}
+}
+
+// TestExecutor_VerifierRejectionFailsTask verifies that a verifier error
+// fails the A2A task rather than falling back to trusting the raw headers.
+func TestExecutor_VerifierRejectionFailsTask(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+
+	executor := NewExecutorWithVerify(a, nil, func(agent.Principal) (agent.Principal, error) {
+		return agent.Principal{}, errFakeVerify
+	})
+
+	events := collectEvents(t, executor, spoofedPrincipalExecCtx())
+	su := lastStatus(t, events)
+	if su.Status.State != a2a.TaskStateFailed {
+		t.Fatalf("state = %s, want failed", su.Status.State)
+	}
+	if provider.hasPrincipal {
+		t.Error("provider should never have been invoked / should not observe a principal")
+	}
+}
+
+// TestExecutor_TrustedForwardedPrincipal_OptIn verifies that an executor
+// explicitly constructed to trust forwarded headers attaches the raw
+// principal without verification.
+func TestExecutor_TrustedForwardedPrincipal_OptIn(t *testing.T) {
+	provider := &principalCapturingProvider{response: "ok"}
+	a := newCapturingPrincipalAgent(t, provider)
+	executor := NewExecutorWithTrustedForwardedPrincipal(a, nil)
+
+	collectEvents(t, executor, spoofedPrincipalExecCtx())
+
+	if !provider.hasPrincipal {
+		t.Fatal("expected trusted forwarded principal on context")
+	}
+	if provider.captured.ID != "attacker" || !provider.captured.HasRole("admin") {
+		t.Errorf("captured principal = %+v, want ID=attacker Roles=[admin]", provider.captured)
+	}
+}
+
+var errFakeVerify = errors.New("verification failed")
+
+func newCapturingPrincipalAgent(t *testing.T, provider *principalCapturingProvider) *agent.Agent {
+	t.Helper()
+	a, err := agent.New(
+		provider,
+		"You are a test agent.",
+		agent.WithName("principal-capturing-agent"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }

@@ -119,7 +119,7 @@ func sendAndParseTask(t *testing.T, serverURL string, msg *a2a.Message) taskResp
 }
 
 // TestIntegration_DataPart_Image_EndToEnd tests the full flow:
-// A2A client sends DataPart with image → MultiServer routes to agent →
+// A2A client sends DataPart with image → Server routes to agent →
 // agent receives ImageBlock → response includes DataPart artifact.
 // Validates: Requirements 1.1, 2.1, 3.2, 3.3
 func TestIntegration_DataPart_Image_EndToEnd(t *testing.T) {
@@ -134,20 +134,18 @@ func TestIntegration_DataPart_Image_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 2. Set up a MultiServer with the agent at a prefix.
-	ms, err := NewMultiServer([]AgentRegistration{
-		{Prefix: "/agents/image", Agent: a},
-	})
+	// 2. Set up a Server for the agent.
+	srv, err := NewServer(a, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Start a test HTTP server using the production agent-card discovery path.
-	ts := httptest.NewServer(ms.Handler())
+	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
 	// 4. Use the A2A Client to connect to the test server and verify card discovery.
-	client, err := NewClient(context.Background(), ts.URL+"/agents/image")
+	client, err := NewClient(context.Background(), ts.URL)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -176,7 +174,7 @@ func TestIntegration_DataPart_Image_EndToEnd(t *testing.T) {
 		imgPart,
 	)
 
-	task := sendAndParseTask(t, ts.URL+"/agents/image/", msg)
+	task := sendAndParseTask(t, ts.URL+"/", msg)
 
 	// 6. Verify the agent received the correct ImageBlock.
 	if len(provider.capturedImages) != 1 {
@@ -224,20 +222,18 @@ func TestIntegration_FilePart_Document_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 2. Set up a MultiServer with the agent at a prefix.
-	ms, err := NewMultiServer([]AgentRegistration{
-		{Prefix: "/agents/docs", Agent: a},
-	})
+	// 2. Set up a Server for the agent.
+	srv, err := NewServer(a, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// 3. Start a test HTTP server using the production agent-card discovery path.
-	ts := httptest.NewServer(ms.Handler())
+	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
 	// 4. Use the A2A Client to connect to the test server and verify card discovery.
-	client, err := NewClient(context.Background(), ts.URL+"/agents/docs")
+	client, err := NewClient(context.Background(), ts.URL)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -257,7 +253,7 @@ func TestIntegration_FilePart_Document_EndToEnd(t *testing.T) {
 		docPart,
 	)
 
-	task := sendAndParseTask(t, ts.URL+"/agents/docs/", msg)
+	task := sendAndParseTask(t, ts.URL+"/", msg)
 
 	// 6. Verify the agent received the correct DocumentBlock with URL.
 	if len(provider.capturedDocs) != 1 {
