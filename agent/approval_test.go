@@ -1000,57 +1000,6 @@ func (o *recordingInterruptObserver) count() int {
 	return len(o.records)
 }
 
-func TestResume_StatelessInterruptIgnoresResumeContextConversation(t *testing.T) {
-	store := newMemConversation()
-	seeded := []Message{{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "persisted other conversation"}}}}
-	if _, err := store.Save(context.Background(), "other", seeded, 0); err != nil {
-		t.Fatal(err)
-	}
-	provider := &approvalBatchProvider{responses: []*ModelResponse{
-		{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{"order_id":"A"}`)}}},
-		{Text: "done"},
-	}}
-	a, err := New(provider, "helpful", WithTools(deleteOrderTool()), WithConversationStore(store))
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := mustInterrupt(t, a, Background(), "delete A")
-	if in.ConversationID != "" || in.Revision != 0 {
-		t.Fatalf("stateless interrupt = %+v", in)
-	}
-
-	res, err := a.Resume(Background().WithConversationID("other"), in, Approve())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Text != "done" {
-		t.Fatalf("result.Text = %q, want done", res.Text)
-	}
-	provider.mu.Lock()
-	resumedMessages := append([]Message(nil), provider.params[1].Messages...)
-	provider.mu.Unlock()
-	for _, msg := range resumedMessages {
-		for _, block := range msg.Content {
-			if text, ok := block.(TextBlock); ok && text.Text == "persisted other conversation" {
-				t.Fatal("resume loaded the caller context conversation instead of using the interrupt snapshot")
-			}
-		}
-	}
-	snapshot, err := store.Load(context.Background(), "other")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Revision != 1 || !reflect.DeepEqual(snapshot.Messages, seeded) {
-		t.Fatalf("stateless resume modified other conversation: %+v", snapshot)
-	}
-	store.mu.Lock()
-	_, emptySaved := store.data[""]
-	store.mu.Unlock()
-	if emptySaved {
-		t.Fatal("stateless pause or resume persisted an empty conversation ID")
-	}
-}
-
 func TestResume_RejectsSameMessagesAtNewerRevision(t *testing.T) {
 	var handlerCalls atomic.Int32
 	approved := tool.NewRaw("approved", "approved", func(context.Context, json.RawMessage) (string, error) {

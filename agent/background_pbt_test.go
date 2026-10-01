@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -3196,26 +3197,21 @@ func (p *p14Provider) Stream(_ context.Context, params ModelRequest, _ func(Mode
 	return p.onCall(params)
 }
 
-// TestIntegration_MissingConversationID verifies that when the LLM invokes a
-// Background_Tool but the invocation has no Conversation_ID, the originating
-// turn returns a ToolResultBlock with IsError: true for that Tool_Use_ID, no
-// conversation is persisted, no handler is dispatched, and no Re_Entry_Turn
-// runs.
+// TestIntegration_MissingConversationID verifies that an Agent with a
+// Background_Tool (and therefore a ConversationStore) rejects an invocation
+// without a Conversation_ID with ErrConversationIDRequired before any
+// provider call: no handler is dispatched, no Re_Entry_Turn runs, and no
+// conversation is persisted.
 //
 // **Validates: Requirements 3.4**
 func TestIntegration_MissingConversationID(t *testing.T) {
-	// Track whether the background handler was ever called.
 	var handlerCalled atomic.Int32
 
 	bgToolName := "long_running_task"
-	bgToolUseID := "tuid-missing-conv"
-	bgAck := "task started"
-
-	// Create a Background_Tool whose handler increments the counter.
 	bgTool := newTestBackgroundRaw(
 		bgToolName,
 		"a background tool that should not run without a conversation id",
-		bgAck,
+		"task started",
 		map[string]any{"type": "object"},
 		func(ctx context.Context, input json.RawMessage) (string, error) {
 			handlerCalled.Add(1)
@@ -3223,92 +3219,38 @@ func TestIntegration_MissingConversationID(t *testing.T) {
 		},
 	)
 
-	// Create a scripted provider:
-	// 1st call: returns a ToolUseBlock calling the background tool.
-	// 2nd call: returns a final assistant text (the turn should still complete).
-	finalText := "acknowledged"
 	sp := &approvalBatchProvider{responses: []*ModelResponse{
-		{
-			ToolCalls: []tool.Call{
-				{ToolUseID: bgToolUseID, Name: bgToolName, Input: json.RawMessage(`{}`)},
-			},
-		},
-		{Text: finalText},
+		{ToolCalls: []tool.Call{{ToolUseID: "tuid-missing-conv", Name: bgToolName, Input: json.RawMessage(`{}`)}}},
+		{Text: "acknowledged"},
 	}}
-
-	// Create a conversation store. The empty invocation ID keeps this call
-	// stateless, so the store must remain untouched.
 	store := newTestMemoryStore()
 
-	a, err := New(sp, "sys", WithTools(bgTool),
-		WithConversationStore(store),
-	)
+	a, err := New(sp, "sys", WithTools(bgTool), WithConversationStore(store))
 	if err != nil {
 		t.Fatalf("agent.New failed: %v", err)
 	}
-
-	// Override the backgroundRegistry with a clean instance for the test.
 	a.backgroundRegistry = newBackgroundRegistry(a, nil, nil)
 
-	// Invoke the agent with no conversation ID. Background() returns a fresh
-	// stateless context.
-	ctx := Background()
-	result, err := a.Invoke(ctx, "run the background task")
-	if err != nil {
-		t.Fatalf("Invoke failed: %v", err)
-	}
-	if result.Text != finalText {
-		t.Fatalf("expected final text %q, got %q", finalText, result.Text)
+	_, err = a.Invoke(Background(), "run the background task")
+	if !errors.Is(err, ErrConversationIDRequired) {
+		t.Fatalf("Invoke err = %v, want ErrConversationIDRequired", err)
 	}
 
-	// Wait for any background goroutines (there should be none, but be safe).
 	a.backgroundRegistry.wg.Wait()
 
-	// Assert 1: The handler was never called.
 	if n := handlerCalled.Load(); n != 0 {
-		t.Fatalf("expected handler to never be called, but it was called %d time(s)", n)
+		t.Fatalf("handler called %d time(s), want 0", n)
 	}
-
-	// Assert 2: The provider was called exactly 2 times (originating turn only,
-	// no additional Re_Entry_Turn provider calls).
 	sp.mu.Lock()
 	providerCalls := len(sp.params)
 	sp.mu.Unlock()
-	if providerCalls != 2 {
-		t.Fatalf("expected exactly 2 provider calls (originating turn), got %d — indicates a spurious Re_Entry_Turn", providerCalls)
-	}
-
-	// Assert 3: The second provider call receives an error result for the
-	// background tool, while the stateless invocation never touches the store.
-	sp.mu.Lock()
-	secondMessages := append([]Message(nil), sp.params[1].Messages...)
-	sp.mu.Unlock()
-	foundErrorResult := false
-	for _, msg := range secondMessages {
-		if msg.Role != RoleUser {
-			continue
-		}
-		for _, block := range msg.Content {
-			trb, ok := block.(ToolResultBlock)
-			if !ok || trb.ToolUseID != bgToolUseID {
-				continue
-			}
-			if !trb.IsError {
-				t.Fatalf("ToolResultBlock for %q has IsError=false, want true", bgToolUseID)
-			}
-			if !contains(trb.Content, "conversation id") {
-				t.Fatalf("ToolResultBlock content %q does not mention 'conversation id'", trb.Content)
-			}
-			foundErrorResult = true
-		}
-	}
-	if !foundErrorResult {
-		t.Fatalf("no ToolResultBlock{IsError: true} found for Tool_Use_ID %q in provider request", bgToolUseID)
+	if providerCalls != 0 {
+		t.Fatalf("provider called %d time(s), want 0", providerCalls)
 	}
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	if len(store.data) != 0 {
-		t.Fatalf("stateless background invocation persisted conversations: %#v", store.data)
+		t.Fatalf("invocation without conversation ID persisted conversations: %#v", store.data)
 	}
 }
 

@@ -46,7 +46,7 @@ These fields are intentionally distinct:
 - **Identity** is the stable subject used to partition long-term memory.
 - **Principal** is authorization data such as subject, roles, and attributes.
 - **Scope** is a named, strict partition key. `Scope` and `ScopeFrom` return `(string, bool)` and never substitute identity when a scope is absent.
-- **ConversationID** selects persisted conversational history. It is supplied only by the invocation context, never by the store or agent option.
+- **ConversationID** selects persisted conversational history. It is supplied only by the invocation context, never by the store or agent option. When the Agent has a ConversationStore, every invocation requires a non-empty ConversationID (`agent.ErrConversationIDRequired` otherwise). Stateless Agents should be constructed without a ConversationStore.
 
 Do not derive authorization from a conversation ID. Do not silently use identity for a missing tenant/account scope.
 

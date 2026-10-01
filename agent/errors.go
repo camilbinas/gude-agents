@@ -17,6 +17,16 @@ var ErrTokenBudgetExceeded = errors.New("token budget exceeded")
 // without producing a final text response.
 var ErrMaxIterationsExceeded = errors.New("max iterations exceeded")
 
+// ErrConversationIDRequired is returned when an Agent configured with a
+// ConversationStore is invoked (or resumed) without a non-empty conversation
+// ID. The check runs before guardrails, conversation load, retrieval,
+// provider calls, and tool execution. Stateless Agents should be constructed
+// without a ConversationStore.
+var ErrConversationIDRequired = errors.New("agent: conversation ID required when a conversation store is configured")
+
+// ErrRetrieverRequired is returned by RAGAgent when the retriever is nil.
+var ErrRetrieverRequired = errors.New("agent: RAG retriever is required")
+
 // --- Typed errors ---
 
 // ProviderError wraps a failure from an LLM provider call.

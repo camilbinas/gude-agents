@@ -37,7 +37,18 @@ ctx := agent.NewContext(context.Background()).WithConversationID("thread-42")
 result, err := a.Invoke(ctx, "Remember that my timezone is UTC+1")
 ```
 
-Without a non-empty conversation ID, the call is stateless even when a store is configured: the agent does not load, save, or flush the store. This also applies to structured output and resume; a resumed invocation remains bound to the ID captured by its interrupt, including an empty stateless ID. `WithSyncConversation` calls `Flush` after each successful stateful save when supported. `Agent.Shutdown` also flushes after waiting for background work.
+When a ConversationStore is configured, every invocation requires a non-empty ConversationID. Forgetting it returns an error matching `agent.ErrConversationIDRequired` before any work runs: no guardrails, conversation load, retrieval, provider call, tool execution, background dispatch, or save. This applies equally to `Invoke`, `Stream`, `TextStream`, and `structured.Invoke`.
+
+```go
+_, err := a.Invoke(agent.Background(), "hello")
+errors.Is(err, agent.ErrConversationIDRequired) // true
+```
+
+There is no per-invocation stateless opt-out. Stateless Agents should be constructed without a ConversationStore; on such an Agent a conversation ID is accepted but has no persistence effect.
+
+Resume is bound to the conversation ID captured by its interrupt; the resume Context's ID is never substituted. Resuming an interrupt without a conversation ID through an Agent with a store fails with `agent.ErrConversationIDRequired` and leaves the interrupt unclaimed.
+
+`WithSyncConversation` calls `Flush` after each successful save when supported. `Agent.Shutdown` also flushes after waiting for background work.
 
 ## Implement a store
 

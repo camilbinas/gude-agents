@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -222,8 +223,11 @@ func TestIntegration_BackgroundTool_MissingConversationID(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if _, err = a.Invoke(agent.NewContext(ctx), "Record this note: integration test in progress."); err != nil {
-		t.Logf("Invoke returned error (acceptable): %v", err)
+	// A store-backed Agent requires a conversation ID; the invocation fails
+	// before any model call, so the background tool can never be dispatched.
+	_, err = a.Invoke(agent.NewContext(ctx), "Record this note: integration test in progress.")
+	if !errors.Is(err, agent.ErrConversationIDRequired) {
+		t.Fatalf("Invoke err = %v, want ErrConversationIDRequired", err)
 	}
 
 	time.Sleep(200 * time.Millisecond)

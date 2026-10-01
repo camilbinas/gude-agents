@@ -33,11 +33,13 @@ type Interrupt struct {
 	ID string `json:"id"`
 	// Type is InterruptApproval or InterruptHumanInput.
 	Type InterruptType `json:"type"`
-	// ConversationID is the conversation the paused invocation belongs to.
-	// Empty means the invocation is stateless; Resume must preserve that.
+	// ConversationID is the conversation the paused invocation belongs to and
+	// is authoritative for Resume. It is empty only for interrupts produced by
+	// an Agent without a ConversationStore; resuming such an interrupt through
+	// an Agent with a store fails with ErrConversationIDRequired.
 	ConversationID string `json:"conversation_id,omitempty"`
 	// Revision is the committed revision of Messages for a persisted
-	// conversation. It is zero for stateless interrupts.
+	// conversation. It is zero for interrupts without a conversation store.
 	Revision uint64 `json:"revision"`
 	// Approval lists the pending calls (Type == InterruptApproval).
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`

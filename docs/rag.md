@@ -19,16 +19,31 @@ type Reranker interface { Rerank(context.Context, string, []rag.Document) ([]rag
 ## Automatic retrieval
 
 ```go
-retriever := rag.NewRetriever(embedder, store,
+retriever := rag.NewRetriever(
+    embedder,
+    store,
     rag.WithMaxResults(6),
     rag.WithScoreThreshold(0.75),
 )
-a, err := agent.RAGAgent(prov, instructions, retriever,
-    agent.WithContextFormatter(rag.DefaultContextFormatter),
+
+a, err := agent.RAGAgent(
+    provider,
+    "Answer using the retrieved documentation.",
+    retriever,
 )
 ```
 
-`agent.RAGAgent` is a thin wrapper around `agent.New` that requires a non-nil `rag.Retriever`, so a RAG agent missing retrieval fails at construction instead of silently skipping context injection. It is equivalent to calling `agent.New` with `agent.WithRetriever(retriever)` plus any other options — no other defaults are applied.
+`agent.RAGAgent` is for Agents whose defining behavior is automatic retrieval. The retriever is mandatory: a nil retriever returns `agent.ErrRetrieverRequired` at construction instead of producing an Agent that silently skips context injection. It is not a preset — iterations, tool execution, and every other setting use the same defaults as `agent.New`. Pass further options as usual, for example `agent.WithContextFormatter(...)`.
+
+The equivalent lower-level form is useful when retrieval is one optional feature among many:
+
+```go
+a, err := agent.New(
+    provider,
+    instructions,
+    agent.WithRetriever(retriever),
+)
+```
 
 The engine retrieves before the provider call and injects formatted context transiently. Retrieved context is not persisted into conversation history.
 

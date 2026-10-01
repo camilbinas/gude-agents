@@ -191,8 +191,9 @@ func GetTyped[T any](c *Context, key any) (T, bool) {
 // ConversationID returns the conversation ID for the invocation.
 func (c *Context) ConversationID() string { return c.cfg.conversationID }
 
-// WithConversationID sets the conversation ID. An empty ID selects stateless
-// execution even when the Agent has a ConversationStore.
+// WithConversationID sets the conversation ID. When the Agent has a
+// ConversationStore, every invocation requires a non-empty ID (see
+// ErrConversationIDRequired). Without a store the ID has no persistence effect.
 func (c *Context) WithConversationID(id string) *Context {
 	c.cfg.conversationID = id
 	return c

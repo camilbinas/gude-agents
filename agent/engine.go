@@ -145,11 +145,22 @@ type run struct {
 
 func (r *run) detailed() bool { return r.c.cfg.detailedEvents }
 
-// hasConversation reports whether this invocation is stateful. An empty
-// conversation ID always selects stateless execution, even when the Agent has
-// a ConversationStore.
+// hasConversation reports whether this invocation is stateful. When a
+// ConversationStore is configured, lifecycle guarantees a non-empty
+// conversation ID (see requireConversationID), so every invocation of such an
+// Agent is stateful.
 func (r *run) hasConversation() bool {
 	return r.a.conversation != nil && r.convID != ""
+}
+
+// requireConversationID enforces that an Agent with a ConversationStore is
+// never invoked without a conversation ID. Stateless Agents must be
+// constructed without a ConversationStore; there is no per-invocation opt-out.
+func (a *Agent) requireConversationID(convID string) error {
+	if a.conversation != nil && convID == "" {
+		return ErrConversationIDRequired
+	}
+	return nil
 }
 
 // emitLifecycle emits a detailed lifecycle event when enabled.
@@ -173,6 +184,13 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 		if canonical == nil {
 			return Result{}, fmt.Errorf("load interrupt for resume %q: %w", spec.resume.ID, ErrInterruptNotFound)
 		}
+		// The interrupt's conversation ID is authoritative for Resume. Reject
+		// an unbound interrupt on a stateful Agent before claiming it, so the
+		// interrupt is not consumed; the resume Context's ID is never used as
+		// a substitute.
+		if err := a.requireConversationID(canonical.ConversationID); err != nil {
+			return Result{}, fmt.Errorf("resume interrupt %q: %w", spec.resume.ID, err)
+		}
 		if err := validateResume(canonical, spec.response); err != nil {
 			return Result{}, err
 		}
@@ -194,9 +212,8 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 	}
 	convID := c.ConversationID()
 	if spec.resume != nil {
-		// Resume stays bound to the conversation captured by the interrupt.
-		// In particular, an empty ID remains stateless even if the resume
-		// context carries a non-empty conversation ID.
+		// Resume stays bound to the conversation captured by the interrupt;
+		// the resume context's conversation ID is never used as a fallback.
 		convID = spec.resume.ConversationID
 	}
 	return a.lifecycle(c, convID, userMessage, func(r *run) (Result, error) {
@@ -216,6 +233,11 @@ func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *r
 
 	r := &run{a: a, c: c, h: h, convID: convID}
 	res, err := func() (Result, error) {
+		// Fail before any invocation work (guardrails, conversation load,
+		// retrieval, provider calls, tools, background dispatch, save).
+		if err := a.requireConversationID(convID); err != nil {
+			return Result{}, err
+		}
 		// Serialize the Load → Save region with Re_Entry_Turns and other
 		// invocations on the same conversation.
 		if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {

@@ -120,30 +120,6 @@ func TestConversationStore_IsolatesContextConversationIDs(t *testing.T) {
 	}
 }
 
-func TestConversationID_EmptyStringIsStateless(t *testing.T) {
-	sp := newScriptedProvider(&ModelResponse{Text: "reply"})
-
-	store := &failingSaveConversation{loadErr: errors.New("must not load"), flushErr: errors.New("must not flush")}
-	a, err := New(sp, "sys", WithConversationStore(store), WithSyncConversation())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := a.Invoke(Background().WithConversationID(""), "hello")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Text != "reply" {
-		t.Fatalf("result.Text = %q, want reply", result.Text)
-	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if store.loads != 0 || store.saves != 0 || store.flushes != 0 {
-		t.Fatalf("stateless invocation touched store: loads=%d saves=%d flushes=%d", store.loads, store.saves, store.flushes)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // ForkConversation (1d9ac49)
 // ---------------------------------------------------------------------------

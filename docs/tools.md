@@ -32,7 +32,7 @@ search := tool.New("search", "Search the catalog",
 
 Use `NewRaw` with `tool.WithSchema(schema)` when input must remain raw JSON. Use the same `json.RawMessage` type parameter plus `WithSchema` for rich/background raw input.
 
-`NewRich` returns `*tool.Output` with text and optional images. `NewBackground` acknowledges immediately, runs the handler on a detached context outside the originating model turn, persists completion, and triggers a conversation re-entry turn. It requires a non-empty acknowledgement, an agent conversation store, **and a non-empty invocation conversation ID**; without either requirement the handler is not dispatched and the model receives an error tool result. Empty conversation IDs remain stateless and are never persisted.
+`NewRich` returns `*tool.Output` with text and optional images. `NewBackground` acknowledges immediately, runs the handler on a detached context outside the originating model turn, persists completion, and triggers a conversation re-entry turn. It requires a non-empty acknowledgement and an agent conversation store (enforced by `agent.New`). Because a store-backed Agent requires a non-empty conversation ID on every invocation, an invocation without one fails with `agent.ErrConversationIDRequired` before the model runs, so a background tool can never be dispatched without a conversation.
 
 ## Options
 

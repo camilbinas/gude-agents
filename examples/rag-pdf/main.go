@@ -78,10 +78,10 @@ func main() {
 		Narrowing:    "Only use information from the provided documents. If the documents don't contain relevant information, say so.",
 	}).String()
 
-	a, err := agent.New(
+	a, err := agent.RAGAgent(
 		bedrock.Must(bedrock.Standard()),
 		instructions,
-		agent.WithRetriever(retriever),
+		retriever,
 		agent.WithConversationStore(conversation.NewInMemory()),
 		auto.WithLogging(),
 		agent.WithContextFormatter(logAndFormat),

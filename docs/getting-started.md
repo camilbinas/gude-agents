@@ -64,6 +64,8 @@ func main() {
 
 `Agent` configuration is fixed after `New`, except a supplied dynamic `tool.Registry`. Configure each call by chaining mutable `Context.With…` methods before invocation.
 
+Because this Agent has a conversation store, every call needs `WithConversationID`; omitting it returns `agent.ErrConversationIDRequired` before the model runs. For one-off stateless calls, construct the Agent without `WithConversationStore`.
+
 ## Stream application events
 
 ```go

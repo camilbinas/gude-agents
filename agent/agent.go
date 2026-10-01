@@ -91,12 +91,22 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 	return a, nil
 }
 
-// RAGAgent creates an Agent with a required rag.Retriever.
+// RAGAgent creates an Agent whose defining behavior is automatic retrieval.
+// It requires a non-nil retriever (ErrRetrieverRequired otherwise) and is
+// otherwise exactly equivalent to:
+//
+//	New(provider, instructions, append([]Option{WithRetriever(retriever)}, opts...)...)
+//
+// No other defaults are applied. Use New with WithRetriever when retrieval is
+// one optional feature among many.
 func RAGAgent(provider Provider, instructions string, retriever rag.Retriever, opts ...Option) (*Agent, error) {
 	if retriever == nil {
-		return nil, errors.New("agent: RAG retriever is required")
+		return nil, ErrRetrieverRequired
 	}
-	return New(provider, instructions, append([]Option{WithRetriever(retriever)}, opts...)...)
+	options := make([]Option, 0, len(opts)+1)
+	options = append(options, WithRetriever(retriever))
+	options = append(options, opts...)
+	return New(provider, instructions, options...)
 }
 
 // Name returns the configured agent name.

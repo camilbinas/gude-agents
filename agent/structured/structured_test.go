@@ -148,6 +148,7 @@ type conversation struct {
 	mu               sync.Mutex
 	messages         []agent.Message
 	revision         uint64
+	loads            int
 	saves            int
 	conflictMessages []agent.Message
 }
@@ -155,6 +156,7 @@ type conversation struct {
 func (c *conversation) Load(context.Context, string) (agent.ConversationSnapshot, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.loads++
 	return agent.ConversationSnapshot{
 		Messages: append([]agent.Message(nil), c.messages...),
 		Revision: c.revision,
@@ -219,26 +221,24 @@ func TestInvokeUsesGuardrailsAndPersistsDecodedOutput(t *testing.T) {
 	}
 }
 
-func TestInvokeEmptyConversationIDIsStateless(t *testing.T) {
-	store := &conversation{
-		messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "must not load"}}}},
-		revision: 1,
-	}
+func TestInvokeMissingConversationIDWithStoreFails(t *testing.T) {
+	store := &conversation{revision: 1}
 	provider := &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)}
 	a, err := agent.New(provider, "sys", agent.WithConversationStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Invoke[profile](agent.Background(), a, "input"); err != nil {
-		t.Fatal(err)
+	_, err = Invoke[profile](agent.Background(), a, "input")
+	if !errors.Is(err, agent.ErrConversationIDRequired) {
+		t.Fatalf("err = %v, want ErrConversationIDRequired", err)
 	}
-	if len(provider.params.Messages) != 1 {
-		t.Fatalf("provider messages = %d, want only stateless input", len(provider.params.Messages))
+	if provider.params.Messages != nil || provider.params.System != "" {
+		t.Fatalf("provider was called: %#v", provider.params)
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if store.saves != 0 || store.revision != 1 {
-		t.Fatalf("stateless structured invocation changed store: saves=%d revision=%d", store.saves, store.revision)
+	if store.loads != 0 || store.saves != 0 || store.revision != 1 {
+		t.Fatalf("store touched: loads=%d saves=%d revision=%d", store.loads, store.saves, store.revision)
 	}
 }
 

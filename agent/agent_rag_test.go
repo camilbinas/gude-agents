@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -140,9 +141,39 @@ func (p *iteratingProvider) Stream(_ context.Context, _ ModelRequest, cb func(Mo
 }
 
 func TestRAGAgent_NilRetrieverErrors(t *testing.T) {
-	_, err := RAGAgent(mockProvider{}, "sys", nil)
-	if err == nil {
-		t.Fatal("expected error for nil retriever, got nil")
+	a, err := RAGAgent(mockProvider{}, "sys", nil)
+	if !errors.Is(err, ErrRetrieverRequired) {
+		t.Fatalf("err = %v, want ErrRetrieverRequired", err)
+	}
+	if a != nil {
+		t.Fatal("RAGAgent must not return an Agent for a nil retriever")
+	}
+}
+
+// TestRAGAgent_SameDefaultsAsNew verifies RAGAgent is not a preset: apart from
+// the retriever it applies exactly the defaults of New.
+func TestRAGAgent_SameDefaultsAsNew(t *testing.T) {
+	retriever := &countingRetriever{}
+	viaRAG, err := RAGAgent(mockProvider{}, "sys", retriever)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaNew, err := New(mockProvider{}, "sys", WithRetriever(retriever))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viaRAG.retriever != viaNew.retriever {
+		t.Error("retriever differs")
+	}
+	if viaRAG.maxIterations != viaNew.maxIterations {
+		t.Errorf("maxIterations = %d, New default = %d", viaRAG.maxIterations, viaNew.maxIterations)
+	}
+	if viaRAG.parallelTools != viaNew.parallelTools {
+		t.Errorf("parallelTools = %v, New default = %v", viaRAG.parallelTools, viaNew.parallelTools)
+	}
+	if viaRAG.tokenBudget != viaNew.tokenBudget || viaRAG.conversation != viaNew.conversation ||
+		(viaRAG.contextFormatter == nil) != (viaNew.contextFormatter == nil) {
+		t.Error("RAGAgent applied defaults that New does not")
 	}
 }
 

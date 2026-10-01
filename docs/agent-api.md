@@ -20,6 +20,10 @@ a, err := agent.New(prov, "You are a support assistant.",
 )
 ```
 
+When a ConversationStore is configured, every invocation requires a non-empty ConversationID; forgetting it returns an error matching `agent.ErrConversationIDRequired` before any model or tool work. Stateless Agents should be constructed without a ConversationStore.
+
+`agent.RAGAgent(prov, instructions, retriever, opts...)` is the one convenience constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
+
 Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithSyncConversation`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithInterruptStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
 
 ## Invocation

@@ -97,10 +97,10 @@ func main() {
 
 	provider := bedrock.Must(bedrock.Standard())
 
-	a, err := agent.New(
+	a, err := agent.RAGAgent(
 		provider,
 		"Answer questions using only the provided context. Be concise.",
-		agent.WithRetriever(rerankedRetriever),
+		rerankedRetriever,
 	)
 	if err != nil {
 		log.Fatal(err)

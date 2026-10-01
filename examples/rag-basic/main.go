@@ -36,10 +36,10 @@ func main() {
 	provider := bedrock.Must(bedrock.Standard())
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
 
-	a, err := agent.New(
+	a, err := agent.RAGAgent(
 		provider,
 		"Answer questions using only the provided context. Be concise.",
-		agent.WithRetriever(retriever),
+		retriever,
 	)
 	if err != nil {
 		log.Fatal(err)

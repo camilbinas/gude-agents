@@ -75,8 +75,10 @@ func WithSequentialTools() Option {
 }
 
 // WithConversationStore configures conversation persistence. Conversation IDs
-// are supplied only by Context.WithConversationID; an empty ID is stateless and
-// never loads, saves, or flushes the store.
+// are supplied only by Context.WithConversationID. When a ConversationStore is
+// configured, every invocation requires a non-empty ConversationID; an empty
+// ID fails with ErrConversationIDRequired before any invocation work runs.
+// Stateless Agents should be constructed without a ConversationStore.
 func WithConversationStore(c ConversationStore) Option {
 	return func(a *Agent) error {
 		a.conversation = c

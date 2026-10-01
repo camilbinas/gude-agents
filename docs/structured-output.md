@@ -34,7 +34,7 @@ type Result[T any] struct {
 }
 ```
 
-The schema is generated from `T`. Structured invocation reuses the normal agent lifecycle: conversation CAS locking and persistence, RAG context, guardrails, provider retry/timeout, token limits, caching, and operational observers. An empty conversation ID is stateless and never loads, saves, or flushes a configured conversation store.
+The schema is generated from `T`. Structured invocation reuses the normal agent lifecycle: conversation CAS locking and persistence, RAG context, guardrails, provider retry/timeout, token limits, caching, and operational observers. When the Agent has a conversation store, a non-empty conversation ID is required; without one the call returns an error matching `agent.ErrConversationIDRequired` before the provider runs.
 
 Token usage is accumulated before output decoding. If cumulative usage is greater than `WithTokenBudget`, invocation returns `agent.ErrTokenBudgetExceeded` before output guardrails, decoding, or conversation persistence. Usage exactly equal to the budget is allowed. On any error, the generic result still carries the underlying `Run`, including usage accumulated before the failure; callers should inspect both values when accounting matters.
 
