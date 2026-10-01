@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"reflect"
 	"sort"
@@ -25,6 +26,10 @@ type Store[T any] struct {
 	entries  map[string][]memEntry[T] // keyed by identifier
 	embedder rag.Embedder
 	schema   *memSchema
+
+	// random is the entropy source for generated entry IDs. Nil means
+	// crypto/rand.Reader; tests substitute failing readers.
+	random io.Reader
 }
 
 type memEntry[T any] struct {
@@ -68,14 +73,18 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 		return errors.New("memory: content field is empty")
 	}
 
+	id := s.extractPK(value)
+	if id == "" {
+		generated, err := randomID(s.random)
+		if err != nil {
+			return err
+		}
+		id = generated
+	}
+
 	embedding, err := s.embedder.Embed(ctx, content)
 	if err != nil {
 		return fmt.Errorf("memory: embed: %w", err)
-	}
-
-	id := s.extractPK(value)
-	if id == "" {
-		id = randomID()
 	}
 
 	s.mu.Lock()
@@ -543,8 +552,16 @@ func cosineSimilarity(a, b []float64) float64 {
 	return dot / (magA * magB)
 }
 
-func randomID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+// randomID returns 128 random bits as 32 lowercase hex characters. RNG
+// failures and short reads are returned rather than yielding a predictable
+// (all-zero or partially filled) ID.
+func randomID(r io.Reader) (string, error) {
+	if r == nil {
+		r = rand.Reader
+	}
+	var b [16]byte
+	if _, err := io.ReadFull(r, b[:]); err != nil {
+		return "", fmt.Errorf("memory: generate entry ID: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }

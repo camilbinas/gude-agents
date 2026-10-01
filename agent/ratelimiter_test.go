@@ -124,12 +124,12 @@ func TestRateLimiter_SharedMode_TPM(t *testing.T) {
 	if _, err := rl.Acquire(ctx, ""); err != nil {
 		t.Fatalf("acquire 1: %v", err)
 	}
-	rl.Record("", TokenUsage{InputTokens: 60, OutputTokens: 0})
+	rl.Record(context.Background(), "", TokenUsage{InputTokens: 60, OutputTokens: 0})
 
 	if _, err := rl.Acquire(ctx, ""); err != nil {
 		t.Fatalf("acquire 2: %v", err)
 	}
-	rl.Record("", TokenUsage{InputTokens: 50, OutputTokens: 0})
+	rl.Record(context.Background(), "", TokenUsage{InputTokens: 50, OutputTokens: 0})
 
 	if _, err := rl.Acquire(ctx, ""); err != ErrRateLimitExceeded {
 		t.Fatalf("expected ErrRateLimitExceeded, got %v", err)
@@ -172,9 +172,9 @@ func TestRateLimiter_PerKey_Record(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = rl.Acquire(ctx, "a")
-	rl.Record("a", TokenUsage{InputTokens: 30, OutputTokens: 30})
+	rl.Record(context.Background(), "a", TokenUsage{InputTokens: 30, OutputTokens: 30})
 	_, _ = rl.Acquire(ctx, "a")
-	rl.Record("a", TokenUsage{InputTokens: 25, OutputTokens: 25})
+	rl.Record(context.Background(), "a", TokenUsage{InputTokens: 25, OutputTokens: 25})
 
 	if _, err := rl.Acquire(ctx, "a"); err != ErrRateLimitExceeded {
 		t.Fatalf("expected ErrRateLimitExceeded, got %v", err)

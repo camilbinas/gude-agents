@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"reflect"
 	"sort"
@@ -32,6 +34,10 @@ type Store[T any] struct {
 	dim       int
 	embedder  rag.Embedder
 	schema    *redisSchema
+
+	// random is the entropy source for generated primary keys. Nil means
+	// crypto/rand.Reader; tests substitute failing readers.
+	random io.Reader
 }
 
 // redisClient is the subset of go-redis used by Store. It keeps backend
@@ -214,12 +220,19 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 	}
 
 	// Build HASH fields.
-	fields := s.buildHashFields(value)
+	fields, err := s.buildHashFields(value)
+	if err != nil {
+		return err
+	}
 	fields["embedding"] = float64sToFloat32Bytes(embedding)
 
 	// Namespace the physical key by identifier so equal primary keys from
 	// different identifiers cannot overwrite each other.
-	key := s.entryKey(identifier, s.extractPK(value))
+	pk, err := s.extractPK(value)
+	if err != nil {
+		return err
+	}
+	key := s.entryKey(identifier, pk)
 
 	if err := s.client.HSet(ctx, key, fields).Err(); err != nil {
 		return fmt.Errorf("redis: hset: %w", err)
@@ -329,7 +342,10 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 		return err
 	}
 
-	fields := s.buildHashFields(value)
+	fields, err := s.buildHashFields(value)
+	if err != nil {
+		return err
+	}
 	fields["embedding"] = float64sToFloat32Bytes(embedding)
 
 	if err := s.client.HSet(ctx, id, fields).Err(); err != nil {
@@ -533,6 +549,10 @@ func parseRedisSchema[T any]() (*redisSchema, error) {
 			}
 		}
 
+		if err := validateRedisFieldKind(field, info); err != nil {
+			return nil, err
+		}
+
 		schema.Fields = append(schema.Fields, info)
 	}
 
@@ -544,6 +564,41 @@ func parseRedisSchema[T any]() (*redisSchema, error) {
 	}
 
 	return schema, nil
+}
+
+// validateRedisFieldKind rejects Go field types that cannot round-trip
+// through a HASH field, so they fail at construction instead of decoding to
+// zero values on Recall. Complex types must opt into JSON with ",jsonb".
+func validateRedisFieldKind(field reflect.StructField, info redisFieldInfo) error {
+	if info.IsJSONB {
+		return nil
+	}
+	t := field.Type
+	unsupported := func(reason string) error {
+		return fmt.Errorf("redis: field %s (%s) %s", field.Name, t, reason)
+	}
+	if (info.IsIdent || info.IsContent) && t.Kind() != reflect.String {
+		return unsupported("must be a string")
+	}
+	if t == timeType {
+		if info.FieldType != fieldNUMERIC {
+			return unsupported("must be a numeric field")
+		}
+		return nil
+	}
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return nil
+	case reflect.String, reflect.Bool:
+		if info.FieldType == fieldNUMERIC {
+			return unsupported("cannot be a numeric field")
+		}
+		return nil
+	default:
+		return unsupported("is not supported; use a scalar type or add \",jsonb\"")
+	}
 }
 
 func inferRedisFieldType(t reflect.Type) redisFieldType {
@@ -765,7 +820,7 @@ func (s *Store[T]) extractContent(value T) string {
 	return fmt.Sprintf("%v", v.Field(f.FieldIndex).Interface())
 }
 
-func (s *Store[T]) extractPK(value T) string {
+func (s *Store[T]) extractPK(value T) (string, error) {
 	v := reflect.ValueOf(value)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -774,10 +829,19 @@ func (s *Store[T]) extractPK(value T) string {
 		f := s.schema.Fields[s.schema.PKIdx]
 		pk := fmt.Sprintf("%v", v.Field(f.FieldIndex).Interface())
 		if pk != "" {
-			return pk
+			return pk, nil
 		}
 	}
-	return uuid.New().String()
+	// uuid.New panics on RNG failure; surface the error instead.
+	r := s.random
+	if r == nil {
+		r = rand.Reader
+	}
+	id, err := uuid.NewRandomFromReader(r)
+	if err != nil {
+		return "", fmt.Errorf("redis: generate primary key: %w", err)
+	}
+	return id.String(), nil
 }
 
 // entryKey builds a type-prefixed Redis key with a delimiter-safe identifier
@@ -799,7 +863,10 @@ func setRedisIdentifier[T any](value *T, schema *redisSchema, id string) {
 	}
 }
 
-func (s *Store[T]) buildHashFields(value T) map[string]any {
+// buildHashFields encodes value into HASH fields. Values that could not be
+// decoded again (JSON marshal failures, non-finite floats) are rejected here
+// so corrupted data is never written.
+func (s *Store[T]) buildHashFields(value T) (map[string]any, error) {
 	v := reflect.ValueOf(value)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -807,23 +874,38 @@ func (s *Store[T]) buildHashFields(value T) map[string]any {
 
 	fields := make(map[string]any, len(s.schema.Fields))
 	for _, f := range s.schema.Fields {
-		fieldVal := v.Field(f.FieldIndex).Interface()
+		fv := v.Field(f.FieldIndex)
+		fieldVal := fv.Interface()
 
 		if f.IsJSONB {
-			data, _ := json.Marshal(fieldVal)
-			fields[f.HashField] = string(data)
-		} else if f.FieldType == fieldNUMERIC {
-			// Convert time.Time to Unix epoch.
-			if t, ok := fieldVal.(time.Time); ok {
-				fields[f.HashField] = t.Unix()
-			} else {
-				fields[f.HashField] = fieldVal
+			data, err := json.Marshal(fieldVal)
+			if err != nil {
+				return nil, fmt.Errorf("redis: encode field %q: %w", f.HashField, err)
 			}
-		} else {
+			fields[f.HashField] = string(data)
+			continue
+		}
+		if t, ok := fieldVal.(time.Time); ok {
+			// time.Time is stored as Unix epoch seconds.
+			fields[f.HashField] = strconv.FormatInt(t.Unix(), 10)
+			continue
+		}
+		switch fv.Kind() {
+		case reflect.Float32, reflect.Float64:
+			n := fv.Float()
+			if math.IsNaN(n) || math.IsInf(n, 0) {
+				return nil, fmt.Errorf("redis: encode field %q: value must be finite", f.HashField)
+			}
+			fields[f.HashField] = strconv.FormatFloat(n, 'f', -1, fv.Type().Bits())
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			fields[f.HashField] = strconv.FormatInt(fv.Int(), 10)
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			fields[f.HashField] = strconv.FormatUint(fv.Uint(), 10)
+		default:
 			fields[f.HashField] = fmt.Sprintf("%v", fieldVal)
 		}
 	}
-	return fields
+	return fields, nil
 }
 
 func validateRecallQuery(query memory.RecallQuery) error {
@@ -1084,16 +1166,26 @@ func (s *Store[T]) validateEmbedding(embedding []float64) error {
 	return nil
 }
 
+// parseResults decodes an FT.SEARCH response into typed entries. Any
+// malformed response or stored value fails the whole call: a partially
+// decoded entry is never returned with zero-valued fields standing in for
+// data that could not be read.
 func (s *Store[T]) parseResults(res any, minSimilarity float64, sortBySimilarity bool) ([]memory.Entry[T], error) {
-	var entries []memory.Entry[T]
+	var (
+		entries []memory.Entry[T]
+		err     error
+	)
 
 	switch v := res.(type) {
-	case map[interface{}]interface{}:
-		entries = s.parseRESP3Results(v)
-	case []interface{}:
-		entries = s.parseRESP2Results(v)
+	case map[any]any, map[string]any:
+		entries, err = s.parseRESP3Results(v)
+	case []any:
+		entries, err = s.parseRESP2Results(v)
 	default:
-		return []memory.Entry[T]{}, nil
+		err = fmt.Errorf("unexpected response type %T", res)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis: decode search result: %w", err)
 	}
 
 	// Apply min similarity filter (post-search).
@@ -1116,76 +1208,107 @@ func (s *Store[T]) parseResults(res any, minSimilarity float64, sortBySimilarity
 	return entries, nil
 }
 
-func (s *Store[T]) parseRESP3Results(m map[interface{}]interface{}) []memory.Entry[T] {
+// parseRESP3Results decodes the RESP3 map form of FT.SEARCH:
+// {total_results, results: [{id, extra_attributes: {...}}, ...], ...}.
+func (s *Store[T]) parseRESP3Results(res any) ([]memory.Entry[T], error) {
+	m, err := redisStringMap(res)
+	if err != nil {
+		return nil, fmt.Errorf("response: %w", err)
+	}
 	resultsRaw, ok := m["results"]
 	if !ok {
-		return nil
+		return nil, errors.New("response has no results field")
 	}
-	items, ok := resultsRaw.([]interface{})
+	items, ok := resultsRaw.([]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("results field is %T, want array", resultsRaw)
 	}
 
-	var entries []memory.Entry[T]
-	for _, item := range items {
-		entry, ok := item.(map[interface{}]interface{})
-		if !ok {
-			continue
+	entries := make([]memory.Entry[T], 0, len(items))
+	for i, item := range items {
+		doc, err := redisStringMap(item)
+		if err != nil {
+			return nil, fmt.Errorf("result %d: %w", i, err)
 		}
-
-		// Extract the Redis key (document ID).
-		key, _ := entry["id"].(string)
-
-		attrsRaw, ok := entry["extra_attributes"]
-		if !ok {
-			continue
+		key, err := redisDocumentID(doc["id"])
+		if err != nil {
+			return nil, fmt.Errorf("result %d: %w", i, err)
 		}
-		attrs, ok := attrsRaw.(map[interface{}]interface{})
+		attrsRaw, ok := doc["extra_attributes"]
 		if !ok {
-			continue
+			return nil, fmt.Errorf("entry %q has no extra_attributes", key)
 		}
-
-		value, score := s.scanAttrs(attrs)
-		entries = append(entries, memory.Entry[T]{ID: key, Value: value, Score: score})
+		attrs, err := redisStringMap(attrsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("entry %q attributes: %w", key, err)
+		}
+		entry, err := s.scanEntry(key, attrs)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
 	}
-	return entries
+	return entries, nil
 }
 
-func (s *Store[T]) parseRESP2Results(results []interface{}) []memory.Entry[T] {
-	if len(results) < 1 {
-		return nil
+// parseRESP2Results decodes the RESP2 array form of FT.SEARCH:
+// [total, key1, [field, value, ...], key2, [...], ...].
+func (s *Store[T]) parseRESP2Results(results []any) ([]memory.Entry[T], error) {
+	if _, ok := searchResultCount(results); !ok {
+		return nil, errors.New("response does not start with a result count")
+	}
+	if len(results)%2 != 1 {
+		return nil, fmt.Errorf("response has %d elements, want a count followed by key/attribute pairs", len(results))
 	}
 
-	var entries []memory.Entry[T]
-	for i := 1; i+1 < len(results); i += 2 {
-		// In RESP2, results[i] is the key, results[i+1] is the field array.
-		key, _ := results[i].(string)
-
-		fields, ok := results[i+1].([]interface{})
+	entries := make([]memory.Entry[T], 0, (len(results)-1)/2)
+	for i := 1; i < len(results); i += 2 {
+		key, err := redisDocumentID(results[i])
+		if err != nil {
+			return nil, fmt.Errorf("result %d: %w", (i-1)/2, err)
+		}
+		fields, ok := results[i+1].([]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("entry %q attributes are %T, want array", key, results[i+1])
 		}
-
-		attrs := make(map[interface{}]interface{}, len(fields)/2)
-		for j := 0; j+1 < len(fields); j += 2 {
-			attrs[fields[j]] = fields[j+1]
+		if len(fields)%2 != 0 {
+			return nil, fmt.Errorf("entry %q attributes have odd length %d", key, len(fields))
 		}
-
-		value, score := s.scanAttrs(attrs)
-		entries = append(entries, memory.Entry[T]{ID: key, Value: value, Score: score})
+		attrs := make(map[string]any, len(fields)/2)
+		for j := 0; j < len(fields); j += 2 {
+			name, ok := redisScalarString(fields[j])
+			if !ok {
+				return nil, fmt.Errorf("entry %q attribute name is %T, want string", key, fields[j])
+			}
+			attrs[name] = fields[j+1]
+		}
+		entry, err := s.scanEntry(key, attrs)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
 	}
-	return entries
+	return entries, nil
 }
 
-func (s *Store[T]) scanAttrs(attrs map[interface{}]interface{}) (T, float64) {
+// scanEntry decodes one document. The KNN score is required; individual
+// schema fields may be absent (for example after a field was added to T), but
+// any value that is present must decode into its Go field exactly.
+func (s *Store[T]) scanEntry(key string, attrs map[string]any) (memory.Entry[T], error) {
 	var result T
 	rv := reflect.ValueOf(&result).Elem()
 
-	var score float64
-	if scoreStr, ok := attrs["score"].(string); ok {
-		if d, err := strconv.ParseFloat(scoreStr, 64); err == nil {
-			score = 1 - d // convert distance to similarity
-		}
+	rawScore, ok := attrs["score"]
+	if !ok {
+		return memory.Entry[T]{}, fmt.Errorf("entry %q has no score", key)
+	}
+	scoreStr, ok := redisScalarString(rawScore)
+	if !ok {
+		return memory.Entry[T]{}, fmt.Errorf("entry %q score is %T, want string", key, rawScore)
+	}
+	distance, err := strconv.ParseFloat(scoreStr, 64)
+	if err != nil || math.IsNaN(distance) || math.IsInf(distance, 0) {
+		return memory.Entry[T]{}, fmt.Errorf("entry %q has invalid score %q", key, scoreStr)
 	}
 
 	for _, f := range s.schema.Fields {
@@ -1193,39 +1316,127 @@ func (s *Store[T]) scanAttrs(attrs map[interface{}]interface{}) (T, float64) {
 		if !ok {
 			continue
 		}
-		rawStr := fmt.Sprintf("%v", raw)
-		field := rv.Field(f.FieldIndex)
-
-		if f.IsJSONB {
-			ptr := reflect.New(field.Type())
-			if err := json.Unmarshal([]byte(rawStr), ptr.Interface()); err == nil {
-				field.Set(ptr.Elem())
-			}
-		} else if f.FieldType == fieldNUMERIC {
-			if field.Type() == reflect.TypeOf(time.Time{}) {
-				if epoch, err := strconv.ParseInt(rawStr, 10, 64); err == nil {
-					field.Set(reflect.ValueOf(time.Unix(epoch, 0)))
-				}
-			} else {
-				switch field.Kind() {
-				case reflect.Int, reflect.Int64:
-					if n, err := strconv.ParseInt(rawStr, 10, 64); err == nil {
-						field.SetInt(n)
-					}
-				case reflect.Float64:
-					if n, err := strconv.ParseFloat(rawStr, 64); err == nil {
-						field.SetFloat(n)
-					}
-				}
-			}
-		} else {
-			if field.Kind() == reflect.String {
-				field.SetString(rawStr)
-			}
+		if err := decodeRedisField(rv.Field(f.FieldIndex), f, raw); err != nil {
+			return memory.Entry[T]{}, fmt.Errorf("entry %q: decode field %q: %w", key, f.HashField, err)
 		}
 	}
 
-	return result, score
+	// Convert cosine distance to similarity.
+	return memory.Entry[T]{ID: key, Value: result, Score: 1 - distance}, nil
+}
+
+var timeType = reflect.TypeOf(time.Time{})
+
+// decodeRedisField is the inverse of buildHashFields for a single field.
+func decodeRedisField(field reflect.Value, f redisFieldInfo, raw any) error {
+	s, ok := redisScalarString(raw)
+	if !ok {
+		return fmt.Errorf("stored value is %T, want string", raw)
+	}
+
+	if f.IsJSONB {
+		ptr := reflect.New(field.Type())
+		if err := json.Unmarshal([]byte(s), ptr.Interface()); err != nil {
+			return fmt.Errorf("invalid JSON: %w", err)
+		}
+		field.Set(ptr.Elem())
+		return nil
+	}
+
+	if field.Type() == timeType {
+		epoch, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid Unix timestamp %q", s)
+		}
+		field.Set(reflect.ValueOf(time.Unix(epoch, 0)))
+		return nil
+	}
+
+	switch field.Kind() {
+	case reflect.String:
+		field.SetString(s)
+	case reflect.Bool:
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return fmt.Errorf("invalid bool %q", s)
+		}
+		field.SetBool(b)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(s, 10, field.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("invalid %s %q", field.Type(), s)
+		}
+		field.SetInt(n)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n, err := strconv.ParseUint(s, 10, field.Type().Bits())
+		if err != nil {
+			return fmt.Errorf("invalid %s %q", field.Type(), s)
+		}
+		field.SetUint(n)
+	case reflect.Float32, reflect.Float64:
+		n, err := strconv.ParseFloat(s, field.Type().Bits())
+		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+			return fmt.Errorf("invalid %s %q", field.Type(), s)
+		}
+		field.SetFloat(n)
+	default:
+		// parseRedisSchema rejects these kinds; keep a defensive error.
+		return fmt.Errorf("unsupported Go type %s", field.Type())
+	}
+	return nil
+}
+
+// redisStringMap normalizes a RESP3 map (decoded by go-redis as
+// map[any]any or map[string]any) into a map keyed by string.
+func redisStringMap(v any) (map[string]any, error) {
+	switch m := v.(type) {
+	case map[string]any:
+		return m, nil
+	case map[any]any:
+		out := make(map[string]any, len(m))
+		for k, val := range m {
+			key, ok := redisScalarString(k)
+			if !ok {
+				return nil, fmt.Errorf("map key is %T, want string", k)
+			}
+			out[key] = val
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("got %T, want map", v)
+	}
+}
+
+func redisDocumentID(v any) (string, error) {
+	id, ok := v.(string)
+	if !ok {
+		b, isBytes := v.([]byte)
+		if !isBytes {
+			return "", fmt.Errorf("document id is %T, want string", v)
+		}
+		id = string(b)
+	}
+	if id == "" {
+		return "", errors.New("document id is empty")
+	}
+	return id, nil
+}
+
+// redisScalarString converts a scalar reply value to its textual form.
+// Aggregates and nil are rejected rather than formatted with %v.
+func redisScalarString(v any) (string, bool) {
+	switch x := v.(type) {
+	case string:
+		return x, true
+	case []byte:
+		return string(x), true
+	case int64:
+		return strconv.FormatInt(x, 10), true
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64), true
+	default:
+		return "", false
+	}
 }
 
 // Options holds Redis connection configuration.

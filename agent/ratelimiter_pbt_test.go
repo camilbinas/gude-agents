@@ -91,7 +91,7 @@ func TestProperty_ZeroLimitMeansUnlimited(t *testing.T) {
 			// Record large amounts of tokens — TPM should never be enforced
 			for i := 0; i < numRecords; i++ {
 				tokens := rapid.IntRange(1, 100000).Draw(rt, "tokens")
-				rl.Record("", TokenUsage{
+				rl.Record(context.Background(), "", TokenUsage{
 					InputTokens:  tokens / 2,
 					OutputTokens: tokens - tokens/2,
 				})
@@ -247,7 +247,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 				// Record some tokens (distribute the tpmLimit across records)
 				tokens := rapid.IntRange(1, tpmLimit/numRecords+1).Draw(rt, "tokens")
 				totalOldTokens += tokens
-				rl.Record("", TokenUsage{
+				rl.Record(context.Background(), "", TokenUsage{
 					InputTokens:  tokens / 2,
 					OutputTokens: tokens - tokens/2,
 				})
@@ -261,7 +261,7 @@ func TestProperty_SlidingWindowOnlyCountsRecentRequests(t *testing.T) {
 			// Now the sliding window should have pruned all old token records.
 			// Record tokens up to the limit — this should succeed because old tokens expired.
 			tokensToRecord := tpmLimit - 1 // just under the limit
-			rl.Record("", TokenUsage{
+			rl.Record(context.Background(), "", TokenUsage{
 				InputTokens:  tokensToRecord / 2,
 				OutputTokens: tokensToRecord - tokensToRecord/2,
 			})
@@ -405,7 +405,7 @@ func TestProperty_FailFastReturnsErrRateLimitExceeded(t *testing.T) {
 			// Record tokens to exhaust the TPM limit.
 			// We need to record enough tokens to meet or exceed tpmLimit.
 			// Use a single Record call with exactly tpmLimit tokens.
-			rl.Record("", TokenUsage{
+			rl.Record(context.Background(), "", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
@@ -484,7 +484,7 @@ func TestProperty_CountersTrackConsumptionAccurately(t *testing.T) {
 				output := rapid.IntRange(1, 5000).Draw(rt, "outputTokens")
 				usage := TokenUsage{InputTokens: input, OutputTokens: output}
 				expectedTotal += usage.Total()
-				rl.Record("", usage)
+				rl.Record(context.Background(), "", usage)
 			}
 
 			// Verify TPM counter equals sum of all tokens
@@ -554,7 +554,7 @@ func TestProperty_CountersTrackConsumptionAccurately(t *testing.T) {
 				output := rapid.IntRange(1, 5000).Draw(rt, "outputTokens")
 				usage := TokenUsage{InputTokens: input, OutputTokens: output}
 				expectedTotal += usage.Total()
-				rl.Record("", usage)
+				rl.Record(context.Background(), "", usage)
 			}
 
 			// Verify TPM counter equals sum of all tokens
@@ -727,7 +727,7 @@ func TestProperty_BlockModeWaitsAndSucceedsAfterWindowReset(t *testing.T) {
 			}
 
 			// Record tokens to exhaust TPM at T=0
-			rl.Record("", TokenUsage{
+			rl.Record(context.Background(), "", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
@@ -1039,7 +1039,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			ctx := context.Background()
 
 			// Record tokens to exhaust TPM limit
-			rl.Record("", TokenUsage{
+			rl.Record(context.Background(), "", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
@@ -1082,7 +1082,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			// Record some tokens but stay under TPM limit
 			tokensToRecord := rapid.IntRange(0, tpmLimit-1).Draw(rt, "tokensToRecord")
 			if tokensToRecord > 0 {
-				rl.Record("", TokenUsage{
+				rl.Record(context.Background(), "", TokenUsage{
 					InputTokens:  tokensToRecord / 2,
 					OutputTokens: tokensToRecord - tokensToRecord/2,
 				})
@@ -1132,7 +1132,7 @@ func TestProperty_AcquireEnforcesBothRPMAndTPMLimits(t *testing.T) {
 			}
 
 			// Also exhaust TPM by recording tokens >= tpmLimit
-			rl.Record("", TokenUsage{
+			rl.Record(context.Background(), "", TokenUsage{
 				InputTokens:  tpmLimit / 2,
 				OutputTokens: tpmLimit - tpmLimit/2,
 			})
@@ -1270,7 +1270,7 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 					output := rapid.IntRange(1, 1000).Draw(rt, "outputTokens")
 					usage := TokenUsage{InputTokens: input, OutputTokens: output}
 					expectedTPM += usage.Total()
-					rl.Record("", usage)
+					rl.Record(context.Background(), "", usage)
 				}
 				// else: failed call — do NOT call Record
 			}
@@ -1328,7 +1328,7 @@ func TestProperty_FailedCallsDontRecordTokens(t *testing.T) {
 					output := rapid.IntRange(1, 1000).Draw(rt, "outputTokens")
 					usage := TokenUsage{InputTokens: input, OutputTokens: output}
 					expectedTPM += usage.Total()
-					rl.Record("", usage)
+					rl.Record(context.Background(), "", usage)
 				}
 				// else: failed call — do NOT call Record
 			}
@@ -1535,7 +1535,7 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 							InputTokens:  tokensPerOp / 2,
 							OutputTokens: tokensPerOp - tokensPerOp/2,
 						}
-						rl.Record("", usage)
+						rl.Record(context.Background(), "", usage)
 						totalTokens.Add(int64(usage.Total()))
 					}
 				}()
@@ -1629,7 +1629,7 @@ func TestProperty_ConcurrencySafety(t *testing.T) {
 							InputTokens:  tokensPerOp / 2,
 							OutputTokens: tokensPerOp - tokensPerOp/2,
 						}
-						rl.Record("", usage)
+						rl.Record(context.Background(), "", usage)
 						totalTokens.Add(int64(usage.Total()))
 					}
 				}()
@@ -1765,8 +1765,8 @@ func TestProperty_AliasEquivalence(t *testing.T) {
 					InputTokens:  tokens / 2,
 					OutputTokens: tokens - tokens/2,
 				}
-				rlAlias.Record("key1", usage)
-				rlExplicit.Record("key1", usage)
+				rlAlias.Record(context.Background(), "key1", usage)
+				rlExplicit.Record(context.Background(), "key1", usage)
 			}
 
 			// Try multiple Acquires and verify identical behavior
@@ -1858,8 +1858,8 @@ func TestProperty_AliasEquivalence(t *testing.T) {
 					InputTokens:  tokens / 2,
 					OutputTokens: tokens - tokens/2,
 				}
-				rlAlias.Record(key, usage)
-				rlExplicit.Record(key, usage)
+				rlAlias.Record(context.Background(), key, usage)
+				rlExplicit.Record(context.Background(), key, usage)
 			}
 
 			// Try Acquires and verify identical behavior
@@ -2123,7 +2123,7 @@ func TestProperty_MaxConcurrentInvariant(t *testing.T) {
 
 					// Release the slot via the lease returned by Acquire.
 					inflight.Add(-1)
-					rl.Record("testkey", TokenUsage{InputTokens: 1, OutputTokens: 1})
+					rl.Record(context.Background(), "testkey", TokenUsage{InputTokens: 1, OutputTokens: 1})
 					release()
 				}()
 			}
@@ -2197,7 +2197,7 @@ func TestProperty_MaxConcurrentInvariant(t *testing.T) {
 
 					// Release the slot via the lease returned by Acquire.
 					inflight.Add(-1)
-					rl.Record("testkey", TokenUsage{InputTokens: 1, OutputTokens: 1})
+					rl.Record(context.Background(), "testkey", TokenUsage{InputTokens: 1, OutputTokens: 1})
 					release()
 					completedCount.Add(1)
 				}()
@@ -2368,7 +2368,7 @@ func TestProperty_ConfigurableWindow(t *testing.T) {
 			ctx := context.Background()
 
 			// Record tokens to fill the budget exactly
-			rl.Record(key, TokenUsage{
+			rl.Record(context.Background(), key, TokenUsage{
 				InputTokens:  count / 2,
 				OutputTokens: count - count/2,
 			})
@@ -2419,7 +2419,7 @@ func TestProperty_ConfigurableWindow(t *testing.T) {
 			ctx := context.Background()
 
 			// Record tokens to fill the budget
-			rl.Record(key, TokenUsage{
+			rl.Record(context.Background(), key, TokenUsage{
 				InputTokens:  count / 2,
 				OutputTokens: count - count/2,
 			})
@@ -2651,46 +2651,41 @@ func TestProperty_GlobalLimitConjunction(t *testing.T) {
 	})
 }
 
-// mockRateLimitStore is a test double that tracks all method calls to verify
-// delegation from the RateLimiter when a store is configured via WithStore.
+// mockRateLimitStore is a test double that records every store call so tests
+// can verify delegation from the RateLimiter when a store is configured.
 type mockRateLimitStore struct {
 	mu sync.Mutex
 
-	incrementRequestsCalls []mockStoreCall
-	incrementTokensCalls   []mockStoreCall
-	getRequestCountCalls   []mockStoreCall
-	getTokenCountCalls     []mockStoreCall
+	reserveCalls       [][]RequestReservation
+	recordTokensCalls  []mockRecordCall
+	getTokenCountCalls []mockStoreCall
 
-	// Configurable return values for counts (defaults to 0 = below any limit).
-	requestCount int
-	tokenCount   int
+	// tokenCount is returned by GetTokenCount (0 = below any limit).
+	tokenCount int
 }
 
 type mockStoreCall struct {
 	Key    string
 	Window time.Duration
-	Amount int // only used for IncrementTokens
 }
 
-func (m *mockRateLimitStore) IncrementRequests(_ context.Context, key string, window time.Duration) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.incrementRequestsCalls = append(m.incrementRequestsCalls, mockStoreCall{Key: key, Window: window})
-	return m.requestCount, nil
+type mockRecordCall struct {
+	Counters []TokenCounter
+	Amount   int
 }
 
-func (m *mockRateLimitStore) IncrementTokens(_ context.Context, key string, window time.Duration, amount int) (int, error) {
+func (m *mockRateLimitStore) ReserveRequests(_ context.Context, rs []RequestReservation) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.incrementTokensCalls = append(m.incrementTokensCalls, mockStoreCall{Key: key, Window: window, Amount: amount})
-	return m.tokenCount, nil
+	m.reserveCalls = append(m.reserveCalls, append([]RequestReservation(nil), rs...))
+	return true, nil
 }
 
-func (m *mockRateLimitStore) GetRequestCount(_ context.Context, key string, window time.Duration) (int, error) {
+func (m *mockRateLimitStore) RecordTokens(_ context.Context, cs []TokenCounter, amount int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.getRequestCountCalls = append(m.getRequestCountCalls, mockStoreCall{Key: key, Window: window})
-	return m.requestCount, nil
+	m.recordTokensCalls = append(m.recordTokensCalls, mockRecordCall{Counters: append([]TokenCounter(nil), cs...), Amount: amount})
+	return nil
 }
 
 func (m *mockRateLimitStore) GetTokenCount(_ context.Context, key string, window time.Duration) (int, error) {
@@ -2701,102 +2696,70 @@ func (m *mockRateLimitStore) GetTokenCount(_ context.Context, key string, window
 }
 
 // TestProperty_StoreDelegation verifies that when a RateLimitStore is configured
-// via WithStore, all counter increment and query operations during Acquire and
-// Record are delegated to the store, and the in-memory bucket map is NOT used.
+// via WithStore, request admission is one ReserveRequests call per Acquire,
+// token usage is one RecordTokens call per Record, and the in-memory bucket
+// map is NOT used.
 //
 // **Validates: Requirements 5.3**
 func TestProperty_StoreDelegation(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Generate random RPM and TPM limits.
 		rpmLimit := rapid.IntRange(1, 100).Draw(rt, "rpmLimit")
 		tpmLimit := rapid.IntRange(1, 10000).Draw(rt, "tpmLimit")
 
-		// Create a mock store that returns counts below limits (so Acquire succeeds).
-		store := &mockRateLimitStore{
-			requestCount: 0,
-			tokenCount:   0,
-		}
-
-		// Create RateLimiter with the mock store.
+		store := &mockRateLimitStore{}
 		rl, err := NewRateLimiter(RPM(rpmLimit), TPM(tpmLimit), WithStore(store), WithFailFast())
 		if err != nil {
 			rt.Fatalf("NewRateLimiter with WithStore failed: %v", err)
 		}
 
-		// Generate a random sequence of Acquire and Record calls.
 		numOps := rapid.IntRange(1, 20).Draw(rt, "numOps")
 		key := rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, "key")
-
 		ctx := context.Background()
 
-		acquireCount := 0
-		recordCount := 0
-		totalTokens := 0
-
+		acquireCount, recordCount, totalTokens := 0, 0, 0
 		for i := 0; i < numOps; i++ {
-			op := rapid.IntRange(0, 1).Draw(rt, "op")
-			switch op {
-			case 0: // Acquire
-				_, err := rl.Acquire(ctx, key)
-				if err != nil {
+			switch rapid.IntRange(0, 1).Draw(rt, "op") {
+			case 0:
+				if _, err := rl.Acquire(ctx, key); err != nil {
 					rt.Fatalf("Acquire() returned error on op %d: %v", i, err)
 				}
 				acquireCount++
-			case 1: // Record
+			case 1:
 				tokens := rapid.IntRange(1, 1000).Draw(rt, "tokens")
 				totalTokens += tokens
-				err := rl.Record(key, TokenUsage{
-					InputTokens:  tokens / 2,
-					OutputTokens: tokens - tokens/2,
-				})
-				if err != nil {
+				if err := rl.Record(ctx, key, TokenUsage{InputTokens: tokens / 2, OutputTokens: tokens - tokens/2}); err != nil {
 					rt.Fatalf("Record() returned error on op %d: %v", i, err)
 				}
 				recordCount++
 			}
 		}
 
-		// Verify: mock store IncrementRequests was called for each Acquire.
 		store.mu.Lock()
-		incReqCalls := len(store.incrementRequestsCalls)
-		store.mu.Unlock()
-
-		if incReqCalls != acquireCount {
-			rt.Fatalf("expected %d IncrementRequests calls (one per Acquire), got %d", acquireCount, incReqCalls)
+		defer store.mu.Unlock()
+		if len(store.reserveCalls) != acquireCount {
+			rt.Fatalf("expected %d ReserveRequests calls (one per Acquire), got %d", acquireCount, len(store.reserveCalls))
 		}
-
-		// Verify: mock store IncrementTokens was called for each Record with tokens > 0.
-		store.mu.Lock()
-		incTokCalls := len(store.incrementTokensCalls)
-		store.mu.Unlock()
-
-		if incTokCalls != recordCount {
-			rt.Fatalf("expected %d IncrementTokens calls (one per Record), got %d", recordCount, incTokCalls)
+		for _, rs := range store.reserveCalls {
+			if len(rs) != 1 || rs[0].Key != storeKey(key) || rs[0].Limit != rpmLimit || rs[0].Window != time.Minute {
+				rt.Fatalf("unexpected reservation %+v", rs)
+			}
 		}
-
-		// Verify: IncrementTokens amounts sum to totalTokens.
-		store.mu.Lock()
-		actualTotalTokens := 0
-		for _, call := range store.incrementTokensCalls {
-			actualTotalTokens += call.Amount
+		if len(store.recordTokensCalls) != recordCount {
+			rt.Fatalf("expected %d RecordTokens calls (one per Record), got %d", recordCount, len(store.recordTokensCalls))
 		}
-		store.mu.Unlock()
-
-		if actualTotalTokens != totalTokens {
-			rt.Fatalf("expected total tokens delegated to store = %d, got %d", totalTokens, actualTotalTokens)
+		sum := 0
+		for _, c := range store.recordTokensCalls {
+			sum += c.Amount
+			if len(c.Counters) != 1 || c.Counters[0].Key != storeKey(key) {
+				rt.Fatalf("unexpected token counters %+v", c.Counters)
+			}
 		}
-
-		// Verify: GetRequestCount was called during Acquire (for limit checking).
-		store.mu.Lock()
-		getReqCalls := len(store.getRequestCountCalls)
-		store.mu.Unlock()
-
-		if getReqCalls < acquireCount {
-			rt.Fatalf("expected at least %d GetRequestCount calls (one per Acquire), got %d", acquireCount, getReqCalls)
+		if sum != totalTokens {
+			rt.Fatalf("expected total tokens delegated to store = %d, got %d", totalTokens, sum)
 		}
-
-		// Verify: in-memory bucket map is NOT used when store is configured.
-		// rl.Len() should return 0 since no in-memory buckets should be created.
+		if acquireCount > 0 && len(store.getTokenCountCalls) < acquireCount {
+			rt.Fatalf("expected at least %d GetTokenCount calls (one per Acquire), got %d", acquireCount, len(store.getTokenCountCalls))
+		}
 		if rl.Len() != 0 {
 			rt.Fatalf("expected rl.Len() = 0 (no in-memory buckets when store configured), got %d", rl.Len())
 		}
@@ -2846,7 +2809,7 @@ func TestProperty_RecordBothCounters(t *testing.T) {
 				output := rapid.IntRange(1, 100).Draw(rt, "outputTokens")
 				usage := TokenUsage{InputTokens: input, OutputTokens: output}
 				expectedTotal += usage.Total()
-				rl.Record(key, usage)
+				rl.Record(context.Background(), key, usage)
 			}
 
 			// Verify per-key token count matches expected total
@@ -2918,7 +2881,7 @@ func TestProperty_RecordBothCounters(t *testing.T) {
 				perKeyExpected[key] += total
 				globalExpected += total
 
-				rl.Record(key, usage)
+				rl.Record(context.Background(), key, usage)
 			}
 
 			// Verify per-key token counts
@@ -2979,7 +2942,7 @@ func TestProperty_RecordBothCounters(t *testing.T) {
 				output := rapid.IntRange(1, 100).Draw(rt, "outputTokens")
 				usage := TokenUsage{InputTokens: input, OutputTokens: output}
 				expectedTotal += usage.Total()
-				rl.Record(key, usage)
+				rl.Record(context.Background(), key, usage)
 			}
 
 			// Verify per-key token count matches expected total
@@ -3051,7 +3014,7 @@ func TestProperty_RecordBothCounters(t *testing.T) {
 				perKeyExpected[key] += total
 				globalExpected += total
 
-				rl.Record(key, usage)
+				rl.Record(context.Background(), key, usage)
 			}
 
 			// Verify per-key token counts
@@ -3081,210 +3044,76 @@ func TestProperty_RecordBothCounters(t *testing.T) {
 // errorRateLimitStore is a test double that returns configurable errors from
 // specific methods to verify that the RateLimiter propagates store errors.
 type errorRateLimitStore struct {
-	getRequestCountErr   error
-	getTokenCountErr     error
-	incrementRequestsErr error
-	incrementTokensErr   error
-
-	// Return values for successful calls (0 = below any limit).
-	requestCount int
-	tokenCount   int
+	reserveErr       error
+	recordTokensErr  error
+	getTokenCountErr error
 }
 
-func (e *errorRateLimitStore) GetRequestCount(_ context.Context, _ string, _ time.Duration) (int, error) {
-	if e.getRequestCountErr != nil {
-		return 0, e.getRequestCountErr
+func (e *errorRateLimitStore) ReserveRequests(_ context.Context, _ []RequestReservation) (bool, error) {
+	if e.reserveErr != nil {
+		return false, e.reserveErr
 	}
-	return e.requestCount, nil
+	return true, nil
+}
+
+func (e *errorRateLimitStore) RecordTokens(_ context.Context, _ []TokenCounter, _ int) error {
+	return e.recordTokensErr
 }
 
 func (e *errorRateLimitStore) GetTokenCount(_ context.Context, _ string, _ time.Duration) (int, error) {
 	if e.getTokenCountErr != nil {
 		return 0, e.getTokenCountErr
 	}
-	return e.tokenCount, nil
-}
-
-func (e *errorRateLimitStore) IncrementRequests(_ context.Context, _ string, _ time.Duration) (int, error) {
-	if e.incrementRequestsErr != nil {
-		return 0, e.incrementRequestsErr
-	}
-	return e.requestCount, nil
-}
-
-func (e *errorRateLimitStore) IncrementTokens(_ context.Context, _ string, _ time.Duration, _ int) (int, error) {
-	if e.incrementTokensErr != nil {
-		return 0, e.incrementTokensErr
-	}
-	return e.tokenCount, nil
+	return 0, nil
 }
 
 // TestProperty_StoreErrorPropagation verifies Property 8: Store error propagation.
 // For any error returned by a RateLimitStore method during Acquire or Record,
 // the RateLimiter SHALL propagate that error to the caller without swallowing it.
 //
-// Strategy:
-// 1. Create mock stores that return specific errors from each method:
-//   - GetRequestCount returns error → Acquire returns that error
-//   - GetTokenCount returns error → Acquire returns that error
-//   - IncrementRequests returns error → Acquire returns that error
-//   - IncrementTokens returns error → Record returns that error
-//
-// 2. Generate random error messages with rapid
-// 3. Verify: the exact error returned by the store is the error returned by Acquire/Record
-// 4. Use errors.Is() to verify error identity is preserved
-//
 // **Validates: Requirements 5.6**
 func TestProperty_StoreErrorPropagation(t *testing.T) {
-	t.Run("GetRequestCount_Error_PropagatesFromAcquire", func(t *testing.T) {
-		rapid.Check(t, func(rt *rapid.T) {
-			// Generate a random error message.
-			errMsg := rapid.StringMatching(`[a-z]{3,20}_error_[0-9]{1,5}`).Draw(rt, "errMsg")
-			storeErr := errors.New(errMsg)
+	cases := []struct {
+		name   string
+		store  func(error) *errorRateLimitStore
+		record bool
+	}{
+		{name: "ReserveRequests_Error_PropagatesFromAcquire", store: func(err error) *errorRateLimitStore { return &errorRateLimitStore{reserveErr: err} }},
+		{name: "GetTokenCount_Error_PropagatesFromAcquire", store: func(err error) *errorRateLimitStore { return &errorRateLimitStore{getTokenCountErr: err} }},
+		{name: "RecordTokens_Error_PropagatesFromRecord", store: func(err error) *errorRateLimitStore { return &errorRateLimitStore{recordTokensErr: err} }, record: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rapid.Check(t, func(rt *rapid.T) {
+				errMsg := rapid.StringMatching(`[a-z]{3,20}_error_[0-9]{1,5}`).Draw(rt, "errMsg")
+				storeErr := errors.New(errMsg)
+				rpmLimit := rapid.IntRange(1, 100).Draw(rt, "rpmLimit")
+				tpmLimit := rapid.IntRange(1, 10000).Draw(rt, "tpmLimit")
 
-			// Create a store that fails on GetRequestCount.
-			store := &errorRateLimitStore{
-				getRequestCountErr: storeErr,
-			}
+				rl, err := NewRateLimiter(RPM(rpmLimit), TPM(tpmLimit), WithStore(tc.store(storeErr)), WithFailFast())
+				if err != nil {
+					rt.Fatalf("NewRateLimiter failed: %v", err)
+				}
+				key := rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, "key")
 
-			// Need both RPM and TPM limits configured so the request path is exercised.
-			rpmLimit := rapid.IntRange(1, 100).Draw(rt, "rpmLimit")
-			tpmLimit := rapid.IntRange(1, 10000).Draw(rt, "tpmLimit")
-
-			rl, err := NewRateLimiter(RPM(rpmLimit), TPM(tpmLimit), WithStore(store), WithFailFast())
-			if err != nil {
-				rt.Fatalf("NewRateLimiter failed: %v", err)
-			}
-
-			// Acquire should propagate the GetRequestCount error.
-			key := rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, "key")
-			_, acquireErr := rl.Acquire(context.Background(), key)
-
-			if acquireErr == nil {
-				rt.Fatalf("Acquire() returned nil, expected store error %q", errMsg)
-			}
-			if !errors.Is(acquireErr, storeErr) {
-				rt.Fatalf("Acquire() returned %v, expected errors.Is to match store error %v", acquireErr, storeErr)
-			}
-		})
-	})
-
-	t.Run("GetTokenCount_Error_PropagatesFromAcquire", func(t *testing.T) {
-		rapid.Check(t, func(rt *rapid.T) {
-			// Generate a random error message.
-			errMsg := rapid.StringMatching(`[a-z]{3,20}_error_[0-9]{1,5}`).Draw(rt, "errMsg")
-			storeErr := errors.New(errMsg)
-
-			// Create a store where GetRequestCount succeeds (returns 0) but
-			// GetTokenCount fails.
-			store := &errorRateLimitStore{
-				getTokenCountErr: storeErr,
-				requestCount:     0, // below limit, so request check passes
-			}
-
-			// Need both RPM and TPM limits configured so the token path is exercised.
-			rpmLimit := rapid.IntRange(1, 100).Draw(rt, "rpmLimit")
-			tpmLimit := rapid.IntRange(1, 10000).Draw(rt, "tpmLimit")
-
-			rl, err := NewRateLimiter(RPM(rpmLimit), TPM(tpmLimit), WithStore(store), WithFailFast())
-			if err != nil {
-				rt.Fatalf("NewRateLimiter failed: %v", err)
-			}
-
-			// Acquire should propagate the GetTokenCount error.
-			key := rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, "key")
-			_, acquireErr := rl.Acquire(context.Background(), key)
-
-			if acquireErr == nil {
-				rt.Fatalf("Acquire() returned nil, expected store error %q", errMsg)
-			}
-			if !errors.Is(acquireErr, storeErr) {
-				rt.Fatalf("Acquire() returned %v, expected errors.Is to match store error %v", acquireErr, storeErr)
-			}
-		})
-	})
-
-	t.Run("IncrementRequests_Error_PropagatesFromAcquire", func(t *testing.T) {
-		rapid.Check(t, func(rt *rapid.T) {
-			// Generate a random error message.
-			errMsg := rapid.StringMatching(`[a-z]{3,20}_error_[0-9]{1,5}`).Draw(rt, "errMsg")
-			storeErr := errors.New(errMsg)
-
-			// Create a store where Get methods return 0 (under limit) but
-			// IncrementRequests fails.
-			store := &errorRateLimitStore{
-				incrementRequestsErr: storeErr,
-				requestCount:         0, // below limit
-				tokenCount:           0, // below limit
-			}
-
-			// Need both RPM and TPM limits configured so both check paths pass.
-			rpmLimit := rapid.IntRange(1, 100).Draw(rt, "rpmLimit")
-			tpmLimit := rapid.IntRange(1, 10000).Draw(rt, "tpmLimit")
-
-			rl, err := NewRateLimiter(RPM(rpmLimit), TPM(tpmLimit), WithStore(store), WithFailFast())
-			if err != nil {
-				rt.Fatalf("NewRateLimiter failed: %v", err)
-			}
-
-			// Acquire should propagate the IncrementRequests error.
-			key := rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, "key")
-			_, acquireErr := rl.Acquire(context.Background(), key)
-
-			if acquireErr == nil {
-				rt.Fatalf("Acquire() returned nil, expected store error %q", errMsg)
-			}
-			if !errors.Is(acquireErr, storeErr) {
-				rt.Fatalf("Acquire() returned %v, expected errors.Is to match store error %v", acquireErr, storeErr)
-			}
-		})
-	})
-
-	t.Run("IncrementTokens_Error_PropagatesFromRecord", func(t *testing.T) {
-		rapid.Check(t, func(rt *rapid.T) {
-			// Generate a random error message.
-			errMsg := rapid.StringMatching(`[a-z]{3,20}_error_[0-9]{1,5}`).Draw(rt, "errMsg")
-			storeErr := errors.New(errMsg)
-
-			// Create a store where everything succeeds EXCEPT IncrementTokens.
-			store := &errorRateLimitStore{
-				incrementTokensErr: storeErr,
-				requestCount:       0, // below limit
-				tokenCount:         0, // below limit
-			}
-
-			// Need both RPM and TPM limits configured.
-			rpmLimit := rapid.IntRange(1, 100).Draw(rt, "rpmLimit")
-			tpmLimit := rapid.IntRange(1, 10000).Draw(rt, "tpmLimit")
-
-			rl, err := NewRateLimiter(RPM(rpmLimit), TPM(tpmLimit), WithStore(store), WithFailFast())
-			if err != nil {
-				rt.Fatalf("NewRateLimiter failed: %v", err)
-			}
-
-			key := rapid.StringMatching(`[a-z]{1,10}`).Draw(rt, "key")
-
-			// Acquire should succeed since Get/Increment for requests all pass.
-			_, acquireErr := rl.Acquire(context.Background(), key)
-			if acquireErr != nil {
-				rt.Fatalf("Acquire() returned unexpected error: %v", acquireErr)
-			}
-
-			// Record should propagate the IncrementTokens error.
-			tokens := rapid.IntRange(1, 1000).Draw(rt, "tokens")
-			recordErr := rl.Record(key, TokenUsage{
-				InputTokens:  tokens / 2,
-				OutputTokens: tokens - tokens/2,
+				_, acquireErr := rl.Acquire(context.Background(), key)
+				if !tc.record {
+					if !errors.Is(acquireErr, storeErr) {
+						rt.Fatalf("Acquire() returned %v, expected store error %v", acquireErr, storeErr)
+					}
+					return
+				}
+				if acquireErr != nil {
+					rt.Fatalf("Acquire() returned unexpected error: %v", acquireErr)
+				}
+				tokens := rapid.IntRange(1, 1000).Draw(rt, "tokens")
+				recordErr := rl.Record(context.Background(), key, TokenUsage{InputTokens: tokens / 2, OutputTokens: tokens - tokens/2})
+				if !errors.Is(recordErr, storeErr) {
+					rt.Fatalf("Record() returned %v, expected store error %v", recordErr, storeErr)
+				}
 			})
-
-			if recordErr == nil {
-				rt.Fatalf("Record() returned nil, expected store error %q", errMsg)
-			}
-			if !errors.Is(recordErr, storeErr) {
-				rt.Fatalf("Record() returned %v, expected errors.Is to match store error %v", recordErr, storeErr)
-			}
 		})
-	})
+	}
 }
 
 // TestProperty_ConcurrentSafety verifies that for any number of goroutines
@@ -3383,7 +3212,7 @@ func TestProperty_ConcurrentSafety(t *testing.T) {
 						// Acquire + Record pair
 						release, err := rl.Acquire(ctx, key)
 						if err == nil {
-							_ = rl.Record(key, TokenUsage{
+							_ = rl.Record(context.Background(), key, TokenUsage{
 								InputTokens:  1 + (i % 10),
 								OutputTokens: 1 + (goroutineID % 10),
 							})
@@ -3393,7 +3222,7 @@ func TestProperty_ConcurrentSafety(t *testing.T) {
 						// Acquire + Record with larger token usage
 						release, err := rl.Acquire(ctx, key)
 						if err == nil {
-							_ = rl.Record(key, TokenUsage{
+							_ = rl.Record(context.Background(), key, TokenUsage{
 								InputTokens:  5 + (i % 20),
 								OutputTokens: 3 + (goroutineID % 15),
 							})

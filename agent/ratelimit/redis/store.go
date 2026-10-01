@@ -1,12 +1,27 @@
 // Package redis provides a Redis-backed implementation of the
 // agent.RateLimitStore interface for distributed rate limiting.
+//
+// Every counter is a Redis sorted set of events scored by Redis server time
+// (TIME inside the script), so instances with skewed clocks share one
+// consistent window. Each check-and-record runs as a single-key Lua script,
+// which is atomic and Redis Cluster friendly: per-key and global counters may
+// live on different slots.
+//
+// A reservation spanning several counters (per-key and global) reserves them
+// one at a time and refunds earlier reservations when a later one is rejected
+// or fails. Concurrent callers therefore can never push any counter past its
+// limit. If a refund itself fails, that counter stays over-counted until the
+// event leaves its window: the limiter errs toward rejecting, never toward
+// exceeding a limit.
 package redis
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
@@ -17,11 +32,16 @@ import (
 // Ensure Store implements agent.RateLimitStore at compile time.
 var _ agent.RateLimitStore = (*Store)(nil)
 
+// refundTimeout bounds compensating writes, which must still run after the
+// caller's context is cancelled.
+const refundTimeout = 5 * time.Second
+
 // Store implements agent.RateLimitStore using Redis sorted sets with
 // sliding-window semantics.
 type Store struct {
 	client redis.UniversalClient
-	prefix string // key prefix for namespacing
+	prefix string    // key prefix for namespacing
+	random io.Reader // source of event IDs; crypto/rand.Reader in production
 }
 
 // Option configures a Store.
@@ -40,6 +60,7 @@ func NewStore(client redis.UniversalClient, opts ...Option) *Store {
 	s := &Store{
 		client: client,
 		prefix: "ratelimit",
+		random: rand.Reader,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -47,174 +68,185 @@ func NewStore(client redis.UniversalClient, opts ...Option) *Store {
 	return s
 }
 
-// requestKey returns the Redis key for request tracking.
+// requestKey returns the Redis key for a request counter. The framework adds
+// no Redis Cluster hash tag: each script touches exactly one key.
 func (s *Store) requestKey(key string) string {
-	return fmt.Sprintf("%s:req:%s", s.prefix, key)
+	return s.prefix + ":req:" + key
 }
 
-// tokenKey returns the Redis key for token tracking.
+// tokenKey returns the Redis key for a token counter.
 func (s *Store) tokenKey(key string) string {
-	return fmt.Sprintf("%s:tok:%s", s.prefix, key)
+	return s.prefix + ":tok:" + key
 }
 
-// incrementRequestsScript atomically adds a request entry, prunes expired
-// entries, sets TTL, and returns the count.
-var incrementRequestsScript = redis.NewScript(`
+// randomHex128From returns 128 random bits from r, hex encoded. It fails
+// rather than falling back to a weaker or partial value.
+func randomHex128From(r io.Reader) (string, error) {
+	var b [16]byte
+	if _, err := io.ReadFull(r, b[:]); err != nil {
+		return "", fmt.Errorf("generate rate limit event ID: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// newMembers generates n unique event IDs before any mutation runs, so an RNG
+// failure aborts the operation without touching Redis.
+func (s *Store) newMembers(n int) ([]string, error) {
+	members := make([]string, n)
+	for i := range members {
+		id, err := randomHex128From(s.random)
+		if err != nil {
+			return nil, err
+		}
+		members[i] = id
+	}
+	return members, nil
+}
+
+// serverNow is shared by all scripts: it reads Redis server time in ms.
+// replicate_commands makes TIME usable before writes on Redis < 5; newer
+// servers replicate script effects by default.
+const serverNow = `
+if redis.replicate_commands then redis.replicate_commands() end
+local t = redis.call("TIME")
+local now_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+`
+
+// reserveScript prunes expired events, rejects (returns 0) without writing
+// when the counter is at its limit, and otherwise records the event
+// (returns 1).
+var reserveScript = redis.NewScript(serverNow + `
 local key = KEYS[1]
-local now_ms = tonumber(ARGV[1])
-local window_ms = tonumber(ARGV[2])
+local window_ms = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
 local member = ARGV[3]
-local cutoff = now_ms - window_ms
 
--- Add new entry with score = now_ms
+redis.call("ZREMRANGEBYSCORE", key, "-inf", now_ms - window_ms)
+if redis.call("ZCARD", key) >= limit then
+  return 0
+end
 redis.call("ZADD", key, now_ms, member)
-
--- Remove entries outside the window
-redis.call("ZREMRANGEBYSCORE", key, "-inf", cutoff)
-
--- Set TTL to window duration (in seconds, rounded up)
-local ttl_sec = math.ceil(window_ms / 1000)
-redis.call("EXPIRE", key, ttl_sec)
-
--- Return current count
-return redis.call("ZCARD", key)
+redis.call("PEXPIRE", key, window_ms)
+return 1
 `)
 
-// uniqueID generates a unique identifier for sorted set members.
-func uniqueID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// IncrementRequests atomically increments the request counter for the given
-// key and window, returning the new count.
-func (s *Store) IncrementRequests(ctx context.Context, key string, window time.Duration) (int, error) {
-	rKey := s.requestKey(key)
-	nowMs := time.Now().UnixMilli()
-	windowMs := window.Milliseconds()
-	member := uniqueID() + ":" + strconv.FormatInt(nowMs, 10)
-
-	result, err := incrementRequestsScript.Run(ctx, s.client, []string{rKey}, nowMs, windowMs, member).Int()
-	if err != nil {
-		return 0, err
-	}
-	return result, nil
-}
-
-// incrementTokensScript atomically adds a token entry, prunes expired
-// entries, sets TTL, and returns the sum of tokens in the window.
-var incrementTokensScript = redis.NewScript(`
+// recordScript records an event unconditionally and prunes expired ones.
+var recordScript = redis.NewScript(serverNow + `
 local key = KEYS[1]
-local now_ms = tonumber(ARGV[1])
-local window_ms = tonumber(ARGV[2])
-local member = ARGV[3]
-local cutoff = now_ms - window_ms
+local window_ms = tonumber(ARGV[1])
+local member = ARGV[2]
 
--- Add new entry with score = now_ms
+redis.call("ZREMRANGEBYSCORE", key, "-inf", now_ms - window_ms)
 redis.call("ZADD", key, now_ms, member)
+redis.call("PEXPIRE", key, window_ms)
+return 1
+`)
 
--- Remove entries outside the window
-redis.call("ZREMRANGEBYSCORE", key, "-inf", cutoff)
+// getTokenCountScript prunes expired events and sums the token amounts
+// encoded in the members ("<32 hex id>:<amount>").
+var getTokenCountScript = redis.NewScript(serverNow + `
+local key = KEYS[1]
+local window_ms = tonumber(ARGV[1])
 
--- Set TTL to window duration (in seconds, rounded up)
-local ttl_sec = math.ceil(window_ms / 1000)
-redis.call("EXPIRE", key, ttl_sec)
-
--- Get all members in the window and sum their amounts
-local members = redis.call("ZRANGEBYSCORE", key, cutoff, "+inf")
+redis.call("ZREMRANGEBYSCORE", key, "-inf", now_ms - window_ms)
+local members = redis.call("ZRANGE", key, 0, -1)
 local total = 0
 for _, m in ipairs(members) do
-    -- member format is "uniqueID:amount" where uniqueID is 32 hex chars
-    local sep = string.find(m, ":", 33)
-    if sep then
-        local amt = tonumber(string.sub(m, sep + 1))
-        if amt then
-            total = total + amt
-        end
+  local sep = string.find(m, ":", 33, true)
+  if sep then
+    local amt = tonumber(string.sub(m, sep + 1))
+    if amt then
+      total = total + amt
     end
+  end
 end
 return total
 `)
 
-// IncrementTokens atomically increments the token counter for the given
-// key and window by amount, returning the new total.
-func (s *Store) IncrementTokens(ctx context.Context, key string, window time.Duration, amount int) (int, error) {
-	rKey := s.tokenKey(key)
-	nowMs := time.Now().UnixMilli()
-	windowMs := window.Milliseconds()
-	// Member format: "uniqueID:amount" — unique ID ensures uniqueness, amount is parseable.
-	member := uniqueID() + ":" + strconv.Itoa(amount)
+type placed struct{ key, member string }
 
-	result, err := incrementTokensScript.Run(ctx, s.client, []string{rKey}, nowMs, windowMs, member).Int()
-	if err != nil {
-		return 0, err
+// refund removes events recorded earlier in a failed multi-counter operation.
+func (s *Store) refund(ctx context.Context, done []placed) error {
+	if len(done) == 0 {
+		return nil
 	}
-	return result, nil
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refundTimeout)
+	defer cancel()
+	var errs []error
+	for _, p := range done {
+		if err := s.client.ZRem(rctx, p.key, p.member).Err(); err != nil {
+			errs = append(errs, fmt.Errorf("refund %s: %w", p.key, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
-// getRequestCountScript prunes expired entries and returns the count.
-var getRequestCountScript = redis.NewScript(`
-local key = KEYS[1]
-local now_ms = tonumber(ARGV[1])
-local window_ms = tonumber(ARGV[2])
-local cutoff = now_ms - window_ms
-
--- Remove entries outside the window
-redis.call("ZREMRANGEBYSCORE", key, "-inf", cutoff)
-
--- Return current count
-return redis.call("ZCARD", key)
-`)
-
-// GetRequestCount returns the current request count within the window for key.
-func (s *Store) GetRequestCount(ctx context.Context, key string, window time.Duration) (int, error) {
-	rKey := s.requestKey(key)
-	nowMs := time.Now().UnixMilli()
-	windowMs := window.Milliseconds()
-
-	result, err := getRequestCountScript.Run(ctx, s.client, []string{rKey}, nowMs, windowMs).Int()
-	if err != nil {
-		return 0, err
+func validWindow(w time.Duration) error {
+	if w.Milliseconds() <= 0 {
+		return fmt.Errorf("redis rate limit store: window must be >= 1ms, got %v", w)
 	}
-	return result, nil
+	return nil
 }
 
-// getTokenCountScript prunes expired entries and returns the sum of tokens.
-var getTokenCountScript = redis.NewScript(`
-local key = KEYS[1]
-local now_ms = tonumber(ARGV[1])
-local window_ms = tonumber(ARGV[2])
-local cutoff = now_ms - window_ms
+// ReserveRequests implements agent.RateLimitStore. Each counter is checked
+// and charged by one atomic script; earlier charges are refunded when a later
+// counter rejects or errors, so the outcome is all-or-nothing.
+func (s *Store) ReserveRequests(ctx context.Context, reservations []agent.RequestReservation) (bool, error) {
+	for _, r := range reservations {
+		if err := validWindow(r.Window); err != nil {
+			return false, err
+		}
+	}
+	members, err := s.newMembers(len(reservations))
+	if err != nil {
+		return false, err
+	}
+	var done []placed
+	for i, r := range reservations {
+		key := s.requestKey(r.Key)
+		ok, err := reserveScript.Run(ctx, s.client, []string{key}, r.Window.Milliseconds(), r.Limit, members[i]).Int()
+		if err != nil {
+			return false, errors.Join(err, s.refund(ctx, done))
+		}
+		if ok != 1 {
+			return false, s.refund(ctx, done)
+		}
+		done = append(done, placed{key: key, member: members[i]})
+	}
+	return true, nil
+}
 
--- Remove entries outside the window
-redis.call("ZREMRANGEBYSCORE", key, "-inf", cutoff)
+// RecordTokens implements agent.RateLimitStore. Usage is recorded on every
+// counter; if one write fails, earlier writes are refunded.
+func (s *Store) RecordTokens(ctx context.Context, counters []agent.TokenCounter, amount int) error {
+	for _, c := range counters {
+		if err := validWindow(c.Window); err != nil {
+			return err
+		}
+	}
+	if amount <= 0 || len(counters) == 0 {
+		return nil
+	}
+	ids, err := s.newMembers(len(counters))
+	if err != nil {
+		return err
+	}
+	var done []placed
+	for i, c := range counters {
+		key := s.tokenKey(c.Key)
+		member := ids[i] + ":" + strconv.Itoa(amount)
+		if err := recordScript.Run(ctx, s.client, []string{key}, c.Window.Milliseconds(), member).Err(); err != nil {
+			return errors.Join(err, s.refund(ctx, done))
+		}
+		done = append(done, placed{key: key, member: member})
+	}
+	return nil
+}
 
--- Get all members in the window and sum their amounts
-local members = redis.call("ZRANGEBYSCORE", key, cutoff, "+inf")
-local total = 0
-for _, m in ipairs(members) do
-    -- member format is "uniqueID:amount" where uniqueID is 32 hex chars
-    local sep = string.find(m, ":", 33)
-    if sep then
-        local amt = tonumber(string.sub(m, sep + 1))
-        if amt then
-            total = total + amt
-        end
-    end
-end
-return total
-`)
-
-// GetTokenCount returns the current token count within the window for key.
+// GetTokenCount implements agent.RateLimitStore.
 func (s *Store) GetTokenCount(ctx context.Context, key string, window time.Duration) (int, error) {
-	rKey := s.tokenKey(key)
-	nowMs := time.Now().UnixMilli()
-	windowMs := window.Milliseconds()
-
-	result, err := getTokenCountScript.Run(ctx, s.client, []string{rKey}, nowMs, windowMs).Int()
-	if err != nil {
+	if err := validWindow(window); err != nil {
 		return 0, err
 	}
-	return result, nil
+	return getTokenCountScript.Run(ctx, s.client, []string{s.tokenKey(key)}, window.Milliseconds()).Int()
 }

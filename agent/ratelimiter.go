@@ -186,8 +186,141 @@ func (b *rateBucket) tpmWaitDuration() time.Duration {
 	return time.Second
 }
 
-func (b *rateBucket) waitForCapacity(ctx context.Context, waitDuration time.Duration) error {
-	timer := time.NewTimer(waitDuration)
+// capacityLocked reports whether b can admit one more request: its request
+// count is below rpmLimit and its recorded tokens are below tpmLimit. When it
+// cannot, wait is how long until capacity may free up. Caller holds b.mu.
+func (b *rateBucket) capacityLocked() (ok bool, wait time.Duration) {
+	if b.rpmLimit > 0 {
+		var count int
+		switch b.windowStrategy {
+		case SlidingWindow:
+			count = b.slidingRPMCount()
+		case FixedWindow:
+			count = b.fixedRPMCountVal()
+		}
+		if count >= b.rpmLimit {
+			return false, b.rpmWaitDuration()
+		}
+	}
+	if b.tpmLimit > 0 {
+		if b.tokenCountLocked() >= b.tpmLimit {
+			return false, b.tpmWaitDuration()
+		}
+	}
+	return true, 0
+}
+
+// tokenCountLocked returns the tokens recorded in the current token window.
+// Caller holds b.mu.
+func (b *rateBucket) tokenCountLocked() int {
+	switch b.windowStrategy {
+	case FixedWindow:
+		return b.fixedTPMCountVal()
+	default:
+		return b.slidingTPMCount()
+	}
+}
+
+// chargeRequestLocked records one admitted request. Buckets without a request
+// limit keep no request history. Caller holds b.mu.
+func (b *rateBucket) chargeRequestLocked() {
+	now := b.now()
+	b.lastAccess = now
+	if b.rpmLimit <= 0 {
+		return
+	}
+	switch b.windowStrategy {
+	case SlidingWindow:
+		b.rpmEvents = append(b.rpmEvents, now)
+	case FixedWindow:
+		b.maybeResetFixedWindow()
+		b.fixedRPMCount++
+	}
+}
+
+// recordLocked records actual token usage. Buckets without a token limit keep
+// no token history. Caller holds b.mu.
+func (b *rateBucket) recordLocked(tokens int) {
+	now := b.now()
+	b.lastAccess = now
+	if b.tpmLimit <= 0 {
+		return
+	}
+	switch b.windowStrategy {
+	case SlidingWindow:
+		b.tpmEvents = append(b.tpmEvents, tokenEvent{at: now, tokens: tokens})
+	case FixedWindow:
+		b.maybeResetFixedTokenWindow()
+		b.fixedTPMCount += tokens
+	}
+}
+
+// lockBuckets locks buckets in slice order. Callers always pass the per-key
+// bucket before the global bucket, which gives a consistent lock order.
+func lockBuckets(buckets []*rateBucket) {
+	for _, b := range buckets {
+		b.mu.Lock()
+	}
+}
+
+func unlockBuckets(buckets []*rateBucket) {
+	for i := len(buckets) - 1; i >= 0; i-- {
+		buckets[i].mu.Unlock()
+	}
+}
+
+// reserveBuckets admits one request on every bucket or on none. All buckets
+// are checked and charged while all their locks are held, so a rejection by
+// one bucket (for example the global one) never consumes another bucket's
+// budget. In BlockMode it waits for the longest required wait and retries.
+func reserveBuckets(ctx context.Context, behavior OverflowBehavior, buckets []*rateBucket) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		lockBuckets(buckets)
+		admit := true
+		var wait time.Duration
+		for _, b := range buckets {
+			if ok, w := b.capacityLocked(); !ok {
+				admit = false
+				if w > wait {
+					wait = w
+				}
+			}
+		}
+		if admit {
+			for _, b := range buckets {
+				b.chargeRequestLocked()
+			}
+			unlockBuckets(buckets)
+			return nil
+		}
+		unlockBuckets(buckets)
+		if behavior == FailFastMode {
+			return ErrRateLimitExceeded
+		}
+		if wait < time.Millisecond {
+			wait = time.Millisecond
+		}
+		if err := waitFor(ctx, wait); err != nil {
+			return err
+		}
+	}
+}
+
+// recordBuckets records tokens on every bucket in one critical section.
+func recordBuckets(buckets []*rateBucket, tokens int) {
+	lockBuckets(buckets)
+	for _, b := range buckets {
+		b.recordLocked(tokens)
+	}
+	unlockBuckets(buckets)
+}
+
+// waitFor sleeps for d or until ctx is done.
+func waitFor(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -197,173 +330,74 @@ func (b *rateBucket) waitForCapacity(ctx context.Context, waitDuration time.Dura
 	}
 }
 
-// acquire checks rate limits and blocks or fails fast depending on config.
-func (b *rateBucket) acquire(ctx context.Context) error {
-	b.mu.Lock()
-	for {
-		if err := ctx.Err(); err != nil {
-			b.mu.Unlock()
-			return err
-		}
-		if b.rpmLimit > 0 {
-			var count int
-			switch b.windowStrategy {
-			case SlidingWindow:
-				count = b.slidingRPMCount()
-			case FixedWindow:
-				count = b.fixedRPMCountVal()
-			}
-			if count >= b.rpmLimit {
-				if b.overflowBehavior == FailFastMode {
-					b.mu.Unlock()
-					return ErrRateLimitExceeded
-				}
-				waitDuration := b.rpmWaitDuration()
-				b.mu.Unlock()
-				if err := b.waitForCapacity(ctx, waitDuration); err != nil {
-					return err
-				}
-				b.mu.Lock()
-				continue
-			}
-		}
-
-		if b.tpmLimit > 0 {
-			var count int
-			switch b.windowStrategy {
-			case SlidingWindow:
-				count = b.slidingTPMCount()
-			case FixedWindow:
-				count = b.fixedTPMCountVal()
-			}
-			if count >= b.tpmLimit {
-				if b.overflowBehavior == FailFastMode {
-					b.mu.Unlock()
-					return ErrRateLimitExceeded
-				}
-				waitDuration := b.tpmWaitDuration()
-				b.mu.Unlock()
-				if err := b.waitForCapacity(ctx, waitDuration); err != nil {
-					return err
-				}
-				b.mu.Lock()
-				continue
-			}
-		}
-
-		switch b.windowStrategy {
-		case SlidingWindow:
-			b.rpmEvents = append(b.rpmEvents, b.now())
-		case FixedWindow:
-			b.maybeResetFixedWindow()
-			b.fixedRPMCount++
-		}
-
-		b.lastAccess = b.now()
-		b.mu.Unlock()
-		return nil
-	}
-}
-
-// record records token consumption after a successful provider call.
-func (b *rateBucket) record(usage TokenUsage) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	tokens := usage.Total()
-	if tokens <= 0 {
-		return
-	}
-
-	b.lastAccess = b.now()
-
-	switch b.windowStrategy {
-	case SlidingWindow:
-		b.tpmEvents = append(b.tpmEvents, tokenEvent{at: b.now(), tokens: tokens})
-	case FixedWindow:
-		b.maybeResetFixedTokenWindow()
-		b.fixedTPMCount += tokens
-	}
-}
-
 // rateConfig holds a count + window pair for configurable limits.
 type rateConfig struct {
 	Count         int
 	WindowSeconds int
 }
 
-// concurrencySem is a per-key semaphore for limiting concurrent in-flight calls.
-// It uses sync.Cond for BlockMode waiting with context cancellation support.
+func (c *rateConfig) window() time.Duration {
+	return time.Duration(c.WindowSeconds) * time.Second
+}
+
+// concurrencySem is a per-key counting semaphore backed by a buffered
+// channel: a send occupies a slot, a receive frees one. Waiters select on the
+// channel and their context, so no helper goroutine is needed per waiter.
 type concurrencySem struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	inflight int
-	max      int
+	slots chan struct{}
+	// refs counts callers that currently hold or are waiting for a slot. It
+	// is guarded by RateLimiter.mu and prevents Purge or the stale sweep from
+	// discarding a semaphore that is in use, which would let a fresh
+	// semaphore for the same key exceed MaxConcurrent.
+	refs int
 }
 
-// newConcurrencySem creates a concurrencySem with the given maximum concurrency.
+// newConcurrencySem creates a concurrencySem with the given capacity.
 func newConcurrencySem(max int) *concurrencySem {
-	s := &concurrencySem{max: max}
-	s.cond = sync.NewCond(&s.mu)
-	return s
+	return &concurrencySem{slots: make(chan struct{}, max)}
 }
 
-// Acquire blocks (BlockMode) or fails (FailFastMode) if at capacity.
-// In BlockMode, it waits until a slot is released or the context is cancelled.
+// Acquire takes a slot. In FailFastMode it returns ErrRateLimitExceeded when
+// none is free; in BlockMode it waits until a slot frees or ctx is done.
 func (s *concurrencySem) Acquire(ctx context.Context, behavior OverflowBehavior) error {
-	s.mu.Lock()
 	if err := ctx.Err(); err != nil {
-		s.mu.Unlock()
 		return err
 	}
-
-	for s.inflight >= s.max {
-		if behavior == FailFastMode {
-			s.mu.Unlock()
+	if behavior == FailFastMode {
+		select {
+		case s.slots <- struct{}{}:
+			return nil
+		default:
 			return ErrRateLimitExceeded
 		}
-
-		// BlockMode: wait with context awareness.
-		// Use a goroutine to monitor context cancellation while we wait on the cond.
-		// The cond.Wait() atomically unlocks and waits, then re-locks on wake.
-		ctxDone := make(chan struct{})
-		go func() {
-			select {
-			case <-ctx.Done():
-				// Context cancelled — broadcast to wake all waiters so we can check.
-				s.cond.Broadcast()
-			case <-ctxDone:
-				// Normal wake — context monitor is no longer needed.
-			}
-		}()
-
-		s.cond.Wait()
-		close(ctxDone)
-
-		// Check if we woke because the context was cancelled.
-		if ctx.Err() != nil {
-			s.mu.Unlock()
-			return ctx.Err()
+	}
+	select {
+	case s.slots <- struct{}{}:
+		// A slot and cancellation can become ready together; never hand out
+		// a slot to an already-cancelled caller.
+		if err := ctx.Err(); err != nil {
+			s.Release()
+			return err
 		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	if err := ctx.Err(); err != nil {
-		s.mu.Unlock()
-		return err
-	}
-	s.inflight++
-	s.mu.Unlock()
-	return nil
 }
 
-// Release decrements the inflight count and signals one waiter.
+// Release frees one slot. Releasing an idle semaphore is a no-op.
 func (s *concurrencySem) Release() {
-	s.mu.Lock()
-	if s.inflight > 0 {
-		s.inflight--
+	select {
+	case <-s.slots:
+	default:
 	}
-	s.cond.Signal()
-	s.mu.Unlock()
 }
+
+// inflight returns the number of occupied slots.
+func (s *concurrencySem) inflight() int { return len(s.slots) }
+
+// capacity returns the semaphore's maximum concurrency.
+func (s *concurrencySem) capacity() int { return cap(s.slots) }
 
 // RateLimiter enforces RPM and TPM limits on provider calls.
 // It supports both shared (single-bucket) and per-key (multi-bucket) modes.
@@ -378,21 +412,19 @@ func (s *concurrencySem) Release() {
 type RateLimiter struct {
 	mu sync.Mutex
 
-	rpmLimit int
-	tpmLimit int
-
 	windowStrategy   WindowStrategy
 	overflowBehavior OverflowBehavior
 
-	buckets   map[string]*rateBucket
-	lastSweep time.Time // last time stale buckets were evicted
+	buckets    map[string]*rateBucket
+	lastSweep  time.Time     // last time stale buckets were evicted
+	staleAfter time.Duration // idle time after which a per-key bucket holds no in-window state
 
 	// Clock abstraction for testing.
 	now func() time.Time
 
 	// Configurable rate limits (additive constraints).
-	requestRateLimit *rateConfig // nil = use legacy rpmLimit
-	tokenRateLimit   *rateConfig // nil = use legacy tpmLimit
+	requestRateLimit *rateConfig // nil = no per-key request limit
+	tokenRateLimit   *rateConfig // nil = no per-key token limit
 
 	// Global limits (shared across all keys).
 	globalRequestLimit *rateConfig // nil = no global request limit
@@ -552,8 +584,6 @@ func WithoutPreFlight() RateLimiterOption {
 // independent budget with the same limits.
 func NewRateLimiter(opts ...RateLimiterOption) (*RateLimiter, error) {
 	rl := &RateLimiter{
-		rpmLimit:         0,
-		tpmLimit:         0,
 		windowStrategy:   SlidingWindow,
 		overflowBehavior: FailFastMode,
 		buckets:          make(map[string]*rateBucket),
@@ -605,7 +635,7 @@ func NewRateLimiter(opts ...RateLimiterOption) (*RateLimiter, error) {
 	// Default: enable pre-flight token estimation when a TPM limit is configured
 	// and no explicit estimator was set. This prevents obviously-over-budget calls
 	// from consuming API quota. Use WithoutPreFlight() to opt out.
-	hasTPM := rl.tpmLimit > 0 || (rl.tokenRateLimit != nil && rl.tokenRateLimit.Count > 0)
+	hasTPM := rl.tokenRateLimit != nil || rl.globalTokenLimit != nil
 	if hasTPM && rl.tokenEstimator == nil && !rl.preFlightDisabled {
 		rl.tokenEstimator = CharEstimator{}
 	}
@@ -652,52 +682,63 @@ func NewRateLimiter(opts ...RateLimiterOption) (*RateLimiter, error) {
 		rl.semaphores = make(map[string]*concurrencySem)
 	}
 
+	rl.staleAfter = staleAfterFor(rl)
+
 	return rl, nil
 }
 
-// bucket returns the rateBucket for the given key, creating one if needed.
-// Lazily evicts stale buckets (idle > 60s) at most once per 10 seconds.
+// Store keys used by the RateLimiter. Per-key counters are namespaced so a
+// caller key such as "global" can never collide with the global counters.
+const (
+	storeGlobalKey   = "global"
+	storePerKeyScope = "key:"
+)
+
+func storeKey(key string) string { return storePerKeyScope + key }
+
+// storePollInterval is how often BlockMode retries against a RateLimitStore.
+const storePollInterval = time.Second
+
+// accountingTimeout bounds token-accounting store calls. Accounting runs after
+// the provider already consumed tokens, so it survives caller cancellation
+// but must not hang indefinitely.
+const accountingTimeout = 5 * time.Second
+
+// staleSweepInterval is how often idle buckets and semaphores are evicted.
+const staleSweepInterval = 10 * time.Second
+
+// bucket returns the rateBucket for key, creating one if needed, and marks it
+// as recently used. It also evicts idle buckets and unused semaphores at most
+// once per staleSweepInterval.
 func (rl *RateLimiter) bucket(key string) *rateBucket {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	now := rl.now()
-
-	// Lazy sweep: evict stale buckets at most once per 10 seconds.
-	if now.Sub(rl.lastSweep) >= 10*time.Second {
-		rl.lastSweep = now
-		for k, b := range rl.buckets {
-			b.mu.Lock()
-			idle := now.Sub(b.lastAccess)
-			b.mu.Unlock()
-			if idle >= 60*time.Second && k != "" {
-				delete(rl.buckets, k)
-			}
-		}
-	}
+	rl.sweepLocked(now)
 
 	if b, ok := rl.buckets[key]; ok {
+		// Touch under rl.mu so a concurrent sweep cannot evict a bucket that
+		// is about to be used.
+		b.mu.Lock()
+		b.lastAccess = now
+		b.mu.Unlock()
 		return b
 	}
 
-	// Determine effective RPM/TPM limits and window durations for the new bucket.
-	effectiveRPM := rl.rpmLimit
-	effectiveTPM := rl.tpmLimit
-	var windowDuration time.Duration
-	var tokenWindowDuration time.Duration
-
+	var rpmLimit, tpmLimit int
+	var windowDuration, tokenWindowDuration time.Duration
 	if rl.requestRateLimit != nil {
-		effectiveRPM = rl.requestRateLimit.Count
-		windowDuration = time.Duration(rl.requestRateLimit.WindowSeconds) * time.Second
+		rpmLimit = rl.requestRateLimit.Count
+		windowDuration = rl.requestRateLimit.window()
 	}
 	if rl.tokenRateLimit != nil {
-		effectiveTPM = rl.tokenRateLimit.Count
-		tokenWindowDuration = time.Duration(rl.tokenRateLimit.WindowSeconds) * time.Second
+		tpmLimit = rl.tokenRateLimit.Count
+		tokenWindowDuration = rl.tokenRateLimit.window()
 	}
-
 	b := &rateBucket{
-		rpmLimit:            effectiveRPM,
-		tpmLimit:            effectiveTPM,
+		rpmLimit:            rpmLimit,
+		tpmLimit:            tpmLimit,
 		windowStrategy:      rl.windowStrategy,
 		overflowBehavior:    rl.overflowBehavior,
 		windowDuration:      windowDuration,
@@ -707,6 +748,66 @@ func (rl *RateLimiter) bucket(key string) *rateBucket {
 	}
 	rl.buckets[key] = b
 	return b
+}
+
+// sweepLocked evicts per-key buckets idle for at least staleAfter (so every
+// recorded event has left its window and eviction cannot reset a limit) and
+// semaphores no caller holds or waits on. Caller holds rl.mu.
+func (rl *RateLimiter) sweepLocked(now time.Time) {
+	if now.Sub(rl.lastSweep) < staleSweepInterval {
+		return
+	}
+	rl.lastSweep = now
+	for k, b := range rl.buckets {
+		if k == "" {
+			continue
+		}
+		b.mu.Lock()
+		idle := now.Sub(b.lastAccess)
+		b.mu.Unlock()
+		if idle >= rl.staleAfter {
+			delete(rl.buckets, k)
+		}
+	}
+	for k, s := range rl.semaphores {
+		if s.refs == 0 {
+			delete(rl.semaphores, k)
+		}
+	}
+}
+
+// staleAfterFor returns the minimum idle time after which a per-key bucket
+// holds no in-window state: the largest configured per-key window, and never
+// less than 60s.
+func staleAfterFor(rl *RateLimiter) time.Duration {
+	d := 60 * time.Second
+	for _, c := range []*rateConfig{rl.requestRateLimit, rl.tokenRateLimit} {
+		if c != nil && c.window() > d {
+			d = c.window()
+		}
+	}
+	return d
+}
+
+// leaseSem returns the semaphore for key, creating it if needed, and
+// registers the caller as a user so it cannot be discarded while in use.
+func (rl *RateLimiter) leaseSem(key string) *concurrencySem {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	s, ok := rl.semaphores[key]
+	if !ok {
+		s = newConcurrencySem(rl.maxConcurrent)
+		rl.semaphores[key] = s
+	}
+	s.refs++
+	return s
+}
+
+// unleaseSem drops a caller registered by leaseSem.
+func (rl *RateLimiter) unleaseSem(s *concurrencySem) {
+	rl.mu.Lock()
+	s.refs--
+	rl.mu.Unlock()
 }
 
 // ReleaseFunc releases the per-key concurrency slot held by a successful
@@ -732,312 +833,185 @@ type ReleaseFunc func()
 // noopRelease is returned when MaxConcurrent is not configured.
 func noopRelease() {}
 
-// Acquire checks rate limits for the given key before a provider call.
-// Use an empty string for shared (non-keyed) rate limiting.
-// Each distinct key is rate-limited independently.
+// Acquire admits one provider call for key. Use an empty string for shared
+// (non-keyed) rate limiting; each distinct key is limited independently.
+//
+// Acquire first takes a concurrency slot (when MaxConcurrent is configured),
+// then reserves one request on the per-key and global request budgets as a
+// single all-or-nothing reservation. A failed Acquire — rejection, context
+// cancellation, or store error — leaves request accounting exactly as if it
+// never happened and holds no slot. In BlockMode the slot is held while
+// waiting for request capacity.
 //
 // On success it returns a non-nil ReleaseFunc that the caller MUST invoke once
-// the in-flight operation completes (success or failure). When MaxConcurrent is
-// configured, the ReleaseFunc frees the concurrency slot; otherwise it is a
-// no-op. On error the returned ReleaseFunc is nil.
-//
-// When global limits are configured, Acquire also checks the global bucket
-// after per-key checks pass. Both per-key AND global limits must have capacity.
-//
-// When MaxConcurrent is configured, Acquire also acquires a concurrency slot
-// after all rate limit checks pass. The semaphore acquire is performed outside the
-// main mutex to avoid deadlock when blocking.
-//
-// When a RateLimitStore is configured (via WithStore), all counter operations are
-// delegated to the store instead of the in-memory bucket map.
+// the in-flight operation completes. On error the ReleaseFunc is nil.
 func (rl *RateLimiter) Acquire(ctx context.Context, key string) (ReleaseFunc, error) {
-	// Never charge a request that was already cancelled before acquisition.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	// When a store is configured, delegate all counter operations to it.
+	release := ReleaseFunc(noopRelease)
+	if rl.maxConcurrent > 0 {
+		sem := rl.leaseSem(key)
+		if err := sem.Acquire(ctx, rl.overflowBehavior); err != nil {
+			rl.unleaseSem(sem)
+			return nil, err
+		}
+		var once sync.Once
+		release = func() {
+			once.Do(func() {
+				sem.Release()
+				rl.unleaseSem(sem)
+			})
+		}
+	}
+
+	var err error
 	if rl.store != nil {
-		return rl.acquireWithStore(ctx, key)
+		err = rl.reserveWithStore(ctx, key)
+	} else {
+		err = rl.reserveInMemory(ctx, key)
 	}
-
-	// Step 1: Check per-key rate limits (RPM/TPM).
-	if err := rl.bucket(key).acquire(ctx); err != nil {
+	if err != nil {
+		release()
 		return nil, err
 	}
+	return release, nil
+}
 
-	// Step 2: Check global rate limits (if configured).
-	// Both per-key AND global limits must have capacity for Acquire to succeed.
-	// The globalBucket.acquire() handles both RPM and TPM checks, respects
-	// OverflowBehavior (FailFast/Block), and increments the global request
-	// counter on success.
+// limitBuckets returns the in-memory buckets that apply to key, per-key first.
+func (rl *RateLimiter) limitBuckets(key string) []*rateBucket {
+	buckets := []*rateBucket{rl.bucket(key)}
 	if rl.globalBucket != nil {
-		if err := rl.globalBucket.acquire(ctx); err != nil {
-			return nil, err
-		}
+		buckets = append(buckets, rl.globalBucket)
 	}
-
-	// Step 3: If concurrency limiting is not configured, we're done.
-	if rl.maxConcurrent <= 0 {
-		return noopRelease, nil
-	}
-
-	// Step 4: Get or lazily create the per-key semaphore (under lock).
-	rl.mu.Lock()
-	sem, ok := rl.semaphores[key]
-	if !ok {
-		sem = newConcurrencySem(rl.maxConcurrent)
-		rl.semaphores[key] = sem
-	}
-	rl.mu.Unlock()
-
-	// Step 5: Acquire semaphore slot OUTSIDE the main lock to avoid deadlock.
-	if err := sem.Acquire(ctx, rl.overflowBehavior); err != nil {
-		return nil, err
-	}
-
-	// Return an idempotent release that frees exactly one slot.
-	var once sync.Once
-	return func() { once.Do(sem.Release) }, nil
+	return buckets
 }
 
-// acquireWithStore implements the Acquire logic using a RateLimitStore for counter
-// operations. It checks per-key request limits, per-key token limits, global request
-// limits, global token limits, then acquires a concurrency slot if configured.
-func (rl *RateLimiter) acquireWithStore(ctx context.Context, key string) (ReleaseFunc, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func (rl *RateLimiter) reserveInMemory(ctx context.Context, key string) error {
+	return reserveBuckets(ctx, rl.overflowBehavior, rl.limitBuckets(key))
+}
 
-	// Determine per-key request limit and window.
-	reqLimit := rl.rpmLimit
-	reqWindow := 60 * time.Second
+// requestReservations returns the store request counters that apply to key.
+func (rl *RateLimiter) requestReservations(key string) []RequestReservation {
+	var rs []RequestReservation
 	if rl.requestRateLimit != nil {
-		reqLimit = rl.requestRateLimit.Count
-		reqWindow = time.Duration(rl.requestRateLimit.WindowSeconds) * time.Second
+		rs = append(rs, RequestReservation{Key: storeKey(key), Limit: rl.requestRateLimit.Count, Window: rl.requestRateLimit.window()})
 	}
-
-	// Determine per-key token limit and window.
-	tokLimit := rl.tpmLimit
-	tokWindow := 60 * time.Second
-	if rl.tokenRateLimit != nil {
-		tokLimit = rl.tokenRateLimit.Count
-		tokWindow = time.Duration(rl.tokenRateLimit.WindowSeconds) * time.Second
-	}
-
-	// Step 1: Check per-key request limit.
-	if reqLimit > 0 {
-		count, err := rl.store.GetRequestCount(ctx, key, reqWindow)
-		if err != nil {
-			return nil, err
-		}
-		if count >= reqLimit {
-			if rl.overflowBehavior == FailFastMode {
-				return nil, ErrRateLimitExceeded
-			}
-			// BlockMode: poll until capacity or context cancellation.
-			for count >= reqLimit {
-				timer := time.NewTimer(time.Second)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				}
-				count, err = rl.store.GetRequestCount(ctx, key, reqWindow)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	// Step 2: Check per-key token limit.
-	if tokLimit > 0 {
-		count, err := rl.store.GetTokenCount(ctx, key, tokWindow)
-		if err != nil {
-			return nil, err
-		}
-		if count >= tokLimit {
-			if rl.overflowBehavior == FailFastMode {
-				return nil, ErrRateLimitExceeded
-			}
-			// BlockMode: poll until capacity or context cancellation.
-			for count >= tokLimit {
-				timer := time.NewTimer(time.Second)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				}
-				count, err = rl.store.GetTokenCount(ctx, key, tokWindow)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	// Step 3: Check global request limit (if configured).
 	if rl.globalRequestLimit != nil {
-		globalReqWindow := time.Duration(rl.globalRequestLimit.WindowSeconds) * time.Second
-		count, err := rl.store.GetRequestCount(ctx, "global:requests", globalReqWindow)
-		if err != nil {
-			return nil, err
-		}
-		if count >= rl.globalRequestLimit.Count {
-			if rl.overflowBehavior == FailFastMode {
-				return nil, ErrRateLimitExceeded
-			}
-			for count >= rl.globalRequestLimit.Count {
-				timer := time.NewTimer(time.Second)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				}
-				count, err = rl.store.GetRequestCount(ctx, "global:requests", globalReqWindow)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
+		rs = append(rs, RequestReservation{Key: storeGlobalKey, Limit: rl.globalRequestLimit.Count, Window: rl.globalRequestLimit.window()})
 	}
-
-	// Step 4: Check global token limit (if configured).
-	if rl.globalTokenLimit != nil {
-		globalTokWindow := time.Duration(rl.globalTokenLimit.WindowSeconds) * time.Second
-		count, err := rl.store.GetTokenCount(ctx, "global:tokens", globalTokWindow)
-		if err != nil {
-			return nil, err
-		}
-		if count >= rl.globalTokenLimit.Count {
-			if rl.overflowBehavior == FailFastMode {
-				return nil, ErrRateLimitExceeded
-			}
-			for count >= rl.globalTokenLimit.Count {
-				timer := time.NewTimer(time.Second)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				}
-				count, err = rl.store.GetTokenCount(ctx, "global:tokens", globalTokWindow)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	// Step 5: Increment per-key request counter on success.
-	if reqLimit > 0 {
-		if _, err := rl.store.IncrementRequests(ctx, key, reqWindow); err != nil {
-			return nil, err
-		}
-	}
-
-	// Step 6: Increment global request counter (if configured).
-	if rl.globalRequestLimit != nil {
-		globalReqWindow := time.Duration(rl.globalRequestLimit.WindowSeconds) * time.Second
-		if _, err := rl.store.IncrementRequests(ctx, "global:requests", globalReqWindow); err != nil {
-			return nil, err
-		}
-	}
-
-	// Step 7: Acquire concurrency slot if configured.
-	if rl.maxConcurrent <= 0 {
-		return noopRelease, nil
-	}
-
-	rl.mu.Lock()
-	sem, ok := rl.semaphores[key]
-	if !ok {
-		sem = newConcurrencySem(rl.maxConcurrent)
-		rl.semaphores[key] = sem
-	}
-	rl.mu.Unlock()
-
-	if err := sem.Acquire(ctx, rl.overflowBehavior); err != nil {
-		return nil, err
-	}
-
-	var once sync.Once
-	return func() { once.Do(sem.Release) }, nil
+	return rs
 }
 
-// Record records token consumption for the given key after a successful provider call.
+// tokenCounters returns the store token counters that apply to key.
+func (rl *RateLimiter) tokenCounters(key string) []TokenCounter {
+	var cs []TokenCounter
+	if rl.tokenRateLimit != nil {
+		cs = append(cs, TokenCounter{Key: storeKey(key), Window: rl.tokenRateLimit.window()})
+	}
+	if rl.globalTokenLimit != nil {
+		cs = append(cs, TokenCounter{Key: storeGlobalKey, Window: rl.globalTokenLimit.window()})
+	}
+	return cs
+}
+
+// storeTokensAvailable reports whether recorded token usage is below every
+// applicable token limit. Errors are returned to the caller of Acquire.
+func (rl *RateLimiter) storeTokensAvailable(ctx context.Context, key string) (bool, error) {
+	if rl.tokenRateLimit != nil {
+		n, err := rl.store.GetTokenCount(ctx, storeKey(key), rl.tokenRateLimit.window())
+		if err != nil {
+			return false, err
+		}
+		if n >= rl.tokenRateLimit.Count {
+			return false, nil
+		}
+	}
+	if rl.globalTokenLimit != nil {
+		n, err := rl.store.GetTokenCount(ctx, storeGlobalKey, rl.globalTokenLimit.window())
+		if err != nil {
+			return false, err
+		}
+		if n >= rl.globalTokenLimit.Count {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// reserveWithStore admits one request through the store's atomic
+// all-or-nothing reservation, polling in BlockMode.
+func (rl *RateLimiter) reserveWithStore(ctx context.Context, key string) error {
+	reservations := rl.requestReservations(key)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ok, err := rl.storeTokensAvailable(ctx, key)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if len(reservations) == 0 {
+				return nil
+			}
+			ok, err = rl.store.ReserveRequests(ctx, reservations)
+			if err != nil {
+				return err
+			}
+			if ok {
+				return nil
+			}
+		}
+		if rl.overflowBehavior == FailFastMode {
+			return ErrRateLimitExceeded
+		}
+		if err := waitFor(ctx, storePollInterval); err != nil {
+			return err
+		}
+	}
+}
+
+// Record records actual token usage for key after a successful provider call.
 // Use an empty string for shared (non-keyed) rate limiting.
 //
-// When a global token limit is configured, Record updates both the per-key and
-// global token counters.
+// Usage is recorded on the per-key and global token counters together:
+// in memory under one critical section, with a store through one
+// all-or-nothing RecordTokens call. Store calls use a context derived from
+// ctx without its cancellation and bounded by a short timeout, so usage the
+// provider already consumed is still recorded when the caller goes away.
 //
-// Record does NOT release the concurrency slot — that is handled by the
-// ReleaseFunc returned from Acquire. This separation ensures the slot is freed
-// even when the operation fails before Record is called.
-//
-// When a RateLimitStore is configured (via WithStore), token recording is delegated
-// to the store. Any store errors are propagated to the caller.
-func (rl *RateLimiter) Record(key string, usage TokenUsage) error {
-	// When a store is configured, delegate token recording to it.
-	if rl.store != nil {
-		return rl.recordWithStore(key, usage)
-	}
-
-	// Step 1: Record token usage in the per-key bucket.
-	rl.bucket(key).record(usage)
-
-	// Step 2: Record token usage in the global bucket (if global token limit configured).
-	if rl.globalBucket != nil {
-		rl.globalBucket.record(usage)
-	}
-
-	return nil
-}
-
-// recordWithStore implements the Record logic using a RateLimitStore for token
-// counter operations. It increments both per-key and global token counters
-// via the store. Concurrency slot release is handled by the ReleaseFunc from
-// Acquire, not here.
-func (rl *RateLimiter) recordWithStore(key string, usage TokenUsage) error {
+// Record does NOT release the concurrency slot; that is the ReleaseFunc's job.
+func (rl *RateLimiter) Record(ctx context.Context, key string, usage TokenUsage) error {
 	tokens := usage.Total()
 	if tokens <= 0 {
 		return nil
 	}
-
-	// Determine per-key token window.
-	tokWindow := 60 * time.Second
-	if rl.tokenRateLimit != nil {
-		tokWindow = time.Duration(rl.tokenRateLimit.WindowSeconds) * time.Second
+	if rl.store == nil {
+		recordBuckets(rl.limitBuckets(key), tokens)
+		return nil
 	}
-
-	// Step 1: Increment per-key token counter via store.
-	ctx := context.Background()
-	if _, err := rl.store.IncrementTokens(ctx, key, tokWindow, tokens); err != nil {
-		return err
+	counters := rl.tokenCounters(key)
+	if len(counters) == 0 {
+		return nil
 	}
-
-	// Step 2: Increment global token counter (if configured).
-	if rl.globalTokenLimit != nil {
-		globalTokWindow := time.Duration(rl.globalTokenLimit.WindowSeconds) * time.Second
-		if _, err := rl.store.IncrementTokens(ctx, "global:tokens", globalTokWindow, tokens); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	accCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountingTimeout)
+	defer cancel()
+	return rl.store.RecordTokens(accCtx, counters, tokens)
 }
 
-// Purge removes the bucket for the given key, freeing its resources.
-// Call this when a conversation ends and no further calls are expected for that key.
-// Has no effect on shared (empty-key) usage.
+// Purge removes the bucket for key, freeing its resources, and its
+// concurrency semaphore when no call holds or waits for a slot. A semaphore
+// still in use is kept so MaxConcurrent stays enforced for in-flight calls;
+// the stale sweep removes it once idle. Call Purge when a conversation ends.
 func (rl *RateLimiter) Purge(key string) {
 	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	delete(rl.buckets, key)
-	rl.mu.Unlock()
+	if s, ok := rl.semaphores[key]; ok && s.refs == 0 {
+		delete(rl.semaphores, key)
+	}
 }
 
 // Len returns the number of active key buckets.
@@ -1047,59 +1021,46 @@ func (rl *RateLimiter) Len() int {
 	return len(rl.buckets)
 }
 
-// PreFlightCheck estimates token usage for the given request and checks whether
-// the estimated input tokens fit within the remaining TPM budget for key.
-// Returns ErrRateLimitExceeded if the estimate exceeds remaining capacity.
-// Returns nil (allows the call) if no TokenEstimator is configured, or if the
-// estimator returns an error (fail-open).
+// PreFlightCheck estimates the input tokens of req and rejects the call with
+// ErrRateLimitExceeded when the estimate exceeds the remaining per-key token
+// budget or the remaining global token budget. Both must have room when both
+// are configured.
+//
+// It fails open: it returns nil when no TokenEstimator is configured, when the
+// estimator errors, or when a store read errors.
 func (rl *RateLimiter) PreFlightCheck(ctx context.Context, key string, req ModelRequest) error {
-	if rl.tokenEstimator == nil {
+	if rl.tokenEstimator == nil || (rl.tokenRateLimit == nil && rl.globalTokenLimit == nil) {
 		return nil
 	}
-
 	estimate, err := rl.tokenEstimator.EstimateTokens(ctx, req)
 	if err != nil {
-		// Fail-open: allow the call when estimation fails.
 		return nil
 	}
 
-	// Determine the effective TPM limit and window.
-	tpmLimit := rl.tpmLimit
-	tokenWindow := 60 * time.Second
 	if rl.tokenRateLimit != nil {
-		tpmLimit = rl.tokenRateLimit.Count
-		tokenWindow = time.Duration(rl.tokenRateLimit.WindowSeconds) * time.Second
-	}
-
-	// No token limit configured — nothing to check.
-	if tpmLimit <= 0 {
-		return nil
-	}
-
-	// Get current token usage for this key.
-	var currentUsage int
-	if rl.store != nil {
-		currentUsage, err = rl.store.GetTokenCount(ctx, key, tokenWindow)
-		if err != nil {
-			// Fail-open on store errors.
-			return nil
+		used, ok := rl.usedTokens(ctx, storeKey(key), rl.tokenRateLimit, func() *rateBucket { return rl.bucket(key) })
+		if ok && estimate > rl.tokenRateLimit.Count-used {
+			return ErrRateLimitExceeded
 		}
-	} else {
-		b := rl.bucket(key)
-		b.mu.Lock()
-		switch b.windowStrategy {
-		case SlidingWindow:
-			currentUsage = b.slidingTPMCount()
-		case FixedWindow:
-			currentUsage = b.fixedTPMCountVal()
+	}
+	if rl.globalTokenLimit != nil {
+		used, ok := rl.usedTokens(ctx, storeGlobalKey, rl.globalTokenLimit, func() *rateBucket { return rl.globalBucket })
+		if ok && estimate > rl.globalTokenLimit.Count-used {
+			return ErrRateLimitExceeded
 		}
-		b.mu.Unlock()
 	}
-
-	remaining := tpmLimit - currentUsage
-	if estimate > remaining {
-		return ErrRateLimitExceeded
-	}
-
 	return nil
+}
+
+// usedTokens returns recorded token usage from the store (storeKey) or from
+// the in-memory bucket. ok is false when a store read fails (fail-open).
+func (rl *RateLimiter) usedTokens(ctx context.Context, storeKey string, limit *rateConfig, bucket func() *rateBucket) (int, bool) {
+	if rl.store != nil {
+		n, err := rl.store.GetTokenCount(ctx, storeKey, limit.window())
+		return n, err == nil
+	}
+	b := bucket()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tokenCountLocked(), true
 }

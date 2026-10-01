@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -223,10 +224,18 @@ func (r ResumeResponse) decisionFor(callID string) tool.Decision {
 	return r.decision
 }
 
-func newInterruptID() string {
+// newInterruptID returns 128 random bits as 32 lowercase hex characters.
+// A short read or RNG failure is returned rather than producing a
+// predictable (all-zero or partially filled) ID.
+func newInterruptID(r io.Reader) (string, error) {
+	if r == nil {
+		r = rand.Reader
+	}
 	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+	if _, err := io.ReadFull(r, b[:]); err != nil {
+		return "", fmt.Errorf("generate interrupt ID: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // humanInputPausedResult is the tool result recorded for the human-input call.

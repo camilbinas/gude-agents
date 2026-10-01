@@ -51,7 +51,7 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 
 			// Record prior usage to simulate consumed tokens.
 			if priorUsage > 0 {
-				rl.Record("test-key", TokenUsage{
+				rl.Record(context.Background(), "test-key", TokenUsage{
 					InputTokens:  priorUsage / 2,
 					OutputTokens: priorUsage - priorUsage/2,
 				})
@@ -120,7 +120,7 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 
 			// Record prior usage.
 			if priorUsage > 0 {
-				rl.Record("test-key", TokenUsage{
+				rl.Record(context.Background(), "test-key", TokenUsage{
 					InputTokens:  priorUsage / 2,
 					OutputTokens: priorUsage - priorUsage/2,
 				})
@@ -178,7 +178,7 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 
 			// Record prior usage.
 			if priorUsage > 0 {
-				rl.Record("test-key", TokenUsage{
+				rl.Record(context.Background(), "test-key", TokenUsage{
 					InputTokens:  priorUsage / 2,
 					OutputTokens: priorUsage - priorUsage/2,
 				})
@@ -232,7 +232,7 @@ func TestProperty_PreFlightBudgetCheck(t *testing.T) {
 
 			// Record prior usage.
 			if priorUsage > 0 {
-				rl.Record("test-key", TokenUsage{
+				rl.Record(context.Background(), "test-key", TokenUsage{
 					InputTokens:  priorUsage / 2,
 					OutputTokens: priorUsage - priorUsage/2,
 				})

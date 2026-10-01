@@ -25,7 +25,7 @@ func BenchmarkRateLimiter_Baseline(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -44,7 +44,7 @@ func BenchmarkRateLimiter_ConfigurableWindow(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -65,7 +65,7 @@ func BenchmarkRateLimiter_WithGlobalLimits(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -84,7 +84,7 @@ func BenchmarkRateLimiter_WithMaxConcurrent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -105,7 +105,7 @@ func BenchmarkRateLimiter_WithMemoryStore(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -127,7 +127,7 @@ func BenchmarkRateLimiter_FullStack(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -146,7 +146,7 @@ func BenchmarkRateLimiter_Baseline_Parallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			release, _ := rl.Acquire(ctx, "key")
-			_ = rl.Record("key", usage)
+			_ = rl.Record(context.Background(), "key", usage)
 			release()
 		}
 	})
@@ -170,7 +170,7 @@ func BenchmarkRateLimiter_FullStack_Parallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			release, _ := rl.Acquire(ctx, "key")
-			_ = rl.Record("key", usage)
+			_ = rl.Record(context.Background(), "key", usage)
 			release()
 		}
 	})
@@ -197,7 +197,7 @@ func BenchmarkRateLimiter_FullStack_MultiKey_Parallel(b *testing.B) {
 		for pb.Next() {
 			k := keys[i%len(keys)]
 			release, _ := rl.Acquire(ctx, k)
-			_ = rl.Record(k, usage)
+			_ = rl.Record(context.Background(), k, usage)
 			release()
 			i++
 		}
@@ -221,7 +221,7 @@ func BenchmarkRateLimiter_MemoryStore_Parallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			release, _ := rl.Acquire(ctx, "key")
-			_ = rl.Record("key", usage)
+			_ = rl.Record(context.Background(), "key", usage)
 			release()
 		}
 	})
@@ -240,7 +240,7 @@ func BenchmarkRateLimiter_SlidingWindow(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }
@@ -256,7 +256,7 @@ func BenchmarkRateLimiter_FixedWindow(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		release, _ := rl.Acquire(ctx, "key")
-		_ = rl.Record("key", usage)
+		_ = rl.Record(context.Background(), "key", usage)
 		release()
 	}
 }

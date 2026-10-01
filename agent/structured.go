@@ -98,6 +98,17 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, decode f
 			return Result{}, &GuardrailError{Direction: "output", Cause: err}
 		}
 	}
+	// Validate the final (guardrail-processed) JSON against the requested
+	// schema before decoding or persisting it. Provider-native structured
+	// output is not trusted: a successful structured invocation guarantees the
+	// returned JSON both conforms to schema and decodes into the target.
+	// Syntactically invalid JSON is a decode failure, not a schema violation.
+	if !json.Valid([]byte(rawText)) {
+		return Result{}, &StructuredOutputError{Reason: "deserialize", Cause: fmt.Errorf("invalid JSON")}
+	}
+	if err := ValidateToolInput(schema, json.RawMessage(rawText)); err != nil {
+		return Result{}, &StructuredOutputError{Reason: "schema_validation", Cause: err}
+	}
 	if err := decode([]byte(rawText)); err != nil {
 		return Result{}, &StructuredOutputError{Reason: "deserialize", Cause: err}
 	}

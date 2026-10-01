@@ -565,7 +565,14 @@ func (r *run) pendingInterrupt(outcomes []toolOutcome, calls []tool.Call) *Inter
 // the interrupt entirely.
 func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	a, c := r.a, r.c
-	in.ID = newInterruptID()
+	// Fail before any persistence: without an unpredictable ID the pause
+	// cannot be registered, so neither the conversation nor the interrupt
+	// is saved.
+	id, err := newInterruptID(a.random)
+	if err != nil {
+		return Result{}, err
+	}
+	in.ID = id
 	in.ConversationID = r.convID
 	in.Messages = append([]Message(nil), snapshot...)
 
@@ -798,7 +805,7 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req Mo
 		}
 		if err == nil {
 			if a.rateLimiter != nil {
-				recErr := a.rateLimiter.Record(convID, resp.Usage)
+				recErr := a.rateLimiter.Record(ctx, convID, resp.Usage)
 				release()
 				if recErr != nil {
 					return nil, recErr

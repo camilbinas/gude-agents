@@ -106,7 +106,7 @@ func (e *MaxIterationsError) Is(target error) bool {
 // StructuredOutputError is returned when structured output fails to produce
 // a valid typed response. Reason indicates what went wrong.
 type StructuredOutputError struct {
-	Reason string // "nil_agent", "no_tool_call", "wrong_tool", "deserialize"
+	Reason string // "nil_agent", "no_tool_call", "wrong_tool", "schema_validation", "deserialize"
 	Cause  error  // underlying error (nil for no_tool_call/wrong_tool)
 }
 

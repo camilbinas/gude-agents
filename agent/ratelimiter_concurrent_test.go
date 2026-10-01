@@ -90,7 +90,7 @@ func TestConcurrentRecord(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < recordsPerGoroutine; j++ {
-				rl.Record("", TokenUsage{
+				rl.Record(context.Background(), "", TokenUsage{
 					InputTokens:  5,
 					OutputTokens: 5,
 				})
@@ -153,7 +153,7 @@ func TestConcurrentAcquireAndRecord(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < opsPerGoroutine; j++ {
-					rl.Record("", TokenUsage{
+					rl.Record(context.Background(), "", TokenUsage{
 						InputTokens:  3,
 						OutputTokens: 7,
 					})
@@ -235,7 +235,7 @@ func TestSharedLimiterAcrossAgents(t *testing.T) {
 				totalAcquires.Add(1)
 
 				// Record (post-call) — simulating a successful provider response
-				rl.Record("", TokenUsage{
+				rl.Record(context.Background(), "", TokenUsage{
 					InputTokens:  40,
 					OutputTokens: 60,
 				})
@@ -348,7 +348,7 @@ func TestConcurrentRecord_FixedWindow(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < recordsPerGoroutine; j++ {
-				rl.Record("", TokenUsage{
+				rl.Record(context.Background(), "", TokenUsage{
 					InputTokens:  5,
 					OutputTokens: 5,
 				})

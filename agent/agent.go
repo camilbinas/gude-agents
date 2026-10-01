@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -48,6 +49,10 @@ type Agent struct {
 
 	interruptStore           InterruptStore
 	interruptStoreConfigured bool
+
+	// random is the entropy source for interrupt IDs. Nil means
+	// crypto/rand.Reader; tests substitute failing readers.
+	random io.Reader
 
 	backgroundRegistry *backgroundRegistry
 	bgNotify           func(conversationID, agentMessage string)
