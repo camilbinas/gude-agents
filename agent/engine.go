@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"reflect"
 	"sync/atomic"
 	"time"
 
@@ -136,11 +135,14 @@ func (a *Agent) stream(ctx *Context, spec invocationSpec) iter.Seq2[Event, error
 
 // run is the per-invocation engine state.
 type run struct {
-	a        *Agent
-	c        *Context // invocation context (carries tracing span of the invoke)
-	h        hooks
-	convID   string
-	revision uint64
+	a               *Agent
+	c               *Context // invocation context (carries tracing span of the invoke)
+	h               hooks
+	convID          string
+	revision        uint64
+	lastSequence    uint64
+	historyBoundary uint64
+	persistedCount  int // canonical messages present when this run loaded history
 }
 
 func (r *run) detailed() bool { return r.c.cfg.detailedEvents }
@@ -272,13 +274,23 @@ func (r *run) prepareTurn(input string) (messages []Message, ragStart int, err e
 	}
 
 	if r.hasConversation() {
-		loadC, cf := h.onConversationStart(c, ConversationRecord{Operation: "load", ConversationID: r.convID})
-		snapshot, lerr := a.conversation.Load(loadC, r.convID)
+		boundary := uint64(0)
+		if a.contextManager != nil {
+			boundary, err = a.contextManager.HistoryBoundary(c, r.convID)
+			if err != nil {
+				return nil, -1, fmt.Errorf("context history boundary: %w", err)
+			}
+		}
+		loadC, cf := h.onConversationStart(c, ConversationRecord{Operation: "load_after", ConversationID: r.convID})
+		snapshot, lerr := a.conversation.LoadAfter(loadC, r.convID, boundary)
 		cf.finish(lerr, len(snapshot.Messages), snapshot.Revision)
 		if lerr != nil {
 			return nil, -1, fmt.Errorf("conversation load: %w", lerr)
 		}
 		r.revision = snapshot.Revision
+		r.lastSequence = snapshot.LastSequence
+		r.historyBoundary = boundary
+		r.persistedCount = len(snapshot.Messages)
 		messages = snapshot.Messages
 	}
 
@@ -384,7 +396,13 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 			})
 		}
 
-		converseMessages := stripWidgets(messages)
+		toolSpecs, availableTools := a.filterTools(iterC)
+		converseMessages, err := r.modelMessages(iterC, messages, ragStart, systemPrompt, toolSpecs)
+		if err != nil {
+			endIteration(0, false, err)
+			return Result{}, err
+		}
+		converseMessages = stripWidgets(converseMessages)
 		if !a.normDisabled {
 			strategy := NormMerge
 			if a.normStrategy != nil {
@@ -392,7 +410,6 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 			}
 			converseMessages = NormalizeMessages(converseMessages, strategy)
 		}
-		toolSpecs, availableTools := a.filterTools(iterC)
 		// Providers such as Bedrock reject tool blocks without a tool config.
 		if len(toolSpecs) == 0 {
 			converseMessages = stripToolBlocks(converseMessages)
@@ -574,7 +591,10 @@ func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	}
 	in.ID = id
 	in.ConversationID = r.convID
-	in.Messages = append([]Message(nil), snapshot...)
+	if !r.hasConversation() {
+		// Stateless resume has no durable canonical source.
+		in.Messages = append([]Message(nil), snapshot...)
+	}
 
 	if err := c.Err(); err != nil {
 		return Result{}, err
@@ -582,6 +602,7 @@ func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	committed, persistErr := r.saveConversation(snapshot, c.rt.totalUsage())
 	if committed {
 		in.Revision = r.revision
+		in.LastSequence = r.lastSequence
 	}
 	if persistErr != nil && !committed {
 		return Result{}, persistErr
@@ -603,6 +624,7 @@ func (r *run) exposeInterrupt(in *Interrupt, err error) (Result, error) {
 // resumeTurn continues an interrupted invocation (response already validated).
 func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
+	var messages []Message
 	if r.hasConversation() {
 		loadC, cf := r.h.onConversationStart(c, ConversationRecord{Operation: "load", ConversationID: r.convID})
 		snapshot, err := a.conversation.Load(loadC, r.convID)
@@ -610,12 +632,19 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		if err != nil {
 			return Result{}, fmt.Errorf("resume conversation load: %w", err)
 		}
-		if snapshot.Revision != in.Revision || !reflect.DeepEqual(snapshot.Messages, in.Messages) {
+		// LastSequence is authoritative for append-capable stores. The zero
+		// fallback preserves resumability for legacy durable interrupt records
+		// and test stores that predate sequence metadata.
+		if snapshot.Revision != in.Revision || (in.LastSequence != 0 && snapshot.LastSequence != 0 && snapshot.LastSequence != in.LastSequence) {
 			return Result{}, fmt.Errorf("resume conversation %q advanced after interrupt: %w", r.convID, ErrConversationConflict)
 		}
 		r.revision = snapshot.Revision
+		r.lastSequence = snapshot.LastSequence
+		r.persistedCount = len(snapshot.Messages)
+		messages = append([]Message(nil), snapshot.Messages...)
+	} else {
+		messages = append([]Message(nil), in.Messages...)
 	}
-	messages := append([]Message(nil), in.Messages...)
 
 	cfg, err := r.inferenceConfig()
 	if err != nil {
@@ -731,24 +760,31 @@ func stripToolBlocks(msgs []Message) []Message {
 	return out
 }
 
-// saveConversation persists conversation history against the revision loaded by
-// this run. committed is true once Save has atomically committed and the run's
-// revision has advanced, even if a later synchronous Flush fails.
+// saveConversation appends only the canonical messages produced by this run.
+// The historical prefix loaded at invocation start is never sent back to the
+// store, and model-only RAG/normalization projections never enter the event
+// log. committed is true once Append commits even if a later Flush fails.
 func (r *run) saveConversation(messages []Message, cumulative TokenUsage) (committed bool, err error) {
 	a, c, h := r.a, r.c, &r.h
 	if !r.hasConversation() {
 		return false, nil
 	}
+	if r.persistedCount > len(messages) {
+		return false, fmt.Errorf("conversation append: canonical history regressed")
+	}
+	delta := messages[r.persistedCount:]
 	saveC := c.withContext(WithTokenUsage(c.Context, cumulative))
 	saveC, cf := h.onConversationStart(saveC, ConversationRecord{
-		Operation: "save", ConversationID: r.convID, Usage: cumulative, ExpectedRevision: r.revision,
+		Operation: "append", ConversationID: r.convID, Usage: cumulative, ExpectedRevision: r.revision,
 	})
-	revision, err := a.conversation.Save(saveC, r.convID, messages, r.revision)
-	cf.finish(err, len(messages), revision)
+	cursor, err := a.conversation.Append(saveC, r.convID, delta, r.revision)
+	cf.finish(err, len(delta), cursor.Revision)
 	if err != nil {
-		return false, fmt.Errorf("conversation save: %w", err)
+		return false, fmt.Errorf("conversation append: %w", err)
 	}
-	r.revision = revision
+	r.revision = cursor.Revision
+	r.lastSequence = cursor.LastSequence
+	r.persistedCount = len(messages)
 	if a.syncConversation {
 		if flusher, ok := a.conversation.(Flusher); ok {
 			if err := flusher.Flush(c); err != nil {
@@ -872,4 +908,36 @@ func (a *Agent) invokeRecord(convID, userMessage string, c *Context) InvokeRecor
 		ImageCount:      len(c.Images()),
 		DocumentCount:   len(c.Documents()),
 	}
+}
+
+// modelMessages builds a disposable provider projection. messages retains only
+// canonical recent history, transient RAG and the current durable delta; it is
+// never overwritten with a summary/window/filter projection.
+func (r *run) modelMessages(ctx context.Context, messages []Message, ragStart int, system string, tools []tool.Spec) ([]Message, error) {
+	if r.a.contextManager == nil {
+		return messages, nil
+	}
+	canonical := persisted(messages, ragStart)
+	if r.persistedCount > len(canonical) {
+		return nil, fmt.Errorf("context projection: canonical history regressed")
+	}
+	var transient []Message
+	if ragStart >= 0 && ragStart+2 <= len(messages) {
+		transient = append([]Message(nil), messages[ragStart:ragStart+2]...)
+	}
+	out, err := r.a.contextManager.Prepare(ctx, ContextManagerInput{
+		ConversationID: r.convID,
+		Boundary:       r.historyBoundary,
+		Revision:       r.revision,
+		LastSequence:   r.lastSequence,
+		Recent:         canonical[:r.persistedCount],
+		Current:        canonical[r.persistedCount:],
+		Transient:      transient,
+		System:         system,
+		Tools:          tools,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("context projection: %w", err)
+	}
+	return out.Messages, nil
 }

@@ -1,81 +1,65 @@
-# Conversation persistence
+# Conversation persistence and model context
 
-Conversation persistence uses revisioned compare-and-swap (CAS). Conversation IDs come only from `agent.Context.WithConversationID`.
+Conversation history is an append-only canonical event log. Model context is a disposable projection of that log; summaries, windows, RAG content and provider normalization are never written back as conversation messages.
 
 ```go
+type ConversationCursor struct {
+    Revision     uint64 // successful append operations
+    LastSequence uint64 // immutable canonical messages
+}
+
 type ConversationSnapshot struct {
-    Messages []agent.Message
-    Revision uint64
+    Messages     []agent.Message
+    Revision     uint64
+    LastSequence uint64
 }
 
 type ConversationStore interface {
-    Load(context.Context, string) (agent.ConversationSnapshot, error)
-    Save(context.Context, string, []agent.Message, uint64) (uint64, error)
-}
-
-type ConversationManager interface {
-    agent.ConversationStore
-    List(context.Context) ([]string, error)
-    Delete(context.Context, string) error
-}
-
-type Flusher interface {
-    Flush(context.Context) error
+    Load(ctx context.Context, conversationID string) (ConversationSnapshot, error)
+    LoadAfter(ctx context.Context, conversationID string, afterSequence uint64) (ConversationSnapshot, error)
+    Append(ctx context.Context, conversationID string, messages []agent.Message, expectedRevision uint64) (ConversationCursor, error)
 }
 ```
 
-A missing conversation loads as an empty snapshot at revision 0. `Save` succeeds only if `expectedRevision` equals the current revision and returns the new revision. Stale writes return an error matching `agent.ErrConversationConflict`; the agent never silently overwrites a winning concurrent turn.
+Sequences begin at 1, are contiguous, and are assigned by the store. `Revision` and `LastSequence` are deliberately different: appending three messages advances the revision once and the sequence three times. `Append` is atomic: a stale revision returns `agent.ErrConversationConflict` and writes no messages. An empty append is a checked no-op.
+
+`Load` returns the complete transcript for exports, audits, debugging and `agent.ForkConversation`. Runtime calls should use `LoadAfter` so a context strategy can avoid loading history already represented by a durable summary. A range read past the end returns no messages but still reports current revision and last sequence.
+
+## Derived context state
+
+`ContextStateStore` holds namespaced, versioned *derived* state:
+
+```go
+type ContextStateStore interface {
+    LoadContextState(ctx context.Context, conversationID, key string) (agent.ContextStateSnapshot, error)
+    SaveContextState(ctx context.Context, conversationID, key string, data json.RawMessage, expectedRevision uint64) (uint64, error)
+}
+```
+
+Its revisions are independent from conversation CAS. Saving summary state must not change canonical revision, sequence, messages, or `List()` activity ordering. `Delete` removes both canonical events and same-backend state; `ForkConversation` copies canonical events but not derived state.
 
 ## Configure an agent
 
 ```go
 store := conversation.NewInMemory()
-a, err := agent.New(prov, instructions,
-    agent.WithConversationStore(store),
+manager, _ := contextmanager.NewRollingSummary(
+    store,
+    contextmanager.ProviderSummarizer(provider, "Preserve facts and decisions."),
+    contextmanager.WithMaxInputTokens(100_000),
+    contextmanager.WithPreserveRecentTurns(10),
 )
-ctx := agent.NewContext(context.Background()).WithConversationID("thread-42")
-result, err := a.Invoke(ctx, "Remember that my timezone is UTC+1")
+a, _ := agent.New(provider, instructions,
+    agent.WithConversationStore(store),
+    agent.WithContextManager(manager),
+)
 ```
 
-When a ConversationStore is configured, every invocation requires a non-empty ConversationID. Forgetting it returns an error matching `agent.ErrConversationIDRequired` before any work runs: no guardrails, conversation load, retrieval, provider call, tool execution, background dispatch, or save. This applies equally to `Invoke`, `Stream`, `TextStream`, and `structured.Invoke`.
+`ContextManager.HistoryBoundary` runs before `LoadAfter`; a rolling summary with `CoveredThrough: 850` therefore causes a normal request to read only messages after 850. The manager receives recent canonical messages, current unsaved messages and transient RAG separately. Its output is provider-only. The agent appends only genuine new user/assistant/tool messages at commit time.
 
-```go
-_, err := a.Invoke(agent.Background(), "hello")
-errors.Is(err, agent.ErrConversationIDRequired) // true
-```
+`contextmanager.Window`, `contextmanager.Filter`, and `contextmanager.RollingSummary` replace the old persistence wrappers. `RollingSummary` retains a verbatim recent tail and does not summarize unresolved tool calls or unsaved current input. Its synthetic summary marker is never appended to `ConversationStore`.
 
-There is no per-invocation stateless opt-out. Stateless Agents should be constructed without a ConversationStore; on such an Agent a conversation ID is accepted but has no persistence effect.
+## Backends and migration
 
-Resume is bound to the conversation ID captured by its interrupt; the resume Context's ID is never substituted. Resuming an interrupt without a conversation ID through an Agent with a store fails with `agent.ErrConversationIDRequired` and leaves the interrupt unclaimed.
+Memory, PostgreSQL, SQLite, Redis and DynamoDB expose the same append/range/CAS semantics with backend-native storage. PostgreSQL and SQLite migrate legacy `messages` snapshots once into ordered message rows and no longer read/rewrite the blob at runtime. Redis stores metadata plus a same-slot stream. DynamoDB requires a HASH+RANGE layout with `META` and `MSG#...` items; append batches above its 24-message transactional limit fail explicitly rather than partially writing.
 
-`WithSyncConversation` calls `Flush` after each successful save when supported. `Agent.Shutdown` also flushes after waiting for background work.
-
-## Implement a store
-
-```go
-snapshot, err := store.Load(ctx, id)
-if err != nil { return err }
-nextRevision, err := store.Save(ctx, id, updated, snapshot.Revision)
-if errors.Is(err, agent.ErrConversationConflict) {
-    // reload, reconcile, or ask the caller to retry
-}
-_ = nextRevision
-```
-
-Copy message slices at the storage boundary. Make revision checks and writes atomic. A `ConversationManager` is optional and enables administrative list/delete operations. `agent.ForkConversation` copies a snapshot to a new ID at revision 0.
-
-## Strategies
-
-The `conversation` package provides window, token, filter, summary, and token-summary wrappers. Wrappers preserve the inner store's revision and manager capabilities. Background summarizers reload and retry on conflicts rather than replacing newer turns. Flush asynchronous strategies before shutdown.
-
-## Backends and schema migration
-
-Available implementations include memory, Redis, PostgreSQL, SQLite, and DynamoDB. Production backends must persist both serialized messages and a monotonic revision:
-
-- **Redis**: update messages and revision in one atomic script/transaction.
-- **PostgreSQL/SQLite**: keep a non-null revision column and use conditional insert/update.
-- **DynamoDB**: use a condition expression on the revision attribute.
-
-When upgrading an existing schema, add/initialize revision as `0` for legacy rows and deploy the conditional write path before allowing concurrent writers. Do not synthesize revision from timestamps or message counts. Back up persistent data, test the migration against a copy, and verify a second save with the same expected revision fails.
-
-Backend constructors and options live in `agent/conversation/<backend>`. Keep credentials in the backend client's standard configuration rather than conversation IDs or context KV.
+For Redis and DynamoDB, deploy the new layout with a migration plan before switching traffic. Existing snapshot keys/items are not silently destroyed or dual-read forever.

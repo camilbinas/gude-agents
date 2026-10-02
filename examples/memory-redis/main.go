@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/contextmanager"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/memory"
@@ -85,13 +86,18 @@ func main() {
 		memoryredis.WithToolDescription("Remove a specific memory entry when the user asks to forget something."),
 	)
 
-	store := conversation.NewWindow(conversation.NewInMemory(), 20)
+	store := conversation.NewInMemory()
+	manager, err := contextmanager.NewWindow(store, 20)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
 		"You are a personal assistant that remembers everything the user tells you about themselves. Use save_preference to store ANY personal information: name, preferences, settings, facts about the user, decisions, or context they share. Use update_preference to correct or change an existing preference by its ID when the user updates something. Use get_preferences to retrieve relevant information when answering questions or before making suggestions. ALWAYS save when the user shares personal info (name, role, preferences, tools they use, etc). ALWAYS recall before answering questions about the user.",
 		agent.WithTools(rememberTool, updateTool, recallTool, forgetTool, tavily.New(os.Getenv("TAVILY_API_KEY")), webfetch.New()),
 		agent.WithConversationStore(store),
+		agent.WithContextManager(manager),
 		auto.WithLogging(),
 	)
 	if err != nil {

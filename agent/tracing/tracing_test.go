@@ -1088,17 +1088,17 @@ func TestMemorySpan_LoadAndSave(t *testing.T) {
 
 	spans := exp.GetSpans()
 
-	loadSpan := findSpan(spans, "agent.conversation.load")
+	loadSpan := findSpan(spans, "agent.conversation.load_after")
 	if loadSpan == nil {
-		t.Fatal("expected agent.conversation.load span")
+		t.Fatal("expected agent.conversation.load_after span")
 	}
 	if v := getAttr(*loadSpan, AttrMemoryConversationID); v.AsString() != "conv-42" {
 		t.Errorf("expected memory.conversation_id=%q, got %q", "conv-42", v.AsString())
 	}
 
-	saveSpan := findSpan(spans, "agent.conversation.save")
+	saveSpan := findSpan(spans, "agent.conversation.append")
 	if saveSpan == nil {
-		t.Fatal("expected agent.conversation.save span")
+		t.Fatal("expected agent.conversation.append span")
 	}
 	if v := getAttr(*saveSpan, AttrMemoryConversationID); v.AsString() != "conv-42" {
 		t.Errorf("expected memory.conversation_id=%q, got %q", "conv-42", v.AsString())
@@ -1125,9 +1125,9 @@ func TestMemorySpan_LoadErrorStatus(t *testing.T) {
 	_, _ = a.Invoke(agent.Background().WithConversationID("conv-1"), "hi")
 
 	spans := exp.GetSpans()
-	loadSpan := findSpan(spans, "agent.conversation.load")
+	loadSpan := findSpan(spans, "agent.conversation.load_after")
 	if loadSpan == nil {
-		t.Fatal("expected agent.conversation.load span")
+		t.Fatal("expected agent.conversation.load_after span")
 	}
 
 	if loadSpan.Status.Code != codes.Error {
@@ -1158,9 +1158,9 @@ func TestMemorySpan_SaveErrorStatus(t *testing.T) {
 	}
 
 	spans := exp.GetSpans()
-	saveSpan := findSpan(spans, "agent.conversation.save")
+	saveSpan := findSpan(spans, "agent.conversation.append")
 	if saveSpan == nil {
-		t.Fatal("expected agent.conversation.save span")
+		t.Fatal("expected agent.conversation.append span")
 	}
 
 	if saveSpan.Status.Code != codes.Error {
@@ -1646,4 +1646,31 @@ func TestInvokeSpan_PerInvocationOverride_ReflectedInSpan(t *testing.T) {
 	if v := getAttr(*invokeSpan, AttrGenAITemperature); v.AsFloat64() != 0.95 {
 		t.Errorf("expected temperature=0.95 (per-invocation override), got %v", v.AsFloat64())
 	}
+}
+
+func (m *mockMemory) LoadAfter(ctx context.Context, id string, after uint64) (agent.ConversationSnapshot, error) {
+	snapshot, err := m.Load(ctx, id)
+	if err != nil {
+		return snapshot, err
+	}
+	if after > uint64(len(snapshot.Messages)) {
+		after = uint64(len(snapshot.Messages))
+	}
+	snapshot.Messages = snapshot.Messages[after:]
+	snapshot.LastSequence = uint64(len(m.data[id]))
+	return snapshot, nil
+}
+func (m *mockMemory) Append(ctx context.Context, id string, messages []agent.Message, expected uint64) (agent.ConversationCursor, error) {
+	snapshot, err := m.Load(ctx, id)
+	if err != nil {
+		return agent.ConversationCursor{}, err
+	}
+	if snapshot.Revision != expected {
+		return agent.ConversationCursor{}, agent.ErrConversationConflict
+	}
+	next, err := m.Save(ctx, id, append(snapshot.Messages, messages...), expected)
+	if err != nil {
+		return agent.ConversationCursor{}, err
+	}
+	return agent.ConversationCursor{Revision: next, LastSequence: uint64(len(snapshot.Messages) + len(messages))}, nil
 }

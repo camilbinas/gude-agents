@@ -86,6 +86,20 @@ func WithConversationStore(c ConversationStore) Option {
 	}
 }
 
+// WithContextManager configures a model-context projection. It is applied after
+// canonical range loading and before every provider call; it never changes the
+// append-only conversation log. A ContextManager can use durable
+// ContextStateStore state to select a LoadAfter boundary.
+func WithContextManager(manager ContextManager) Option {
+	return func(a *Agent) error {
+		if manager == nil {
+			return fmt.Errorf("context manager must not be nil")
+		}
+		a.contextManager = manager
+		return nil
+	}
+}
+
 // WithMiddleware adds middleware(s) that wrap tool execution.
 func WithMiddleware(mws ...Middleware) Option {
 	return func(a *Agent) error {
@@ -162,8 +176,8 @@ func WithContextFormatter(f rag.ContextFormatter) Option {
 	}
 }
 
-// WithSyncConversation makes the agent call Flush(ctx) after each Save,
-// blocking until asynchronous persistence work is complete. It only has an
+// WithSyncConversation makes the agent call Flush(ctx) after each successful
+// Append, blocking until asynchronous persistence work is complete. It only has an
 // effect when the store implements Flusher.
 func WithSyncConversation() Option {
 	return func(a *Agent) error {

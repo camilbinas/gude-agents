@@ -2,52 +2,25 @@ package dynamodb
 
 import "time"
 
-// Option configures a DynamoDBMemory instance.
 type Option func(*config)
-
-// config holds configuration for DynamoDBMemory construction.
 type config struct {
 	keyPrefix    string
 	ttl          time.Duration
 	ttlAttribute string
 	pkAttribute  string
+	skAttribute  string
 	endpoint     string
 }
 
-// WithKeyPrefix sets the key prefix for all DynamoDB partition keys. Default: "gude:"
-func WithKeyPrefix(prefix string) Option {
-	return func(c *config) {
-		c.keyPrefix = prefix
-	}
-}
+func WithKeyPrefix(prefix string) Option  { return func(c *config) { c.keyPrefix = prefix } }
+func WithTTL(d time.Duration) Option      { return func(c *config) { c.ttl = d } }
+func WithTTLAttribute(attr string) Option { return func(c *config) { c.ttlAttribute = attr } }
 
-// WithTTL sets the TTL for stored conversations. When set, a numeric Unix-epoch
-// TTL attribute is written to each DynamoDB item.
-func WithTTL(d time.Duration) Option {
-	return func(c *config) {
-		c.ttl = d
-	}
-}
+// WithPartitionKey sets the HASH key attribute. The append-only layout requires
+// a sort key as well; the default partition key is conversation_id.
+func WithPartitionKey(attr string) Option { return func(c *config) { c.pkAttribute = attr } }
 
-// WithTTLAttribute sets the name of the TTL attribute. Default: "ttl"
-func WithTTLAttribute(attr string) Option {
-	return func(c *config) {
-		c.ttlAttribute = attr
-	}
-}
-
-// WithPartitionKey sets the name of the partition key attribute. Default: "conversation_id"
-func WithPartitionKey(attr string) Option {
-	return func(c *config) {
-		c.pkAttribute = attr
-	}
-}
-
-// WithEndpoint sets a custom endpoint URL for DynamoDB-compatible services
-// (e.g. DynamoDB Local at http://localhost:8000). Uses the SDK v2 BaseEndpoint
-// option on the DynamoDB client.
-func WithEndpoint(url string) Option {
-	return func(c *config) {
-		c.endpoint = url
-	}
-}
+// WithSortKey sets the RANGE key attribute. New tables must use a string sort
+// key; default "sequence" stores META and zero-padded MSG# entries.
+func WithSortKey(attr string) Option { return func(c *config) { c.skAttribute = attr } }
+func WithEndpoint(url string) Option { return func(c *config) { c.endpoint = url } }

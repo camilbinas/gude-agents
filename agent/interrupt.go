@@ -39,16 +39,18 @@ type Interrupt struct {
 	// an Agent without a ConversationStore; resuming such an interrupt through
 	// an Agent with a store fails with ErrConversationIDRequired.
 	ConversationID string `json:"conversation_id,omitempty"`
-	// Revision is the committed revision of Messages for a persisted
-	// conversation. It is zero for interrupts without a conversation store.
+	// Revision is the committed append revision at the pause.
 	Revision uint64 `json:"revision"`
+	// LastSequence is the highest immutable canonical event at the pause.
+	// Resume compares it with Revision; neither is provider-facing content.
+	LastSequence uint64 `json:"last_sequence"`
 	// Approval lists the pending calls (Type == InterruptApproval).
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`
 	// Input describes the human ask (Type == InterruptHumanInput).
 	Input *InputInterrupt `json:"input,omitempty"`
-	// Messages is the resumable conversation snapshot at the pause. It is
-	// exported for durability (see conversation.MarshalInterrupt) and omitted
-	// from the event JSON encoding.
+	// Messages is retained only for stateless interrupts, which have no
+	// ConversationStore from which Resume can reload canonical history. A
+	// persisted interrupt leaves it empty and stores cursor metadata instead.
 	Messages []Message `json:"-"`
 }
 

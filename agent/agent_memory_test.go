@@ -246,7 +246,7 @@ func testSaveLatest(ctx context.Context, store ConversationStore, id string, mes
 	if err != nil {
 		return err
 	}
-	_, err = store.Save(ctx, id, messages, snapshot.Revision)
+	_, err = store.Append(ctx, id, messages, snapshot.Revision)
 	return err
 }
 

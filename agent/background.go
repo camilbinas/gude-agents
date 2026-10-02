@@ -248,22 +248,15 @@ func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
 			return Result{}, fmt.Errorf("re-entry load: %w", err)
 		}
 		r.revision = snapshot.Revision
+		r.lastSequence = snapshot.LastSequence
+		r.persistedCount = len(snapshot.Messages)
 		// Append the synthesized completion and persist it before re-entry.
 		history := append(snapshot.Messages, completion.toMessage(d.toolUseID))
 		if _, err := r.saveConversation(history, TokenUsage{}); err != nil {
 			return Result{}, fmt.Errorf("re-entry pre-save: %w", err)
 		}
-		if a.syncConversation {
-			// A synchronous strategy may have committed a summarized snapshot
-			// during Flush. Reload both its revision and messages before the
-			// re-entry save so the next CAS neither conflicts with nor undoes it.
-			latest, err := a.conversation.Load(r.c, r.convID)
-			if err != nil {
-				return Result{}, fmt.Errorf("re-entry post-flush load: %w", err)
-			}
-			r.revision = latest.Revision
-			history = latest.Messages
-		}
+		// Context-state refreshes do not change canonical revision or history, so
+		// no post-flush reload is necessary before the re-entry provider call.
 		cfg, err := r.inferenceConfig()
 		if err != nil {
 			return Result{}, err

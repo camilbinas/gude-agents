@@ -124,7 +124,7 @@ func main() {
 			),
 		),
 		agent.WithConversationStore(
-			conversation.NewWindow(conversation.NewInMemory(), 20),
+			conversation.NewInMemory(),
 		),
 	)
 	if err != nil {

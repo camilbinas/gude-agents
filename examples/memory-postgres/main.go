@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/contextmanager"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/memory"
@@ -111,13 +112,18 @@ func main() {
 		postgres.WithToolDescription("Remove a specific event from memory by its ID."),
 	)
 
-	store := conversation.NewWindow(conversation.NewInMemory(), 20)
+	store := conversation.NewInMemory()
+	manager, err := contextmanager.NewWindow(store, 20)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
 		"You are a monitoring assistant that tracks system events. Use remember_event to store incidents, recoveries, and deployments. Use update_event to correct or enrich an existing event by its ID. Use recall_events to retrieve relevant past events when asked. Always recall before answering questions about past events.",
 		agent.WithTools(rememberTool, updateTool, recallTool, forgetTool),
 		agent.WithConversationStore(store),
+		agent.WithContextManager(manager),
 		auto.WithLogging(),
 	)
 	if err != nil {

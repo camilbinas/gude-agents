@@ -399,3 +399,33 @@ func TestInvokeReturnsConversationConflictWithoutOverwrite(t *testing.T) {
 		t.Fatalf("winner overwritten: %+v", snapshot)
 	}
 }
+
+func (c *conversation) LoadAfter(ctx context.Context, _ string, after uint64) (agent.ConversationSnapshot, error) {
+	snapshot, err := c.Load(ctx, "")
+	if after > uint64(len(snapshot.Messages)) {
+		after = uint64(len(snapshot.Messages))
+	}
+	snapshot.Messages = snapshot.Messages[after:]
+	snapshot.LastSequence = uint64(len(c.messages))
+	return snapshot, err
+}
+func (c *conversation) Append(ctx context.Context, id string, messages []agent.Message, expectedRevision uint64) (agent.ConversationCursor, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conflictMessages != nil {
+		c.messages = append([]agent.Message(nil), c.conflictMessages...)
+		c.conflictMessages = nil
+		c.revision++
+		return agent.ConversationCursor{}, agent.ErrConversationConflict
+	}
+	if expectedRevision != c.revision {
+		return agent.ConversationCursor{}, agent.ErrConversationConflict
+	}
+	if len(messages) == 0 {
+		return agent.ConversationCursor{Revision: c.revision, LastSequence: uint64(len(c.messages))}, nil
+	}
+	c.messages = append(c.messages, messages...)
+	c.revision++
+	c.saves++
+	return agent.ConversationCursor{Revision: c.revision, LastSequence: uint64(len(c.messages))}, nil
+}

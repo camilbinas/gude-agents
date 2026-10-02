@@ -15,6 +15,7 @@ import (
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/contextmanager"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/memory"
@@ -38,7 +39,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	store := conversation.NewWindow(conversation.NewInMemory(), 40)
+	store := conversation.NewInMemory()
+	manager, err := contextmanager.NewWindow(store, 40)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
@@ -50,6 +55,7 @@ func main() {
 		),
 		auto.WithLogging(),
 		agent.WithConversationStore(store),
+		agent.WithContextManager(manager),
 	)
 	if err != nil {
 		log.Fatal(err)

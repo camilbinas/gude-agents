@@ -5,8 +5,9 @@ type Option func(*pgConfig)
 
 type pgConfig struct {
 	tableName    string
+	messageTable string
 	colID        string
-	colMessages  string
+	colMessages  string // legacy snapshot column, migration-only
 	colRevision  string
 	colUpdatedAt string
 }
@@ -14,6 +15,7 @@ type pgConfig struct {
 func defaultConfig() *pgConfig {
 	return &pgConfig{
 		tableName:    "conversations",
+		messageTable: "conversation_messages",
 		colID:        "conversation_id",
 		colMessages:  "messages",
 		colRevision:  "revision",
@@ -26,6 +28,7 @@ func WithTableName(name string) Option {
 	return func(c *pgConfig) {
 		if name != "" {
 			c.tableName = name
+			c.messageTable = name + "_messages"
 		}
 	}
 }

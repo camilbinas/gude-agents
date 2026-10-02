@@ -25,6 +25,7 @@ type Agent struct {
 	tokenBudget     int
 
 	conversation     ConversationStore
+	contextManager   ContextManager
 	syncConversation bool
 	normStrategy     *NormStrategy
 	normDisabled     bool

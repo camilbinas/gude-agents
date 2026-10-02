@@ -48,14 +48,19 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, decode f
 	}
 
 	system := a.instructionsFor(c)
+	structuredSpec := tool.Spec{
+		Name:        structuredOutputToolName,
+		Description: "Respond with structured JSON output conforming to the schema.",
+		InputSchema: schema,
+	}
+	modelMessages, err := r.modelMessages(c, messages, ragStart, system, []tool.Spec{structuredSpec})
+	if err != nil {
+		return Result{}, fmt.Errorf("structured output: %w", err)
+	}
 	modelReq := ModelRequest{
-		Messages: messages,
-		System:   system,
-		Tools: []tool.Spec{{
-			Name:        structuredOutputToolName,
-			Description: "Respond with structured JSON output conforming to the schema.",
-			InputSchema: schema,
-		}},
+		Messages:        modelMessages,
+		System:          system,
+		Tools:           []tool.Spec{structuredSpec},
 		ToolChoice:      &tool.Choice{Mode: tool.ChoiceTool, Name: structuredOutputToolName},
 		InferenceConfig: cfg,
 		CachingEnabled:  a.cachingEnabled,
