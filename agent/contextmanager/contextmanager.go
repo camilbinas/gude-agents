@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
 )
@@ -319,19 +320,83 @@ func hasUnresolved(messages []agent.Message) bool {
 	return len(pending) > 0
 }
 
+// DefaultSummaryPrompt is the batteries-included system prompt used by
+// DefaultProviderSummarizer.
+const DefaultSummaryPrompt = "Summarize the following conversation into a single concise paragraph. " +
+	"Preserve all key facts, names, and decisions."
+
+// DefaultProviderSummarizer returns a ProviderSummarizer with
+// DefaultSummaryPrompt, so callers don't have to supply a prompt.
+func DefaultProviderSummarizer(provider agent.Provider) Summarizer {
+	return ProviderSummarizer(provider, DefaultSummaryPrompt)
+}
+
+// renderBlock renders one content block as a single text line for the
+// summarizer input. Tool calls and tool results are included so the summary
+// of a tool-using agent reflects what actually happened; image and document
+// blocks are omitted (media summarization is out of scope here). It returns
+// "" for blocks that contribute nothing.
+func renderBlock(b agent.ContentBlock) string {
+	switch x := b.(type) {
+	case agent.TextBlock:
+		return x.Text
+	case agent.ToolUseBlock:
+		input := string(x.Input)
+		if input == "" {
+			input = "{}"
+		}
+		return fmt.Sprintf("[called tool %q with %s]", x.Name, input)
+	case agent.ToolResultBlock:
+		if x.IsError {
+			return fmt.Sprintf("[tool error: %s]", x.Content)
+		}
+		return fmt.Sprintf("[tool result: %s]", x.Content)
+	default:
+		return ""
+	}
+}
+
 // ProviderSummarizer adapts an agent.Provider into a RollingSummary
 // Summarizer. It keeps the summary prompt/model call separate from canonical
 // conversation persistence.
+//
+// The covered messages (and any existing summary) are rendered into a single
+// user message rather than replayed as a live transcript. This keeps the
+// request provider-portable: the model request always ends with a user
+// message, which providers such as Amazon Bedrock, Anthropic, and Gemini
+// require (they reject a conversation ending in an assistant turn, treating it
+// as an unsupported assistant prefill). It also means the summarizer never
+// feeds the model orphaned tool_use/tool_result blocks from the covered
+// window.
 func ProviderSummarizer(provider agent.Provider, system string) Summarizer {
 	return func(ctx context.Context, existing string, messages []agent.Message) (string, error) {
 		if provider == nil {
 			return "", errors.New("contextmanager: summarizer provider is required")
 		}
-		input := make([]agent.Message, 0, len(messages)+1)
+
+		var sb strings.Builder
 		if existing != "" {
-			input = append(input, summaryMessage(existing))
+			sb.WriteString("Summary so far:\n")
+			sb.WriteString(existing)
+			sb.WriteString("\n\nNew messages to fold into the summary:\n")
 		}
-		input = append(input, messages...)
+		for _, m := range messages {
+			for _, b := range m.Content {
+				line := renderBlock(b)
+				if line == "" {
+					continue
+				}
+				sb.WriteString(string(m.Role))
+				sb.WriteString(": ")
+				sb.WriteString(line)
+				sb.WriteString("\n")
+			}
+		}
+
+		input := []agent.Message{{
+			Role:    agent.RoleUser,
+			Content: []agent.ContentBlock{agent.TextBlock{Text: sb.String()}},
+		}}
 		response, err := provider.Stream(ctx, agent.ModelRequest{System: system, Messages: input}, nil)
 		if err != nil {
 			return "", fmt.Errorf("contextmanager: provider summary: %w", err)

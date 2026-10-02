@@ -87,3 +87,94 @@ func TestWindowUsesTailAndKeepsToolPairs(t *testing.T) {
 		t.Fatalf("window orphaned tool result: %#v", tail.Messages)
 	}
 }
+
+// captureProvider records the last ModelRequest it received and returns a
+// fixed summary. It implements agent.Provider.
+type captureProvider struct {
+	last agent.ModelRequest
+}
+
+func (p *captureProvider) Name() string { return "capture" }
+
+func (p *captureProvider) Stream(_ context.Context, req agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	p.last = req
+	return &agent.ModelResponse{Text: "SUMMARY"}, nil
+}
+
+// TestProviderSummarizerIncludesToolBlocksAndEndsWithUser verifies that the
+// summarizer renders tool-use and tool-result content into its input and that
+// the request is a single user message (provider-portable: never ends with an
+// assistant turn, even when the covered window does).
+func TestProviderSummarizerIncludesToolBlocksAndEndsWithUser(t *testing.T) {
+	p := &captureProvider{}
+	summarize := ProviderSummarizer(p, "sys-prompt")
+
+	covered := []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "what's the weather in Berlin?"}}},
+		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{
+			agent.ToolUseBlock{ToolUseID: "t1", Name: "get_weather", Input: []byte(`{"city":"Berlin"}`)},
+		}},
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{
+			agent.ToolResultBlock{ToolUseID: "t1", Content: "22C sunny"},
+		}},
+		// Covered window deliberately ends on an assistant turn.
+		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: "It's 22C and sunny."}}},
+	}
+
+	out, err := summarize(context.Background(), "", covered)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if out != "SUMMARY" {
+		t.Fatalf("summary text = %q, want SUMMARY", out)
+	}
+
+	req := p.last
+	if req.System != "sys-prompt" {
+		t.Errorf("system = %q, want sys-prompt", req.System)
+	}
+	// Provider-portability guard: exactly one message, and it must be a user turn.
+	if len(req.Messages) != 1 {
+		t.Fatalf("message count = %d, want 1 (flattened)", len(req.Messages))
+	}
+	if req.Messages[0].Role != agent.RoleUser {
+		t.Fatalf("final message role = %q, want user", req.Messages[0].Role)
+	}
+	tb, ok := req.Messages[0].Content[0].(agent.TextBlock)
+	if !ok {
+		t.Fatalf("flattened content is not a TextBlock: %#v", req.Messages[0].Content[0])
+	}
+	text := tb.Text
+	for _, want := range []string{
+		"what's the weather in Berlin?",
+		`get_weather`,
+		`"city":"Berlin"`,
+		"tool result: 22C sunny",
+		"It's 22C and sunny.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("flattened summarizer input missing %q\n--- got ---\n%s", want, text)
+		}
+	}
+}
+
+// TestProviderSummarizerRendersToolError verifies tool errors are rendered.
+func TestProviderSummarizerRendersToolError(t *testing.T) {
+	p := &captureProvider{}
+	summarize := ProviderSummarizer(p, "sys")
+	_, err := summarize(context.Background(), "prior summary", []agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{
+			agent.ToolResultBlock{ToolUseID: "t1", Content: "boom", IsError: true},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	text := p.last.Messages[0].Content[0].(agent.TextBlock).Text
+	if !strings.Contains(text, "tool error: boom") {
+		t.Errorf("missing rendered tool error\n--- got ---\n%s", text)
+	}
+	if !strings.Contains(text, "Summary so far:\nprior summary") {
+		t.Errorf("missing existing-summary preamble\n--- got ---\n%s", text)
+	}
+}
