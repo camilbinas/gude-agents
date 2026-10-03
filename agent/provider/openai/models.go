@@ -1,6 +1,9 @@
 package openai
 
-import rag "github.com/camilbinas/gude-agents/agent/rag/openai"
+import (
+	"github.com/camilbinas/gude-agents/agent"
+	rag "github.com/camilbinas/gude-agents/agent/rag/openai"
+)
 
 // GPT models.
 func GPT4o(opts ...Option) (*OpenAIProvider, error)      { return New("gpt-4o", opts...) }
@@ -17,8 +20,20 @@ func GPT5_4Mini(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.4-m
 func GPT5_4Nano(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.4-nano", opts...) }
 func GPT5_5(opts ...Option) (*OpenAIProvider, error)     { return New("gpt-5.5", opts...) }
 
-func GPT5_6(opts ...Option) (*OpenAIProvider, error)      { return New("gpt-5.6", opts...) }
-func GPT5_6Sol(opts ...Option) (*OpenAIProvider, error)   { return New("gpt-5.6-sol", opts...) }
+func GPT5_6(opts ...Option) (*OpenAIProvider, error) {
+	return New("gpt-5.6", append([]Option{WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_050_000,
+		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+	})}, opts...)...)
+}
+func GPT5_6Sol(opts ...Option) (*OpenAIProvider, error) {
+	return New("gpt-5.6-sol", append([]Option{WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_050_000,
+		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+	})}, opts...)...)
+}
 func GPT5_6Terra(opts ...Option) (*OpenAIProvider, error) { return New("gpt-5.6-terra", opts...) }
 func GPT5_6Luna(opts ...Option) (*OpenAIProvider, error)  { return New("gpt-5.6-luna", opts...) }
 

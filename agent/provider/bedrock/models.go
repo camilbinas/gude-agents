@@ -1,6 +1,7 @@
 package bedrock
 
 import (
+	"github.com/camilbinas/gude-agents/agent"
 	rag "github.com/camilbinas/gude-agents/agent/rag/bedrock"
 )
 
@@ -12,7 +13,12 @@ func GlobalClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-sonnet-4-5-20250929-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func GlobalClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
-	return New("global.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("global.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     64_000,
+		ToolUse:             agent.Supported,
+		ToolChoice:          agent.ToolChoiceCapabilities{Specific: agent.Supported},
+	})}, opts...)...)
 }
 func GlobalClaudeSonnet5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-sonnet-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
@@ -36,13 +42,25 @@ func GlobalClaudeFable5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-fable-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func GlobalClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
-	return New("global.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("global.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     128_000,
+	})}, opts...)...)
 }
 
 // Claude Sonnet 5.5 is Global-only on Bedrock — no us./eu. inference profile
 // exists for this model as of this writing.
 func GlobalClaudeSonnet5_5(opts ...Option) (*BedrockProvider, error) {
-	return New("global.anthropic.claude-sonnet-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("global.anthropic.claude-sonnet-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
+	})}, opts...)...)
 }
 
 // Amazon Nova models (Global cross-region inference).
@@ -58,7 +76,12 @@ func US_ClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-sonnet-4-5-20250929-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func US_ClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
-	return New("us.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("us.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     64_000,
+		ToolUse:             agent.Supported,
+		ToolChoice:          agent.ToolChoiceCapabilities{Specific: agent.Supported},
+	})}, opts...)...)
 }
 func US_ClaudeSonnet5(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-sonnet-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
@@ -82,7 +105,10 @@ func US_ClaudeFable5(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-fable-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func US_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
-	return New("us.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("us.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     128_000,
+	})}, opts...)...)
 }
 
 // Claude Sonnet 5.5 has no US geo inference profile on Bedrock — only Global.
@@ -115,7 +141,12 @@ func EU_ClaudeSonnet4_5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-sonnet-4-5-20250929-v1:0", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func EU_ClaudeSonnet4_6(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("eu.anthropic.claude-sonnet-4-6", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     64_000,
+		ToolUse:             agent.Supported,
+		ToolChoice:          agent.ToolChoiceCapabilities{Specific: agent.Supported},
+	})}, opts...)...)
 }
 func EU_ClaudeSonnet5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-sonnet-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
@@ -136,16 +167,25 @@ func EU_ClaudeOpus5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
 }
 func EU_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
-	return New("eu.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("eu.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     128_000,
+	})}, opts...)...)
 }
 
 // Claude Opus 5.5 also has AU and JP geo inference profiles on Bedrock, unlike
 // any earlier Claude model in this file.
 func AU_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
-	return New("au.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("au.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     128_000,
+	})}, opts...)...)
 }
 func JP_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
-	return New("jp.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude)}, opts...)...)
+	return New("jp.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_000_000,
+		MaxOutputTokens:     128_000,
+	})}, opts...)...)
 }
 
 // Fable 5 has no EU geo route.

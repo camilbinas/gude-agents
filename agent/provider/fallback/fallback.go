@@ -38,6 +38,57 @@ func New(primary agent.Provider, fallbacks ...agent.Provider) *Provider {
 // Name returns a human-readable identifier for this provider instance.
 func (p *Provider) Name() string { return "fallback" }
 
+// Capabilities returns the conservative intersection of capabilities across
+// every provider that may serve an invocation. A feature is Supported only if
+// every provider reports Supported, Unsupported only if every provider reports
+// Unsupported, and Unknown otherwise. Numeric limits are exposed only when
+// every provider supplies a positive value; the smallest such value wins.
+func (p *Provider) Capabilities() agent.ModelCapabilities {
+	if len(p.chain) == 0 {
+		return agent.ModelCapabilities{}
+	}
+
+	first := agent.CapabilitiesOf(p.chain[0])
+	caps := agent.ModelCapabilities{
+		ContextWindowTokens:    first.ContextWindowTokens,
+		MaxOutputTokens:        first.MaxOutputTokens,
+		ToolUse:                first.ToolUse,
+		NativeStructuredOutput: first.NativeStructuredOutput,
+		ToolChoice:             first.ToolChoice,
+	}
+	for _, provider := range p.chain[1:] {
+		next := agent.CapabilitiesOf(provider)
+		caps.ContextWindowTokens = conservativeLimit(caps.ContextWindowTokens, next.ContextWindowTokens)
+		caps.MaxOutputTokens = conservativeLimit(caps.MaxOutputTokens, next.MaxOutputTokens)
+		caps.ToolUse = conservativeCapability(caps.ToolUse, next.ToolUse)
+		caps.ToolChoice.Auto = conservativeCapability(caps.ToolChoice.Auto, next.ToolChoice.Auto)
+		caps.ToolChoice.Required = conservativeCapability(caps.ToolChoice.Required, next.ToolChoice.Required)
+		caps.ToolChoice.Specific = conservativeCapability(caps.ToolChoice.Specific, next.ToolChoice.Specific)
+		caps.NativeStructuredOutput = conservativeCapability(caps.NativeStructuredOutput, next.NativeStructuredOutput)
+	}
+	return caps
+}
+
+func conservativeCapability(left, right agent.Capability) agent.Capability {
+	if left == right && (left == agent.Supported || left == agent.Unsupported) {
+		return left
+	}
+	return agent.Unknown
+}
+
+func conservativeLimit(left, right int) int {
+	if left <= 0 || right <= 0 {
+		return 0
+	}
+	if right < left {
+		return right
+	}
+	return left
+}
+
+var _ agent.Provider = (*Provider)(nil)
+var _ agent.CapabilityProvider = (*Provider)(nil)
+
 // Stream tries each provider in order, returning the first success. A failed
 // provider is retried only when it has not emitted an event to the caller.
 func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {

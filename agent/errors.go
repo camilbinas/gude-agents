@@ -27,6 +27,12 @@ var ErrConversationIDRequired = errors.New("agent: conversation ID required when
 // ErrRetrieverRequired is returned by RAGAgent when the retriever is nil.
 var ErrRetrieverRequired = errors.New("agent: RAG retriever is required")
 
+// ErrStructuredOutputUnsupported is returned as the cause of a
+// StructuredOutputError when a configured provider explicitly reports that it
+// cannot satisfy structured output through either a named or automatic schema
+// tool choice mechanism.
+var ErrStructuredOutputUnsupported = errors.New("structured output is unsupported by configured provider capabilities")
+
 // --- Typed errors ---
 
 // ProviderError wraps a failure from an LLM provider call.
@@ -104,7 +110,9 @@ func (e *MaxIterationsError) Is(target error) bool {
 }
 
 // StructuredOutputError is returned when structured output fails to produce
-// a valid typed response. Reason indicates what went wrong.
+// a valid typed response. Reason indicates what went wrong: "nil_agent",
+// "unsupported_capability", "no_tool_call", "wrong_tool",
+// "schema_validation", or "deserialize".
 type StructuredOutputError struct {
 	Reason string // "nil_agent", "no_tool_call", "wrong_tool", "schema_validation", "deserialize"
 	Cause  error  // underlying error (nil for no_tool_call/wrong_tool)

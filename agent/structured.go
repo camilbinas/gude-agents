@@ -9,6 +9,30 @@ import (
 
 const structuredOutputToolName = "structured_output"
 
+// structuredOutputToolChoice chooses the strongest compatible tool-selection
+// mode. Unknown metadata keeps the named forced-tool path. A model that
+// explicitly lacks named choice but supports automatic selection receives the
+// sole schema tool with a nil choice; providers interpret nil as their default
+// automatic behavior and can omit unsupported choice fields entirely.
+func structuredOutputToolChoice(caps ModelCapabilities) (*tool.Choice, error) {
+	if caps.ToolUse == Unsupported {
+		return nil, &StructuredOutputError{
+			Reason: "unsupported_capability",
+			Cause:  fmt.Errorf("%w: tool use", ErrStructuredOutputUnsupported),
+		}
+	}
+	if caps.ToolChoice.Specific != Unsupported {
+		return &tool.Choice{Mode: tool.ChoiceTool, Name: structuredOutputToolName}, nil
+	}
+	if caps.ToolChoice.Auto != Unsupported {
+		return nil, nil
+	}
+	return nil, &StructuredOutputError{
+		Reason: "unsupported_capability",
+		Cause:  fmt.Errorf("%w: neither named nor automatic tool choice", ErrStructuredOutputUnsupported),
+	}
+}
+
 // InvokeSchema runs the shared structured-output lifecycle for a JSON schema.
 // The model's output is checked against the supported schema subset (see
 // ValidateToolInput: JSON validity, type, enum, required, properties, items)
@@ -23,19 +47,23 @@ func (a *Agent) InvokeSchema(c *Context, userMessage string, schema map[string]a
 	if decode == nil {
 		return Result{}, fmt.Errorf("structured output decoder is required")
 	}
+	toolChoice, err := structuredOutputToolChoice(CapabilitiesOf(a.provider))
+	if err != nil {
+		return Result{}, err
+	}
 	inv := c.forInvocation(c, &invocationRuntime{})
 	convID := inv.ConversationID()
 	return a.lifecycle(inv, convID, userMessage, func(r *run) (Result, error) {
-		return r.structuredTurn(userMessage, schema, func(raw []byte) error {
+		return r.structuredTurn(userMessage, schema, toolChoice, func(raw []byte) error {
 			return decode(json.RawMessage(raw))
 		})
 	})
 }
 
-// structuredTurn runs a single forced-tool-choice model call, applies output
+// structuredTurn runs a single schema-tool model call, applies output
 // guardrails to the raw JSON, decodes it with decode and only then persists
 // the turn. Result.Text is the guardrail-processed JSON.
-func (r *run) structuredTurn(userMessage string, schema map[string]any, decode func([]byte) error) (Result, error) {
+func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoice *tool.Choice, decode func([]byte) error) (Result, error) {
 	a, c, h := r.a, r.c, &r.h
 
 	messages, ragStart, err := r.prepareTurn(userMessage)
@@ -61,7 +89,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, decode f
 		Messages:        modelMessages,
 		System:          system,
 		Tools:           []tool.Spec{structuredSpec},
-		ToolChoice:      &tool.Choice{Mode: tool.ChoiceTool, Name: structuredOutputToolName},
+		ToolChoice:      toolChoice,
 		InferenceConfig: cfg,
 		CachingEnabled:  a.cachingEnabled,
 	}

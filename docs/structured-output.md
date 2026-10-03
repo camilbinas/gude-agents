@@ -47,3 +47,15 @@ Handle malformed or non-conforming model output as `*agent.StructuredOutputError
 Schema validation uses `agent.ValidateToolInput`, which enforces a subset of JSON Schema, not the full specification. Enforced keywords: `type` (including unions such as `["string", "null"]`), `enum`, `required`, `properties`, and `items`, applied recursively. Other keywords (for example `minimum`, `maxLength`, `pattern`, `additionalProperties`, `oneOf`) are sent to the model as guidance but are not enforced. For schemas generated from `T`, Go decoding still rejects values whose types don't fit `T`, such as map values of the wrong type. Check any other constraints yourself after `Invoke` returns.
 
 Use pointer/optional fields when omission is valid and JSON tags for stable names. Keep schemas reasonably small and descriptions unambiguous.
+
+## Provider capability checks
+
+Structured output always supplies exactly one `structured_output` schema tool. When a provider reports named tool selection as supported (or metadata is unknown), Gude forces that specifically named tool. It does not downgrade to prompt-only JSON.
+
+Some models, including Bedrock Claude Sonnet 5.5, explicitly support tools and automatic tool selection but reject named/required selection. For that capability shape, Gude supplies the sole schema tool with `ToolChoice == nil`, allowing the provider's automatic default to select it without emitting an unsupported choice field. The returned tool input still undergoes the same JSON validity, schema-subset validation, Go decode, guardrails, and persistence ordering.
+
+Automatic selection cannot guarantee a call: a model that replies in plain text returns `*agent.StructuredOutputError` with `Reason == "no_tool_call"`. Applications should handle that error or choose a model with `ToolChoice.Specific` support when a forced-call guarantee is essential.
+
+Before making the request, Gude reads optional metadata with `agent.CapabilitiesOf`. It fails before the provider call only when `ToolUse` is explicitly unsupported, or when both named and automatic tool choice are explicitly unsupported. Unknown metadata deliberately keeps the named forced-tool attempt, so custom, private, and newly released models remain usable without a Gude release.
+
+No first-party provider currently implements a native schema/JSON structured-output request path. Accordingly, their `NativeStructuredOutput` capability is reported as `agent.Unsupported`; a future adapter can add a native path without changing the common provider contract. See [provider capability metadata](providers.md#capability-metadata) for named-constructor defaults, overrides, and advisory context/output limits.

@@ -26,6 +26,7 @@ type AnthropicProvider struct {
 	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
 	cachingEnabled bool
+	capabilities   agent.ModelCapabilities
 }
 
 // Option configures the AnthropicProvider.
@@ -37,11 +38,77 @@ type options struct {
 	thinkingEffort pvdr.ThinkingEffort
 	thinkingBudget int64
 	cachingEnabled bool
+	capabilities   agent.ModelCapabilities
 }
 
 // WithAPIKey sets the Anthropic API key. Defaults to ANTHROPIC_API_KEY env var.
 func WithAPIKey(key string) Option {
 	return func(o *options) { o.apiKey = key }
+}
+
+// WithCapabilities partially overrides best-known capability metadata. Only
+// non-zero numeric values and non-Unknown capability values replace existing
+// defaults. Use fine-grained options to explicitly reset a field to Unknown.
+func WithCapabilities(c agent.ModelCapabilities) Option {
+	return func(o *options) { o.capabilities = agent.MergeModelCapabilities(o.capabilities, c) }
+}
+
+// WithContextWindowTokens overrides advisory total context capacity metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithContextWindowTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.ContextWindowTokens = tokens
+		} else {
+			o.capabilities.ContextWindowTokens = 0
+		}
+	}
+}
+
+// WithMaxOutputTokens overrides advisory output-token ceiling metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithMaxOutputTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.MaxOutputTokens = tokens
+		} else {
+			o.capabilities.MaxOutputTokens = 0
+		}
+	}
+}
+
+// WithToolUse overrides effective tool-use support, including agent.Unknown.
+func WithToolUse(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolUse = capability }
+}
+
+// WithToolChoice partially overrides tool-choice metadata. Use per-mode
+// options for an explicit reset to agent.Unknown.
+func WithToolChoice(capabilities agent.ToolChoiceCapabilities) Option {
+	return func(o *options) {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, agent.ModelCapabilities{ToolChoice: capabilities})
+	}
+}
+
+// WithToolChoiceAuto overrides automatic tool-choice support.
+func WithToolChoiceAuto(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Auto = capability }
+}
+
+// WithToolChoiceRequired overrides required-tool-choice support.
+func WithToolChoiceRequired(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Required = capability }
+}
+
+// WithToolChoiceSpecific overrides named-tool-choice support.
+func WithToolChoiceSpecific(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Specific = capability }
+}
+
+// WithNativeStructuredOutput overrides native schema/JSON structured-output
+// support, including an explicit reset to agent.Unknown.
+func WithNativeStructuredOutput(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.NativeStructuredOutput = capability }
 }
 
 // WithMaxTokens sets the max tokens for responses.
@@ -92,7 +159,7 @@ func Must(p *AnthropicProvider, err error) *AnthropicProvider {
 
 // New creates a new AnthropicProvider.
 func New(model string, opts ...Option) (*AnthropicProvider, error) {
-	o := &options{}
+	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -109,15 +176,21 @@ func New(model string, opts ...Option) (*AnthropicProvider, error) {
 		thinkingEffort: o.thinkingEffort,
 		thinkingBudget: o.thinkingBudget,
 		cachingEnabled: o.cachingEnabled,
+		capabilities:   o.capabilities,
 	}, nil
 }
 
 var _ agent.Provider = (*AnthropicProvider)(nil)
+var _ agent.CapabilityProvider = (*AnthropicProvider)(nil)
 
 // Name returns a human-readable identifier for this provider instance.
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
 func (p *AnthropicProvider) ModelID() string { return string(p.model) }
+
+// Capabilities returns effective adapter/model capabilities captured during
+// construction. The returned value cannot mutate this provider.
+func (p *AnthropicProvider) Capabilities() agent.ModelCapabilities { return p.capabilities }
 
 // Client returns the underlying Anthropic SDK client.
 // Use this for direct SDK access when you need provider-specific features
@@ -230,13 +303,25 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 }
 
 func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.MessageNewParams {
-	// Anthropic's API requires max_tokens and validates it against each model's
-	// actual output limit. The generic provider default is 128000; model
-	// constructors with lower limits configure their own defaults.
-	var maxTokens int64 = 128000
+	// Anthropic requires max_tokens. Start from the historical generic default,
+	// then use a known model ceiling only when it is lower. This makes
+	// MaxOutputTokens a safe implicit fallback rather than a request to consume
+	// a model's full capacity on every call.
+	var maxTokens int64 = 128_000
+	ceiling := int64(p.capabilities.MaxOutputTokens)
+	if ceiling > 0 && ceiling < maxTokens {
+		maxTokens = ceiling
+	}
 	if p.maxTokens != nil {
 		maxTokens = *p.maxTokens
 	}
+	if cfg := req.InferenceConfig; cfg != nil && cfg.MaxTokens != nil {
+		maxTokens = int64(*cfg.MaxTokens)
+	}
+	if ceiling > 0 && maxTokens > ceiling {
+		maxTokens = ceiling
+	}
+
 	cachingEnabled := req.CachingEnabled || p.cachingEnabled
 	msgs := toAnthropicMessages(req.Messages, cachingEnabled)
 	input := anthropicsdk.MessageNewParams{
@@ -259,12 +344,15 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 	}
 	if budget := p.resolveThinkingBudget(); budget > 0 {
 		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(budget)
-		// Anthropic requires max_tokens > thinking.budget_tokens. Add the
-		// budget on top of the configured max so the model has room to
-		// both reason and answer.
+		// Anthropic requires max_tokens to include room for both thinking and
+		// the visible answer. A known model ceiling remains authoritative.
 		input.MaxTokens = maxTokens + budget
+		if ceiling > 0 && input.MaxTokens > ceiling {
+			input.MaxTokens = ceiling
+		}
 	}
-	// Apply inference config overrides.
+	// Apply inference config overrides other than MaxTokens, which was applied
+	// above before reasoning headroom is calculated.
 	if cfg := req.InferenceConfig; cfg != nil {
 		if cfg.Temperature != nil {
 			input.Temperature = param.NewOpt(*cfg.Temperature)
@@ -277,9 +365,6 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 		}
 		if cfg.StopSequences != nil {
 			input.StopSequences = cfg.StopSequences
-		}
-		if cfg.MaxTokens != nil {
-			input.MaxTokens = int64(*cfg.MaxTokens)
 		}
 	}
 	return input

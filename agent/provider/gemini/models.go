@@ -1,6 +1,9 @@
 package gemini
 
-import rag "github.com/camilbinas/gude-agents/agent/rag/gemini"
+import (
+	"github.com/camilbinas/gude-agents/agent"
+	rag "github.com/camilbinas/gude-agents/agent/rag/gemini"
+)
 
 // Gemini models (Google GenAI API).
 func Gemini25Pro(opts ...Option) (*GeminiProvider, error)   { return New("gemini-2.5-pro", opts...) }
@@ -31,7 +34,11 @@ func Gemini37Flash(opts ...Option) (*GeminiProvider, error) {
 	return New("gemini-3.7-flash", opts...)
 }
 func Gemini38Flash(opts ...Option) (*GeminiProvider, error) {
-	return New("gemini-3.8-flash", opts...)
+	return New("gemini-3.8-flash", append([]Option{WithCapabilities(agent.ModelCapabilities{
+		ContextWindowTokens: 1_048_576,
+		MaxOutputTokens:     65_536,
+		ToolUse:             agent.Supported,
+	})}, opts...)...)
 }
 
 // Gemini embedding models.
@@ -48,5 +55,5 @@ func GeminiEmbedding002(opts ...rag.EmbedderOption) (*rag.Embedder, error) {
 // Smartest is a preview ID because Gemini 3.5 Pro has not shipped and 3.1 Pro is
 // the newest Pro-tier model.
 func Cheapest(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.5-flash-lite", opts...) }
-func Standard(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.8-flash", opts...) }
+func Standard(opts ...Option) (*GeminiProvider, error) { return Gemini38Flash(opts...) }
 func Smartest(opts ...Option) (*GeminiProvider, error) { return New("gemini-3.1-pro-preview", opts...) }

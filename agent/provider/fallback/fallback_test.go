@@ -182,3 +182,62 @@ func TestStream_SingleProvider(t *testing.T) {
 		assert.ErrorIs(t, err, providerErr)
 	})
 }
+
+type capabilityStubProvider struct {
+	*stubProvider
+	caps agent.ModelCapabilities
+}
+
+func (s *capabilityStubProvider) Capabilities() agent.ModelCapabilities { return s.caps }
+
+func TestCapabilitiesConservativelyAggregateFallbackChain(t *testing.T) {
+	first := &capabilityStubProvider{
+		stubProvider: okProvider("first"),
+		caps: agent.ModelCapabilities{
+			ContextWindowTokens:    200000,
+			MaxOutputTokens:        16000,
+			ToolUse:                agent.Supported,
+			NativeStructuredOutput: agent.Unsupported,
+			ToolChoice:             agent.ToolChoiceCapabilities{Auto: agent.Supported, Required: agent.Supported, Specific: agent.Supported},
+		},
+	}
+	second := &capabilityStubProvider{
+		stubProvider: okProvider("second"),
+		caps: agent.ModelCapabilities{
+			ContextWindowTokens:    128000,
+			MaxOutputTokens:        8000,
+			ToolUse:                agent.Supported,
+			NativeStructuredOutput: agent.Unsupported,
+			ToolChoice:             agent.ToolChoiceCapabilities{Auto: agent.Supported, Required: agent.Unsupported, Specific: agent.Supported},
+		},
+	}
+
+	got := fallback.New(first, second).Capabilities()
+	want := agent.ModelCapabilities{
+		ContextWindowTokens:    128000,
+		MaxOutputTokens:        8000,
+		ToolUse:                agent.Supported,
+		NativeStructuredOutput: agent.Unsupported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unknown,
+			Specific: agent.Supported,
+		},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestCapabilitiesReturnsUnknownWhenFallbackDelegateDoesNotReportMetadata(t *testing.T) {
+	known := &capabilityStubProvider{
+		stubProvider: okProvider("known"),
+		caps: agent.ModelCapabilities{
+			ContextWindowTokens: 200000,
+			MaxOutputTokens:     16000,
+			ToolUse:             agent.Supported,
+			ToolChoice:          agent.ToolChoiceCapabilities{Specific: agent.Supported},
+		},
+	}
+
+	got := fallback.New(known, okProvider("legacy")).Capabilities()
+	assert.Equal(t, agent.ModelCapabilities{}, got)
+}

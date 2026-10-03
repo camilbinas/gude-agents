@@ -70,6 +70,7 @@ type BedrockProvider struct {
 	guardrailID      string              // empty = no guardrail
 	guardrailVersion string
 	cachingEnabled   bool
+	capabilities     agent.ModelCapabilities
 }
 
 // Option configures the BedrockProvider.
@@ -87,11 +88,79 @@ type options struct {
 	cachingEnabled         bool
 	urlFetchTimeout        time.Duration
 	allowPrivateURLFetches bool
+	capabilities           agent.ModelCapabilities
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
 func WithRegion(region string) Option {
 	return func(o *options) { o.region = region }
+}
+
+// WithCapabilities partially overrides best-known capability metadata. Only
+// non-zero numeric values and non-Unknown capability values replace existing
+// defaults. Use the fine-grained capability options to explicitly reset a
+// field to Unknown.
+func WithCapabilities(c agent.ModelCapabilities) Option {
+	return func(o *options) { o.capabilities = agent.MergeModelCapabilities(o.capabilities, c) }
+}
+
+// WithContextWindowTokens overrides advisory total context capacity metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithContextWindowTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.ContextWindowTokens = tokens
+		} else {
+			o.capabilities.ContextWindowTokens = 0
+		}
+	}
+}
+
+// WithMaxOutputTokens overrides advisory maximum output-token metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithMaxOutputTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.MaxOutputTokens = tokens
+		} else {
+			o.capabilities.MaxOutputTokens = 0
+		}
+	}
+}
+
+// WithToolUse overrides the effective tool-use capability, including an
+// explicit reset to agent.Unknown.
+func WithToolUse(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolUse = capability }
+}
+
+// WithToolChoice partially overrides tool-choice metadata. Use the per-mode
+// options below when an explicit reset to agent.Unknown is required.
+func WithToolChoice(capabilities agent.ToolChoiceCapabilities) Option {
+	return func(o *options) {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, agent.ModelCapabilities{ToolChoice: capabilities})
+	}
+}
+
+// WithToolChoiceAuto overrides automatic tool-choice support.
+func WithToolChoiceAuto(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Auto = capability }
+}
+
+// WithToolChoiceRequired overrides required-tool-choice support.
+func WithToolChoiceRequired(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Required = capability }
+}
+
+// WithToolChoiceSpecific overrides named-tool-choice support.
+func WithToolChoiceSpecific(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Specific = capability }
+}
+
+// WithNativeStructuredOutput overrides native schema/JSON structured-output
+// support, including an explicit reset to agent.Unknown.
+func WithNativeStructuredOutput(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.NativeStructuredOutput = capability }
 }
 
 // WithURLFetchTimeout sets the timeout for downloading image and document URL sources.
@@ -220,7 +289,7 @@ func Must(p *BedrockProvider, err error) *BedrockProvider {
 // New creates a new BedrockProvider. It loads AWS config from the default
 // credential chain and accepts optional configuration.
 func New(model string, opts ...Option) (*BedrockProvider, error) {
-	o := &options{}
+	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -276,19 +345,26 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 		guardrailID:      o.guardrailID,
 		guardrailVersion: o.guardrailVersion,
 		cachingEnabled:   o.cachingEnabled,
+		capabilities:     o.capabilities,
 	}, nil
 }
 
 // Model returns the model ID this provider is configured to use.
 func (p *BedrockProvider) ModelID() string { return p.model }
 
+// Capabilities returns effective adapter/model capabilities captured during
+// construction. The returned value may be changed by the caller without
+// mutating this provider.
+func (p *BedrockProvider) Capabilities() agent.ModelCapabilities { return p.capabilities }
+
 // Client returns the underlying AWS Bedrock runtime client.
 // Use this for direct SDK access when you need provider-specific features
 // not exposed through the agent.Provider interface.
 func (p *BedrockProvider) Client() *bedrockruntime.Client { return p.client }
 
-// Compile-time check: BedrockProvider satisfies agent.Provider.
+// Compile-time checks: BedrockProvider satisfies the required and optional provider contracts.
 var _ agent.Provider = (*BedrockProvider)(nil)
+var _ agent.CapabilityProvider = (*BedrockProvider)(nil)
 
 // Name returns a human-readable identifier for this provider instance.
 func (p *BedrockProvider) Name() string { return "bedrock" }
@@ -581,6 +657,12 @@ func toBedrockMessagesWithFetcher(ctx context.Context, fetchClient *http.Client,
 		if err != nil {
 			return nil, err
 		}
+		// Bedrock requires every message to carry at least one content block.
+		// Dropping blank text (above) can leave a message empty; substitute a
+		// minimal placeholder so the request stays valid.
+		if len(blocks) == 0 {
+			blocks = []types.ContentBlock{&types.ContentBlockMemberText{Value: "(no content)"}}
+		}
 		out[i] = types.Message{
 			Role:    toBedrockRole(m.Role),
 			Content: blocks,
@@ -607,6 +689,13 @@ func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Cl
 	for _, b := range blocks {
 		switch v := b.(type) {
 		case agent.TextBlock:
+			// Bedrock rejects blank text content blocks ("The text field in
+			// the ContentBlock object ... is blank"). Drop empty text rather
+			// than emit an invalid block; the empty-content guard below keeps
+			// a message from becoming entirely contentless.
+			if v.Text == "" {
+				continue
+			}
 			out = append(out, &types.ContentBlockMemberText{Value: v.Text})
 
 		case agent.ToolUseBlock:

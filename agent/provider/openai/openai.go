@@ -24,9 +24,11 @@ type OpenAIProvider struct {
 	maxTokens      int64
 	thinkingEffort pvdr.ThinkingEffort // mapped to OpenAI's reasoning_effort; empty = disabled
 	cachingEnabled bool
+	capabilities   agent.ModelCapabilities
 }
 
 var _ agent.Provider = (*OpenAIProvider)(nil)
+var _ agent.CapabilityProvider = (*OpenAIProvider)(nil)
 
 // Name returns a human-readable identifier for this provider instance.
 func (p *OpenAIProvider) Name() string { return "openai" }
@@ -40,11 +42,77 @@ type options struct {
 	maxTokens      int64
 	thinkingEffort pvdr.ThinkingEffort
 	cachingEnabled bool
+	capabilities   agent.ModelCapabilities
 }
 
 // WithAPIKey sets the OpenAI API key. Defaults to OPENAI_API_KEY env var.
 func WithAPIKey(key string) Option {
 	return func(o *options) { o.apiKey = key }
+}
+
+// WithCapabilities partially overrides best-known capability metadata. Only
+// non-zero numeric values and non-Unknown capability values replace existing
+// defaults. Use fine-grained options to explicitly reset a field to Unknown.
+func WithCapabilities(c agent.ModelCapabilities) Option {
+	return func(o *options) { o.capabilities = agent.MergeModelCapabilities(o.capabilities, c) }
+}
+
+// WithContextWindowTokens overrides advisory total context capacity metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithContextWindowTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.ContextWindowTokens = tokens
+		} else {
+			o.capabilities.ContextWindowTokens = 0
+		}
+	}
+}
+
+// WithMaxOutputTokens overrides advisory output-token ceiling metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithMaxOutputTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.MaxOutputTokens = tokens
+		} else {
+			o.capabilities.MaxOutputTokens = 0
+		}
+	}
+}
+
+// WithToolUse overrides effective tool-use support, including agent.Unknown.
+func WithToolUse(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolUse = capability }
+}
+
+// WithToolChoice partially overrides tool-choice metadata. Use per-mode
+// options for an explicit reset to agent.Unknown.
+func WithToolChoice(capabilities agent.ToolChoiceCapabilities) Option {
+	return func(o *options) {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, agent.ModelCapabilities{ToolChoice: capabilities})
+	}
+}
+
+// WithToolChoiceAuto overrides automatic tool-choice support.
+func WithToolChoiceAuto(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Auto = capability }
+}
+
+// WithToolChoiceRequired overrides required-tool-choice support.
+func WithToolChoiceRequired(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Required = capability }
+}
+
+// WithToolChoiceSpecific overrides named-tool-choice support.
+func WithToolChoiceSpecific(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Specific = capability }
+}
+
+// WithNativeStructuredOutput overrides native schema/JSON structured-output
+// support, including an explicit reset to agent.Unknown.
+func WithNativeStructuredOutput(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.NativeStructuredOutput = capability }
 }
 
 // WithBaseURL sets a custom base URL for OpenAI-compatible endpoints.
@@ -85,7 +153,7 @@ func Must(p *OpenAIProvider, err error) *OpenAIProvider {
 
 // New creates a new OpenAIProvider.
 func New(model string, opts ...Option) (*OpenAIProvider, error) {
-	o := &options{}
+	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -105,11 +173,16 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 		maxTokens:      o.maxTokens,
 		thinkingEffort: o.thinkingEffort,
 		cachingEnabled: o.cachingEnabled,
+		capabilities:   o.capabilities,
 	}, nil
 }
 
 // ModelID returns the model ID this provider is configured to use.
 func (p *OpenAIProvider) ModelID() string { return p.model }
+
+// Capabilities returns effective adapter/model capabilities captured during
+// construction. The returned value cannot mutate this provider.
+func (p *OpenAIProvider) Capabilities() agent.ModelCapabilities { return p.capabilities }
 
 // Client returns the underlying OpenAI SDK client.
 // Use this for direct SDK access when you need provider-specific features

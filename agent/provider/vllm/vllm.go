@@ -21,9 +21,21 @@ type Provider = openai.OpenAIProvider
 // Option configures the vLLM provider.
 type Option = openai.Option
 
-// WithBaseURL overrides the vLLM server URL.
-// By default, the URL is read from VLLM_BASE_URL, falling back to http://localhost:8000/v1.
-var WithBaseURL = openai.WithBaseURL
+// Provider options are re-exported from the shared OpenAI-compatible adapter.
+var (
+	// WithBaseURL overrides the vLLM server URL. By default, the URL is read
+	// from VLLM_BASE_URL, falling back to http://localhost:8000/v1.
+	WithBaseURL                = openai.WithBaseURL
+	WithCapabilities           = openai.WithCapabilities
+	WithContextWindowTokens    = openai.WithContextWindowTokens
+	WithMaxOutputTokens        = openai.WithMaxOutputTokens
+	WithToolUse                = openai.WithToolUse
+	WithToolChoice             = openai.WithToolChoice
+	WithToolChoiceAuto         = openai.WithToolChoiceAuto
+	WithToolChoiceRequired     = openai.WithToolChoiceRequired
+	WithToolChoiceSpecific     = openai.WithToolChoiceSpecific
+	WithNativeStructuredOutput = openai.WithNativeStructuredOutput
+)
 
 // New creates a provider targeting a vLLM server.
 // The model parameter is the HuggingFace model ID (e.g. "mistralai/Mistral-7B-Instruct-v0.2").

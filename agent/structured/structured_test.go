@@ -24,11 +24,13 @@ type testProvider struct {
 	params   agent.ModelRequest
 	response *agent.ModelResponse
 	err      error
+	calls    int
 }
 
 func (p *testProvider) Name() string { return "structured-test" }
 
 func (p *testProvider) Stream(_ context.Context, req agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	p.calls++
 	p.params = req
 	if p.err != nil {
 		return nil, p.err
@@ -428,4 +430,92 @@ func (c *conversation) Append(ctx context.Context, id string, messages []agent.M
 	c.revision++
 	c.saves++
 	return agent.ConversationCursor{Revision: c.revision, LastSequence: uint64(len(c.messages))}, nil
+}
+
+type capabilityProvider struct {
+	*testProvider
+	caps agent.ModelCapabilities
+}
+
+func (p *capabilityProvider) Capabilities() agent.ModelCapabilities { return p.caps }
+
+func TestInvokeUnknownCapabilitiesStillUsesForcedToolPath(t *testing.T) {
+	provider := &capabilityProvider{
+		testProvider: &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)},
+		caps:         agent.ModelCapabilities{},
+	}
+	a, err := agent.New(provider, "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Invoke[profile](agent.Background(), a, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value.Name != "Ada" || provider.calls != 1 {
+		t.Fatalf("result = %#v, provider calls = %d", got, provider.calls)
+	}
+	if provider.params.ToolChoice == nil || provider.params.ToolChoice.Mode != tool.ChoiceTool {
+		t.Fatalf("ToolChoice = %#v", provider.params.ToolChoice)
+	}
+}
+
+func TestInvokeAutomaticOnlyCapabilitiesUsesUnspecifiedChoice(t *testing.T) {
+	provider := &capabilityProvider{
+		testProvider: &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)},
+		caps: agent.ModelCapabilities{
+			ToolUse: agent.Supported,
+			ToolChoice: agent.ToolChoiceCapabilities{
+				Auto:     agent.Supported,
+				Specific: agent.Unsupported,
+			},
+		},
+	}
+	a, err := agent.New(provider, "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Invoke[profile](agent.Background(), a, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value.Name != "Ada" || provider.calls != 1 {
+		t.Fatalf("result = %#v, provider calls = %d", got, provider.calls)
+	}
+	if provider.params.ToolChoice != nil {
+		t.Fatalf("ToolChoice = %#v, want nil provider-default automatic choice", provider.params.ToolChoice)
+	}
+	if len(provider.params.Tools) != 1 || provider.params.Tools[0].Name != outputToolName {
+		t.Fatalf("Tools = %#v, want sole structured schema tool", provider.params.Tools)
+	}
+}
+
+func TestInvokeKnownUnsupportedCapabilityFailsBeforeProviderCall(t *testing.T) {
+	for _, caps := range []agent.ModelCapabilities{
+		{ToolUse: agent.Unsupported},
+		{ToolChoice: agent.ToolChoiceCapabilities{Specific: agent.Unsupported, Auto: agent.Unsupported}},
+	} {
+		provider := &capabilityProvider{
+			testProvider: &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)},
+			caps:         caps,
+		}
+		a, err := agent.New(provider, "sys")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = Invoke[profile](agent.Background(), a, "input")
+		var structuredErr *agent.StructuredOutputError
+		if !errors.As(err, &structuredErr) || structuredErr.Reason != "unsupported_capability" {
+			t.Fatalf("capabilities %#v: error = %T %v", caps, err, err)
+		}
+		if !errors.Is(err, agent.ErrStructuredOutputUnsupported) {
+			t.Fatalf("capabilities %#v: error does not wrap ErrStructuredOutputUnsupported: %v", caps, err)
+		}
+		if provider.calls != 0 {
+			t.Fatalf("capabilities %#v: provider calls = %d, want 0", caps, provider.calls)
+		}
+	}
 }

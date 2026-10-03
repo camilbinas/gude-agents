@@ -162,6 +162,14 @@ func WithTokenEstimator(e agent.TokenEstimator) RollingOption {
 		return nil
 	}
 }
+
+// WithMaxInputTokens sets the estimated input-token budget that triggers
+// rolling summarization.
+//
+// TODO(capabilities): when context-manager construction receives a configured
+// provider, use agent.CapabilitiesOf(provider).ContextWindowTokens and
+// MaxOutputTokens as advisory defaults when callers do not set this option.
+// Explicit caller configuration must remain authoritative.
 func WithMaxInputTokens(n int) RollingOption {
 	return func(r *RollingSummary) error {
 		if n < 1 {

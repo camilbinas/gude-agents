@@ -25,9 +25,11 @@ type GeminiProvider struct {
 	thinkingEffort pvdr.ThinkingEffort // empty = effort not set
 	thinkingBudget int64               // 0 = budget not set; takes precedence over effort
 	cachingEnabled bool                // true = surface CachedContentTokenCount in usage
+	capabilities   agent.ModelCapabilities
 }
 
 var _ agent.Provider = (*GeminiProvider)(nil)
+var _ agent.CapabilityProvider = (*GeminiProvider)(nil)
 
 // Name returns a human-readable identifier for this provider instance.
 func (p *GeminiProvider) Name() string { return "gemini" }
@@ -41,12 +43,78 @@ type options struct {
 	thinkingEffort pvdr.ThinkingEffort
 	thinkingBudget int64
 	cachingEnabled bool
+	capabilities   agent.ModelCapabilities
 }
 
 // WithAPIKey sets the Gemini API key. Defaults to GEMINI_API_KEY env var,
 // falling back to GOOGLE_API_KEY.
 func WithAPIKey(key string) Option {
 	return func(o *options) { o.apiKey = key }
+}
+
+// WithCapabilities partially overrides best-known capability metadata. Only
+// non-zero numeric values and non-Unknown capability values replace existing
+// defaults. Use fine-grained options to explicitly reset a field to Unknown.
+func WithCapabilities(c agent.ModelCapabilities) Option {
+	return func(o *options) { o.capabilities = agent.MergeModelCapabilities(o.capabilities, c) }
+}
+
+// WithContextWindowTokens overrides advisory total context capacity metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithContextWindowTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.ContextWindowTokens = tokens
+		} else {
+			o.capabilities.ContextWindowTokens = 0
+		}
+	}
+}
+
+// WithMaxOutputTokens overrides advisory output-token ceiling metadata.
+// Pass 0 to explicitly mark the value unknown.
+func WithMaxOutputTokens(tokens int) Option {
+	return func(o *options) {
+		if tokens > 0 {
+			o.capabilities.MaxOutputTokens = tokens
+		} else {
+			o.capabilities.MaxOutputTokens = 0
+		}
+	}
+}
+
+// WithToolUse overrides effective tool-use support, including agent.Unknown.
+func WithToolUse(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolUse = capability }
+}
+
+// WithToolChoice partially overrides tool-choice metadata. Use per-mode
+// options for an explicit reset to agent.Unknown.
+func WithToolChoice(capabilities agent.ToolChoiceCapabilities) Option {
+	return func(o *options) {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, agent.ModelCapabilities{ToolChoice: capabilities})
+	}
+}
+
+// WithToolChoiceAuto overrides automatic tool-choice support.
+func WithToolChoiceAuto(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Auto = capability }
+}
+
+// WithToolChoiceRequired overrides required-tool-choice support.
+func WithToolChoiceRequired(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Required = capability }
+}
+
+// WithToolChoiceSpecific overrides named-tool-choice support.
+func WithToolChoiceSpecific(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.ToolChoice.Specific = capability }
+}
+
+// WithNativeStructuredOutput overrides native schema/JSON structured-output
+// support, including an explicit reset to agent.Unknown.
+func WithNativeStructuredOutput(capability agent.Capability) Option {
+	return func(o *options) { o.capabilities.NativeStructuredOutput = capability }
 }
 
 // WithMaxTokens sets the max tokens for responses.
@@ -97,7 +165,7 @@ func Must(p *GeminiProvider, err error) *GeminiProvider {
 
 // New creates a new GeminiProvider.
 func New(model string, opts ...Option) (*GeminiProvider, error) {
-	o := &options{}
+	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
 	for _, fn := range opts {
 		fn(o)
 	}
@@ -126,11 +194,16 @@ func New(model string, opts ...Option) (*GeminiProvider, error) {
 		thinkingEffort: o.thinkingEffort,
 		thinkingBudget: o.thinkingBudget,
 		cachingEnabled: o.cachingEnabled,
+		capabilities:   o.capabilities,
 	}, nil
 }
 
 // ModelID returns the model ID this provider is configured to use.
 func (p *GeminiProvider) ModelID() string { return p.model }
+
+// Capabilities returns effective adapter/model capabilities captured during
+// construction. The returned value cannot mutate this provider.
+func (p *GeminiProvider) Capabilities() agent.ModelCapabilities { return p.capabilities }
 
 // Client returns the underlying Google GenAI client.
 // Use this for direct SDK access when you need provider-specific features

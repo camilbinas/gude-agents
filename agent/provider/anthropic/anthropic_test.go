@@ -538,7 +538,7 @@ func TestBuildAnthropicDocParam_FileID(t *testing.T) {
 	}
 }
 
-func TestClaudeHaiku45DefaultMaxTokens(t *testing.T) {
+func TestClaudeHaiku45MaxTokensDefault(t *testing.T) {
 	tests := []struct {
 		name    string
 		factory func(...Option) (*AnthropicProvider, error)
@@ -547,12 +547,12 @@ func TestClaudeHaiku45DefaultMaxTokens(t *testing.T) {
 		{
 			name:    "Haiku 4.5 constructor",
 			factory: ClaudeHaiku4_5,
-			want:    claudeHaiku45DefaultMaxTokens,
+			want:    64_000,
 		},
 		{
 			name:    "Cheapest constructor",
 			factory: Cheapest,
-			want:    claudeHaiku45DefaultMaxTokens,
+			want:    64_000,
 		},
 		{
 			name: "generic constructor retains generic default",
@@ -606,5 +606,70 @@ func TestClaudeHaiku45MaxTokenOverrides(t *testing.T) {
 	params.InferenceConfig = &agent.InferenceConfig{MaxTokens: &perCallLimit}
 	if got := p.buildParams(params).MaxTokens; got != int64(perCallLimit) {
 		t.Errorf("per-call MaxTokens = %d, want %d", got, perCallLimit)
+	}
+}
+
+func TestBuildParamsDerivesAndClampsMaxTokensFromCapabilities(t *testing.T) {
+	requestLimit := 2048
+	tests := []struct {
+		name       string
+		maxTokens  *int64
+		budget     int64
+		requestMax *int
+		want       int64
+	}{
+		{
+			name: "implicit default uses capability ceiling",
+			want: 4096,
+		},
+		{
+			name:      "explicit provider limit wins below ceiling",
+			maxTokens: ptr(2048),
+			want:      2048,
+		},
+		{
+			name:      "explicit provider limit includes thinking headroom",
+			maxTokens: ptr(2048),
+			budget:    1024,
+			want:      3072,
+		},
+		{
+			name:   "implicit ceiling contains thinking headroom",
+			budget: 1024,
+			want:   4096,
+		},
+		{
+			name:       "per-call limit includes thinking headroom",
+			budget:     1024,
+			requestMax: &requestLimit,
+			want:       3072,
+		},
+		{
+			name:      "explicit provider limit is clamped to ceiling",
+			maxTokens: ptr(8192),
+			want:      4096,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &AnthropicProvider{
+				model:          "test-model",
+				maxTokens:      tt.maxTokens,
+				thinkingBudget: tt.budget,
+				capabilities:   agent.ModelCapabilities{MaxOutputTokens: 4096},
+			}
+			params := agent.ModelRequest{}
+			if tt.requestMax != nil {
+				params.InferenceConfig = &agent.InferenceConfig{MaxTokens: tt.requestMax}
+			}
+			got := p.buildParams(params)
+			if got.MaxTokens != tt.want {
+				t.Fatalf("MaxTokens = %d, want %d", got.MaxTokens, tt.want)
+			}
+			if tt.budget > 0 && got.Thinking.OfEnabled == nil {
+				t.Fatal("thinking was not enabled")
+			}
+		})
 	}
 }
