@@ -48,12 +48,24 @@ func ClaudeOpus5_5(opts ...Option) (*AnthropicProvider, error) {
 	return New("claude-opus-5-5", append([]Option{WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 func ClaudeSonnet5_5(opts ...Option) (*AnthropicProvider, error) {
 	return New("claude-sonnet-5-5", append([]Option{WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 

@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/provider/anthropic"
+	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/agent/provider/fallback"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -517,5 +520,107 @@ func TestInvokeKnownUnsupportedCapabilityFailsBeforeProviderCall(t *testing.T) {
 		if provider.calls != 0 {
 			t.Fatalf("capabilities %#v: provider calls = %d, want 0", caps, provider.calls)
 		}
+	}
+}
+
+func TestInvokeFallbackKnownSpecificUnsupportedUsesAutomaticChoice(t *testing.T) {
+	primary := &capabilityProvider{
+		testProvider: &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)},
+		caps: agent.ModelCapabilities{
+			ToolUse: agent.Supported,
+			ToolChoice: agent.ToolChoiceCapabilities{
+				Auto:     agent.Supported,
+				Specific: agent.Supported,
+			},
+		},
+	}
+	backup := &capabilityProvider{
+		testProvider: &testProvider{response: structuredResponse(`{"name":"Grace","count":4}`)},
+		caps: agent.ModelCapabilities{
+			ToolUse: agent.Supported,
+			ToolChoice: agent.ToolChoiceCapabilities{
+				Auto:     agent.Supported,
+				Specific: agent.Unsupported,
+			},
+		},
+	}
+	a, err := agent.New(fallback.New(primary, backup), "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Invoke[profile](agent.Background(), a, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value.Name != "Ada" || primary.calls != 1 || backup.calls != 0 {
+		t.Fatalf("result = %#v, primary calls = %d, backup calls = %d", got, primary.calls, backup.calls)
+	}
+	if primary.params.ToolChoice != nil {
+		t.Fatalf("ToolChoice = %#v, want nil provider-default automatic choice", primary.params.ToolChoice)
+	}
+}
+
+func TestInvokeDirectClaude55CapabilitiesUseAutomaticChoice(t *testing.T) {
+	for _, factory := range []struct {
+		name string
+		new  func(...anthropic.Option) (*anthropic.AnthropicProvider, error)
+	}{
+		{name: "Sonnet 5.5", new: anthropic.ClaudeSonnet5_5},
+		{name: "Opus 5.5", new: anthropic.ClaudeOpus5_5},
+	} {
+		t.Run(factory.name, func(t *testing.T) {
+			model, err := factory.new()
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := &capabilityProvider{
+				testProvider: &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)},
+				caps:         model.Capabilities(),
+			}
+			a, err := agent.New(provider, "sys")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := Invoke[profile](agent.Background(), a, "input"); err != nil {
+				t.Fatal(err)
+			}
+			if provider.params.ToolChoice != nil {
+				t.Fatalf("ToolChoice = %#v, want nil provider-default automatic choice", provider.params.ToolChoice)
+			}
+		})
+	}
+}
+
+func TestInvokeBedrockClaude55CapabilitiesUseAutomaticChoice(t *testing.T) {
+	for _, factory := range []struct {
+		name string
+		new  func(...bedrock.Option) (*bedrock.BedrockProvider, error)
+	}{
+		{name: "Sonnet 5.5", new: bedrock.GlobalClaudeSonnet5_5},
+		{name: "Opus 5.5", new: bedrock.GlobalClaudeOpus5_5},
+	} {
+		t.Run(factory.name, func(t *testing.T) {
+			model, err := factory.new(bedrock.WithAPIKey("test-key"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := &capabilityProvider{
+				testProvider: &testProvider{response: structuredResponse(`{"name":"Ada","count":3}`)},
+				caps:         model.Capabilities(),
+			}
+			a, err := agent.New(provider, "sys")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := Invoke[profile](agent.Background(), a, "input"); err != nil {
+				t.Fatal(err)
+			}
+			if provider.params.ToolChoice != nil {
+				t.Fatalf("ToolChoice = %#v, want nil provider-default automatic choice", provider.params.ToolChoice)
+			}
+		})
 	}
 }

@@ -303,13 +303,14 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 }
 
 func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.MessageNewParams {
-	// Anthropic requires max_tokens. Start from the historical generic default,
-	// then use a known model ceiling only when it is lower. This makes
-	// MaxOutputTokens a safe implicit fallback rather than a request to consume
-	// a model's full capacity on every call.
+	// Anthropic requires max_tokens. A known lower model ceiling can inform the
+	// implicit fallback, but it never overrides an explicit provider or
+	// invocation setting: metadata is advisory and the live provider remains
+	// authoritative for validation.
 	var maxTokens int64 = 128_000
 	ceiling := int64(p.capabilities.MaxOutputTokens)
-	if ceiling > 0 && ceiling < maxTokens {
+	usesCapabilityDefault := p.maxTokens == nil && ceiling > 0 && ceiling <= maxTokens
+	if usesCapabilityDefault {
 		maxTokens = ceiling
 	}
 	if p.maxTokens != nil {
@@ -317,9 +318,7 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 	}
 	if cfg := req.InferenceConfig; cfg != nil && cfg.MaxTokens != nil {
 		maxTokens = int64(*cfg.MaxTokens)
-	}
-	if ceiling > 0 && maxTokens > ceiling {
-		maxTokens = ceiling
+		usesCapabilityDefault = false
 	}
 
 	cachingEnabled := req.CachingEnabled || p.cachingEnabled
@@ -344,11 +343,13 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 	}
 	if budget := p.resolveThinkingBudget(); budget > 0 {
 		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(budget)
-		// Anthropic requires max_tokens to include room for both thinking and
-		// the visible answer. A known model ceiling remains authoritative.
-		input.MaxTokens = maxTokens + budget
-		if ceiling > 0 && input.MaxTokens > ceiling {
+		// Capability metadata may choose the implicit default, in which case
+		// the documented ceiling includes both thinking and visible output.
+		// Explicit caller limits remain untouched and are validated by Anthropic.
+		if usesCapabilityDefault {
 			input.MaxTokens = ceiling
+		} else {
+			input.MaxTokens = maxTokens + budget
 		}
 	}
 	// Apply inference config overrides other than MaxTokens, which was applied

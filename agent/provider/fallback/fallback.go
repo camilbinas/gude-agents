@@ -40,9 +40,10 @@ func (p *Provider) Name() string { return "fallback" }
 
 // Capabilities returns the conservative intersection of capabilities across
 // every provider that may serve an invocation. A feature is Supported only if
-// every provider reports Supported, Unsupported only if every provider reports
-// Unsupported, and Unknown otherwise. Numeric limits are exposed only when
-// every provider supplies a positive value; the smallest such value wins.
+// every provider reports Supported. If any delegate explicitly reports
+// Unsupported, the chain reports Unsupported; otherwise it reports Unknown.
+// Numeric limits are exposed only when every provider supplies a positive
+// value; the smallest such value wins.
 func (p *Provider) Capabilities() agent.ModelCapabilities {
 	if len(p.chain) == 0 {
 		return agent.ModelCapabilities{}
@@ -70,8 +71,11 @@ func (p *Provider) Capabilities() agent.ModelCapabilities {
 }
 
 func conservativeCapability(left, right agent.Capability) agent.Capability {
-	if left == right && (left == agent.Supported || left == agent.Unsupported) {
-		return left
+	if left == agent.Unsupported || right == agent.Unsupported {
+		return agent.Unsupported
+	}
+	if left == agent.Supported && right == agent.Supported {
+		return agent.Supported
 	}
 	return agent.Unknown
 }

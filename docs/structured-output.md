@@ -52,7 +52,7 @@ Use pointer/optional fields when omission is valid and JSON tags for stable name
 
 Structured output always supplies exactly one `structured_output` schema tool. When a provider reports named tool selection as supported (or metadata is unknown), Gude forces that specifically named tool. It does not downgrade to prompt-only JSON.
 
-Some models, including Bedrock Claude Sonnet 5.5, explicitly support tools and automatic tool selection but reject named/required selection. For that capability shape, Gude supplies the sole schema tool with `ToolChoice == nil`, allowing the provider's automatic default to select it without emitting an unsupported choice field. The returned tool input still undergoes the same JSON validity, schema-subset validation, Go decode, guardrails, and persistence ordering.
+Some models, including Bedrock Claude Sonnet 5.5 and Opus 5.5, explicitly support tools and automatic tool selection but reject named/required selection. For that capability shape, Gude supplies the sole schema tool with `ToolChoice == nil`, allowing the provider's automatic default to select it without emitting an unsupported choice field. The returned tool input still undergoes the same JSON validity, schema-subset validation, Go decode, guardrails, and persistence ordering.
 
 Automatic selection cannot guarantee a call: a model that replies in plain text returns `*agent.StructuredOutputError` with `Reason == "no_tool_call"`. Applications should handle that error or choose a model with `ToolChoice.Specific` support when a forced-call guarantee is essential.
 

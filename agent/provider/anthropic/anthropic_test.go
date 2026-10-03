@@ -609,8 +609,9 @@ func TestClaudeHaiku45MaxTokenOverrides(t *testing.T) {
 	}
 }
 
-func TestBuildParamsDerivesAndClampsMaxTokensFromCapabilities(t *testing.T) {
+func TestBuildParamsUsesAdvisoryMaxTokensCapabilities(t *testing.T) {
 	requestLimit := 2048
+	overrideLimit := 8192
 	tests := []struct {
 		name       string
 		maxTokens  *int64
@@ -645,9 +646,14 @@ func TestBuildParamsDerivesAndClampsMaxTokensFromCapabilities(t *testing.T) {
 			want:       3072,
 		},
 		{
-			name:      "explicit provider limit is clamped to ceiling",
+			name:      "explicit provider limit is not reduced by advisory ceiling",
 			maxTokens: ptr(8192),
-			want:      4096,
+			want:      8192,
+		},
+		{
+			name:       "per-call limit is not reduced by advisory ceiling",
+			requestMax: &overrideLimit,
+			want:       8192,
 		},
 	}
 
@@ -671,5 +677,39 @@ func TestBuildParamsDerivesAndClampsMaxTokensFromCapabilities(t *testing.T) {
 				t.Fatal("thinking was not enabled")
 			}
 		})
+	}
+}
+
+func TestClaude55ToolChoiceCapabilities(t *testing.T) {
+	for _, factory := range []struct {
+		name string
+		new  func(...Option) (*AnthropicProvider, error)
+	}{
+		{name: "Sonnet 5.5", new: ClaudeSonnet5_5},
+		{name: "Opus 5.5", new: ClaudeOpus5_5},
+	} {
+		t.Run(factory.name, func(t *testing.T) {
+			p, err := factory.new()
+			if err != nil {
+				t.Fatal(err)
+			}
+			caps := p.Capabilities()
+			if caps.ToolUse != agent.Supported {
+				t.Fatalf("ToolUse = %v, want Supported", caps.ToolUse)
+			}
+			if caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Unsupported || caps.ToolChoice.Specific != agent.Unsupported {
+				t.Fatalf("ToolChoice = %#v, want Auto supported and Required/Specific unsupported", caps.ToolChoice)
+			}
+		})
+	}
+}
+
+func TestClaude55CallerCapabilityOverrideWins(t *testing.T) {
+	p, err := ClaudeSonnet5_5(WithToolChoiceSpecific(agent.Supported))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Capabilities().ToolChoice.Specific; got != agent.Supported {
+		t.Fatalf("Specific = %v, want caller override Supported", got)
 	}
 }

@@ -220,7 +220,7 @@ func TestCapabilitiesConservativelyAggregateFallbackChain(t *testing.T) {
 		NativeStructuredOutput: agent.Unsupported,
 		ToolChoice: agent.ToolChoiceCapabilities{
 			Auto:     agent.Supported,
-			Required: agent.Unknown,
+			Required: agent.Unsupported,
 			Specific: agent.Supported,
 		},
 	}
@@ -240,4 +240,32 @@ func TestCapabilitiesReturnsUnknownWhenFallbackDelegateDoesNotReportMetadata(t *
 
 	got := fallback.New(known, okProvider("legacy")).Capabilities()
 	assert.Equal(t, agent.ModelCapabilities{}, got)
+}
+
+func TestCapabilitiesKnownUnsupportedWinsOverSupported(t *testing.T) {
+	primary := &capabilityStubProvider{
+		stubProvider: okProvider("primary"),
+		caps: agent.ModelCapabilities{
+			ToolUse: agent.Supported,
+			ToolChoice: agent.ToolChoiceCapabilities{
+				Auto:     agent.Supported,
+				Specific: agent.Supported,
+			},
+		},
+	}
+	fallbackProvider := &capabilityStubProvider{
+		stubProvider: okProvider("fallback"),
+		caps: agent.ModelCapabilities{
+			ToolUse: agent.Supported,
+			ToolChoice: agent.ToolChoiceCapabilities{
+				Auto:     agent.Supported,
+				Specific: agent.Unsupported,
+			},
+		},
+	}
+
+	got := fallback.New(primary, fallbackProvider).Capabilities()
+	assert.Equal(t, agent.Supported, got.ToolUse)
+	assert.Equal(t, agent.Supported, got.ToolChoice.Auto)
+	assert.Equal(t, agent.Unsupported, got.ToolChoice.Specific)
 }

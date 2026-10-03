@@ -45,6 +45,12 @@ func GlobalClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
 	return New("global.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 
@@ -108,6 +114,12 @@ func US_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
 	return New("us.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 
@@ -170,6 +182,12 @@ func EU_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
 	return New("eu.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 
@@ -179,12 +197,24 @@ func AU_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
 	return New("au.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 func JP_ClaudeOpus5_5(opts ...Option) (*BedrockProvider, error) {
 	return New("jp.anthropic.claude-opus-5-5", append([]Option{withThinkingStyle(thinkingStyleClaude), WithCapabilities(agent.ModelCapabilities{
 		ContextWindowTokens: 1_000_000,
 		MaxOutputTokens:     128_000,
+		ToolUse:             agent.Supported,
+		ToolChoice: agent.ToolChoiceCapabilities{
+			Auto:     agent.Supported,
+			Required: agent.Unsupported,
+			Specific: agent.Unsupported,
+		},
 	})}, opts...)...)
 }
 

@@ -72,7 +72,7 @@ prov = bedrock.Must(bedrock.GlobalClaudeSonnet5_5(
 ))
 ```
 
-`ContextWindowTokens` and `MaxOutputTokens` are advisory sizing hints, not engine limits. Gude does not reject a request based on local estimates; the live provider remains authoritative. `fallback.Provider` reports a conservative intersection across every provider that may serve a request: a feature is supported only when all delegates support it, and numeric limits are reported only when every delegate reports a known value (using the smallest limit).
+`ContextWindowTokens` and `MaxOutputTokens` are advisory sizing hints, not engine limits. Gude does not reject a request based on local estimates; the live provider remains authoritative. `fallback.Provider` reports a conservative intersection across every provider that may serve a request: a feature is supported only when every delegate supports it, unsupported when any delegate explicitly rejects it, and otherwise unknown. Numeric limits are reported only when every delegate reports a known value (using the smallest limit).
 
 ### Current researched defaults
 
@@ -82,9 +82,10 @@ The catalog intentionally covers only current models with primary-source evidenc
 | --- | ---: | ---: | --- | --- |
 | Bedrock Claude Sonnet 4.6 (`global.`, `us.`, `eu.`) | 1,000,000 | 64,000 | Tool use + named forced tool choice supported; native schema output unavailable through Gude | [AWS model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html) |
 | Bedrock Claude Sonnet 5.5 (`global.`) | 1,000,000 | 128,000 | Auto tool use supported; Bedrock rejects required/named forced choice; native schema output unavailable through Gude | [AWS model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html) |
-| Bedrock Claude Opus 5.5 (`global.`, `us.`, `eu.`, `au.`, `jp.`) | 1,000,000 | 128,000 | Native schema output unavailable through Gude | [AWS model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html) |
+| Bedrock Claude Opus 5.5 (`global.`, `us.`, `eu.`, `au.`, `jp.`) | 1,000,000 | 128,000 | Auto tool use supported; required/named forced choice unsupported; native schema output unavailable through Gude | [AWS model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html) |
 | Direct Anthropic Claude Haiku 4.5 | 200,000 | 64,000 | Native schema output unavailable through Gude | [Anthropic model overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview) |
-| Direct Anthropic Claude Sonnet 4.6, Sonnet 5, Sonnet 5.5, Opus 5.5 | 1,000,000 | 128,000 | Native schema output unavailable through Gude | [Anthropic model overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview) |
+| Direct Anthropic Claude Sonnet 4.6, Sonnet 5 | 1,000,000 | 128,000 | Native schema output unavailable through Gude | [Anthropic model overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview) |
+| Direct Anthropic Claude Sonnet 5.5, Opus 5.5 | 1,000,000 | 128,000 | Auto tool use supported; required/named forced choice unsupported; native schema output unavailable through Gude | [Anthropic Sonnet 5.5 changes](https://platform.claude.com/docs/en/models/sonnet-5-5/whats-new-sonnet-5-5) · [Anthropic Opus 5.5 changes](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5) |
 | OpenAI GPT-5.6 / GPT-5.6 Sol | 1,050,000 | 128,000 | Function calling supported; native structured outputs exist upstream but are not yet implemented by Gude's Chat Completions adapter | [OpenAI model page](https://platform.openai.com/docs/models/gpt-5.6) |
 | Gemini 3.8 Flash | 1,048,576 | 65,536 | Function calling supported; native structured outputs exist upstream but are not yet implemented by Gude | [Google model page](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) |
 
