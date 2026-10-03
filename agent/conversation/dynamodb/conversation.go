@@ -27,9 +27,9 @@ type dynamoDBClient interface {
 	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	Scan(context.Context, *dynamodb.ScanInput, ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	BatchWriteItem(context.Context, *dynamodb.BatchWriteItemInput, ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error)
 	TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
-	DeleteItem(context.Context, *dynamodb.DeleteItemInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 }
 
 var (
@@ -42,6 +42,7 @@ type Conversation struct {
 	table, keyPrefix                       string
 	ttl                                    time.Duration
 	ttlAttribute, pkAttribute, skAttribute string
+	waitBatchWriteRetry                    func(context.Context, int) error
 }
 
 func New(cfg aws.Config, table string, opts ...Option) (*Conversation, error) {
@@ -60,7 +61,7 @@ func New(cfg aws.Config, table string, opts ...Option) (*Conversation, error) {
 			o.BaseEndpoint = aws.String(c.endpoint)
 		}
 	})
-	return &Conversation{client: client, table: table, keyPrefix: c.keyPrefix, ttl: c.ttl, ttlAttribute: c.ttlAttribute, pkAttribute: c.pkAttribute, skAttribute: c.skAttribute}, nil
+	return &Conversation{client: client, table: table, keyPrefix: c.keyPrefix, ttl: c.ttl, ttlAttribute: c.ttlAttribute, pkAttribute: c.pkAttribute, skAttribute: c.skAttribute, waitBatchWriteRetry: waitBatchWriteRetry}, nil
 }
 func (m *Conversation) partition(id string) string { return m.keyPrefix + "conv#" + id }
 func msgKey(sequence uint64) string                { return fmt.Sprintf("MSG#%020d", sequence) }
@@ -91,27 +92,37 @@ func (m *Conversation) LoadAfter(ctx context.Context, id string, after uint64) (
 	if err != nil {
 		return agent.ConversationSnapshot{}, err
 	}
-	out, err := m.client.Query(ctx, &dynamodb.QueryInput{TableName: aws.String(m.table), ConsistentRead: aws.Bool(true), KeyConditionExpression: aws.String("#pk = :pk AND #sk > :after"), ExpressionAttributeNames: map[string]string{"#pk": m.pkAttribute, "#sk": m.skAttribute}, ExpressionAttributeValues: map[string]dbtypes.AttributeValue{":pk": avs(m.partition(id)), ":after": avs(msgKey(after))}})
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load range: %w", err)
-	}
-	msgs := make([]agent.Message, 0, len(out.Items))
-	for _, item := range out.Items {
-		if sk, ok := item[m.skAttribute].(*dbtypes.AttributeValueMemberS); !ok || !strings.HasPrefix(sk.Value, "MSG#") {
-			continue
+	msgs := []agent.Message{}
+	var start map[string]dbtypes.AttributeValue
+	for {
+		if err := ctx.Err(); err != nil {
+			return agent.ConversationSnapshot{}, err
 		}
-		raw, ok := item["message"].(*dbtypes.AttributeValueMemberS)
-		if !ok {
-			return agent.ConversationSnapshot{}, errors.New("dynamodb conversation: message field missing")
+		out, err := m.client.Query(ctx, &dynamodb.QueryInput{TableName: aws.String(m.table), ConsistentRead: aws.Bool(true), KeyConditionExpression: aws.String("#pk = :pk AND #sk > :after"), ExpressionAttributeNames: map[string]string{"#pk": m.pkAttribute, "#sk": m.skAttribute}, ExpressionAttributeValues: map[string]dbtypes.AttributeValue{":pk": avs(m.partition(id)), ":after": avs(msgKey(after))}, ExclusiveStartKey: start})
+		if err != nil {
+			return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: load range: %w", err)
 		}
-		one, err := conversation.UnmarshalMessages([]byte(raw.Value))
-		if err != nil || len(one) != 1 {
-			if err == nil {
-				err = errors.New("expected one message")
+		for _, item := range out.Items {
+			if sk, ok := item[m.skAttribute].(*dbtypes.AttributeValueMemberS); !ok || !strings.HasPrefix(sk.Value, "MSG#") {
+				continue
 			}
-			return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: decode event: %w", err)
+			raw, ok := item["message"].(*dbtypes.AttributeValueMemberS)
+			if !ok {
+				return agent.ConversationSnapshot{}, errors.New("dynamodb conversation: message field missing")
+			}
+			one, err := conversation.UnmarshalMessages([]byte(raw.Value))
+			if err != nil || len(one) != 1 {
+				if err == nil {
+					err = errors.New("expected one message")
+				}
+				return agent.ConversationSnapshot{}, fmt.Errorf("dynamodb conversation: decode event: %w", err)
+			}
+			msgs = append(msgs, one[0])
 		}
-		msgs = append(msgs, one[0])
+		if len(out.LastEvaluatedKey) == 0 {
+			break
+		}
+		start = out.LastEvaluatedKey
 	}
 	return agent.ConversationSnapshot{Messages: msgs, Revision: rev, LastSequence: last}, nil
 }
@@ -258,16 +269,102 @@ func (m *Conversation) List(ctx context.Context) ([]string, error) {
 	}
 	return ids, nil
 }
-func (m *Conversation) Delete(ctx context.Context, id string) error {
-	out, err := m.client.Query(ctx, &dynamodb.QueryInput{TableName: aws.String(m.table), KeyConditionExpression: aws.String("#pk = :pk"), ExpressionAttributeNames: map[string]string{"#pk": m.pkAttribute}, ExpressionAttributeValues: map[string]dbtypes.AttributeValue{":pk": avs(m.partition(id))}})
-	if err != nil {
-		return fmt.Errorf("dynamodb conversation: delete query: %w", err)
+
+const (
+	batchWriteLimit      = 25
+	maxBatchWriteRetries = 8
+	batchWriteRetryBase  = 10 * time.Millisecond
+	batchWriteRetryMax   = time.Second
+)
+
+func waitBatchWriteRetry(ctx context.Context, attempt int) error {
+	delay := batchWriteRetryBase << min(attempt, 6)
+	if delay > batchWriteRetryMax {
+		delay = batchWriteRetryMax
 	}
-	for _, item := range out.Items {
-		sk := item[m.skAttribute].(*dbtypes.AttributeValueMemberS).Value
-		if _, err := m.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(m.table), Key: m.key(id, sk)}); err != nil {
-			return fmt.Errorf("dynamodb conversation: delete: %w", err)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (m *Conversation) Delete(ctx context.Context, id string) error {
+	keys, err := m.deleteKeys(ctx, id)
+	if err != nil {
+		return err
+	}
+	for len(keys) > 0 {
+		n := min(batchWriteLimit, len(keys))
+		if err := m.deleteBatch(ctx, keys[:n]); err != nil {
+			return err
 		}
+		keys = keys[n:]
 	}
 	return nil
+}
+
+// deleteKeys reads every page before deletion so consuming a page cannot make
+// its LastEvaluatedKey invalid while items are removed from the partition.
+func (m *Conversation) deleteKeys(ctx context.Context, id string) ([]map[string]dbtypes.AttributeValue, error) {
+	var keys []map[string]dbtypes.AttributeValue
+	var start map[string]dbtypes.AttributeValue
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		out, err := m.client.Query(ctx, &dynamodb.QueryInput{TableName: aws.String(m.table), KeyConditionExpression: aws.String("#pk = :pk"), ProjectionExpression: aws.String("#pk, #sk"), ExpressionAttributeNames: map[string]string{"#pk": m.pkAttribute, "#sk": m.skAttribute}, ExpressionAttributeValues: map[string]dbtypes.AttributeValue{":pk": avs(m.partition(id))}, ExclusiveStartKey: start})
+		if err != nil {
+			return nil, fmt.Errorf("dynamodb conversation: delete query: %w", err)
+		}
+		for _, item := range out.Items {
+			pk, ok := item[m.pkAttribute].(*dbtypes.AttributeValueMemberS)
+			if !ok || pk.Value != m.partition(id) {
+				return nil, errors.New("dynamodb conversation: delete item partition key missing")
+			}
+			sk, ok := item[m.skAttribute].(*dbtypes.AttributeValueMemberS)
+			if !ok {
+				return nil, errors.New("dynamodb conversation: delete item sort key missing")
+			}
+			keys = append(keys, m.key(id, sk.Value))
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return keys, nil
+		}
+		start = out.LastEvaluatedKey
+	}
+}
+
+func (m *Conversation) deleteBatch(ctx context.Context, keys []map[string]dbtypes.AttributeValue) error {
+	requests := make([]dbtypes.WriteRequest, len(keys))
+	for i, key := range keys {
+		requests[i] = dbtypes.WriteRequest{DeleteRequest: &dbtypes.DeleteRequest{Key: key}}
+	}
+	pending := map[string][]dbtypes.WriteRequest{m.table: requests}
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		out, err := m.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{RequestItems: pending})
+		if err != nil {
+			return fmt.Errorf("dynamodb conversation: delete batch: %w", err)
+		}
+		if len(out.UnprocessedItems) == 0 {
+			return nil
+		}
+		if attempt >= maxBatchWriteRetries {
+			return fmt.Errorf("dynamodb conversation: delete batch: unprocessed items remain after %d retries", maxBatchWriteRetries)
+		}
+		wait := m.waitBatchWriteRetry
+		if wait == nil {
+			wait = waitBatchWriteRetry
+		}
+		if err := wait(ctx, attempt); err != nil {
+			return fmt.Errorf("dynamodb conversation: delete batch retry: %w", err)
+		}
+		pending = out.UnprocessedItems
+	}
 }
