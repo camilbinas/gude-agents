@@ -3,12 +3,12 @@ module github.com/camilbinas/gude-agents/agent/provider/registry
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v1.5.0
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v1.5.0
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v1.5.0
-	github.com/camilbinas/gude-agents/agent/provider/gemini v1.5.0
-	github.com/camilbinas/gude-agents/agent/provider/ollama v1.5.0
-	github.com/camilbinas/gude-agents/agent/provider/openai v1.5.0
+	github.com/camilbinas/gude-agents v1.6.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v1.6.0
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v1.6.0
+	github.com/camilbinas/gude-agents/agent/provider/gemini v1.6.0
+	github.com/camilbinas/gude-agents/agent/provider/ollama v1.6.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v1.6.0
 )
 
 require (
@@ -35,9 +35,9 @@ require (
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v1.5.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/gemini v1.5.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/openai v1.5.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v1.6.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/gemini v1.6.0 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v1.6.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
