@@ -463,6 +463,12 @@ func TestResume_DecideBatchOrderedSequentialAndParallel(t *testing.T) {
 			if len(calls) != 2 || calls[0].CallID != "allow-1" || calls[1].CallID != "deny-3" {
 				t.Fatalf("approval calls = %#v, want provider order", calls)
 			}
+			mu.Lock()
+			prePause := append([]string(nil), handlers...)
+			mu.Unlock()
+			if len(prePause) != 0 {
+				t.Fatalf("handlers ran before approval: %v", prePause)
+			}
 
 			result, err := a.Resume(Background(), in, Decide(map[string]tool.Decision{
 				"allow-1": tool.Allow(),
@@ -477,8 +483,13 @@ func TestResume_DecideBatchOrderedSequentialAndParallel(t *testing.T) {
 			mu.Lock()
 			got := append([]string(nil), handlers...)
 			mu.Unlock()
-			if len(got) != 2 || got[0] != "free" || got[1] != "allowed" {
-				t.Fatalf("handlers = %v, want [free allowed]", got)
+			if len(got) != 2 || got[0] != "allowed" || got[1] != "free" {
+				if !parallel {
+					t.Fatalf("handlers = %v, want [allowed free]", got)
+				}
+				if len(got) != 2 || (got[0] != "allowed" && got[1] != "allowed") || (got[0] != "free" && got[1] != "free") {
+					t.Fatalf("parallel handlers = %v, want allowed and free", got)
+				}
 			}
 
 			provider.mu.Lock()

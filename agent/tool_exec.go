@@ -14,6 +14,7 @@ type toolOutcome struct {
 	result     ToolResultBlock
 	widgets    []WidgetBlock
 	pending    bool            // waiting for human approval; result is not final
+	deferred   bool            // deferred until approval interrupt resumes
 	humanInput *InputInterrupt // set when the call requested human input
 }
 
@@ -31,24 +32,58 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 		t, ok := available[calls[i].Name]
 		outcomes[i] = r.executeCall(c, calls[i], t, ok, d, async)
 	}
+	run := func(indices []int) {
+		if r.a.parallelTools && len(indices) > 1 {
+			var sink *eventSink
+			if c.rt != nil {
+				sink = c.rt.sink
+			}
+			runParallel(sink, len(indices), func(i int) { exec(indices[i], true) })
+			return
+		}
+		for _, i := range indices {
+			if err := c.Err(); err != nil {
+				outcomes[i] = toolOutcome{result: ToolResultBlock{
+					ToolUseID: calls[i].ToolUseID, Content: "not executed: " + err.Error(), IsError: true,
+				}}
+				continue
+			}
+			exec(i, false)
+		}
+	}
 
-	if r.a.parallelTools && len(calls) > 1 {
-		var sink *eventSink
-		if c.rt != nil {
-			sink = c.rt.sink
+	// Initial approval batches preflight approval-configured calls through the
+	// normal authorization/schema/guard pipeline before any sibling handler is
+	// allowed to run. Resume supplies decisions and executes the full batch.
+	if decisions == nil {
+		var approvals, remaining []int
+		for i, call := range calls {
+			if t, ok := available[call.Name]; ok && t.NeedsApproval() {
+				approvals = append(approvals, i)
+			} else {
+				remaining = append(remaining, i)
+			}
 		}
-		runParallel(sink, len(calls), func(i int) { exec(i, true) })
-		return outcomes
+		if len(approvals) > 0 {
+			run(approvals)
+			for _, i := range approvals {
+				if outcomes[i].pending {
+					for _, sibling := range remaining {
+						outcomes[sibling] = toolOutcome{deferred: true}
+					}
+					return outcomes
+				}
+			}
+			run(remaining)
+			return outcomes
+		}
 	}
+
+	all := make([]int, len(calls))
 	for i := range calls {
-		if err := c.Err(); err != nil {
-			outcomes[i] = toolOutcome{result: ToolResultBlock{
-				ToolUseID: calls[i].ToolUseID, Content: "not executed: " + err.Error(), IsError: true,
-			}}
-			continue
-		}
-		exec(i, false)
+		all[i] = i
 	}
+	run(all)
 	return outcomes
 }
 

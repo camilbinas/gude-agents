@@ -534,7 +534,7 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 func resultBlocks(outcomes []toolOutcome, includePending bool) []ContentBlock {
 	out := make([]ContentBlock, 0, len(outcomes))
 	for _, o := range outcomes {
-		if o.pending && !includePending {
+		if o.deferred || (o.pending && !includePending) {
 			continue
 		}
 		out = append(out, o.result)
@@ -665,12 +665,9 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		messages = append(messages, Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
 
 	case InterruptApproval:
-		calls := make([]tool.Call, len(in.Approval.Calls))
-		decisions := make([]*tool.Decision, len(in.Approval.Calls))
-		for i, call := range in.Approval.Calls {
-			calls[i] = tool.Call{ToolUseID: call.CallID, Name: call.Name, Input: call.Input}
-			d := resp.decisionFor(call.CallID)
-			decisions[i] = &d
+		calls, decisions, err := approvalResumeBatch(messages, in.Approval, resp)
+		if err != nil {
+			return Result{}, err
 		}
 		_, available := a.filterTools(c)
 		outcomes := r.executeBatch(c, calls, available, decisions)
@@ -684,6 +681,50 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	}
 
 	return r.loop(messages, -1, cfg)
+}
+
+// approvalResumeBatch reconstructs the original model tool batch from the
+// persisted assistant turn. Approval decisions apply only to pending calls;
+// deferred normal siblings execute after approval resumes.
+func approvalResumeBatch(messages []Message, approval *ApprovalInterrupt, resp ResumeResponse) ([]tool.Call, []*tool.Decision, error) {
+	if approval == nil || len(approval.Calls) == 0 {
+		return nil, nil, errors.New("resume approval interrupt has no calls")
+	}
+	pending := make(map[string]ApprovalCall, len(approval.Calls))
+	for _, call := range approval.Calls {
+		pending[call.CallID] = call
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != RoleAssistant {
+			continue
+		}
+		var calls []tool.Call
+		seen := make(map[string]bool, len(pending))
+		for _, block := range messages[i].Content {
+			tu, ok := block.(ToolUseBlock)
+			if !ok {
+				continue
+			}
+			input := cloneRaw(tu.Input)
+			if approved, ok := pending[tu.ToolUseID]; ok {
+				input = cloneRaw(approved.Input)
+				seen[tu.ToolUseID] = true
+			}
+			calls = append(calls, tool.Call{ToolUseID: tu.ToolUseID, Name: tu.Name, Input: input})
+		}
+		if len(calls) == 0 || len(seen) != len(pending) {
+			continue
+		}
+		decisions := make([]*tool.Decision, len(calls))
+		for j, call := range calls {
+			if _, ok := pending[call.ToolUseID]; ok {
+				d := resp.decisionFor(call.ToolUseID)
+				decisions[j] = &d
+			}
+		}
+		return calls, decisions, nil
+	}
+	return nil, nil, errors.New("resume approval interrupt tool batch not found")
 }
 
 // mergeToolResults appends results to the conversation. If the last message

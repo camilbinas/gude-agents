@@ -100,9 +100,9 @@ func TestHumanInput_PreservesConversationContext(t *testing.T) {
 	}
 }
 
-// TestHumanInput_TakesPrecedenceOverPendingApproval verifies that approval
-// calls in the same batch as a human-input call are never executed.
-func TestHumanInput_TakesPrecedenceOverPendingApproval(t *testing.T) {
+// TestApproval_PrecedesHumanInputSibling verifies that approval preflight
+// defers a human-input sibling without executing it.
+func TestApproval_PrecedesHumanInputSibling(t *testing.T) {
 	called := false
 	danger := newTestRaw("danger", "danger", map[string]any{"type": "object"},
 		func(context.Context, json.RawMessage) (string, error) { called = true; return "boom", nil },
@@ -116,18 +116,15 @@ func TestHumanInput_TakesPrecedenceOverPendingApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := mustInterrupt(t, a, Background(), "go")
-	if in.Type != InterruptHumanInput {
-		t.Fatalf("type = %q, want human_input", in.Type)
+	if in.Type != InterruptApproval || in.Approval == nil || len(in.Approval.Calls) != 1 || in.Approval.Calls[0].CallID != "d1" {
+		t.Fatalf("interrupt = %#v, want approval for d1", in)
 	}
 	if called {
 		t.Fatal("approval-required tool must not run")
 	}
 	last := in.Messages[len(in.Messages)-1]
-	if len(last.Content) != 2 {
-		t.Fatalf("results = %#v, want both calls answered", last.Content)
-	}
-	if tr := last.Content[0].(ToolResultBlock); tr.ToolUseID != "d1" || !tr.IsError {
-		t.Fatalf("pending approval result = %#v, want not-executed error", tr)
+	if last.Role != RoleAssistant || len(last.Content) != 2 {
+		t.Fatalf("snapshot = %#v, want original assistant tool batch", last)
 	}
 }
 
