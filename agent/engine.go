@@ -625,9 +625,17 @@ func (r *run) exposeInterrupt(in *Interrupt, err error) (Result, error) {
 func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
 	var messages []Message
+	var err error
 	if r.hasConversation() {
-		loadC, cf := r.h.onConversationStart(c, ConversationRecord{Operation: "load", ConversationID: r.convID})
-		snapshot, err := a.conversation.Load(loadC, r.convID)
+		boundary := uint64(0)
+		if a.contextManager != nil {
+			boundary, err = a.contextManager.HistoryBoundary(c, r.convID)
+			if err != nil {
+				return Result{}, fmt.Errorf("context history boundary: %w", err)
+			}
+		}
+		loadC, cf := r.h.onConversationStart(c, ConversationRecord{Operation: "load_after", ConversationID: r.convID})
+		snapshot, err := a.conversation.LoadAfter(loadC, r.convID, boundary)
 		cf.finish(err, len(snapshot.Messages), snapshot.Revision)
 		if err != nil {
 			return Result{}, fmt.Errorf("resume conversation load: %w", err)
@@ -640,6 +648,7 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		}
 		r.revision = snapshot.Revision
 		r.lastSequence = snapshot.LastSequence
+		r.historyBoundary = boundary
 		r.persistedCount = len(snapshot.Messages)
 		messages = append([]Message(nil), snapshot.Messages...)
 	} else {

@@ -15,6 +15,7 @@ func TestMarshalInterrupt_ApprovalRoundTrip(t *testing.T) {
 		Type:           agent.InterruptApproval,
 		ConversationID: "conv-abc",
 		Revision:       7,
+		LastSequence:   23,
 		Approval: &agent.ApprovalInterrupt{
 			Calls: []agent.ApprovalCall{
 				{CallID: "approval-1", Name: "refund", Input: json.RawMessage(`{"amount":500}`)},
@@ -57,7 +58,10 @@ func TestMarshalInterrupt_ApprovalRoundTrip(t *testing.T) {
 	if restored.Revision != original.Revision {
 		t.Errorf("Revision = %d, want %d", restored.Revision, original.Revision)
 	}
-	if !json.Valid(data) || !strings.Contains(string(data), `"revision":7`) {
+	if restored.LastSequence != original.LastSequence {
+		t.Errorf("LastSequence = %d, want %d", restored.LastSequence, original.LastSequence)
+	}
+	if !json.Valid(data) || !strings.Contains(string(data), `"revision":7`) || !strings.Contains(string(data), `"last_sequence":23`) {
 		t.Errorf("durable JSON does not contain revision %d: %s", original.Revision, data)
 	}
 	if restored.Input != nil {
@@ -85,6 +89,7 @@ func TestMarshalInterrupt_HumanInputRoundTrip(t *testing.T) {
 		Type:           agent.InterruptHumanInput,
 		ConversationID: "conv-abc",
 		Revision:       11,
+		LastSequence:   31,
 		Input: &agent.InputInterrupt{
 			Reason:   "needs manager approval",
 			Question: "Can you approve a $500 refund?",
@@ -130,6 +135,9 @@ func TestMarshalInterrupt_HumanInputRoundTrip(t *testing.T) {
 	}
 	if restored.Revision != original.Revision {
 		t.Errorf("Revision = %d, want %d", restored.Revision, original.Revision)
+	}
+	if restored.LastSequence != original.LastSequence {
+		t.Errorf("LastSequence = %d, want %d", restored.LastSequence, original.LastSequence)
 	}
 	if !reflect.DeepEqual(restored.Messages, original.Messages) {
 		t.Errorf("Messages mismatch:\n got  %+v\n want %+v", restored.Messages, original.Messages)

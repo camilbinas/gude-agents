@@ -17,6 +17,7 @@ type jsonInterrupt struct {
 	Type           agent.InterruptType      `json:"type"`
 	ConversationID string                   `json:"conversation_id,omitempty"`
 	Revision       uint64                   `json:"revision"`
+	LastSequence   uint64                   `json:"last_sequence"`
 	Approval       *agent.ApprovalInterrupt `json:"approval,omitempty"`
 	Input          *agent.InputInterrupt    `json:"input,omitempty"`
 	Messages       []jsonMessage            `json:"messages"`
@@ -45,6 +46,7 @@ func MarshalInterrupt(in *agent.Interrupt) ([]byte, error) {
 		Type:           in.Type,
 		ConversationID: in.ConversationID,
 		Revision:       in.Revision,
+		LastSequence:   in.LastSequence,
 		Approval:       in.Approval,
 		Input:          in.Input,
 		Messages:       jmsgs,
@@ -77,6 +79,7 @@ func UnmarshalInterrupt(data []byte) (*agent.Interrupt, error) {
 		Type:           j.Type,
 		ConversationID: j.ConversationID,
 		Revision:       j.Revision,
+		LastSequence:   j.LastSequence,
 		Approval:       j.Approval,
 		Input:          j.Input,
 		Messages:       messages,
