@@ -17,19 +17,22 @@ type rangeResumeStore struct {
 	lastSequence   uint64
 	loadCalls      int
 	loadAfterCalls []uint64
+	ids            []string
 }
 
-func (s *rangeResumeStore) Load(context.Context, string) (ConversationSnapshot, error) {
+func (s *rangeResumeStore) Load(_ context.Context, id string) (ConversationSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadCalls++
+	s.ids = append(s.ids, id)
 	return ConversationSnapshot{Messages: append([]Message(nil), s.messages...), Revision: s.revision, LastSequence: s.lastSequence}, nil
 }
 
-func (s *rangeResumeStore) LoadAfter(_ context.Context, _ string, after uint64) (ConversationSnapshot, error) {
+func (s *rangeResumeStore) LoadAfter(_ context.Context, id string, after uint64) (ConversationSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadAfterCalls = append(s.loadAfterCalls, after)
+	s.ids = append(s.ids, id)
 	start := int(after)
 	if start > len(s.messages) {
 		start = len(s.messages)
@@ -37,9 +40,10 @@ func (s *rangeResumeStore) LoadAfter(_ context.Context, _ string, after uint64) 
 	return ConversationSnapshot{Messages: append([]Message(nil), s.messages[start:]...), Revision: s.revision, LastSequence: s.lastSequence}, nil
 }
 
-func (s *rangeResumeStore) Append(_ context.Context, _ string, messages []Message, expected uint64) (ConversationCursor, error) {
+func (s *rangeResumeStore) Append(_ context.Context, id string, messages []Message, expected uint64) (ConversationCursor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.ids = append(s.ids, id)
 	if expected != s.revision {
 		return ConversationCursor{}, ErrConversationConflict
 	}

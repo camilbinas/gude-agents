@@ -262,3 +262,171 @@ func (p *erroringProvider) Name() string { return "mock" }
 func (p *erroringProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
 	return nil, p.err
 }
+
+func TestAgentAsTool_IsolatesPersistentChildConversation(t *testing.T) {
+	parentStore := &rangeResumeStore{}
+	childStore := &rangeResumeStore{}
+	childProvider := newScriptedProvider(&ModelResponse{Text: "child done"})
+	child, err := New(childProvider, "child", WithConversationStore(childStore))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentProvider := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate-1", Name: "child", Input: json.RawMessage(`{"message":"work"}`)}}},
+		&ModelResponse{Text: "parent done"},
+	)
+	parent, err := New(parentProvider, "parent", WithConversationStore(parentStore), WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parent.Invoke(Background().WithConversationID("parent-123"), "go"); err != nil {
+		t.Fatal(err)
+	}
+	wantChildID := childConversationID("parent-123", "delegate-1", "child", child.Name())
+	parentStore.mu.Lock()
+	parentCount := len(parentStore.messages)
+	parentIDs := append([]string(nil), parentStore.ids...)
+	parentStore.mu.Unlock()
+	childStore.mu.Lock()
+	childCount := len(childStore.messages)
+	childIDs := append([]string(nil), childStore.ids...)
+	childStore.mu.Unlock()
+	if parentCount == 0 || childCount == 0 {
+		t.Fatalf("parent messages=%d child messages=%d", parentCount, childCount)
+	}
+	if wantChildID == "parent-123" {
+		t.Fatal("child conversation ID collided with parent")
+	}
+	seen := func(ids []string, want string) bool {
+		for _, id := range ids {
+			if id == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !seen(parentIDs, "parent-123") || !seen(childIDs, wantChildID) || seen(childIDs, "parent-123") {
+		t.Fatalf("parent IDs=%v child IDs=%v want child=%q", parentIDs, childIDs, wantChildID)
+	}
+	if childConversationID("parent-123", "delegate-1", "child", child.Name()) != wantChildID || childConversationID("parent-123", "delegate-2", "child", child.Name()) == wantChildID {
+		t.Fatal("child conversation identity is not deterministic and call-specific")
+	}
+}
+
+func TestAgentAsTool_PropagatesIdentityAndScopesButNotKV(t *testing.T) {
+	childProvider := &composeFuncProvider{fn: func(ctx context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+		c := FromContext(ctx)
+		principal, ok := c.Principal()
+		if !ok || principal.ID != "user" || principal.Roles[0] != "admin" {
+			return nil, errors.New("principal missing")
+		}
+		if scope, ok := c.Scope("project"); !ok || scope != "p1" {
+			return nil, errors.New("scope missing")
+		}
+		if _, ok := c.Get("parent-kv"); ok {
+			return nil, errors.New("parent KV leaked")
+		}
+		c.Set("child-kv", "value")
+		return &ModelResponse{Text: "child"}, nil
+	}}
+	child, err := New(childProvider, "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentProvider := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}},
+		&ModelResponse{Text: "done"},
+	)
+	parent, err := New(parentProvider, "parent", WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := Background().WithPrincipal(Principal{ID: "user", Roles: []string{"admin"}}).WithScope("project", "p1")
+	ctx.Set("parent-kv", "value")
+	if _, err := parent.Invoke(ctx, "go"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ctx.Get("child-kv"); ok {
+		t.Fatal("child KV leaked to parent")
+	}
+}
+
+func TestAgentAsTool_ChildCancellationFollowsParent(t *testing.T) {
+	started := make(chan struct{})
+	childProvider := &composeFuncProvider{fn: func(ctx context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	child, err := New(childProvider, "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentProvider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}})
+	parent, err := New(parentProvider, "parent", WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := parent.Invoke(NewContext(base), "go"); done <- err }()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("parent error = %v, want context.Canceled", err)
+	}
+}
+
+func TestAgentAsTool_ConsumesChildInterrupt(t *testing.T) {
+	childStore := &rangeResumeStore{}
+	interrupts := newTestInterruptStore()
+	approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
+	child, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "child-approval", Name: "approve", Input: json.RawMessage(`{}`)}}}), "child", WithConversationStore(childStore), WithInterruptStore(interrupts), WithTools(approval))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentProvider := newCapturingProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}},
+		&ModelResponse{Text: "recovered"},
+	)
+	parent, err := New(parentProvider, "parent", WithConversationStore(&rangeResumeStore{}), WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parent.Invoke(Background().WithConversationID("parent"), "go"); err != nil {
+		t.Fatal(err)
+	}
+	interrupts.mu.Lock()
+	claimed := append([]string(nil), interrupts.claimed...)
+	interrupts.mu.Unlock()
+	if len(claimed) != 1 {
+		t.Fatalf("claimed child interrupts = %v", claimed)
+	}
+	if _, err := child.Resume(Background().WithConversationID(childConversationID("parent", "delegate", "child", child.Name())), &Interrupt{ID: claimed[0]}, Approve()); !errors.Is(err, ErrInterruptNotFound) {
+		t.Fatalf("child interrupt remains resumable: %v", err)
+	}
+}
+
+type composeFuncProvider struct {
+	fn func(context.Context, ModelRequest, func(ModelEvent)) (*ModelResponse, error)
+}
+
+func (p *composeFuncProvider) Name() string { return "compose" }
+func (p *composeFuncProvider) Stream(ctx context.Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
+	return p.fn(ctx, req, emit)
+}
+
+func TestAgentAsToolChildConversationIDsDoNotCollide(t *testing.T) {
+	ids := make(chan string, 32)
+	for i := 0; i < 32; i++ {
+		go func(i int) { ids <- childConversationID("parent", fmt.Sprintf("call-%d", i), "child", "worker") }(i)
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 32; i++ {
+		id := <-ids
+		if seen[id] {
+			t.Fatalf("duplicate child conversation ID %q", id)
+		}
+		seen[id] = true
+	}
+}
