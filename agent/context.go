@@ -283,9 +283,55 @@ func (c *Context) WithObservers(observers ...Observer) *Context {
 func (c *Context) Clone() *Context {
 	return &Context{
 		Context: c.Context,
-		cfg:     c.cfg,
+		cfg:     cloneInvocationConfig(c.cfg),
 		kv:      &kvStore{data: make(map[any]any)},
 	}
+}
+
+func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
+	clone := cfg
+	if cfg.principal != nil {
+		principal := clonePrincipal(*cfg.principal)
+		clone.principal = &principal
+	}
+	if cfg.scopes != nil {
+		clone.scopes = maps.Clone(cfg.scopes)
+	}
+	if cfg.images != nil {
+		clone.images = append([]ImageBlock(nil), cfg.images...)
+		for i := range clone.images {
+			clone.images[i].Source.Data = append([]byte(nil), cfg.images[i].Source.Data...)
+		}
+	}
+	if cfg.documents != nil {
+		clone.documents = append([]DocumentBlock(nil), cfg.documents...)
+		for i := range clone.documents {
+			clone.documents[i].Source.Data = append([]byte(nil), cfg.documents[i].Source.Data...)
+		}
+	}
+	if cfg.inferenceConfig != nil {
+		inference := *cfg.inferenceConfig
+		if inference.Temperature != nil {
+			v := *inference.Temperature
+			inference.Temperature = &v
+		}
+		if inference.TopP != nil {
+			v := *inference.TopP
+			inference.TopP = &v
+		}
+		if inference.TopK != nil {
+			v := *inference.TopK
+			inference.TopK = &v
+		}
+		if inference.MaxTokens != nil {
+			v := *inference.MaxTokens
+			inference.MaxTokens = &v
+		}
+		inference.StopSequences = append([]string(nil), inference.StopSequences...)
+		clone.inferenceConfig = &inference
+	}
+	clone.observers = append([]Observer(nil), cfg.observers...)
+	return clone
 }
 
 // ---------------------------------------------------------------------------

@@ -510,3 +510,69 @@ func TestObserverDispatcher_DetailedStreamEventsAreIndependent(t *testing.T) {
 		t.Fatalf("stream detail gating failed: plain=%d detailed=%d", plainEvents, detailEvents)
 	}
 }
+
+func TestContextClone_DeepCopiesInvocationConfiguration(t *testing.T) {
+	temperature, topP := 0.2, 0.8
+	topK, maxTokens := 5, 123
+	firstObserver := &contextTestInvokeObserver{name: "first"}
+	secondObserver := &contextTestInvokeObserver{name: "second"}
+	original := Background().
+		WithScope("project", "p1").
+		WithPrincipal(Principal{ID: "user", Roles: []string{"admin"}, Attrs: map[string]string{"org": "one"}, Credentials: map[string]string{"token": "secret"}}).
+		WithImages([]ImageBlock{{Source: ImageSource{Data: []byte{1, 2}, MIMEType: "image/png"}}}).
+		WithDocuments([]DocumentBlock{{Source: DocumentSource{Data: []byte{3, 4}, MIMEType: "application/pdf"}}}).
+		WithInferenceConfig(&InferenceConfig{Temperature: &temperature, TopP: &topP, TopK: &topK, MaxTokens: &maxTokens, StopSequences: []string{"STOP"}}).
+		WithObservers(firstObserver, secondObserver)
+	original.Set("parent", "value")
+	original = original.forInvocation(original, &invocationRuntime{}).forToolCall(&toolCallRuntime{id: "call"})
+
+	clone := original.Clone()
+	if clone.Context != original.Context || clone.rt != nil || clone.call != nil || clone.kv == original.kv {
+		t.Fatalf("clone runtime ownership is incorrect: %#v", clone)
+	}
+	if _, ok := clone.Get("parent"); ok {
+		t.Fatal("clone inherited parent KV")
+	}
+	clone.Set("child", "value")
+	if _, ok := original.Get("child"); ok {
+		t.Fatal("original received clone KV")
+	}
+
+	clone.cfg.scopes["project"] = "p2"
+	clone.cfg.principal.Roles[0] = "viewer"
+	clone.cfg.principal.Attrs["org"] = "two"
+	clone.cfg.principal.Credentials["token"] = "changed"
+	clone.cfg.images[0].Source.Data[0] = 9
+	clone.cfg.documents[0].Source.Data[0] = 8
+	*clone.cfg.inferenceConfig.Temperature = 0.9
+	*clone.cfg.inferenceConfig.TopP = 0.1
+	*clone.cfg.inferenceConfig.TopK = 99
+	*clone.cfg.inferenceConfig.MaxTokens = 456
+	clone.cfg.inferenceConfig.StopSequences[0] = "CHANGED"
+	clone.cfg.observers[0] = secondObserver
+
+	if got, _ := original.Scope("project"); got != "p1" {
+		t.Fatalf("original scope = %q", got)
+	}
+	principal, _ := original.Principal()
+	if principal.Roles[0] != "admin" || principal.Attrs["org"] != "one" || principal.Credentials["token"] != "secret" {
+		t.Fatalf("original principal mutated: %#v", principal)
+	}
+	if original.Images()[0].Source.Data[0] != 1 || original.Documents()[0].Source.Data[0] != 3 {
+		t.Fatalf("original attachments mutated: images=%v docs=%v", original.Images(), original.Documents())
+	}
+	inference := original.InferenceConfig()
+	if *inference.Temperature != 0.2 || *inference.TopP != 0.8 || *inference.TopK != 5 || *inference.MaxTokens != 123 || inference.StopSequences[0] != "STOP" {
+		t.Fatalf("original inference mutated: %#v", inference)
+	}
+	if original.cfg.observers[0] != firstObserver {
+		t.Fatal("original observer slice mutated")
+	}
+
+	original.cfg.scopes["project"] = "p3"
+	original.cfg.images[0].Source.Data[1] = 7
+	*original.cfg.inferenceConfig.MaxTokens = 777
+	if got, _ := clone.Scope("project"); got != "p2" || clone.Images()[0].Source.Data[1] != 2 || *clone.InferenceConfig().MaxTokens != 456 {
+		t.Fatalf("clone changed after original mutation: scope=%q image=%v inference=%d", got, clone.Images()[0].Source.Data, *clone.InferenceConfig().MaxTokens)
+	}
+}
