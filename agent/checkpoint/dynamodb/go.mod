@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1
-	github.com/camilbinas/gude-agents/agent/checkpoint v1.6.3
+	github.com/camilbinas/gude-agents/agent/checkpoint v1.6.4
 )
 
 require (
@@ -14,5 +14,5 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.21 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
-	github.com/camilbinas/gude-agents v1.6.3 // indirect
+	github.com/camilbinas/gude-agents v1.6.4 // indirect
 )
