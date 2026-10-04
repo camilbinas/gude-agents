@@ -1,4 +1,4 @@
-package agent
+package ratelimit
 
 import (
 	"context"
@@ -6,9 +6,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	agent "github.com/camilbinas/gude-agents/agent"
 )
 
-// countingProviderForPreflight tracks how many times Stream is called.
+type loopEstimator struct {
+	estimate int
+	err      error
+}
+
+func (e loopEstimator) EstimateTokens(context.Context, ModelRequest) (int, error) {
+	return e.estimate, e.err
+}
+
 type countingProviderForPreflight struct {
 	calls    atomic.Int32
 	response *ModelResponse
@@ -27,7 +37,7 @@ func (p *countingProviderForPreflight) Stream(_ context.Context, _ ModelRequest,
 func TestLoopIntegration_PreFlightReject_NoProviderCall(t *testing.T) {
 	// When the pre-flight check rejects (estimate exceeds capacity),
 	// the provider should NOT be called at all.
-	estimator := &mockEstimator{estimate: 5000, err: nil}
+	estimator := &loopEstimator{estimate: 5000, err: nil}
 
 	rl, err := NewRateLimiter(TPM(100), WithTokenEstimator(estimator))
 	if err != nil {
@@ -38,17 +48,17 @@ func TestLoopIntegration_PreFlightReject_NoProviderCall(t *testing.T) {
 		response: &ModelResponse{Text: "should not reach here"},
 	}
 
-	a, err := New(provider, "sys", WithRateLimiter(rl))
+	a, err := agent.New(provider, "sys", agent.WithRateLimiter(rl))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, invokeErr := a.Invoke(Background(), "hello")
+	_, invokeErr := a.Invoke(agent.Background(), "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error from pre-flight rejection, got nil")
 	}
-	if !errors.Is(invokeErr, ErrRateLimitExceeded) {
-		t.Fatalf("expected ErrRateLimitExceeded, got: %v", invokeErr)
+	if !errors.Is(invokeErr, agent.ErrRateLimitExceeded) {
+		t.Fatalf("expected agent.ErrRateLimitExceeded, got: %v", invokeErr)
 	}
 
 	if calls := provider.calls.Load(); calls != 0 {
@@ -59,7 +69,7 @@ func TestLoopIntegration_PreFlightReject_NoProviderCall(t *testing.T) {
 func TestLoopIntegration_PreFlightPass_NormalProviderCall(t *testing.T) {
 	// When the pre-flight check passes (estimate within capacity),
 	// the provider should be called normally and return a result.
-	estimator := &mockEstimator{estimate: 10, err: nil}
+	estimator := &loopEstimator{estimate: 10, err: nil}
 
 	rl, err := NewRateLimiter(TPM(1000), WithTokenEstimator(estimator))
 	if err != nil {
@@ -73,12 +83,12 @@ func TestLoopIntegration_PreFlightPass_NormalProviderCall(t *testing.T) {
 		},
 	}
 
-	a, err := New(provider, "sys", WithRateLimiter(rl))
+	a, err := agent.New(provider, "sys", agent.WithRateLimiter(rl))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, invokeErr := a.Invoke(Background(), "hello")
+	result, invokeErr := a.Invoke(agent.Background(), "hello")
 	if invokeErr != nil {
 		t.Fatalf("unexpected error: %v", invokeErr)
 	}
@@ -101,13 +111,13 @@ func TestLoopIntegration_NoRateLimiter_SkipsPreFlight(t *testing.T) {
 		},
 	}
 
-	// No WithRateLimiter option — rateLimiter is nil.
-	a, err := New(provider, "sys")
+	// No agent.WithRateLimiter option — rateLimiter is nil.
+	a, err := agent.New(provider, "sys")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	result, invokeErr := a.Invoke(Background(), "hello")
+	result, invokeErr := a.Invoke(agent.Background(), "hello")
 	if invokeErr != nil {
 		t.Fatalf("unexpected error: %v", invokeErr)
 	}
@@ -121,9 +131,9 @@ func TestLoopIntegration_NoRateLimiter_SkipsPreFlight(t *testing.T) {
 }
 
 func TestLoopIntegration_PreFlightReject_NotRetried(t *testing.T) {
-	// ErrRateLimitExceeded from pre-flight should NOT be retried,
+	// agent.ErrRateLimitExceeded from pre-flight should NOT be retried,
 	// even when the agent has retry configured.
-	estimator := &mockEstimator{estimate: 5000, err: nil}
+	estimator := &loopEstimator{estimate: 5000, err: nil}
 
 	rl, err := NewRateLimiter(TPM(100), WithTokenEstimator(estimator))
 	if err != nil {
@@ -134,25 +144,53 @@ func TestLoopIntegration_PreFlightReject_NotRetried(t *testing.T) {
 		response: &ModelResponse{Text: "should not reach here"},
 	}
 
-	a, err := New(provider, "sys",
-		WithRateLimiter(rl),
-		WithProviderRetry(3, 10*time.Millisecond), // 3 retries configured
+	a, err := agent.New(provider, "sys",
+		agent.WithRateLimiter(rl),
+		agent.WithProviderRetry(3, 10*time.Millisecond), // 3 retries configured
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, invokeErr := a.Invoke(Background(), "hello")
+	_, invokeErr := a.Invoke(agent.Background(), "hello")
 	if invokeErr == nil {
 		t.Fatal("expected error from pre-flight rejection, got nil")
 	}
-	if !errors.Is(invokeErr, ErrRateLimitExceeded) {
-		t.Fatalf("expected ErrRateLimitExceeded, got: %v", invokeErr)
+	if !errors.Is(invokeErr, agent.ErrRateLimitExceeded) {
+		t.Fatalf("expected agent.ErrRateLimitExceeded, got: %v", invokeErr)
 	}
 
 	// The provider should never have been called — pre-flight runs before
 	// the retry loop and short-circuits on rejection.
 	if calls := provider.calls.Load(); calls != 0 {
 		t.Errorf("expected 0 provider calls (pre-flight reject should not retry), got %d", calls)
+	}
+}
+
+func TestProviderRetryFinalizesLeasePerAttempt(t *testing.T) {
+	var calls atomic.Int32
+	provider := &funcProvider{fn: func(context.Context, ModelRequest, func(ModelEvent)) (*ModelResponse, error) {
+		if calls.Add(1) == 1 {
+			return nil, errors.New("transient")
+		}
+		return &ModelResponse{Text: "recovered", Usage: TokenUsage{InputTokens: 200}}, nil
+	}}
+	rl, err := NewRateLimiter(TPM(1000), WithTokenEstimator(loopEstimator{estimate: 500}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := agent.New(provider, "sys", agent.WithProviderRetry(1, time.Millisecond), agent.WithRateLimiter(rl))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(agent.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("provider attempts = %d, want 2", got)
+	}
+	rl.tokenEstimator = loopEstimator{estimate: 400}
+	if _, err := rl.AcquireLease(context.Background(), "", ModelRequest{}); !errors.Is(err, agent.ErrRateLimitExceeded) {
+		t.Fatalf("retry token accounting = %v, want ErrRateLimitExceeded", err)
 	}
 }

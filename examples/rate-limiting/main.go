@@ -27,6 +27,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/logging/auto"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
+	"github.com/camilbinas/gude-agents/agent/ratelimit"
 	"github.com/joho/godotenv"
 )
 
@@ -40,7 +41,7 @@ func main() {
 	// FailFast is the default — returns ErrRateLimitExceeded immediately.
 	fmt.Println("── Shared mode (2 RPM, fail-fast default) ──")
 
-	rl, err := agent.NewRateLimiter(agent.RPM(2))
+	rl, err := ratelimit.NewRateLimiter(ratelimit.RPM(2))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func main() {
 	// Use WithBlock() to wait for capacity instead of failing fast.
 	fmt.Println("\n── Per-conversation mode (2 RPM each, block) ──")
 
-	rl2, err := agent.NewRateLimiter(agent.RPM(2), agent.WithBlock())
+	rl2, err := ratelimit.NewRateLimiter(ratelimit.RPM(2), ratelimit.WithBlock())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,10 +120,10 @@ func main() {
 	// RPM() and TPM() are convenient aliases for 60-second windows.
 	fmt.Println("\n── Configurable windows (10 requests per 30 seconds) ──")
 
-	rl3, err := agent.NewRateLimiter(
-		agent.RequestRateLimit(10, 30), // 10 requests per 30-second window
-		agent.TokenRateLimit(5000, 30), // 5000 tokens per 30-second window
-		agent.WithFailFast(),
+	rl3, err := ratelimit.NewRateLimiter(
+		ratelimit.RequestRateLimit(10, 30), // 10 requests per 30-second window
+		ratelimit.TokenRateLimit(5000, 30), // 5000 tokens per 30-second window
+		ratelimit.WithFailFast(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -155,10 +156,10 @@ func main() {
 	// that throttle based on concurrent connections, not just request rate.
 	fmt.Println("\n── Concurrency limiting (max 2 in-flight per key) ──")
 
-	rl4, err := agent.NewRateLimiter(
-		agent.RPM(100),         // high rate limit so it doesn't interfere
-		agent.MaxConcurrent(2), // at most 2 calls in-flight per conversation
-		agent.WithBlock(),      // block if at capacity (instead of failing fast)
+	rl4, err := ratelimit.NewRateLimiter(
+		ratelimit.RPM(100),         // high rate limit so it doesn't interfere
+		ratelimit.MaxConcurrent(2), // at most 2 calls in-flight per conversation
+		ratelimit.WithBlock(),      // block if at capacity (instead of failing fast)
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -196,11 +197,11 @@ func main() {
 	// Both per-key AND global limits must pass for a call to proceed.
 	fmt.Println("\n── Global limits (5 RPM per key, 8 RPM global) ──")
 
-	rl5, err := agent.NewRateLimiter(
-		agent.RPM(5),                // 5 requests/min per conversation
-		agent.WithGlobalRPM(8),      // 8 requests/min total across all keys
-		agent.WithGlobalTPM(10_000), // 10k tokens/min total
-		agent.WithFailFast(),
+	rl5, err := ratelimit.NewRateLimiter(
+		ratelimit.RPM(5),                // 5 requests/min per conversation
+		ratelimit.WithGlobalRPM(8),      // 8 requests/min total across all keys
+		ratelimit.WithGlobalTPM(10_000), // 10k tokens/min total
+		ratelimit.WithFailFast(),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -245,9 +246,9 @@ func main() {
 	//
 	//   client := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
 	//   store := redistore.NewStore(client, redistore.WithPrefix("myapp"))
-	//   rl, _ := agent.NewRateLimiter(
-	//       agent.RPM(100),
-	//       agent.WithGlobalRPM(500),
-	//       agent.WithStore(store),
+	//   rl, _ := ratelimit.NewRateLimiter(
+	//       ratelimit.RPM(100),
+	//       ratelimit.WithGlobalRPM(500),
+	//       ratelimit.WithStore(store),
 	//   )
 }

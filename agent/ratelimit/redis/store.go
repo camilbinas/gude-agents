@@ -1,5 +1,5 @@
 // Package redis provides a Redis-backed implementation of the
-// agent.RateLimitStore interface for distributed rate limiting.
+// ratelimit.RateLimitStore interface for distributed rate limiting.
 //
 // Every counter is a Redis sorted set of events scored by Redis server time
 // (TIME inside the script), so instances with skewed clocks share one
@@ -31,18 +31,18 @@ import (
 	"strconv"
 	"time"
 
-	agent "github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/ratelimit"
 	"github.com/redis/go-redis/v9"
 )
 
-// Ensure Store implements agent.RateLimitStore at compile time.
-var _ agent.RateLimitStore = (*Store)(nil)
+// Ensure Store implements ratelimit.RateLimitStore at compile time.
+var _ ratelimit.RateLimitStore = (*Store)(nil)
 
 // refundTimeout bounds compensating writes, which must still run after the
 // caller's context is cancelled.
 const refundTimeout = 5 * time.Second
 
-// Store implements agent.RateLimitStore using Redis sorted sets with
+// Store implements ratelimit.RateLimitStore using Redis sorted sets with
 // sliding-window semantics.
 type Store struct {
 	client redis.UniversalClient
@@ -195,11 +195,11 @@ func validWindow(w time.Duration) error {
 	return nil
 }
 
-// ReserveRequests implements agent.RateLimitStore. Each counter is checked
+// ReserveRequests implements ratelimit.RateLimitStore. Each counter is checked
 // and charged by one atomic script; earlier charges are refunded when a later
 // counter rejects, and earlier plus the attempted charge are refunded when a
 // script errors, so the outcome is all-or-nothing.
-func (s *Store) ReserveRequests(ctx context.Context, reservations []agent.RequestReservation) (bool, error) {
+func (s *Store) ReserveRequests(ctx context.Context, reservations []ratelimit.RequestReservation) (bool, error) {
 	for _, r := range reservations {
 		if err := validWindow(r.Window); err != nil {
 			return false, err
@@ -227,9 +227,9 @@ func (s *Store) ReserveRequests(ctx context.Context, reservations []agent.Reques
 	return true, nil
 }
 
-// RecordTokens implements agent.RateLimitStore. Usage is recorded on every
+// RecordTokens implements ratelimit.RateLimitStore. Usage is recorded on every
 // counter; if one write errors, it and all earlier writes are refunded.
-func (s *Store) RecordTokens(ctx context.Context, counters []agent.TokenCounter, amount int) error {
+func (s *Store) RecordTokens(ctx context.Context, counters []ratelimit.TokenCounter, amount int) error {
 	for _, c := range counters {
 		if err := validWindow(c.Window); err != nil {
 			return err
@@ -255,7 +255,7 @@ func (s *Store) RecordTokens(ctx context.Context, counters []agent.TokenCounter,
 	return nil
 }
 
-// GetTokenCount implements agent.RateLimitStore.
+// GetTokenCount implements ratelimit.RateLimitStore.
 func (s *Store) GetTokenCount(ctx context.Context, key string, window time.Duration) (int, error) {
 	if err := validWindow(window); err != nil {
 		return 0, err

@@ -149,10 +149,9 @@ func WithTokenBudget(maxTokens int) Option {
 	}
 }
 
-// WithRateLimiter attaches a RateLimiter to the agent.
-// The limiter's Acquire method is called before each provider call (keyed by
-// conversation ID), and Record is called after each successful provider call.
-func WithRateLimiter(rl *RateLimiter) Option {
+// WithRateLimiter attaches provider-call rate limiting. Concrete limiters are
+// available from the agent/ratelimit package.
+func WithRateLimiter(rl RateLimiter) Option {
 	return func(a *Agent) error {
 		a.rateLimiter = rl
 		return nil

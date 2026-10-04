@@ -797,26 +797,17 @@ func (r *run) saveConversation(messages []Message, cumulative TokenUsage) (commi
 
 // callProviderWithRetry calls Provider.Stream with optional timeout and retry.
 func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
-	// Pre-flight token budget check — performed once before the retry loop.
-	if a.rateLimiter != nil {
-		if err := a.rateLimiter.PreFlightCheck(ctx, convID, req); err != nil {
-			return nil, err
-		}
-	}
-
 	maxAttempts := 1 + a.retryMax
 	var lastErr error
 
 	for attempt := range maxAttempts {
-		// The returned release frees the per-key concurrency slot. It must run
-		// for every successful Acquire, even when the provider call fails.
-		var release ReleaseFunc
+		var lease RateLimitLease
 		if a.rateLimiter != nil {
-			rel, err := a.rateLimiter.Acquire(ctx, convID)
+			var err error
+			lease, err = a.rateLimiter.AcquireLease(ctx, convID, req)
 			if err != nil {
 				return nil, err
 			}
-			release = rel
 		}
 
 		callCtx := ctx
@@ -840,18 +831,22 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req Mo
 			cancel()
 		}
 		if err == nil {
-			if a.rateLimiter != nil {
-				recErr := a.rateLimiter.Record(ctx, convID, resp.Usage)
-				release()
-				if recErr != nil {
-					return nil, recErr
+			if lease != nil {
+				commitErr := lease.Commit(ctx, resp.Usage)
+				lease.Release()
+				if commitErr != nil {
+					return nil, commitErr
 				}
 			}
 			return resp, nil
 		}
 
-		if release != nil {
-			release()
+		if lease != nil {
+			failErr := lease.Fail(ctx)
+			lease.Release()
+			if failErr != nil {
+				return nil, errors.Join(err, failErr)
+			}
 		}
 
 		lastErr = err

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	agent "github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/ratelimit"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -36,8 +36,8 @@ func reqCount(t *testing.T, mr *miniredis.Miniredis, key string) int {
 	return len(members)
 }
 
-func res(key string, limit int, window time.Duration) agent.RequestReservation {
-	return agent.RequestReservation{Key: key, Limit: limit, Window: window}
+func res(key string, limit int, window time.Duration) ratelimit.RequestReservation {
+	return ratelimit.RequestReservation{Key: key, Limit: limit, Window: window}
 }
 
 func TestReserveRequests_EnforcesLimit(t *testing.T) {
@@ -45,12 +45,12 @@ func TestReserveRequests_EnforcesLimit(t *testing.T) {
 	store := NewStore(client)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		ok, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("k", 3, time.Minute)})
+		ok, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("k", 3, time.Minute)})
 		if err != nil || !ok {
 			t.Fatalf("reservation %d = %v, %v", i, ok, err)
 		}
 	}
-	ok, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("k", 3, time.Minute)})
+	ok, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("k", 3, time.Minute)})
 	if err != nil || ok {
 		t.Fatalf("reservation over limit = %v, %v, want false, nil", ok, err)
 	}
@@ -65,10 +65,10 @@ func TestReserveRequests_RejectionRefundsEarlierCounters(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	store := NewStore(client)
 	ctx := context.Background()
-	if ok, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("global", 1, time.Minute)}); !ok || err != nil {
+	if ok, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("global", 1, time.Minute)}); !ok || err != nil {
 		t.Fatalf("fill global = %v, %v", ok, err)
 	}
-	ok, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("key:a", 10, time.Minute), res("global", 1, time.Minute)})
+	ok, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("key:a", 10, time.Minute), res("global", 1, time.Minute)})
 	if err != nil || ok {
 		t.Fatalf("reservation = %v, %v, want false, nil", ok, err)
 	}
@@ -94,7 +94,7 @@ func TestReserveRequests_ConcurrentNeverExceedsLimit(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			key := "key:" + string(rune('a'+i%10))
-			allowed, err := store.ReserveRequests(ctx, []agent.RequestReservation{res(key, 1000, time.Minute), res("global", 10, time.Minute)})
+			allowed, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res(key, 1000, time.Minute), res("global", 10, time.Minute)})
 			switch {
 			case err != nil:
 				t.Errorf("reserve: %v", err)
@@ -126,7 +126,7 @@ func TestReserveRequests_UsesServerTimeWindow(t *testing.T) {
 	store := NewStore(client)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	r := []agent.RequestReservation{res("k", 1, 10*time.Second)}
+	r := []ratelimit.RequestReservation{res("k", 1, 10*time.Second)}
 
 	if ok, _ := store.ReserveRequests(ctx, r); !ok {
 		t.Fatal("first reservation rejected")
@@ -145,7 +145,7 @@ func TestRecordTokens_AllCountersAndSum(t *testing.T) {
 	_, client := setupMiniredis(t)
 	store := NewStore(client)
 	ctx := context.Background()
-	counters := []agent.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}
+	counters := []ratelimit.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}
 	for _, amt := range []int{10, 25, 100} {
 		if err := store.RecordTokens(ctx, counters, amt); err != nil {
 			t.Fatal(err)
@@ -164,7 +164,7 @@ func TestRecordTokens_WindowExpiry(t *testing.T) {
 	store := NewStore(client)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "k", Window: 2 * time.Second}}, 42); err != nil {
+	if err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "k", Window: 2 * time.Second}}, 42); err != nil {
 		t.Fatal(err)
 	}
 	mr.SetTime(base.Add(3 * time.Second))
@@ -183,7 +183,7 @@ func TestRecordTokens_FailureRefundsEarlierCounters(t *testing.T) {
 	if err := mr.Set("ratelimit:tok:global", "not-a-zset"); err != nil {
 		t.Fatal(err)
 	}
-	err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
+	err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
 	if err == nil {
 		t.Fatal("expected error from the failing counter")
 	}
@@ -198,7 +198,7 @@ func TestReserveRequests_ScriptErrorRefunds(t *testing.T) {
 	if err := mr.Set("ratelimit:req:global", "not-a-zset"); err != nil {
 		t.Fatal(err)
 	}
-	ok, err := store.ReserveRequests(context.Background(), []agent.RequestReservation{res("key:a", 5, time.Minute), res("global", 5, time.Minute)})
+	ok, err := store.ReserveRequests(context.Background(), []ratelimit.RequestReservation{res("key:a", 5, time.Minute), res("global", 5, time.Minute)})
 	if err == nil || ok {
 		t.Fatalf("reservation = %v, %v, want error", ok, err)
 	}
@@ -221,10 +221,10 @@ func TestRNGFailureAbortsBeforeMutation(t *testing.T) {
 	store.random = failingReader{}
 	ctx := context.Background()
 
-	if ok, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("k", 5, time.Minute)}); ok || !errors.Is(err, errRNG) {
+	if ok, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("k", 5, time.Minute)}); ok || !errors.Is(err, errRNG) {
 		t.Fatalf("ReserveRequests = %v, %v, want RNG error", ok, err)
 	}
-	if err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "k", Window: time.Minute}}, 10); !errors.Is(err, errRNG) {
+	if err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "k", Window: time.Minute}}, 10); !errors.Is(err, errRNG) {
 		t.Fatalf("RecordTokens = %v, want RNG error", err)
 	}
 	if keys := mr.Keys(); len(keys) != 0 {
@@ -279,10 +279,10 @@ func TestErrorPropagation(t *testing.T) {
 	ctx := context.Background()
 	mr.Close()
 
-	if _, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("k", 5, time.Minute)}); err == nil {
+	if _, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("k", 5, time.Minute)}); err == nil {
 		t.Error("ReserveRequests: expected error when Redis is unavailable")
 	}
-	if err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "k", Window: time.Minute}}, 10); err == nil {
+	if err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "k", Window: time.Minute}}, 10); err == nil {
 		t.Error("RecordTokens: expected error when Redis is unavailable")
 	}
 	if _, err := store.GetTokenCount(ctx, "k", time.Minute); err == nil {
@@ -294,7 +294,7 @@ func TestErrorPropagation(t *testing.T) {
 // the Lua paths: global rejection must not consume per-key budget.
 func TestRateLimiterWithRedisStore(t *testing.T) {
 	mr, client := setupMiniredis(t)
-	rl, err := agent.NewRateLimiter(agent.RPM(5), agent.WithGlobalRPM(2), agent.TPM(1000), agent.WithGlobalTPM(1000), agent.WithStore(NewStore(client)))
+	rl, err := ratelimit.NewRateLimiter(ratelimit.RPM(5), ratelimit.WithGlobalRPM(2), ratelimit.TPM(1000), ratelimit.WithGlobalTPM(1000), ratelimit.WithStore(NewStore(client)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,13 +306,13 @@ func TestRateLimiterWithRedisStore(t *testing.T) {
 		}
 		release()
 	}
-	if _, err := rl.Acquire(ctx, "c"); !errors.Is(err, agent.ErrRateLimitExceeded) {
+	if _, err := rl.Acquire(ctx, "c"); !errors.Is(err, ratelimit.ErrRateLimitExceeded) {
 		t.Fatalf("Acquire(c) = %v, want ErrRateLimitExceeded", err)
 	}
 	if n := reqCount(t, mr, "ratelimit:req:key:c"); n != 0 {
 		t.Fatalf("per-key c events = %d, want 0", n)
 	}
-	if err := rl.Record(ctx, "a", agent.TokenUsage{InputTokens: 30}); err != nil {
+	if err := rl.Record(ctx, "a", ratelimit.TokenUsage{InputTokens: 30}); err != nil {
 		t.Fatal(err)
 	}
 	store := NewStore(client)

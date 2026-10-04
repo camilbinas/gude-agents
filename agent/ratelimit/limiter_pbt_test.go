@@ -1,4 +1,4 @@
-package agent
+package ratelimit
 
 import (
 	"context"
@@ -9,8 +9,22 @@ import (
 	"testing"
 	"time"
 
+	agent "github.com/camilbinas/gude-agents/agent"
 	"pgregory.net/rapid"
 )
+
+type funcProvider struct {
+	fn func(context.Context, ModelRequest, func(ModelEvent)) (*ModelResponse, error)
+}
+
+func (p *funcProvider) Name() string { return "rate-limit-test" }
+func (p *funcProvider) Stream(ctx context.Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
+	return p.fn(ctx, req, emit)
+}
+
+func drawModelRequest(t *rapid.T) ModelRequest {
+	return ModelRequest{System: rapid.String().Draw(t, "system")}
+}
 
 // TestProperty_ZeroLimitMeansUnlimited verifies that when a limit dimension is
 // set to zero, the RateLimiter never blocks or returns an error for that dimension,
@@ -1395,16 +1409,16 @@ func TestProperty_ErrRateLimitExceededShortCircuitsRetries(t *testing.T) {
 			}
 
 			// Create an agent with the exhausted rate limiter and retry configured
-			a, err := New(countingProvider, "sys",
-				WithRateLimiter(rl),
-				WithProviderRetry(retryMax, 10*time.Millisecond),
+			a, err := agent.New(countingProvider, "sys",
+				agent.WithRateLimiter(rl),
+				agent.WithProviderRetry(retryMax, 10*time.Millisecond),
 			)
 			if err != nil {
 				rt.Fatalf("New() returned error: %v", err)
 			}
 
 			// Invoke the agent — Acquire should fail immediately on the first attempt
-			_, invokeErr := a.Invoke(Background(), "hello")
+			_, invokeErr := a.Invoke(agent.Background(), "hello")
 
 			// Verify: error is ErrRateLimitExceeded
 			if invokeErr == nil {
@@ -1453,9 +1467,9 @@ func TestProperty_ErrRateLimitExceededShortCircuitsRetries(t *testing.T) {
 			}
 
 			// Create an agent with the rate limiter (RPM=1) and retry configured
-			a, err := New(failingProvider, "sys",
-				WithRateLimiter(rl),
-				WithProviderRetry(retryMax, 1*time.Millisecond),
+			a, err := agent.New(failingProvider, "sys",
+				agent.WithRateLimiter(rl),
+				agent.WithProviderRetry(retryMax, 1*time.Millisecond),
 			)
 			if err != nil {
 				rt.Fatalf("New() returned error: %v", err)
@@ -1465,7 +1479,7 @@ func TestProperty_ErrRateLimitExceededShortCircuitsRetries(t *testing.T) {
 			// - First attempt: Acquire succeeds (RPM goes from 0 to 1), provider fails
 			// - Retry attempt: Acquire fails with ErrRateLimitExceeded (RPM=1, limit=1)
 			// - Agent should propagate ErrRateLimitExceeded immediately
-			_, invokeErr := a.Invoke(Background(), "hello")
+			_, invokeErr := a.Invoke(agent.Background(), "hello")
 
 			// Verify: error is ErrRateLimitExceeded (not the transient error)
 			if invokeErr == nil {

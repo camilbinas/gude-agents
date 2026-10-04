@@ -38,7 +38,7 @@ type Agent struct {
 	outputGuardrails []OutputGuardrail
 	toolFilters      []ToolFilter
 
-	rateLimiter *RateLimiter
+	rateLimiter RateLimiter
 
 	providerTimeout time.Duration
 	retryMax        int

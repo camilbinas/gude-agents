@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/ratelimit"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -89,7 +89,7 @@ func assertInjected(t *testing.T, hook *ambiguousHook, err error) {
 // earlier reservation and the ambiguous one must be refunded.
 func TestReserveRequests_AmbiguousErrorOnLaterCounterRefundsAll(t *testing.T) {
 	hook, store, count := setupAmbiguous(t, "ratelimit:req:global")
-	ok, err := store.ReserveRequests(context.Background(), []agent.RequestReservation{
+	ok, err := store.ReserveRequests(context.Background(), []ratelimit.RequestReservation{
 		res("key:a", 10, time.Minute), res("global", 10, time.Minute),
 	})
 	if ok {
@@ -107,7 +107,7 @@ func TestReserveRequests_AmbiguousErrorOnLaterCounterRefundsAll(t *testing.T) {
 // The first script writes, then the client sees an error.
 func TestReserveRequests_AmbiguousErrorOnFirstCounterRefundsIt(t *testing.T) {
 	hook, store, count := setupAmbiguous(t, "ratelimit:req:key:a")
-	ok, err := store.ReserveRequests(context.Background(), []agent.RequestReservation{
+	ok, err := store.ReserveRequests(context.Background(), []ratelimit.RequestReservation{
 		res("key:a", 10, time.Minute), res("global", 10, time.Minute),
 	})
 	if ok {
@@ -125,7 +125,7 @@ func TestReserveRequests_AmbiguousErrorOnFirstCounterRefundsIt(t *testing.T) {
 func TestRecordTokens_AmbiguousErrorOnLaterCounterRefundsAll(t *testing.T) {
 	hook, store, _ := setupAmbiguous(t, "ratelimit:tok:global")
 	ctx := context.Background()
-	err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
+	err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
 	assertInjected(t, hook, err)
 	for _, key := range []string{"key:a", "global"} {
 		if n, err := store.GetTokenCount(ctx, key, time.Minute); err != nil || n != 0 {
@@ -137,7 +137,7 @@ func TestRecordTokens_AmbiguousErrorOnLaterCounterRefundsAll(t *testing.T) {
 func TestRecordTokens_AmbiguousErrorOnFirstCounterRefundsIt(t *testing.T) {
 	hook, store, _ := setupAmbiguous(t, "ratelimit:tok:key:a")
 	ctx := context.Background()
-	err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
+	err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
 	assertInjected(t, hook, err)
 	for _, key := range []string{"key:a", "global"} {
 		if n, err := store.GetTokenCount(ctx, key, time.Minute); err != nil || n != 0 {
@@ -152,7 +152,7 @@ func TestCompensationFailureOnlyOverCounts(t *testing.T) {
 	t.Run("ReserveRequests", func(t *testing.T) {
 		hook, store, count := setupAmbiguous(t, "ratelimit:req:global")
 		hook.failRefunds = true
-		ok, err := store.ReserveRequests(context.Background(), []agent.RequestReservation{
+		ok, err := store.ReserveRequests(context.Background(), []ratelimit.RequestReservation{
 			res("key:a", 10, time.Minute), res("global", 10, time.Minute),
 		})
 		if ok {
@@ -170,7 +170,7 @@ func TestCompensationFailureOnlyOverCounts(t *testing.T) {
 		hook, store, _ := setupAmbiguous(t, "ratelimit:tok:global")
 		hook.failRefunds = true
 		ctx := context.Background()
-		err := store.RecordTokens(ctx, []agent.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
+		err := store.RecordTokens(ctx, []ratelimit.TokenCounter{{Key: "key:a", Window: time.Minute}, {Key: "global", Window: time.Minute}}, 50)
 		assertInjected(t, hook, err)
 		if !strings.Contains(err.Error(), "refund") {
 			t.Fatalf("error = %v, want refund failure reported", err)
@@ -190,7 +190,7 @@ func TestRefundOfUnwrittenMemberIsHarmless(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	store := NewStore(client)
 	ctx := context.Background()
-	if ok, err := store.ReserveRequests(ctx, []agent.RequestReservation{res("global", 10, time.Minute)}); !ok || err != nil {
+	if ok, err := store.ReserveRequests(ctx, []ratelimit.RequestReservation{res("global", 10, time.Minute)}); !ok || err != nil {
 		t.Fatalf("seed = %v, %v", ok, err)
 	}
 	if err := store.refund(ctx, []placed{{key: "ratelimit:req:global", member: "never-written"}, {key: "ratelimit:req:missing", member: "x"}}); err != nil {
@@ -207,7 +207,7 @@ func TestAcquire_AmbiguousStoreErrorConsumesNoQuota(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	hook := &ambiguousHook{failKey: "ratelimit:req:global", remaining: 1}
 	client.AddHook(hook)
-	rl, err := agent.NewRateLimiter(agent.RPM(1), agent.WithGlobalRPM(1), agent.WithStore(NewStore(client)))
+	rl, err := ratelimit.NewRateLimiter(ratelimit.RPM(1), ratelimit.WithGlobalRPM(1), ratelimit.WithStore(NewStore(client)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,17 +8,18 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/ratelimit"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 func TestIntegration_TokenEstimation_PreFlightRejectsOversizedRequest(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	rl, err := agent.NewRateLimiter(
-		agent.TPM(50),
-		agent.RPM(100),
-		agent.WithTokenEstimator(nil),
-		agent.WithFailFast(),
+	rl, err := ratelimit.NewRateLimiter(
+		ratelimit.TPM(50),
+		ratelimit.RPM(100),
+		ratelimit.WithTokenEstimator(nil),
+		ratelimit.WithFailFast(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -45,11 +46,11 @@ func TestIntegration_TokenEstimation_PreFlightRejectsOversizedRequest(t *testing
 func TestIntegration_TokenEstimation_PreFlightAllowsSmallRequest(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	rl, err := agent.NewRateLimiter(
-		agent.TPM(100000),
-		agent.RPM(100),
-		agent.WithTokenEstimator(nil),
-		agent.WithFailFast(),
+	rl, err := ratelimit.NewRateLimiter(
+		ratelimit.TPM(100000),
+		ratelimit.RPM(100),
+		ratelimit.WithTokenEstimator(nil),
+		ratelimit.WithFailFast(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -75,11 +76,11 @@ func TestIntegration_TokenEstimation_PreFlightAllowsSmallRequest(t *testing.T) {
 func TestIntegration_TokenEstimation_BudgetExhaustedAfterFirstCall(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
-	rl, err := agent.NewRateLimiter(
-		agent.TPM(200),
-		agent.RPM(100),
-		agent.WithTokenEstimator(nil),
-		agent.WithFailFast(),
+	rl, err := ratelimit.NewRateLimiter(
+		ratelimit.TPM(200),
+		ratelimit.RPM(100),
+		ratelimit.WithTokenEstimator(nil),
+		ratelimit.WithFailFast(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -123,11 +124,11 @@ func TestIntegration_TokenEstimation_WithToolsIncludedInEstimate(t *testing.T) {
 		return "42", nil
 	})
 
-	rl, err := agent.NewRateLimiter(
-		agent.TPM(30),
-		agent.RPM(100),
-		agent.WithTokenEstimator(nil),
-		agent.WithFailFast(),
+	rl, err := ratelimit.NewRateLimiter(
+		ratelimit.TPM(30),
+		ratelimit.RPM(100),
+		ratelimit.WithTokenEstimator(nil),
+		ratelimit.WithFailFast(),
 	)
 	if err != nil {
 		t.Fatal(err)

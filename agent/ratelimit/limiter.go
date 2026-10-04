@@ -1,4 +1,4 @@
-package agent
+package ratelimit
 
 import (
 	"context"
@@ -61,6 +61,7 @@ type rateBucket struct {
 	fixedRPMCount         int
 	fixedTPMCount         int
 	fixedTokenWindowStart time.Time // separate fixed window tracking for tokens
+	reservedTPM           int       // active estimated-token reservations
 
 	// lastAccess is updated on every acquire/record for TTL eviction.
 	lastAccess time.Time
@@ -117,6 +118,7 @@ func (b *rateBucket) maybeResetFixedTokenWindow() {
 	if now.Sub(start) >= b.effectiveTokenWindow() {
 		b.fixedTokenWindowStart = now
 		b.fixedTPMCount = 0
+		b.reservedTPM = 0
 	}
 }
 
@@ -399,16 +401,7 @@ func (s *concurrencySem) inflight() int { return len(s.slots) }
 // capacity returns the semaphore's maximum concurrency.
 func (s *concurrencySem) capacity() int { return cap(s.slots) }
 
-// RateLimiter enforces RPM and TPM limits on provider calls.
-// It supports both shared (single-bucket) and per-key (multi-bucket) modes.
-//
-// In shared mode, all calls compete for the same budget regardless of
-// conversation ID. In per-key mode, each conversation ID gets its own
-// independent budget. The mode is determined automatically: when a conversation
-// ID is present, the limiter uses per-key buckets; when absent, it uses a
-// shared default bucket.
-//
-// It is safe for concurrent use by multiple goroutines and agents.
+// RateLimiter enforces provider-call limits.
 type RateLimiter struct {
 	mu sync.Mutex
 
@@ -542,9 +535,9 @@ func WithGlobalTPM(count int) RateLimiterOption {
 	return WithGlobalTokenLimit(count, 60)
 }
 
-// WithStore configures a pluggable RateLimitStore backend.
-// When set, all counter operations are delegated to the provided store
-// instead of the default in-memory bucket logic.
+// WithStore configures a pluggable RateLimitStore backend. RPM and TPM leases
+// are distributed through the store; MaxConcurrent remains process-local.
+// Store backends must implement RateLimitLeaseStore for provider-call use.
 func WithStore(store RateLimitStore) RateLimiterOption {
 	return func(rl *RateLimiter) {
 		rl.store = store
@@ -563,15 +556,20 @@ func WithTokenEstimator(estimator TokenEstimator) RateLimiterOption {
 	}
 }
 
-// WithoutPreFlight disables the automatic pre-flight token budget check.
-// By default, when a TPM limit is configured, the RateLimiter uses CharEstimator
-// to reject requests that would obviously exceed the remaining budget. Use this
-// option to disable that behavior and rely solely on post-hoc token accounting.
-func WithoutPreFlight() RateLimiterOption {
+// WithoutTokenReservation disables estimated TPM admission reservations.
+// RPM and process-local concurrency limits remain enforced. Estimator failures
+// already fail open without requiring this option.
+func WithoutTokenReservation() RateLimiterOption {
 	return func(rl *RateLimiter) {
 		rl.preFlightDisabled = true
 		rl.tokenEstimator = nil
 	}
+}
+
+// WithoutPreFlight is retained as a compatibility alias. There is no longer a
+// separate pre-flight phase; use WithoutTokenReservation in new code.
+func WithoutPreFlight() RateLimiterOption {
+	return WithoutTokenReservation()
 }
 
 // NewRateLimiter creates a RateLimiter configured entirely via functional options.
@@ -896,10 +894,10 @@ func (rl *RateLimiter) reserveInMemory(ctx context.Context, key string) error {
 func (rl *RateLimiter) requestReservations(key string) []RequestReservation {
 	var rs []RequestReservation
 	if rl.requestRateLimit != nil {
-		rs = append(rs, RequestReservation{Key: storeKey(key), Limit: rl.requestRateLimit.Count, Window: rl.requestRateLimit.window()})
+		rs = append(rs, RequestReservation{Key: storeKey(key), Limit: rl.requestRateLimit.Count, Window: rl.requestRateLimit.window(), Strategy: rl.windowStrategy})
 	}
 	if rl.globalRequestLimit != nil {
-		rs = append(rs, RequestReservation{Key: storeGlobalKey, Limit: rl.globalRequestLimit.Count, Window: rl.globalRequestLimit.window()})
+		rs = append(rs, RequestReservation{Key: storeGlobalKey, Limit: rl.globalRequestLimit.Count, Window: rl.globalRequestLimit.window(), Strategy: rl.windowStrategy})
 	}
 	return rs
 }
