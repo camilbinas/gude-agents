@@ -203,3 +203,19 @@ func TestToolHandler_RemoteTaskFailed(t *testing.T) {
 		t.Fatalf("tool handler error = %v, want remote failure", err)
 	}
 }
+
+func TestExtractTextFromResult_UnwrapsTaskEnvelope(t *testing.T) {
+	text, err := extractTextFromResult(json.RawMessage(`{
+		"task": {
+			"id": "task-1",
+			"status": {"state": "TASK_STATE_COMPLETED"},
+			"artifacts": [{"artifactId": "artifact-1", "parts": [{"text": "hello"}, {"text": " world"}]}]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "hello world" {
+		t.Fatalf("text = %q, want hello world", text)
+	}
+}

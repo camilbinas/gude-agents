@@ -22,3 +22,5 @@ A2A can propagate a principal through `X-Agent-Principal-*` request headers. The
 Without either option, forwarded principal headers are parsed but discarded — the agent context has no principal from them. Server adapters built on the raw HTTP request (rather than `NewServer`) can recover the unverified value with `PrincipalFromRequest`, but are responsible for verifying or discarding it themselves.
 
 Use in-process [`AgentAsTool`](multi-agent.md) when deployment isolation is unnecessary. Use [MCP](mcp.md) for tool servers rather than independently addressable agents.
+
+See [`examples/a2a`](../examples/a2a/): run `server` to expose an Agent Card and `client` to discover remote skills and install them on a local orchestrator.

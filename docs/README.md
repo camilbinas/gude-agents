@@ -36,3 +36,7 @@ result, err := a.Invoke(ctx, "What changed?")
 - [HTTP services](http.md), [MCP](mcp.md), and [A2A](a2a.md)
 - [Observability and audit](observability.md)
 - [Checkpointing](checkpoint.md)
+
+## Runnable examples
+
+The focused learning path lives in [`../examples/README.md`](../examples/README.md): getting started, tools, streaming, conversation, human control, structured output, RAG, memory, multi-agent composition, MCP, HTTP, A2A, and multimodal input. Backend, provider, exporter, and transport configuration belongs in the topic documentation below rather than in separate chatbot programs.

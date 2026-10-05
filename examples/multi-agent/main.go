@@ -1,140 +1,57 @@
-// Example: Multi-agent orchestration.
+// Run: go run ./multi-agent
 //
-// An orchestrator agent routes questions about a dev team to three specialist workers:
-//   - repo analyst:  searches repositories by name, language, or description
-//   - PR reviewer:   looks up open pull requests by repo or author
-//   - team lookup:   finds team members by name or role
-//
-// The orchestrator decides which specialist(s) to call, potentially in
-// parallel, then synthesizes their answers into a single response.
-//
-// Key concepts demonstrated:
-//   - agent.New         — creates both specialist and orchestrator agents
-//   - agent.WithTools   — installs specialist tools and wrapped child agents
-//   - agent.AgentAsTool — wraps a child agent as a callable tool
-//   - prompt.RISEN / prompt.COSTAR — structured prompt templates
-//
-// Run:
-//
-//	go run ./multi-agent
-
+// An orchestrator delegates to two focused in-process specialists through
+// AgentAsTool. The specialists do not need a network protocol or a second
+// deployment when they live in the same service.
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/conversation"
-	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/examples/utils"
-	"github.com/joho/godotenv"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
+type destinationInput struct {
+	City string `json:"city" description:"Destination city" required:"true"`
+}
+
 func main() {
-	godotenv.Load() //nolint
-
-	haiku := bedrock.Must(bedrock.Cheapest())
-	sonnet := bedrock.Must(bedrock.Standard())
-
-	// ── Worker 1: Repo analyst ────────────────────────────────────────────────
-	// Searches the repo list and reports stats. Fast model — just tool + format.
-	repoAnalyst, err := agent.New(
-		haiku,
-		prompt.RISEN{
-			Role:         "You are a repository analyst.",
-			Instructions: "Use the search_repos tool to find repositories matching the query.",
-			Steps:        []string{"Search repos", "List each match with its language, description, open PRs, open issues, and last commit time"},
-			EndGoal:      "Give the caller a clear snapshot of the matching repositories.",
-			Narrowing:    "Report only what the tool returns. No speculation.",
-		}.String(),
-		agent.WithTools(searchReposTool()),
-	)
+	provider := bedrock.Must(bedrock.Standard())
+	researcher, err := agent.New(provider, "You research a destination using the supplied facts.", agent.WithTools(
+		tool.New("destination_facts", "Return destination facts", func(_ context.Context, in destinationInput) (string, error) {
+			return fmt.Sprintf(`{"city":%q,"highlights":["historic temples","walkable neighborhoods"]}`, in.City), nil
+		}),
+	))
+	if err != nil {
+		log.Fatal(err)
+	}
+	planner, err := agent.New(provider, "You make compact travel plans using the supplied facts.", agent.WithTools(
+		tool.New("trip_constraints", "Return planning constraints", func(_ context.Context, in destinationInput) (string, error) {
+			return fmt.Sprintf(`{"city":%q,"duration_days":3,"style":"quiet and food-focused"}`, in.City), nil
+		}),
+	))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// ── Worker 2: PR reviewer ─────────────────────────────────────────────────
-	// Looks up open pull requests filtered by repo or author.
-	prReviewer, err := agent.New(
-		haiku,
-		prompt.RISEN{
-			Role:         "You are a pull request analyst.",
-			Instructions: "Use the search_prs tool to find open pull requests. Filter by repo or author as needed.",
-			Steps:        []string{"Search PRs with the appropriate filters", "List each PR with its ID, repo, title, author, and comment count"},
-			EndGoal:      "Give the caller a clear list of relevant open PRs.",
-			Narrowing:    "Only report open PRs. Do not invent status or context.",
-		}.String(),
-		agent.WithTools(searchPRsTool()),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// ── Worker 3: Team lookup ─────────────────────────────────────────────────
-	// Finds team members by name or role.
-	teamLookup, err := agent.New(
-		haiku,
-		prompt.RISEN{
-			Role:         "You are a team directory assistant.",
-			Instructions: "Use the search_team tool to find team members by name or role.",
-			Steps:        []string{"Search the team", "For each match, report their name, role, repos they own, and open PR count"},
-			EndGoal:      "Give the caller a clear picture of who's on the team and what they're working on.",
-			Narrowing:    "Only report what the tool returns. Do not guess workload or availability.",
-		}.String(),
-		agent.WithTools(searchTeamTool()),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// ── Orchestrator ──────────────────────────────────────────────────────────
-	// Routes to the right specialist(s) and synthesizes the answer.
-	// Tool calls run in parallel by default, so independent specialist calls
-	// run simultaneously.
 	orchestrator, err := agent.New(
-		sonnet,
-		prompt.COSTAR{
-			Context: `You are an internal dev-team assistant. You have three specialists:
-- ask_repo_analyst: finds repos by name, language, or description
-- ask_pr_reviewer:  lists open pull requests by repo or author
-- ask_team_lookup:  finds team members by name or role`,
-			Objective: "Answer the user's question by calling the right specialist(s). For questions that span multiple domains (e.g. 'who owns the Go repos and what PRs do they have open?'), call specialists in parallel.",
-			Style:     "Concise and scannable. Use bullet points. Lead with the direct answer.",
-			Tone:      "Straightforward — like a knowledgeable colleague, not a help desk.",
-			Audience:  "Developers and engineering managers who want quick, accurate answers.",
-			Response:  "Answer directly. Use the specialists' output as-is where possible.",
-		}.String(),
+		provider,
+		"You coordinate specialists. Delegate research and planning when useful, then combine their answers into one itinerary.",
 		agent.WithTools(
-			agent.AgentAsTool(
-				"ask_repo_analyst",
-				"Search repositories by name, language, or description. Input: a search query.",
-				repoAnalyst,
-			),
-			agent.AgentAsTool(
-				"ask_pr_reviewer",
-				"List open pull requests. Input: describe what to filter by (repo name, author name, or both).",
-				prReviewer,
-			),
-			agent.AgentAsTool(
-				"ask_team_lookup",
-				"Find team members by name or role. Input: a name or role keyword.",
-				teamLookup,
-			),
-		),
-		agent.WithConversationStore(
-			conversation.NewInMemory(),
+			agent.AgentAsTool("research_destination", "Research a travel destination.", researcher),
+			agent.AgentAsTool("plan_trip", "Plan a trip using constraints.", planner),
 		),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// ── Interactive loop ──────────────────────────────────────────────────────
-	fmt.Println("Dev team assistant ready.")
-	fmt.Println("Try: 'What Go repos do we have?' or 'Show me Tom's open PRs' or 'Who are the backend engineers?'")
-	fmt.Println("Type 'quit' to exit.")
-
-	utils.Chat(agent.Background().WithConversationID("dev-team-session"), orchestrator)
+	result, err := orchestrator.Invoke(agent.Background(), "Plan a quiet three-day trip to Kyoto with good food.")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(result.Text)
 }

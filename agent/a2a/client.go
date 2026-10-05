@@ -381,6 +381,22 @@ func resolveEndpointURL(baseURL, endpoint string) (string, error) {
 }
 
 func extractTextFromResult(result json.RawMessage) (string, error) {
+	// JSON-RPC handlers may return a SendMessageResult envelope containing a
+	// task or message, while older handlers return either value directly.
+	// Normalize the envelope first so the rest of the decoder handles both.
+	var envelope struct {
+		Task    json.RawMessage `json:"task"`
+		Message json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(result, &envelope); err == nil {
+		switch {
+		case len(envelope.Task) > 0:
+			result = envelope.Task
+		case len(envelope.Message) > 0:
+			result = envelope.Message
+		}
+	}
+
 	var shape struct {
 		Parts  json.RawMessage `json:"parts"`
 		Status json.RawMessage `json:"status"`

@@ -35,6 +35,10 @@ type Recipe struct {
 func main() {
 	ctx := agent.Background()
 
+	// Standard() uses Claude Sonnet 5.5. It supports automatic tool selection
+	// but not named forced choices, so structured.Invoke supplies the sole
+	// schema tool without an explicit choice. Handle no_tool_call in production
+	// when a model elects to return plain text instead.
 	provider := bedrock.Must(bedrock.Standard())
 
 	a, err := agent.New(

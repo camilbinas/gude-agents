@@ -63,3 +63,16 @@ a, _ := agent.New(provider, instructions,
 Memory, PostgreSQL, SQLite, Redis and DynamoDB expose the same append/range/CAS semantics with backend-native storage. PostgreSQL and SQLite migrate legacy `messages` snapshots once into ordered message rows and no longer read/rewrite the blob at runtime. Redis stores metadata plus a same-slot stream. DynamoDB requires a HASH+RANGE layout with `META` and `MSG#...` items; append batches above its 24-message transactional limit fail explicitly rather than partially writing.
 
 For Redis and DynamoDB, deploy the new layout with a migration plan before switching traffic. Existing snapshot keys/items are not silently destroyed or dual-read forever.
+
+### Backend setup
+
+The canonical runnable workflow is [`examples/conversation`](../examples/conversation/). Choose a durable backend by constructing the store, then pass it to `agent.WithConversationStore`; the Agent and ContextManager setup is otherwise unchanged:
+
+```go
+store, err := postgres.New(pool) // agent/conversation/postgres
+// or: redis.New(opts), dynamodb.New(cfg, table)
+if err != nil { return err }
+a, err := agent.New(provider, instructions, agent.WithConversationStore(store))
+```
+
+PostgreSQL and SQLite store metadata plus append-only message rows. Redis uses same-slot metadata and stream keys. DynamoDB requires the documented partition/sort-key layout. See each backend package's Go documentation for options such as credentials, TTL, key prefixes, and table names.

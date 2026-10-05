@@ -86,3 +86,7 @@ err := a.Shutdown(ctx)
 ```
 
 Shutdown waits for background tools and re-entry turns, then flushes a conversation store that implements `agent.Flusher`.
+
+### Thinking events
+
+`Agent.Stream` can yield `EventThinking` when the configured provider/model has reasoning enabled. Handle it alongside `EventText`; enabling reasoning is provider-specific configuration (for Anthropic, see [Extended thinking](providers/anthropic.md#extended-thinking-and-streaming)).

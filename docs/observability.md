@@ -57,3 +57,15 @@ a, err := agent.New(prov, instructions,
 ```
 
 `WithAudit` writes stable JSON-serializable invocation, tool, and interrupt records. User messages, responses, tool input, and output are redacted by default; `WithAuditContent()` explicitly enables them. Protect audit sinks with access controls, retention limits, and backpressure appropriate to your compliance requirements.
+
+The runnable examples intentionally do not duplicate a chatbot for every exporter. Configure one adapter on the same Agent:
+
+```go
+a, err := agent.New(prov, instructions,
+    autoslog.WithLogging(),
+    tracing.WithTracing(tracerProvider),
+    metricsotel.WithMetrics(meterProvider),
+)
+```
+
+Use the adapter package documentation for Prometheus handlers, CloudWatch flushing, Sentry, OTLP exporters, and content-capture/security trade-offs.

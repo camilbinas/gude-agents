@@ -72,3 +72,15 @@ for i, chunk := range chunks {
 `SplitText` counts runes. `chunkSize` must be positive and `overlap` must be in `[0, chunkSize)`.
 
 The package includes an in-memory manager plus PostgreSQL and Redis stores; embedder integrations include Bedrock, Gemini, and OpenAI. Bedrock also provides Knowledge Base retrieval and reranking. Choose a backend that explicitly supports any metadata/full-text capability you use.
+
+## Backend and managed retriever setup
+
+[`examples/rag`](../examples/rag/) is the in-memory learning workflow. For a durable vector store, replace only the store constructor:
+
+```go
+store, err := postgres.New(pool, dimensions) // agent/rag/postgres
+// or: redis.New(client, dimensions)          // agent/rag/redis
+retriever := rag.NewRetriever(embedder, store)
+```
+
+Managed retrievers such as Bedrock Knowledge Bases and OpenAI vector stores implement `rag.Retriever` directly. The Agent setup remains `agent.RAGAgent(provider, instructions, retriever)`.

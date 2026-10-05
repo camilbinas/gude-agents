@@ -47,3 +47,15 @@ ctx := agent.NewContext(parent).WithIdentity("user-42")
 Memory tools without a configured scope use `agent.IdentityFrom`. A tool configured for a scope such as `account` uses only `agent.ScopeFrom(ctx, "account")`; absence is an error matching `memory.ErrMissingIdentity`. It never falls back to identity.
 
 In-memory, PostgreSQL, and Redis implementations are available. PostgreSQL and Redis provide typed remember/update tools with naming/description options and strict `WithScope`. Treat memory data as user data: validate tenant partitions, retention, deletion, and encryption for your deployment.
+
+## Backend setup
+
+[`examples/memory`](../examples/memory/) demonstrates the workflow with the in-memory store. PostgreSQL and Redis use the same typed schema and tools; only construction changes:
+
+```go
+store, err := postgres.New[Fact](pool, embedder, dimensions)
+// or: redis.NewStore[Fact](redisOptions, embedder, dimensions)
+if err != nil { return err }
+```
+
+Keep identity/scope handling in the Agent invocation; do not put backend credentials or tenant authority in tool input.

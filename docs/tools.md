@@ -105,3 +105,9 @@ tools := registry.List() // deterministic snapshot sorted by name
 Handlers receive standard `context.Context`, including cancellation, tracing, and invocation data. Use `agent.IdentityFrom`, `agent.ScopeFrom`, and `agent.PrincipalFrom`; emit UI or application events with `agent.EmitWidget` and `agent.EmitEvent`.
 
 See [Middleware](middleware.md), [RBAC](rbac.md), and [Interrupts](interrupts.md).
+
+## Policy and observability
+
+Constructor choice is independent from policy: `ToolFilter` controls what the model can see, RBAC/ABAC controls who may execute it, `WithGuard` enforces runtime business rules, `RequiresApproval` pauses for human authorization, and input/output guardrails control content. Observers and audit record what happened. See [RBAC](rbac.md), [Interrupts](interrupts.md), [Guardrails](guardrails.md), and [Observability](observability.md).
+
+The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, A2A, web-search, rich-image, background, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.

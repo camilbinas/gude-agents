@@ -40,3 +40,5 @@ For text-only endpoints, range over `TextStream`. Output guardrails run after li
 Persist interrupts with `WithInterruptStore`, accept an interrupt ID plus a validated decision/answer, load it with `Agent.LoadInterrupt`, then call `Resume` or `ResumeStream`. Authorize that the caller owns the interrupt's conversation before resuming.
 
 Call `Agent.Shutdown` during graceful server shutdown and also close provider-specific clients/exporters where required.
+
+[`examples/http-server`](../examples/http-server/) provides a compact `net/http` reference with `POST /chat` SSE streaming, request-context cancellation, conversation IDs, an interrupt resume endpoint, and graceful shutdown. It is intentionally not a production authentication system.
