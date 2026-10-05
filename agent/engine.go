@@ -542,9 +542,11 @@ func resultBlocks(outcomes []toolOutcome, includePending bool) []ContentBlock {
 	return out
 }
 
-// pendingInterrupt derives the interrupt (if any) from a tool batch. A
-// human-input request takes precedence; approval-pending calls in the same
-// batch are then reported to the model as not executed.
+// pendingInterrupt derives a post-execution interrupt from a tool batch.
+// Initial approval gating happens earlier in executeBatch: approval-required
+// calls pause before sibling handlers (including human-input handlers) run.
+// Once a batch is executing—for example after approval resume—a human-input
+// result takes precedence over concurrently pending approvals.
 func (r *run) pendingInterrupt(outcomes []toolOutcome, calls []tool.Call) *Interrupt {
 	for i := range outcomes {
 		if outcomes[i].humanInput != nil {

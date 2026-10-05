@@ -21,15 +21,19 @@ type orderInput struct {
 }
 
 type timeInput struct {
-	City string `json:"city" description:"City used for the support case" required:"true"`
+	Timezone string `json:"timezone" description:"IANA timezone such as Asia/Tokyo" required:"true"`
 }
 
 func main() {
 	lookupOrder := tool.New("lookup_order", "Look up an order's shipping status", func(_ context.Context, in orderInput) (string, error) {
 		return fmt.Sprintf(`{"order_id":%q,"status":"shipped","total":"$42.00"}`, in.OrderID), nil
 	})
-	localTime := tool.New("local_time", "Get the current support-center time for a city", func(_ context.Context, in timeInput) (string, error) {
-		return fmt.Sprintf(`{"city":%q,"time":%q}`, in.City, time.Now().Format(time.RFC3339)), nil
+	localTime := tool.New("local_time", "Get the current time in an IANA timezone", func(_ context.Context, in timeInput) (string, error) {
+		loc, err := time.LoadLocation(in.Timezone)
+		if err != nil {
+			return "", fmt.Errorf("load timezone %q: %w", in.Timezone, err)
+		}
+		return fmt.Sprintf(`{"timezone":%q,"time":%q}`, in.Timezone, time.Now().In(loc).Format(time.RFC3339)), nil
 	})
 
 	a, err := agent.New(
@@ -40,7 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	result, err := a.Invoke(agent.Background(), "Where is order 1234, and what time is it in Tokyo?")
+	result, err := a.Invoke(agent.Background(), "Where is order 1234, and what time is it in the Asia/Tokyo timezone?")
 	if err != nil {
 		log.Fatal(err)
 	}

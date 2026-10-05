@@ -33,6 +33,10 @@ result, err := a.Resume(ctx, interrupt, agent.Decide(decisions))
 
 Validation happens before any handler runs.
 
+### Approval preflight ordering
+
+For an initial tool batch, approval-required calls are validated through lookup, authorization, schema validation, and guards before **any** sibling handler runs. If one requires approval, the Agent pauses for `InterruptApproval`; a sibling `NewHumanInputTool` is deferred rather than executed. After `Approve`, `Deny`, or `Decide` resumes the batch, deferred siblings execute normally and a human-input tool may then create a new `InterruptHumanInput`.
+
 ## Human-input interrupts
 
 Add the built-in pause tool:
@@ -74,6 +78,17 @@ The agent commits the conversation snapshot first, then creates the durable inte
 
 Conversation-save failures suppress the pause. A later flush or interrupt-save failure returns the pause as a recovery snapshot with the error. With an explicitly configured store, that store remains authoritative: confirm or repair durable persistence before attempting resume rather than assuming the recovery snapshot is executable. Loading without a configured store returns `agent.ErrNoInterruptStore`.
 
-Each interrupt carries its exported resumable `Messages`, `ConversationID`, and committed `Revision`. Resume is bound to that exact ID, revision, and message snapshot. A non-empty persisted conversation must still match both revision and messages or resume returns `agent.ErrConversationConflict` before handlers run. The resume context's conversation ID is never used as a substitute. An interrupt has an empty conversation ID only when produced by an Agent without a conversation store; resuming it through an Agent with a store fails with `agent.ErrConversationIDRequired` before the interrupt is claimed.
+For a stateful conversation, the durable interrupt normally stores the canonical cursor rather than a transcript:
 
-Use `conversation.MarshalInterrupt` and `conversation.UnmarshalInterrupt` when implementing durable stores; their JSON representation includes the committed revision and message snapshot, with no compatibility fallback for older revisionless records. Alternatively, adapt a checkpointer with [`checkpoint/interruptstore`](checkpoint.md#interrupt-storage).
+```text
+ConversationID
+Revision
+LastSequence
+Messages = empty
+```
+
+Resume reloads canonical history from the `ConversationStore`—using a range boundary when a ContextManager supplies one—and verifies the canonical cursor before handlers run. A changed revision or last sequence returns `agent.ErrConversationConflict`.
+
+For a stateless invocation, there is no canonical store to reload. In that case `Interrupt.Messages` contains the resumable snapshot and remains present in the durable envelope for compatibility. The durable serializer therefore supports `Messages`, but callers should not expect populated messages for a normal persisted conversation.
+
+Use `conversation.MarshalInterrupt` and `conversation.UnmarshalInterrupt` when implementing durable stores; their JSON representation carries the conversation cursor and conditionally carries stateless messages. Alternatively, adapt a checkpointer with [`checkpoint/interruptstore`](checkpoint.md#interrupt-storage).

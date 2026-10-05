@@ -8,10 +8,10 @@ import (
 )
 
 // jsonInterrupt is the durable JSON envelope for an agent.Interrupt.
-// Unlike the event encoding of agent.Interrupt (which omits Messages), it
-// includes the resumable conversation snapshot, encoded with the same
-// type-discriminated ContentBlock envelopes as all other durable
-// conversation stores.
+// Unlike the event encoding of agent.Interrupt (which omits Messages), it can
+// encode a stateless resumable message snapshot. Stateful interruptions leave
+// Messages empty and instead resume through ConversationID, Revision, and
+// LastSequence against the canonical ConversationStore.
 type jsonInterrupt struct {
 	ID             string                   `json:"id"`
 	Type           agent.InterruptType      `json:"type"`
@@ -23,9 +23,9 @@ type jsonInterrupt struct {
 	Messages       []jsonMessage            `json:"messages"`
 }
 
-// MarshalInterrupt serialises an Interrupt, including its Messages snapshot,
-// to JSON. The result is safe to store in Redis, Postgres, DynamoDB, etc. and
-// restore in a different process with UnmarshalInterrupt.
+// MarshalInterrupt serialises an Interrupt to JSON. Stateless interruptions
+// include their Messages snapshot; stateful interruptions normally carry an
+// empty Messages array because canonical history is reloaded by cursor.
 func MarshalInterrupt(in *agent.Interrupt) ([]byte, error) {
 	if in == nil {
 		return nil, fmt.Errorf("conversation: marshal interrupt: nil interrupt")

@@ -140,7 +140,7 @@ func TestToolHandler_UsesJSONRPCInterfaceAndResolvesRelativeURL(t *testing.T) {
 		if r.Method == http.MethodPost {
 			postedPath = r.URL.Path
 			message := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("direct "), a2a.NewTextPart("message"))
-			result, err := json.Marshal(message)
+			result, err := json.Marshal(a2a.StreamResponse{Event: message})
 			if err != nil {
 				t.Fatalf("marshal message result: %v", err)
 			}
@@ -180,8 +180,8 @@ func TestToolHandler_RemoteTaskFailed(t *testing.T) {
 			return
 		}
 		failMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("something went wrong"))
-		task := a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateFailed, Message: failMsg}}
-		result, err := json.Marshal(task)
+		task := &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateFailed, Message: failMsg}}
+		result, err := json.Marshal(a2a.StreamResponse{Event: task})
 		if err != nil {
 			t.Fatalf("marshal task: %v", err)
 		}
@@ -217,5 +217,88 @@ func TestExtractTextFromResult_UnwrapsTaskEnvelope(t *testing.T) {
 	}
 	if text != "hello world" {
 		t.Fatalf("text = %q, want hello world", text)
+	}
+}
+
+func TestExtractTextFromResult_StrictSynchronousTaskStates(t *testing.T) {
+	statusMessage := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("remote status text"))
+	completed := func(state a2a.TaskState) *a2a.Task {
+		return &a2a.Task{
+			ID:        "task-1",
+			ContextID: "context-1",
+			Status:    a2a.TaskStatus{State: state, Message: statusMessage},
+			Artifacts: []*a2a.Artifact{{
+				ID:    "artifact-1",
+				Parts: a2a.ContentParts{a2a.NewTextPart("hello"), a2a.NewTextPart(" world")},
+			}},
+		}
+	}
+	message := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("direct "), a2a.NewTextPart("message"))
+
+	cases := []struct {
+		name       string
+		event      a2a.Event
+		want       string
+		wantErrSub string
+	}{
+		{name: "wrapped message", event: message, want: "direct message"},
+		{name: "completed task", event: completed(a2a.TaskStateCompleted), want: "hello world"},
+		{name: "failed task preserves status", event: completed(a2a.TaskStateFailed), wantErrSub: "remote status text"},
+		{name: "canceled task", event: completed(a2a.TaskStateCanceled), wantErrSub: "canceled"},
+		{name: "auth required task", event: completed(a2a.TaskStateAuthRequired), wantErrSub: "requires authentication"},
+		{name: "input required task", event: completed(a2a.TaskStateInputRequired), wantErrSub: "human-input continuation is not propagated"},
+		{name: "rejected task", event: completed(a2a.TaskStateRejected), wantErrSub: "rejected"},
+		{name: "submitted task", event: completed(a2a.TaskStateSubmitted), wantErrSub: "non-completed task state TASK_STATE_SUBMITTED"},
+		{name: "working task", event: completed(a2a.TaskStateWorking), wantErrSub: "non-completed task state TASK_STATE_WORKING"},
+		{name: "unspecified task", event: completed(a2a.TaskStateUnspecified), wantErrSub: "non-completed task state TASK_STATE_UNSPECIFIED"},
+		{name: "unknown task state", event: completed(a2a.TaskState("TASK_STATE_FUTURE")), wantErrSub: "unknown non-completed task state TASK_STATE_FUTURE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(a2a.StreamResponse{Event: tc.event})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := extractTextFromResult(raw)
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("error = %v, want substring %q", err, tc.wantErrSub)
+				}
+				if got != "" {
+					t.Fatalf("text = %q, want no successful text", got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("result = %q, %v; want %q, nil", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractTextFromResult_CompatibilityAndInvalidShapes(t *testing.T) {
+	directMessage, err := json.Marshal(a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("legacy message")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := extractTextFromResult(directMessage); err != nil || text != "legacy message" {
+		t.Fatalf("direct message = %q, %v", text, err)
+	}
+
+	statusUpdate, err := json.Marshal(a2a.StreamResponse{Event: &a2a.TaskStatusUpdateEvent{TaskID: "task-1", ContextID: "context-1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := [][]byte{
+		[]byte(`{}`),
+		[]byte(`null`),
+		[]byte(`{"task":{},"message":{}}`),
+		statusUpdate,
+		[]byte(`not json`),
+	}
+	for _, raw := range invalid {
+		if text, err := extractTextFromResult(raw); err == nil || text != "" {
+			t.Fatalf("result for %s = %q, %v; want error and no text", raw, text, err)
+		}
 	}
 }

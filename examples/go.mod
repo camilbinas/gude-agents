@@ -6,8 +6,6 @@ require (
 	github.com/camilbinas/gude-agents v0.82.0
 	github.com/camilbinas/gude-agents/agent/a2a v0.82.0
 	github.com/camilbinas/gude-agents/agent/mcp v0.82.0
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.82.0
 	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.82.0
-	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 )

@@ -380,65 +380,71 @@ func resolveEndpointURL(baseURL, endpoint string) (string, error) {
 	return base.ResolveReference(target).String(), nil
 }
 
+// extractTextFromResult accepts a synchronous A2A SendMessageResult. A direct
+// Message is retained for compatibility with older servers; task results must
+// use the SDK envelope and are successful only once explicitly completed.
 func extractTextFromResult(result json.RawMessage) (string, error) {
-	// JSON-RPC handlers may return a SendMessageResult envelope containing a
-	// task or message, while older handlers return either value directly.
-	// Normalize the envelope first so the rest of the decoder handles both.
-	var envelope struct {
-		Task    json.RawMessage `json:"task"`
-		Message json.RawMessage `json:"message"`
-	}
-	if err := json.Unmarshal(result, &envelope); err == nil {
-		switch {
-		case len(envelope.Task) > 0:
-			result = envelope.Task
-		case len(envelope.Message) > 0:
-			result = envelope.Message
+	var response a2a.StreamResponse
+	if err := json.Unmarshal(result, &response); err == nil {
+		switch value := response.Event.(type) {
+		case *a2a.Message:
+			return extractTextFromMessage(value), nil
+		case *a2a.Task:
+			return extractCompletedTaskText(value)
+		default:
+			return "", fmt.Errorf("a2a client: invalid synchronous SendMessage result type %T", response.Event)
 		}
 	}
 
-	var shape struct {
-		Parts  json.RawMessage `json:"parts"`
-		Status json.RawMessage `json:"status"`
-	}
-	if err := json.Unmarshal(result, &shape); err != nil {
-		return "", fmt.Errorf("a2a client: parsing result: %w", err)
-	}
-
-	if len(shape.Parts) > 0 && len(shape.Status) == 0 {
-		var message a2a.Message
-		if err := json.Unmarshal(result, &message); err != nil {
-			return "", fmt.Errorf("a2a client: parsing message result: %w", err)
+	// Older A2A JSON-RPC servers can return a bare Message instead of the
+	// v2 StreamResponse {"message": ...} envelope. Preserve that compatible
+	// result shape, but never accept a bare task or an arbitrary object.
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(result, &object); err == nil {
+		if _, hasParts := object["parts"]; hasParts {
+			var message a2a.Message
+			if err := json.Unmarshal(result, &message); err != nil {
+				return "", fmt.Errorf("a2a client: parsing direct message result: %w", err)
+			}
+			return extractTextFromMessage(&message), nil
 		}
-		return extractTextFromMessage(&message), nil
 	}
-	if len(shape.Status) == 0 {
-		return "", fmt.Errorf("a2a client: result is neither a Task nor a Message")
-	}
+	return "", fmt.Errorf("a2a client: parsing SendMessage result: expected task or message envelope")
+}
 
-	var task a2a.Task
-	if err := json.Unmarshal(result, &task); err != nil {
-		return "", fmt.Errorf("a2a client: parsing task result: %w", err)
-	}
-	if task.Status.State == a2a.TaskStateFailed {
-		failMsg := "task failed"
+func extractCompletedTaskText(task *a2a.Task) (string, error) {
+	switch task.Status.State {
+	case a2a.TaskStateCompleted:
+		var texts []string
+		for _, artifact := range task.Artifacts {
+			for _, part := range artifact.Parts {
+				if text := part.Text(); text != "" {
+					texts = append(texts, text)
+				}
+			}
+		}
+		return strings.Join(texts, ""), nil
+	case a2a.TaskStateFailed:
+		message := "task failed"
 		if task.Status.Message != nil {
 			if text := extractTextFromMessage(task.Status.Message); text != "" {
-				failMsg = text
+				message = text
 			}
 		}
-		return "", fmt.Errorf("a2a client: %s", failMsg)
+		return "", fmt.Errorf("a2a client: %s", message)
+	case a2a.TaskStateCanceled:
+		return "", fmt.Errorf("a2a client: remote task was canceled")
+	case a2a.TaskStateRejected:
+		return "", fmt.Errorf("a2a client: remote task was rejected")
+	case a2a.TaskStateAuthRequired:
+		return "", fmt.Errorf("a2a client: remote task requires authentication")
+	case a2a.TaskStateInputRequired:
+		return "", fmt.Errorf("a2a client: remote task requires input; A2A human-input continuation is not propagated through the tool adapter")
+	case a2a.TaskStateSubmitted, a2a.TaskStateWorking, a2a.TaskStateUnspecified:
+		return "", fmt.Errorf("a2a client: synchronous SendMessage returned non-completed task state %s", task.Status.State.String())
+	default:
+		return "", fmt.Errorf("a2a client: synchronous SendMessage returned unknown non-completed task state %s", task.Status.State.String())
 	}
-
-	var texts []string
-	for _, artifact := range task.Artifacts {
-		for _, part := range artifact.Parts {
-			if text := part.Text(); text != "" {
-				texts = append(texts, text)
-			}
-		}
-	}
-	return strings.Join(texts, ""), nil
 }
 
 func extractTextFromMessage(message *a2a.Message) string {
