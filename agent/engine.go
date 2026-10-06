@@ -555,13 +555,25 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 		if len(resp.ToolCalls) > 0 {
 			assistant := toolUseMessage(resp)
 			if r.executionDurable {
-				// Durable intent is recorded before either conversation output or a
-				// handler side effect. The ToolUse turn then becomes canonical before
-				// calls transition to Ready.
+				// The canonical transcript owns all assistant text. Persist the
+				// pre-tool delta (including the user request) before Planned, then
+				// keep any accompanying assistant text in its own canonical turn.
+				if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
+					endIteration(0, false, err)
+					return Result{}, err
+				}
+				if resp.Text != "" {
+					messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
+					if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
+						endIteration(0, false, err)
+						return Result{}, err
+					}
+				}
 				if err := r.planToolBatch(resp.ToolCalls); err != nil {
 					endIteration(0, false, err)
 					return Result{}, err
 				}
+				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls})
 				messages = append(messages, assistant)
 				if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
@@ -577,6 +589,14 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 
 			outcomes := r.executeBatch(iterC, resp.ToolCalls, availableTools, nil)
 			if err := batchOutcomeError(outcomes); err != nil {
+				// A sibling may have completed before another call became
+				// uncertain. Canonicalize only known results before returning.
+				if results := resultBlocks(outcomes, false); len(results) > 0 {
+					messages = append(messages, Message{Role: RoleUser, Content: results})
+					if checkpointErr := r.checkpointToolResults(persisted(messages, ragStart), outcomes); checkpointErr != nil {
+						return Result{}, errors.Join(err, checkpointErr)
+					}
+				}
 				endIteration(len(resp.ToolCalls), false, err)
 				return Result{}, err
 			}
@@ -596,14 +616,14 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 				if results := resultBlocks(outcomes, false); len(results) > 0 {
 					messages = append(messages, Message{Role: RoleUser, Content: results})
 				}
-				if err := r.checkpointToolResults(messages, outcomes); err != nil {
+				if err := r.checkpointToolResults(persisted(messages, ragStart), outcomes); err != nil {
 					return Result{}, err
 				}
 				return r.interrupt(in, persisted(messages, ragStart))
 			}
 
 			messages = append(messages, Message{Role: RoleUser, Content: resultBlocks(outcomes, true)})
-			if err := r.checkpointToolResults(messages, outcomes); err != nil {
+			if err := r.checkpointToolResults(persisted(messages, ragStart), outcomes); err != nil {
 				return Result{}, err
 			}
 			continue
@@ -722,10 +742,14 @@ func (r *run) planToolBatch(calls []tool.Call) error {
 				// semantics and intentionally is not made replayable here.
 				replaySafe = registered.ReplaySafe() && !registered.IsBackground()
 			}
+			inputHash, err := toolInputHash(call.Input)
+			if err != nil {
+				return fmt.Errorf("tool call %q input: %w", call.ToolUseID, err)
+			}
 			batch.Calls[i] = ToolExecution{
 				CallID: call.ToolUseID, Name: call.Name, Status: ToolExecutionPlanned,
 				IdempotencyKey: toolExecutionKey(execution.ID, call.ToolUseID),
-				InputHash:      toolInputHash(call.Input), Input: cloneRaw(call.Input),
+				InputHash:      inputHash, Input: cloneRaw(call.Input),
 				ReplaySafe: replaySafe,
 			}
 		}
@@ -816,7 +840,7 @@ func (r *run) checkpointToolResults(messages []Message, outcomes []toolOutcome) 
 	}
 	completed := make(map[string]struct{}, len(outcomes))
 	for _, outcome := range outcomes {
-		if !outcome.pending && !outcome.deferred && outcome.result.ToolUseID != "" {
+		if !outcome.pending && !outcome.deferred && !outcome.uncertain && outcome.result.ToolUseID != "" {
 			completed[outcome.result.ToolUseID] = struct{}{}
 		}
 	}
@@ -829,14 +853,17 @@ func (r *run) removeToolCalls(completed map[string]struct{}) error {
 		if execution.ToolBatch == nil {
 			return nil
 		}
-		remaining := execution.ToolBatch.Calls[:0]
-		for _, call := range execution.ToolBatch.Calls {
-			if _, ok := completed[call.CallID]; !ok {
-				remaining = append(remaining, call)
+		allCompleted := true
+		for i := range execution.ToolBatch.Calls {
+			call := &execution.ToolBatch.Calls[i]
+			if _, ok := completed[call.CallID]; ok {
+				call.Status = ToolExecutionCompleted
+			}
+			if call.Status != ToolExecutionCompleted {
+				allCompleted = false
 			}
 		}
-		execution.ToolBatch.Calls = remaining
-		if len(remaining) == 0 {
+		if allCompleted {
 			execution.ToolBatch, execution.Phase = nil, ExecutionPhaseModel
 		}
 		return nil
@@ -858,6 +885,11 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	if err != nil {
 		return Execution{}, fmt.Errorf("load execution for recovery: %w", err)
 	}
+	if execution.Status == ExecutionPaused && execution.Phase == ExecutionPhasePaused && execution.Pause != nil && execution.ToolBatch != nil {
+		// Recovery is idempotent once it has durably recreated an approval/input
+		// pause; callers can project it with LoadInterrupt and Resume it later.
+		return execution, nil
+	}
 	if execution.Status != ExecutionRunning || execution.Phase != ExecutionPhaseTools || execution.ToolBatch == nil {
 		return execution, ErrExecutionRecoveryUnsupported
 	}
@@ -877,7 +909,11 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	base = base.forInvocation(base.Context, &invocationRuntime{})
 	r := &run{a: a, c: base, h: a.hooks(base), execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
 
-	snapshot, err := a.conversation.LoadAfter(base, execution.ConversationID, 0)
+	after := execution.LastSequence
+	if execution.ToolBatch.ToolUseLastSequence > 0 {
+		after = execution.ToolBatch.ToolUseLastSequence - 1
+	}
+	snapshot, err := a.conversation.LoadAfter(base, execution.ConversationID, after)
 	if err != nil {
 		return execution, fmt.Errorf("load conversation for recovery: %w", err)
 	}
@@ -887,7 +923,18 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	if err := r.recoverToolUses(&messages); err != nil {
 		return cloneExecution(*r.execution), err
 	}
-	completed := canonicalToolResults(messages)
+	if r.execution.ToolBatch != nil && r.execution.ToolBatch.Resolution != nil {
+		if err := r.finishResolutionClaim(&messages); err != nil {
+			return cloneExecution(*r.execution), err
+		}
+		if r.execution.ToolBatch == nil {
+			return cloneExecution(*r.execution), nil
+		}
+	}
+	_, completed, err := activeToolBatch(messages, r.execution.ToolBatch)
+	if err != nil {
+		return cloneExecution(*r.execution), err
+	}
 	if len(completed) > 0 {
 		if err := r.removeToolCalls(completed); err != nil {
 			return cloneExecution(*r.execution), err
@@ -912,10 +959,29 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	if err != nil {
 		return cloneExecution(*r.execution), err
 	}
+	decisions := r.persistedApprovalDecisions(calls)
 	_, available := a.filterTools(base)
-	outcomes := r.executeBatch(base, calls, available, nil)
+	outcomes := r.executeBatch(base, calls, available, decisions)
 	if err := batchOutcomeError(outcomes); err != nil {
+		if results := resultBlocks(outcomes, false); len(results) > 0 {
+			messages = append(messages, Message{Role: RoleUser, Content: results})
+			if checkpointErr := r.checkpointToolResults(messages, outcomes); checkpointErr != nil {
+				return cloneExecution(*r.execution), errors.Join(err, checkpointErr)
+			}
+		}
 		return cloneExecution(*r.execution), err
+	}
+	if in := r.pendingInterrupt(outcomes, calls); in != nil {
+		if results := resultBlocks(outcomes, false); len(results) > 0 {
+			messages = append(messages, Message{Role: RoleUser, Content: results})
+			if err := r.checkpointToolResults(messages, outcomes); err != nil {
+				return cloneExecution(*r.execution), err
+			}
+		}
+		if err := r.pauseRecoveredExecution(in); err != nil {
+			return cloneExecution(*r.execution), err
+		}
+		return cloneExecution(*r.execution), nil
 	}
 	messages = append(messages, Message{Role: RoleUser, Content: resultBlocks(outcomes, true)})
 	if err := r.checkpointToolResults(messages, outcomes); err != nil {
@@ -924,8 +990,8 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	return cloneExecution(*r.execution), nil
 }
 
-// recoverToolUses repairs the planned -> ready boundary. Planned input is
-// retained only until a canonical ToolUse turn is visible in the conversation.
+// recoverToolUses repairs the planned -> ready boundary using only the
+// bounded suffix after the execution cursor.
 func (r *run) recoverToolUses(messages *[]Message) error {
 	batch := r.execution.ToolBatch
 	if batch == nil {
@@ -938,7 +1004,7 @@ func (r *run) recoverToolUses(messages *[]Message) error {
 	if !allPlanned {
 		return nil
 	}
-	if !toolUsesMatch(*messages, batch) {
+	if len(*messages) == 0 {
 		content := make([]ContentBlock, 0, len(batch.Calls))
 		for _, call := range batch.Calls {
 			if call.Input == nil {
@@ -951,57 +1017,132 @@ func (r *run) recoverToolUses(messages *[]Message) error {
 			return err
 		}
 	}
+	if _, _, err := activeToolBatch(*messages, batch); err != nil {
+		return err
+	}
 	return r.markToolBatchReady()
 }
 
-func toolUsesMatch(messages []Message, batch *ToolBatchExecution) bool {
-	found := make(map[string]ToolUseBlock, len(batch.Calls))
-	for _, message := range messages {
-		for _, block := range message.Content {
-			if use, ok := block.(ToolUseBlock); ok {
-				found[use.ToolUseID] = use
-			}
-		}
+// activeToolBatch validates exactly the assistant ToolUse batch at the active
+// cursor and only its later ToolResults. Any unrelated advance or duplicate
+// result is a conflict rather than a source of recovery input.
+func activeToolBatch(messages []Message, batch *ToolBatchExecution) ([]tool.Call, map[string]struct{}, error) {
+	if batch == nil || len(messages) == 0 || messages[0].Role != RoleAssistant {
+		return nil, nil, ErrExecutionRecoveryUnsupported
 	}
-	for _, call := range batch.Calls {
-		use, ok := found[call.CallID]
-		if !ok || use.Name != call.Name || toolInputHash(use.Input) != call.InputHash {
-			return false
-		}
+	if len(messages[0].Content) != len(batch.Calls) {
+		return nil, nil, ErrExecutionRecoveryUnsupported
 	}
-	return true
-}
-
-func canonicalToolResults(messages []Message) map[string]struct{} {
+	calls := make([]tool.Call, len(batch.Calls))
+	seen := make(map[string]struct{}, len(batch.Calls))
+	for i, block := range messages[0].Content {
+		use, ok := block.(ToolUseBlock)
+		if !ok || i >= len(batch.Calls) {
+			return nil, nil, ErrExecutionRecoveryUnsupported
+		}
+		call := batch.Calls[i]
+		hash, err := toolInputHash(use.Input)
+		if err != nil || use.ToolUseID != call.CallID || use.Name != call.Name || hash != call.InputHash {
+			return nil, nil, ErrExecutionRecoveryUnsupported
+		}
+		if _, duplicate := seen[use.ToolUseID]; duplicate {
+			return nil, nil, ErrExecutionRecoveryUnsupported
+		}
+		seen[use.ToolUseID] = struct{}{}
+		calls[i] = tool.Call{ToolUseID: use.ToolUseID, Name: use.Name, Input: cloneRaw(use.Input)}
+	}
 	results := make(map[string]struct{})
-	for _, message := range messages {
+	for _, message := range messages[1:] {
+		if message.Role != RoleUser || !onlyToolResults(message.Content) {
+			return nil, nil, ErrConversationConflict
+		}
 		for _, block := range message.Content {
-			if result, ok := block.(ToolResultBlock); ok {
-				results[result.ToolUseID] = struct{}{}
+			result := block.(ToolResultBlock)
+			if _, known := seen[result.ToolUseID]; !known {
+				return nil, nil, ErrConversationConflict
 			}
+			if _, duplicate := results[result.ToolUseID]; duplicate {
+				return nil, nil, ErrConversationConflict
+			}
+			results[result.ToolUseID] = struct{}{}
 		}
 	}
-	return results
+	return calls, results, nil
 }
 
 func canonicalPendingToolCalls(messages []Message, batch *ToolBatchExecution) ([]tool.Call, error) {
-	uses := make(map[string]ToolUseBlock, len(batch.Calls))
-	for _, message := range messages {
-		for _, block := range message.Content {
-			if use, ok := block.(ToolUseBlock); ok {
-				uses[use.ToolUseID] = use
+	calls, _, err := activeToolBatch(messages, batch)
+	if err != nil {
+		return nil, err
+	}
+	pending := calls[:0]
+	for i, call := range calls {
+		if batch.Calls[i].Status != ToolExecutionCompleted {
+			pending = append(pending, call)
+		}
+	}
+	return pending, nil
+}
+
+func (r *run) persistedApprovalDecisions(calls []tool.Call) []*tool.Decision {
+	if r.execution == nil || r.execution.ToolBatch == nil {
+		return nil
+	}
+	decisions := make([]*tool.Decision, len(calls))
+	for i, call := range calls {
+		for _, active := range r.execution.ToolBatch.Calls {
+			if active.CallID == call.ToolUseID && active.Approval != nil {
+				d := tool.Decision{Allow: active.Approval.Allow, Reason: active.Approval.Reason}
+				decisions[i] = &d
+				break
 			}
 		}
 	}
-	calls := make([]tool.Call, 0, len(batch.Calls))
-	for _, call := range batch.Calls {
-		use, ok := uses[call.CallID]
-		if !ok || use.Name != call.Name || toolInputHash(use.Input) != call.InputHash {
-			return nil, ErrExecutionRecoveryUnsupported
+	for _, decision := range decisions {
+		if decision != nil {
+			return decisions
 		}
-		calls = append(calls, tool.Call{ToolUseID: call.CallID, Name: call.Name, Input: cloneRaw(use.Input)})
 	}
-	return calls, nil
+	return nil
+}
+
+func (r *run) persistApprovalDecisions(approval *ApprovalInterrupt, resp ResumeResponse) error {
+	if !r.executionDurable {
+		return nil
+	}
+	if approval == nil {
+		return ErrExecutionRecoveryUnsupported
+	}
+	return r.persistExecution(func(execution *Execution) error {
+		if execution.ToolBatch == nil {
+			return ErrExecutionRecoveryUnsupported
+		}
+		for _, requested := range approval.Calls {
+			found := false
+			for i := range execution.ToolBatch.Calls {
+				call := &execution.ToolBatch.Calls[i]
+				if call.CallID == requested.CallID {
+					decision := resp.decisionFor(call.CallID)
+					call.Approval = &ToolApprovalDecision{Allow: decision.Allow, Reason: decision.Reason}
+					found = true
+					break
+				}
+			}
+			if !found {
+				return ErrExecutionRecoveryUnsupported
+			}
+		}
+		return nil
+	})
+}
+
+func (r *run) pauseRecoveredExecution(in *Interrupt) error {
+	return r.persistExecution(func(execution *Execution) error {
+		execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused
+		execution.Revision, execution.LastSequence = r.revision, r.lastSequence
+		execution.Pause = pauseFromInterrupt(in)
+		return nil
+	})
 }
 
 // ReconcileToolExecution resolves an unsafe in-flight call after the owning
@@ -1026,7 +1167,7 @@ func (a *Agent) ReconcileToolExecution(ctx *Context, executionID string, executi
 	if err != nil {
 		return Execution{}, err
 	}
-	if execution.Version != executionVersion || execution.ToolBatch == nil {
+	if execution.Version != executionVersion || execution.ToolBatch == nil || execution.ToolBatch.Resolution != nil {
 		return execution, ErrExecutionConflict
 	}
 	var target *ToolExecution
@@ -1044,52 +1185,103 @@ func (a *Agent) ReconcileToolExecution(ctx *Context, executionID string, executi
 		updated, err := a.executionStore.Save(ctx, execution, execution.Version)
 		return updated, err
 	}
-
-	snapshot, err := a.conversation.LoadAfter(ctx, execution.ConversationID, 0)
+	// The claim CAS is the one-winner boundary between Retry and a manual
+	// success/failure. Do not append a result until it is durable.
+	execution.ToolBatch.Resolution = &ToolResolutionClaim{
+		CallID: callID, Outcome: resolution.Outcome, Output: resolution.Output, ErrorMessage: resolution.ErrorMessage,
+	}
+	claimed, err := a.executionStore.Save(ctx, execution, execution.Version)
 	if err != nil {
 		return execution, err
 	}
-	seen := canonicalToolResults(snapshot.Messages)
-	if _, exists := seen[callID]; !exists {
-		if snapshot.Revision != execution.Revision || (execution.LastSequence != 0 && snapshot.LastSequence != 0 && snapshot.LastSequence != execution.LastSequence) {
-			return execution, ErrConversationConflict
-		}
-		output := resolution.Output
-		isError := resolution.Outcome == ToolResolutionFailed
-		if isError && output == "" {
-			output = resolution.ErrorMessage
-		}
-		if isError && output == "" {
-			output = "tool execution failed"
-		}
-		cursor, err := a.conversation.Append(ctx, execution.ConversationID, []Message{{Role: RoleUser, Content: []ContentBlock{ToolResultBlock{ToolUseID: callID, Content: output, IsError: isError}}}}, execution.Revision)
-		if err != nil {
-			return execution, err
-		}
-		execution.Revision, execution.LastSequence = cursor.Revision, cursor.LastSequence
-	} else {
-		execution.Revision, execution.LastSequence = snapshot.Revision, snapshot.LastSequence
+	base := ctx.Clone().WithConversationID(claimed.ConversationID).WithExecutionID(claimed.ID)
+	base = base.forInvocation(base.Context, &invocationRuntime{})
+	r := &run{a: a, c: base, h: a.hooks(base), execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
+	if claimed.ToolBatch.ToolUseLastSequence == 0 {
+		return cloneExecution(claimed), ErrExecutionRecoveryUnsupported
 	}
-	remaining := execution.ToolBatch.Calls[:0]
-	for _, call := range execution.ToolBatch.Calls {
-		if call.CallID != callID {
-			remaining = append(remaining, call)
-		}
+	after := claimed.ToolBatch.ToolUseLastSequence - 1
+	snapshot, err := a.conversation.LoadAfter(base, claimed.ConversationID, after)
+	if err != nil {
+		return cloneExecution(claimed), err
 	}
-	execution.ToolBatch.Calls = remaining
-	if len(remaining) == 0 {
-		execution.ToolBatch, execution.Phase = nil, ExecutionPhaseModel
+	r.revision, r.lastSequence, r.persistedCount = snapshot.Revision, snapshot.LastSequence, len(snapshot.Messages)
+	messages := append([]Message(nil), snapshot.Messages...)
+	if err := r.finishResolutionClaim(&messages); err != nil {
+		return cloneExecution(*r.execution), err
 	}
-	updated, err := a.executionStore.Save(ctx, execution, execution.Version)
-	return updated, err
+	return cloneExecution(*r.execution), nil
 }
 
-// resultBlocks converts outcomes to ToolResultBlocks in call order. When
-// includePending is false, calls awaiting approval are skipped.
-func resultBlocks(outcomes []toolOutcome, includePending bool) []ContentBlock {
+// finishResolutionClaim projects a claimed manual outcome exactly once. A
+// matching canonical result acknowledges an append whose response was lost;
+// a different result is a stale transcript advance and is rejected.
+func (r *run) finishResolutionClaim(messages *[]Message) error {
+	if r.execution == nil || r.execution.ToolBatch == nil || r.execution.ToolBatch.Resolution == nil {
+		return ErrExecutionRecoveryUnsupported
+	}
+	claim := *r.execution.ToolBatch.Resolution
+	_, results, err := activeToolBatch(*messages, r.execution.ToolBatch)
+	if err != nil {
+		return err
+	}
+	output := claim.Output
+	isError := claim.Outcome == ToolResolutionFailed
+	if isError && output == "" {
+		output = claim.ErrorMessage
+	}
+	if isError && output == "" {
+		output = "tool execution failed"
+	}
+	expected := ToolResultBlock{ToolUseID: claim.CallID, Content: output, IsError: isError}
+	if _, exists := results[claim.CallID]; exists {
+		var actual ToolResultBlock
+		for _, message := range (*messages)[1:] {
+			for _, block := range message.Content {
+				if result, ok := block.(ToolResultBlock); ok && result.ToolUseID == claim.CallID {
+					actual = result
+				}
+			}
+		}
+		if actual.Content != expected.Content || actual.IsError != expected.IsError {
+			return ErrConversationConflict
+		}
+	} else {
+		*messages = append(*messages, Message{Role: RoleUser, Content: []ContentBlock{expected}})
+		if _, err := r.saveConversation(*messages, r.c.rt.totalUsage()); err != nil {
+			return err
+		}
+	}
+	return r.persistExecution(func(execution *Execution) error {
+		if execution.ToolBatch == nil || execution.ToolBatch.Resolution == nil || execution.ToolBatch.Resolution.CallID != claim.CallID {
+			return ErrExecutionConflict
+		}
+		allCompleted := true
+		for i := range execution.ToolBatch.Calls {
+			call := &execution.ToolBatch.Calls[i]
+			if call.CallID == claim.CallID {
+				call.Status = ToolExecutionCompleted
+			}
+			if call.Status != ToolExecutionCompleted {
+				allCompleted = false
+			}
+		}
+		execution.Revision, execution.LastSequence = r.revision, r.lastSequence
+		execution.ToolBatch.Resolution = nil
+		if allCompleted {
+			execution.ToolBatch, execution.Phase = nil, ExecutionPhaseModel
+		}
+		return nil
+	})
+}
+
+// resultBlocks converts only completed, known outcomes to ToolResultBlocks in
+// call order. Pending, deferred, and uncertain calls never create result
+// blocks and therefore remain in the active recovery boundary.
+func resultBlocks(outcomes []toolOutcome, _ bool) []ContentBlock {
 	out := make([]ContentBlock, 0, len(outcomes))
 	for _, o := range outcomes {
-		if o.deferred || (o.pending && !includePending) {
+		if o.pending || o.deferred || o.uncertain || o.result.ToolUseID == "" {
 			continue
 		}
 		out = append(out, o.result)
@@ -1239,9 +1431,16 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		messages = append(messages, Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
 
 	case InterruptApproval:
-		calls, decisions, err := approvalResumeBatch(messages, in.Approval, resp)
+		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
+			return Result{}, err
+		}
+		calls, fallbackDecisions, err := approvalResumeBatch(messages, in.Approval, resp)
 		if err != nil {
 			return Result{}, err
+		}
+		decisions := r.persistedApprovalDecisions(calls)
+		if decisions == nil {
+			decisions = fallbackDecisions
 		}
 		_, available := a.filterTools(c)
 		outcomes := r.executeBatch(c, calls, available, decisions)

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -44,35 +45,59 @@ type ExecutionPause struct {
 }
 
 // ToolExecutionStatus describes the durable state of a call in the currently
-// incomplete tool boundary. No completed historical calls are retained.
+// incomplete tool boundary. Completed markers remain only until every sibling
+// in that same bounded batch is canonical, then the entire batch is cleared.
 type ToolExecutionStatus string
 
 const (
 	ToolExecutionPlanned  ToolExecutionStatus = "planned"
 	ToolExecutionReady    ToolExecutionStatus = "ready"
 	ToolExecutionInFlight ToolExecutionStatus = "in_flight"
+	// ToolExecutionCompleted is retained only inside the current incomplete
+	// batch so recovery can validate its full canonical ToolUse boundary while
+	// never replaying a sibling whose ToolResult is already canonical.
+	ToolExecutionCompleted ToolExecutionStatus = "completed"
 )
+
+// ToolApprovalDecision is a bounded, active-call decision retained across a
+// crash between Resume and handler dispatch. It is never transcript history.
+type ToolApprovalDecision struct {
+	Allow  bool   `json:"allow"`
+	Reason string `json:"reason,omitempty"`
+}
 
 // ToolExecution stores the minimal intent necessary to reconcile a call after
 // a crash. Input is cleared after canonical ToolUse is verified; results stay
 // exclusively in ConversationStore.
 type ToolExecution struct {
-	CallID         string              `json:"call_id"`
-	Name           string              `json:"name"`
-	Status         ToolExecutionStatus `json:"status"`
-	IdempotencyKey string              `json:"idempotency_key"`
-	InputHash      string              `json:"input_hash"`
-	Input          json.RawMessage     `json:"input,omitempty"`
-	ReplaySafe     bool                `json:"replay_safe"`
+	CallID         string                `json:"call_id"`
+	Name           string                `json:"name"`
+	Status         ToolExecutionStatus   `json:"status"`
+	IdempotencyKey string                `json:"idempotency_key"`
+	InputHash      string                `json:"input_hash"`
+	Input          json.RawMessage       `json:"input,omitempty"`
+	ReplaySafe     bool                  `json:"replay_safe"`
+	Approval       *ToolApprovalDecision `json:"approval,omitempty"`
+}
+
+// ToolResolutionClaim owns exactly one manual success/failure reconciliation
+// while its ToolResult is being made canonical. Its payload is cleared as soon
+// as that result is observed in ConversationStore.
+type ToolResolutionClaim struct {
+	CallID       string                `json:"call_id"`
+	Outcome      ToolResolutionOutcome `json:"outcome"`
+	Output       string                `json:"output,omitempty"`
+	ErrorMessage string                `json:"error_message,omitempty"`
 }
 
 // ToolBatchExecution is the single active recovery boundary. It is cleared as
 // soon as all result blocks become canonical conversation history.
 type ToolBatchExecution struct {
-	Iteration           int             `json:"iteration"`
-	Calls               []ToolExecution `json:"calls"`
-	ToolUseRevision     uint64          `json:"tool_use_revision"`
-	ToolUseLastSequence uint64          `json:"tool_use_last_sequence"`
+	Iteration           int                  `json:"iteration"`
+	Calls               []ToolExecution      `json:"calls"`
+	ToolUseRevision     uint64               `json:"tool_use_revision"`
+	ToolUseLastSequence uint64               `json:"tool_use_last_sequence"`
+	Resolution          *ToolResolutionClaim `json:"resolution,omitempty"`
 }
 
 // ToolResolutionOutcome is an application-confirmed outcome for an ambiguous
@@ -163,6 +188,14 @@ func cloneExecution(in Execution) Execution {
 		batch.Calls = append([]ToolExecution(nil), in.ToolBatch.Calls...)
 		for i := range batch.Calls {
 			batch.Calls[i].Input = cloneRaw(batch.Calls[i].Input)
+			if batch.Calls[i].Approval != nil {
+				approval := *batch.Calls[i].Approval
+				batch.Calls[i].Approval = &approval
+			}
+		}
+		if in.ToolBatch.Resolution != nil {
+			resolution := *in.ToolBatch.Resolution
+			batch.Resolution = &resolution
 		}
 		out.ToolBatch = &batch
 	}
@@ -179,9 +212,30 @@ func toolExecutionKey(executionID, callID string) string {
 	return "gude/tool/v1/" + hex.EncodeToString(sum[:])
 }
 
-func toolInputHash(input json.RawMessage) string {
-	sum := sha256.Sum256(input)
-	return hex.EncodeToString(sum[:])
+// toolInputHash computes the stable identity of a JSON input. It rejects
+// malformed or trailing JSON and normalizes object-key ordering while retaining
+// json.Number lexical representation, so semantically equal object formatting
+// does not change a durable tool identity.
+func toolInputHash(input json.RawMessage) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", fmt.Errorf("canonical tool input: invalid JSON: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", errors.New("canonical tool input: invalid trailing JSON")
+		}
+		return "", fmt.Errorf("canonical tool input: invalid trailing JSON: %w", err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("canonical tool input: encode JSON: %w", err)
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func newExecutionID(r io.Reader) (string, error) {

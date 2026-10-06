@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/camilbinas/gude-agents/agent/rag"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -20,12 +22,16 @@ func seedInFlightToolExecution(t *testing.T, conversations *testMemoryStore, exe
 	if err != nil {
 		t.Fatal(err)
 	}
+	hash, err := toolInputHash(json.RawMessage(`{"amount":7}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	execution, err := executions.Create(context.Background(), Execution{
 		ID: "execution-1", ConversationID: "conversation", Revision: cursor.Revision, LastSequence: cursor.LastSequence,
 		Status: ExecutionRunning, Phase: ExecutionPhaseTools, Iteration: 1,
 		ToolBatch: &ToolBatchExecution{Iteration: 1, ToolUseRevision: cursor.Revision, ToolUseLastSequence: cursor.LastSequence, Calls: []ToolExecution{{
 			CallID: "call-1", Name: "charge", Status: ToolExecutionInFlight,
-			IdempotencyKey: toolExecutionKey("execution-1", "call-1"), InputHash: toolInputHash(json.RawMessage(`{"amount":7}`)), ReplaySafe: replaySafe,
+			IdempotencyKey: toolExecutionKey("execution-1", "call-1"), InputHash: hash, ReplaySafe: replaySafe,
 		}}},
 	})
 	if err != nil {
@@ -355,5 +361,354 @@ func TestOutcomeUnknownCanBeReconciledAfterCanonicalToolUse(t *testing.T) {
 	toolResult, ok := snapshot.Messages[2].Content[0].(ToolResultBlock)
 	if !ok || toolResult.Content != "captured" {
 		t.Fatalf("tool result = %#v", snapshot.Messages[2].Content)
+	}
+}
+
+func TestToolInputHashCanonicalJSON(t *testing.T) {
+	a, err := toolInputHash(json.RawMessage(`{"b":"\u003c","a":900719925474099312345}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := toolInputHash(json.RawMessage(` { "a" : 900719925474099312345 , "b" : "<" } `))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Fatalf("canonical hashes differ: %q != %q", a, b)
+	}
+	decimal, err := toolInputHash(json.RawMessage(`1.0`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	integer, err := toolInputHash(json.RawMessage(`1`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decimal == integer {
+		t.Fatal("json.Number lexical representation was not retained")
+	}
+	if _, err := toolInputHash(json.RawMessage(`{} {}`)); err == nil {
+		t.Fatal("trailing JSON was accepted")
+	}
+	if _, err := toolInputHash(json.RawMessage(`{`)); err == nil {
+		t.Fatal("invalid JSON was accepted")
+	}
+}
+
+func TestRecoverExecutionFinishesResolutionClaimIdempotently(t *testing.T) {
+	for _, afterAppend := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before_append", true: "after_append_before_clear"}[afterAppend], func(t *testing.T) {
+			conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+			seeded := seedInFlightToolExecution(t, conversations, executions, false)
+			seeded.ToolBatch.Resolution = &ToolResolutionClaim{CallID: "call-1", Outcome: ToolResolutionSucceeded, Output: "captured"}
+			claimed, err := executions.Save(context.Background(), seeded, seeded.Version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterAppend {
+				if _, err := conversations.Append(context.Background(), claimed.ConversationID, []Message{{Role: RoleUser, Content: []ContentBlock{ToolResultBlock{ToolUseID: "call-1", Content: "captured"}}}}, claimed.Revision); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+			if err != nil {
+				t.Fatal(err)
+			}
+			recovered, err := a.RecoverExecution(Background(), claimed.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if recovered.ToolBatch != nil || recovered.Phase != ExecutionPhaseModel {
+				t.Fatalf("execution = %+v", recovered)
+			}
+			snapshot, err := conversations.Load(context.Background(), claimed.ConversationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Messages) != 2 {
+				t.Fatalf("messages = %#v", snapshot.Messages)
+			}
+		})
+	}
+}
+
+func TestOutcomeUnknownPersistsDefinitiveSiblingResults(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	var knownCalls atomic.Int32
+	known := tool.NewRaw("known", "known", nil, func(context.Context, json.RawMessage) (string, error) {
+		knownCalls.Add(1)
+		return "done", nil
+	})
+	unknown := tool.NewRaw("unknown", "unknown", nil, func(context.Context, json.RawMessage) (string, error) {
+		return "", tool.OutcomeUnknown(errors.New("transport lost"))
+	})
+	a, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{
+		{ToolUseID: "known", Name: "known", Input: json.RawMessage(`{}`)},
+		{ToolUseID: "unknown", Name: "unknown", Input: json.RawMessage(`{}`)},
+	}}), "x", WithTools(known, unknown), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.Invoke(Background().WithConversationID("conversation"), "go")
+	if !errors.Is(err, ErrToolExecutionUncertain) {
+		t.Fatalf("Invoke error = %v", err)
+	}
+	snapshot, err := conversations.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 3 {
+		t.Fatalf("canonical messages = %#v", snapshot.Messages)
+	}
+	resultBlock, ok := snapshot.Messages[2].Content[0].(ToolResultBlock)
+	if !ok || resultBlock.ToolUseID != "known" || resultBlock.Content != "done" {
+		t.Fatalf("definitive sibling result = %#v", snapshot.Messages[2].Content)
+	}
+	execution, err := executions.Load(context.Background(), result.ExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.ToolBatch == nil || execution.ToolBatch.Calls[0].Status != ToolExecutionCompleted || execution.ToolBatch.Calls[1].Status != ToolExecutionInFlight {
+		t.Fatalf("execution = %+v", execution)
+	}
+	if knownCalls.Load() != 1 {
+		t.Fatalf("known calls = %d", knownCalls.Load())
+	}
+}
+
+func TestRecoverExecutionReadyApprovalRemainsDurablyPaused(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	cursor, err := conversations.Append(context.Background(), "conversation", []Message{{
+		Role:    RoleAssistant,
+		Content: []ContentBlock{ToolUseBlock{ToolUseID: "approve", Name: "approve", Input: json.RawMessage(`{}`)}, ToolUseBlock{ToolUseID: "ordinary", Name: "ordinary", Input: json.RawMessage(`{}`)}},
+	}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approveHash, _ := toolInputHash(json.RawMessage(`{}`))
+	ordinaryHash, _ := toolInputHash(json.RawMessage(`{}`))
+	seeded, err := executions.Create(context.Background(), Execution{ID: "execution-approval", ConversationID: "conversation", Revision: cursor.Revision, LastSequence: cursor.LastSequence, Status: ExecutionRunning, Phase: ExecutionPhaseTools, ToolBatch: &ToolBatchExecution{ToolUseRevision: cursor.Revision, ToolUseLastSequence: cursor.LastSequence, Calls: []ToolExecution{
+		{CallID: "approve", Name: "approve", Status: ToolExecutionReady, IdempotencyKey: toolExecutionKey("execution-approval", "approve"), InputHash: approveHash},
+		{CallID: "ordinary", Name: "ordinary", Status: ToolExecutionReady, IdempotencyKey: toolExecutionKey("execution-approval", "ordinary"), InputHash: ordinaryHash},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var approvalCalls, ordinaryCalls atomic.Int32
+	approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { approvalCalls.Add(1); return "approved", nil }, tool.RequiresApproval())
+	ordinary := tool.NewRaw("ordinary", "ordinary", nil, func(context.Context, json.RawMessage) (string, error) { ordinaryCalls.Add(1); return "ordinary", nil })
+	a, err := New(newScriptedProvider(), "x", WithTools(approval, ordinary), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := a.RecoverExecution(Background(), seeded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.Status != ExecutionPaused || paused.Pause == nil || paused.Pause.Approval == nil || approvalCalls.Load() != 0 || ordinaryCalls.Load() != 0 {
+		t.Fatalf("paused=%+v approval=%d ordinary=%d", paused, approvalCalls.Load(), ordinaryCalls.Load())
+	}
+	again, err := a.RecoverExecution(Background(), seeded.ID)
+	if err != nil || again.Status != ExecutionPaused || approvalCalls.Load() != 0 || ordinaryCalls.Load() != 0 {
+		t.Fatalf("repeat recovery=%+v err=%v approval=%d ordinary=%d", again, err, approvalCalls.Load(), ordinaryCalls.Load())
+	}
+	snapshot, err := conversations.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 {
+		t.Fatalf("fabricated tool result: %#v", snapshot.Messages)
+	}
+}
+
+// blockResolutionClaimStore pauses only the first resolution-claim CAS so a
+// competing Retry can deterministically win before any conversation append.
+type blockResolutionClaimStore struct {
+	*testExecutionStore
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockResolutionClaimStore) Save(ctx context.Context, execution Execution, expected uint64) (Execution, error) {
+	if execution.ToolBatch != nil && execution.ToolBatch.Resolution != nil {
+		s.once.Do(func() {
+			close(s.entered)
+			<-s.release
+		})
+	}
+	return s.testExecutionStore.Save(ctx, execution, expected)
+}
+
+func TestReconcileClaimPreventsStaleSuccessAfterRetry(t *testing.T) {
+	conversations, base := newTestMemoryStore(), newTestExecutionStore()
+	seeded := seedInFlightToolExecution(t, conversations, base, false)
+	executions := &blockResolutionClaimStore{testExecutionStore: base, entered: make(chan struct{}), release: make(chan struct{})}
+	a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := a.ReconcileToolExecution(Background(), seeded.ID, seeded.Version, "call-1", ToolResolution{Outcome: ToolResolutionSucceeded, Output: "captured"})
+		result <- err
+	}()
+	<-executions.entered
+	retried, err := a.ReconcileToolExecution(Background(), seeded.ID, seeded.Version, "call-1", ToolResolution{Outcome: ToolResolutionRetry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ToolBatch == nil || retried.ToolBatch.Calls[0].Status != ToolExecutionReady {
+		t.Fatalf("retry = %+v", retried)
+	}
+	close(executions.release)
+	if err := <-result; !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("stale success error = %v", err)
+	}
+	snapshot, err := conversations.Load(context.Background(), seeded.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 {
+		t.Fatalf("stale success appended a result: %#v", snapshot.Messages)
+	}
+}
+
+func TestReconcileClaimPreventsStaleFailureAfterRetry(t *testing.T) {
+	conversations, base := newTestMemoryStore(), newTestExecutionStore()
+	seeded := seedInFlightToolExecution(t, conversations, base, false)
+	executions := &blockResolutionClaimStore{testExecutionStore: base, entered: make(chan struct{}), release: make(chan struct{})}
+	a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := a.ReconcileToolExecution(Background(), seeded.ID, seeded.Version, "call-1", ToolResolution{Outcome: ToolResolutionFailed, ErrorMessage: "declined"})
+		result <- err
+	}()
+	<-executions.entered
+	if _, err := a.ReconcileToolExecution(Background(), seeded.ID, seeded.Version, "call-1", ToolResolution{Outcome: ToolResolutionRetry}); err != nil {
+		t.Fatal(err)
+	}
+	close(executions.release)
+	if err := <-result; !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("stale failure error = %v", err)
+	}
+	snapshot, err := conversations.Load(context.Background(), seeded.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 {
+		t.Fatalf("stale failure appended a result: %#v", snapshot.Messages)
+	}
+}
+
+func TestRecoverPlannedBatchKeepsPrecedingCanonicalUserTurn(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	cursor, err := conversations.Append(context.Background(), "conversation", []Message{{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: "charge invoice"}}}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := toolInputHash(json.RawMessage(`{"amount":7}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := executions.Create(context.Background(), Execution{ID: "planned", ConversationID: "conversation", Revision: cursor.Revision, LastSequence: cursor.LastSequence, Status: ExecutionRunning, Phase: ExecutionPhaseTools, ToolBatch: &ToolBatchExecution{Iteration: 1, Calls: []ToolExecution{{CallID: "charge", Name: "charge", Status: ToolExecutionPlanned, IdempotencyKey: toolExecutionKey("planned", "charge"), InputHash: hash, Input: json.RawMessage(`{"amount":7}`)}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	charge := tool.NewRaw("charge", "charge", nil, func(context.Context, json.RawMessage) (string, error) { return "charged", nil })
+	a, err := New(newScriptedProvider(), "x", WithTools(charge), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RecoverExecution(Background(), seeded.ID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := conversations.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 3 || snapshot.Messages[0].Role != RoleUser {
+		t.Fatalf("canonical recovery messages = %#v", snapshot.Messages)
+	}
+	text, ok := snapshot.Messages[0].Content[0].(TextBlock)
+	if !ok || text.Text != "charge invoice" {
+		t.Fatalf("preceding user turn = %#v", snapshot.Messages[0])
+	}
+}
+
+func TestRecoveryRejectsUnrelatedAdvanceWithinActiveBoundary(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	seeded := seedInFlightToolExecution(t, conversations, executions, false)
+	if _, err := conversations.Append(context.Background(), seeded.ConversationID, []Message{{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "unrelated"}}}}, seeded.Revision); err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RecoverExecution(Background(), seeded.ID); !errors.Is(err, ErrConversationConflict) {
+		t.Fatalf("RecoverExecution error = %v, want conversation conflict", err)
+	}
+}
+
+type staticToolRecoveryRetriever struct{}
+
+func (staticToolRecoveryRetriever) Retrieve(context.Context, string) ([]rag.Document, error) {
+	return []rag.Document{{Content: "transient reference"}}, nil
+}
+
+func TestDurableToolCheckpointExcludesTransientRAGMessages(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	lookup := tool.NewRaw("lookup", "lookup", nil, func(context.Context, json.RawMessage) (string, error) { return "found", nil })
+	a, err := New(newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "lookup", Name: "lookup", Input: json.RawMessage(`{}`)}}},
+		&ModelResponse{Text: "done"},
+	), "x", WithTools(lookup), WithRetriever(staticToolRecoveryRetriever{}), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(Background().WithConversationID("conversation"), "question"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := conversations.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 4 { // user, ToolUse, ToolResult, final
+		t.Fatalf("canonical messages = %#v", snapshot.Messages)
+	}
+	for _, message := range snapshot.Messages {
+		for _, block := range message.Content {
+			if text, ok := block.(TextBlock); ok && strings.Contains(text.Text, "transient reference") {
+				t.Fatalf("transient RAG message persisted: %#v", snapshot.Messages)
+			}
+		}
+	}
+}
+
+func TestToolInputHashSurvivesExecutionJSONRoundTrip(t *testing.T) {
+	input := json.RawMessage(` { "payload": "\u003c", "n": 900719925474099312345 } `)
+	hash, err := toolInputHash(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := Execution{ID: "round-trip", ToolBatch: &ToolBatchExecution{Calls: []ToolExecution{{CallID: "call", Name: "tool", Status: ToolExecutionPlanned, InputHash: hash, Input: input}}}}
+	encoded, err := json.Marshal(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Execution
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	got, err := toolInputHash(decoded.ToolBatch.Calls[0].Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != hash {
+		t.Fatalf("round-trip hash=%q, want %q; encoded=%s", got, hash, encoded)
 	}
 }

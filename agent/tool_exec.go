@@ -15,6 +15,7 @@ type toolOutcome struct {
 	widgets    []WidgetBlock
 	pending    bool            // waiting for human approval; result is not final
 	deferred   bool            // deferred until approval interrupt resumes
+	uncertain  bool            // external outcome unknown; no result is canonical
 	humanInput *InputInterrupt // set when the call requested human input
 	err        error           // terminal recovery/coordinator error; never model-visible
 }
@@ -248,6 +249,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 				ExecutionID: r.c.ExecutionID(), CallID: tc.ToolUseID, ToolName: tc.Name, IdempotencyKey: key,
 			}
 			tf.finish(uncertain, "", true, true, "")
+			out.uncertain = true
 			out.err = uncertain
 			emitEnd("", &ErrorInfo{Code: ErrorCodeOutcomeUnknown, Message: err.Error()}, dur)
 			return out

@@ -121,9 +121,9 @@ When an Agent has both a `ConversationStore` and an `ExecutionStore`, a normal t
 Planned → canonical ToolUse → Ready → InFlight → handler → canonical ToolResult → cleared
 ```
 
-`ConversationStore` remains the canonical append-only transcript. `ExecutionStore` holds only the current incomplete `ToolBatch` (call IDs, names, input hashes, idempotency keys, replay policy, and the ToolUse cursor). It never becomes a second transcript or a historical tool-result store.
+`ConversationStore` remains the canonical append-only transcript. `ExecutionStore` holds only the current incomplete `ToolBatch` (call IDs, names, canonical-JSON input hashes, idempotency keys, replay policy, approval decisions, the ToolUse cursor, and at most one temporary manual-resolution claim). It never becomes a second transcript or a historical tool-result store. A resolution claim carries its success/failure payload only until the matching ToolResult is canonical.
 
-Before a handler can run, the agent persists its intent and appends the assistant `ToolUse` turn. It then marks the call `InFlight` immediately before middleware and the handler. A completed `ToolResult` is appended to the conversation before the active batch is cleared. Approval, authorization, schema validation, and guards remain ahead of `InFlight`, so rejected or pending calls have not started a side effect.
+Before `Planned`, the agent persists any unsaved canonical user turn and any assistant text accompanying tool calls as a text-only assistant message. The following assistant message contains the ToolUse blocks. This keeps provider/RAG projections out of durable state and lets recovery scope reads to the exact ToolUse cursor.
 
 ### Idempotent handlers
 
@@ -154,7 +154,9 @@ Recover an incomplete running execution without replaying the previous provider 
 execution, err := a.RecoverExecution(agent.Background(), executionID)
 ```
 
-Recovery repairs a crash between `Planned` and `Ready` from canonical ToolUse history, clears a batch whose results are already canonical, and replays an `InFlight` call only when that call was declared `tool.WithReplaySafe()`. It reuses the exact idempotency key. An unsafe ambiguous call returns `*agent.ToolExecutionUncertainError` (matching `agent.ErrToolExecutionUncertain`) without calling the handler. Detached background tools are never automatically replayed by this mechanism.
+Recovery reads only the suffix beginning at the active ToolUse cursor, validates the exact call IDs, names, and canonical input hashes, and accepts only later, non-duplicate results for that batch. It rejects unrelated transcript advances. Recovery repairs a crash between `Planned` and `Ready`, clears a batch whose results are already canonical, and replays an `InFlight` call only when that call was declared `tool.WithReplaySafe()`. It reuses the exact idempotency key. An unsafe ambiguous call returns `*agent.ToolExecutionUncertainError` (matching `agent.ErrToolExecutionUncertain`) without calling the handler. Detached background tools are never automatically replayed by this mechanism.
+
+An approval-required Ready batch recovers as a durable pause before any sibling handler is run. Human allow/deny decisions are saved in the active call state before handlers resume, so recovery after `Resume` uses the same decisions.
 
 After checking the external system, resolve an unsafe call with the version read from `ExecutionStore`:
 
@@ -171,3 +173,7 @@ execution, err := a.ReconcileToolExecution(
 Use `ToolResolutionFailed` to append an error ToolResult or `ToolResolutionRetry` to make the same call eligible for recovery again with its original key. Reconciliation is CAS-protected by `executionVersion`; a stale version returns `ErrExecutionConflict`.
 
 This mechanism intentionally does not add provider-response replay, durable background-worker execution, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
+
+### Operational limits
+
+The execution CAS serializes durable state transitions such as manual resolution claims; it does **not** stop a handler that has already started in another process, establish distributed ownership, or provide exactly-once external execution. Replay-safe tools must make their downstream operation idempotent with the supplied key. Unsafe `InFlight` calls require explicit reconciliation. Conversation and execution storage must both provide their documented CAS/durability behavior; if an append commits but its acknowledgement or a later execution save is lost, recovery validates the active ToolUse suffix and finishes the bounded pending state without adding another result.
