@@ -111,3 +111,63 @@ See [Middleware](middleware.md), [RBAC](rbac.md), and [Interrupts](interrupts.md
 Constructor choice is independent from policy: `ToolFilter` controls what the model can see, RBAC/ABAC controls who may execute it, `WithGuard` enforces runtime business rules, `RequiresApproval` pauses for human authorization, and input/output guardrails control content. Observers and audit record what happened. See [RBAC](rbac.md), [Interrupts](interrupts.md), [Guardrails](guardrails.md), and [Observability](observability.md).
 
 The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, A2A, web-search, rich-image, background, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.
+
+
+## Durable tool recovery
+
+When an Agent has both a `ConversationStore` and an `ExecutionStore`, a normal tool batch has a durable boundary around each side effect:
+
+```text
+Planned → canonical ToolUse → Ready → InFlight → handler → canonical ToolResult → cleared
+```
+
+`ConversationStore` remains the canonical append-only transcript. `ExecutionStore` holds only the current incomplete `ToolBatch` (call IDs, names, input hashes, idempotency keys, replay policy, and the ToolUse cursor). It never becomes a second transcript or a historical tool-result store.
+
+Before a handler can run, the agent persists its intent and appends the assistant `ToolUse` turn. It then marks the call `InFlight` immediately before middleware and the handler. A completed `ToolResult` is appended to the conversation before the active batch is cleared. Approval, authorization, schema validation, and guards remain ahead of `InFlight`, so rejected or pending calls have not started a side effect.
+
+### Idempotent handlers
+
+Declare a handler replay-safe only when the downstream side effect honors the supplied key:
+
+```go
+charge := tool.New("charge", "Charge an invoice",
+    func(ctx context.Context, in ChargeInput) (string, error) {
+        key, ok := tool.IdempotencyKey(ctx)
+        if !ok {
+            return "", errors.New("durable tool metadata missing")
+        }
+        return payments.Charge(ctx, in.InvoiceID, key)
+    },
+    tool.WithReplaySafe(),
+)
+```
+
+The key has the stable form `gude/tool/v1/<sha256>` and is derived from the execution ID and provider tool-call ID. `tool.IsRecoveryReplay(ctx)` is true only for an automatic replay of a previously `InFlight` replay-safe call. The key is available to handlers, middleware, and `ToolCallRecord`; it is deliberately not emitted in stream `ToolEvent` payloads.
+
+If an external service may have accepted a request but its outcome cannot be known, return `tool.OutcomeUnknown(err)`. The agent keeps the call `InFlight`, returns `ErrToolExecutionUncertain`, and does not append a synthetic ToolResult.
+
+### Recovery and reconciliation
+
+Recover an incomplete running execution without replaying the previous provider call:
+
+```go
+execution, err := a.RecoverExecution(agent.Background(), executionID)
+```
+
+Recovery repairs a crash between `Planned` and `Ready` from canonical ToolUse history, clears a batch whose results are already canonical, and replays an `InFlight` call only when that call was declared `tool.WithReplaySafe()`. It reuses the exact idempotency key. An unsafe ambiguous call returns `*agent.ToolExecutionUncertainError` (matching `agent.ErrToolExecutionUncertain`) without calling the handler. Detached background tools are never automatically replayed by this mechanism.
+
+After checking the external system, resolve an unsafe call with the version read from `ExecutionStore`:
+
+```go
+execution, err := a.ReconcileToolExecution(
+    agent.Background(), executionID, executionVersion, callID,
+    agent.ToolResolution{
+        Outcome: agent.ToolResolutionSucceeded,
+        Output:  "payment already captured",
+    },
+)
+```
+
+Use `ToolResolutionFailed` to append an error ToolResult or `ToolResolutionRetry` to make the same call eligible for recovery again with its original key. Reconciliation is CAS-protected by `executionVersion`; a stale version returns `ErrExecutionConflict`.
+
+This mechanism intentionally does not add provider-response replay, durable background-worker execution, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.

@@ -79,6 +79,9 @@ type ToolCallRecord struct {
 	ConversationID string
 	Allowed        bool
 	DenialReason   string
+	IdempotencyKey string
+	ReplaySafe     bool
+	RecoveryReplay bool
 	Timestamp      time.Time
 	Duration       time.Duration
 }

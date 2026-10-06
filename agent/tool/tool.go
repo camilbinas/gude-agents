@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -63,6 +64,68 @@ type BackgroundHandler[T any] func(ctx context.Context, input T) (string, error)
 // Option configures a Tool.
 type Option func(*Tool)
 
+// WithReplaySafe declares that a handler can be invoked again after a process
+// failure when it receives the same IdempotencyKey. Handlers must pass that
+// key to the external system they call; this option does not make an otherwise
+// non-idempotent side effect safe by itself.
+func WithReplaySafe() Option {
+	return func(t *Tool) { t.replaySafe = true }
+}
+
+type executionContextKey struct{}
+
+type executionMetadata struct {
+	idempotencyKey string
+	recoveryReplay bool
+}
+
+// WithExecutionMetadata attaches agent-owned execution metadata to a handler
+// context. It is exported for agent adapters; applications normally read it
+// through IdempotencyKey and IsRecoveryReplay instead.
+func WithExecutionMetadata(ctx context.Context, idempotencyKey string, recoveryReplay bool) context.Context {
+	return context.WithValue(ctx, executionContextKey{}, executionMetadata{idempotencyKey: idempotencyKey, recoveryReplay: recoveryReplay})
+}
+
+// IdempotencyKey returns the durable key assigned to the current tool call.
+// The boolean is false when the call is not running under durable execution.
+func IdempotencyKey(ctx context.Context) (string, bool) {
+	metadata, ok := ctx.Value(executionContextKey{}).(executionMetadata)
+	if !ok || metadata.idempotencyKey == "" {
+		return "", false
+	}
+	return metadata.idempotencyKey, true
+}
+
+// IsRecoveryReplay reports whether this handler invocation replays a call
+// found in-flight after recovery. Such calls are only dispatched for tools
+// declared WithReplaySafe.
+func IsRecoveryReplay(ctx context.Context) bool {
+	metadata, _ := ctx.Value(executionContextKey{}).(executionMetadata)
+	return metadata.recoveryReplay
+}
+
+// OutcomeUnknownError marks a handler error whose external side effect may
+// have happened even though its outcome could not be determined.
+type OutcomeUnknownError struct{ Cause error }
+
+func (e *OutcomeUnknownError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "tool outcome unknown"
+	}
+	return "tool outcome unknown: " + e.Cause.Error()
+}
+func (e *OutcomeUnknownError) Unwrap() error { return e.Cause }
+
+// OutcomeUnknown classifies err as an indeterminate external-tool outcome.
+// Pass nil to create a generic classifier error.
+func OutcomeUnknown(err error) error { return &OutcomeUnknownError{Cause: err} }
+
+// IsOutcomeUnknown reports whether err was classified with OutcomeUnknown.
+func IsOutcomeUnknown(err error) bool {
+	var unknown *OutcomeUnknownError
+	return errors.As(err, &unknown)
+}
+
 type executionKind uint8
 
 const (
@@ -87,6 +150,7 @@ type Tool struct {
 	kind          executionKind
 	ack           string
 	needsApproval bool
+	replaySafe    bool
 	rolePolicy    *rolePolicy
 }
 
@@ -121,6 +185,10 @@ func (t Tool) Ack() string { return t.ack }
 
 // NeedsApproval reports whether this tool requires explicit human approval.
 func (t Tool) NeedsApproval() bool { return t.needsApproval }
+
+// ReplaySafe reports whether recovery may replay an in-flight handler with its
+// original idempotency key.
+func (t Tool) ReplaySafe() bool { return t.replaySafe }
 
 // Validate verifies the tool's provider-facing metadata and executable handler.
 func (t Tool) Validate() error {

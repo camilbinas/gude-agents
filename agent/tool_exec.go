@@ -16,6 +16,7 @@ type toolOutcome struct {
 	pending    bool            // waiting for human approval; result is not final
 	deferred   bool            // deferred until approval interrupt resumes
 	humanInput *InputInterrupt // set when the call requested human input
+	err        error           // terminal recovery/coordinator error; never model-visible
 }
 
 // executeBatch runs a batch of tool calls through the canonical pipeline, in
@@ -97,6 +98,10 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool, decision *tool.Decision, async bool) toolOutcome {
 	a := r.a
 	callRT := &toolCallRuntime{id: tc.ToolUseID, name: tc.Name, async: async}
+	if durable, ok := r.toolExecution(tc.ToolUseID); ok {
+		callRT.idempotencyKey = durable.IdempotencyKey
+		callRT.recoveryReplay = r.recovering && durable.Status == ToolExecutionInFlight
+	}
 	callC := parent.forToolCall(callRT)
 	out := toolOutcome{result: ToolResultBlock{ToolUseID: tc.ToolUseID}}
 
@@ -122,6 +127,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	toolC, tf := r.h.onToolStart(callC, ToolCallRecord{
 		CallID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input),
 		Principal: principal, ConversationID: r.convID, Allowed: true,
+		IdempotencyKey: callRT.idempotencyKey, ReplaySafe: found && t.ReplaySafe(), RecoveryReplay: callRT.recoveryReplay,
 	})
 	begin := time.Now()
 
@@ -184,7 +190,18 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 		return out
 	}
 
-	// 6. Middleware + handler selection.
+	// 6. Persist Ready -> InFlight before the handler sees a side effect.
+	key, recoveryReplay, claimErr := r.beginToolExecution(tc.ToolUseID, tc.Name)
+	if claimErr != nil {
+		tf.finish(claimErr, "", true, false, "")
+		out.err = claimErr
+		return fail(claimErr.Error(), ErrorCodeOutcomeUnknown, time.Since(begin))
+	}
+	callRT.idempotencyKey, callRT.recoveryReplay = key, recoveryReplay
+
+	// 7. Middleware + handler selection.
+	// The event payload intentionally does not expose the idempotency key;
+	// observers receive it through ToolCallRecord instead.
 	emitStart()
 	inner := func(hc context.Context, call ToolCall) (ToolResult, error) {
 		execC := FromContext(hc)
@@ -218,13 +235,23 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 		}
 	}
 	handler := ChainMiddleware(inner, a.middlewares...)
-	result, err := handler(toolC, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
+	handlerContext := toolC.withContext(tool.WithExecutionMetadata(toolC.Context, key, recoveryReplay))
+	result, err := handler(handlerContext, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
 	dur := time.Since(begin)
 
 	// 7. Widgets.
 	out.widgets = callRT.drainWidgets()
 
 	if err != nil {
+		if tool.IsOutcomeUnknown(err) {
+			uncertain := &ToolExecutionUncertainError{
+				ExecutionID: r.c.ExecutionID(), CallID: tc.ToolUseID, ToolName: tc.Name, IdempotencyKey: key,
+			}
+			tf.finish(uncertain, "", true, true, "")
+			out.err = uncertain
+			emitEnd("", &ErrorInfo{Code: ErrorCodeOutcomeUnknown, Message: err.Error()}, dur)
+			return out
+		}
 		tf.finish(err, "", true, true, "")
 		out.result.Content = (&ToolError{ToolName: tc.Name, Cause: err}).Error()
 		out.result.IsError = true

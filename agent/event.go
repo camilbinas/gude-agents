@@ -182,6 +182,7 @@ const (
 	ErrorCodeToolDenied       = "tool_denied"
 	ErrorCodeUnknownTool      = "unknown_tool"
 	ErrorCodeInvalidInput     = "invalid_input"
+	ErrorCodeOutcomeUnknown   = "outcome_unknown"
 	ErrorCodeInternal         = "internal"
 )
 
@@ -202,6 +203,8 @@ func errorInfo(err error) *ErrorInfo {
 		code = ErrorCodeTokenBudget
 	case errors.Is(err, ErrRateLimitExceeded):
 		code = ErrorCodeRateLimit
+	case errors.Is(err, ErrToolExecutionUncertain):
+		code = ErrorCodeOutcomeUnknown
 	case errors.Is(err, &GuardrailError{}):
 		code = ErrorCodeGuardrail
 	case errors.Is(err, &StructuredOutputError{}):

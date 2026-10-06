@@ -6,6 +6,8 @@ import (
 	"errors"
 	"maps"
 	"sync"
+
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // Context carries stdlib context semantics plus the configuration of one agent
@@ -90,6 +92,9 @@ type toolCallRuntime struct {
 	id    string
 	name  string
 	async bool // true when the call runs on a worker goroutine (parallel tools)
+
+	idempotencyKey string
+	recoveryReplay bool
 
 	mu         sync.Mutex
 	widgets    []WidgetBlock
@@ -484,6 +489,17 @@ func cloneRaw(b json.RawMessage) json.RawMessage {
 	}
 	return append(json.RawMessage(nil), b...)
 }
+
+// ToolIdempotencyKey returns the durable key assigned to the current tool
+// handler, or "" outside a durable tool execution.
+func ToolIdempotencyKey(ctx context.Context) string {
+	key, _ := tool.IdempotencyKey(ctx)
+	return key
+}
+
+// IsToolRecoveryReplay reports whether the current handler call is replaying
+// a previously in-flight, replay-safe durable tool execution.
+func IsToolRecoveryReplay(ctx context.Context) bool { return tool.IsRecoveryReplay(ctx) }
 
 // tokenUsageKey is the context key for cumulative token usage.
 type tokenUsageKey struct{}
