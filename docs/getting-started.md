@@ -77,7 +77,7 @@ for event, err := range a.Stream(ctx.WithDetailedEvents(), "Explain the forecast
     case agent.EventText:
         fmt.Print(event.Text.Content)
     case agent.EventInterrupt:
-        fmt.Printf("\npaused: %s\n", event.Interrupt.ID)
+        fmt.Printf("\npaused execution: %s\n", event.Interrupt.ExecutionID)
     case agent.EventEnd:
         result = *event.Result
     }

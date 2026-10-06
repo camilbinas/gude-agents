@@ -1,8 +1,8 @@
 // Run: go run ./http-server
 //
 // A standard-library HTTP service with one long-lived Agent, one invocation
-// Context per request, SSE streaming, request cancellation, conversation IDs,
-// interrupt resume, and graceful shutdown.
+// Context per request, SSE streaming, durable execution pauses, and graceful
+// shutdown. The in-memory stores are replaceable with durable backends.
 package main
 
 import (
@@ -13,11 +13,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/checkpoint"
+	"github.com/camilbinas/gude-agents/agent/checkpoint/executionstore"
 	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
@@ -30,17 +31,14 @@ type resumeRequest struct {
 	Answer string `json:"answer"`
 }
 
-type pending struct {
-	sync.Mutex
-	values map[string]*agent.Interrupt
-}
-
 func main() {
-	p := &pending{values: make(map[string]*agent.Interrupt)}
+	conversations := conversation.NewInMemory()
+	executions := executionstore.New(checkpoint.NewMemory())
 	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
 		"You are a support agent. Use request_human_input when an essential detail is missing.",
-		agent.WithConversationStore(conversation.NewInMemory()),
+		agent.WithConversationStore(conversations),
+		agent.WithExecutionStore(executions),
 		agent.WithTools(agent.NewHumanInputTool("request_human_input", "Ask for missing information.")),
 	)
 	if err != nil {
@@ -49,8 +47,8 @@ func main() {
 	defer a.Shutdown(context.Background())
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /chat", p.chat(a))
-	mux.HandleFunc("POST /interrupt/{id}/resume", p.resume(a))
+	mux.HandleFunc("POST /chat", chat(a))
+	mux.HandleFunc("POST /interrupt/{id}/resume", resume(a))
 	server := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -66,7 +64,7 @@ func main() {
 	}
 }
 
-func (p *pending) chat(a *agent.Agent) http.HandlerFunc {
+func chat(a *agent.Agent) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var request chatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -91,17 +89,13 @@ func (p *pending) chat(a *agent.Agent) http.HandlerFunc {
 				flusher.Flush()
 				return
 			}
-			if event.Type == agent.EventInterrupt && event.Interrupt != nil {
-				p.Lock()
-				p.values[event.Interrupt.ID] = event.Interrupt
-				p.Unlock()
-			}
 			writeSSE(w, string(event.Type), event)
 			flusher.Flush()
 		}
 	}
 }
-func (p *pending) resume(a *agent.Agent) http.HandlerFunc {
+
+func resume(a *agent.Agent) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var request resumeRequest
@@ -109,11 +103,9 @@ func (p *pending) resume(a *agent.Agent) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		p.Lock()
-		interrupt := p.values[id]
-		p.Unlock()
-		if interrupt == nil {
-			http.Error(w, "interrupt not found", http.StatusNotFound)
+		interrupt, err := a.LoadInterrupt(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
 		ctx := agent.NewContext(r.Context()).WithConversationID(interrupt.ConversationID)
@@ -122,9 +114,6 @@ func (p *pending) resume(a *agent.Agent) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		p.Lock()
-		delete(p.values, id)
-		p.Unlock()
 		writeJSON(w, result)
 	}
 }

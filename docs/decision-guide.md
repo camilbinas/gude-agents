@@ -20,7 +20,7 @@ Consume streams through `EventEnd` when the completed turn must persist. Breakin
 | User facts across conversations | `memory.Memory[T]` with identity/strict scope |
 | Searchable knowledge | `rag.Store` + `rag.Retriever` |
 | General versioned snapshots | `checkpoint.Checkpointer` |
-| Cross-process paused runs | `InterruptStore` |
+| Cross-process paused runs | `ConversationStore` + `ExecutionStore` backed by `checkpoint.Checkpointer` |
 
 Conversation stores protect writes with revisions. Memory and RAG solve different problems and should not be substituted for transcript persistence.
 

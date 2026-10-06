@@ -26,6 +26,8 @@ type Agent struct {
 
 	conversation     ConversationStore
 	contextManager   ContextManager
+	executionStore   ExecutionStore
+	localPauses      *localPauseRegistry
 	syncConversation bool
 	normStrategy     *NormStrategy
 	normDisabled     bool
@@ -48,10 +50,7 @@ type Agent struct {
 
 	observers []Observer
 
-	interruptStore           InterruptStore
-	interruptStoreConfigured bool
-
-	// random is the entropy source for interrupt IDs. Nil means
+	// random is the entropy source for execution IDs. Nil means
 	// crypto/rand.Reader; tests substitute failing readers.
 	random io.Reader
 
@@ -65,12 +64,12 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 		return nil, fmt.Errorf("provider is required")
 	}
 	a := &Agent{
-		provider:       provider,
-		instructions:   instructions,
-		toolRegistry:   &tool.Registry{},
-		maxIterations:  10,
-		parallelTools:  true,
-		interruptStore: newMemoryInterruptStore(),
+		provider:      provider,
+		instructions:  instructions,
+		toolRegistry:  &tool.Registry{},
+		maxIterations: 10,
+		parallelTools: true,
+		localPauses:   newLocalPauseRegistry(),
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -90,6 +89,9 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 		if t.IsBackground() && a.conversation == nil {
 			return nil, fmt.Errorf("tool %q: background and detached tools require a conversation store; use WithConversationStore", t.Spec.Name)
 		}
+	}
+	if a.executionStore != nil && a.conversation == nil {
+		return nil, fmt.Errorf("ExecutionStore requires ConversationStore")
 	}
 	if a.conversation != nil {
 		a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)

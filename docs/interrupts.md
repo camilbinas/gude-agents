@@ -2,8 +2,6 @@
 
 Approvals and human questions use one pause/resume model. Normally a pause returns `Result{StopReason: agent.StopInterrupt, Interrupt: ...}` with a nil error. A stream emits `EventInterrupt`, followed by `EventEnd` carrying the same result.
 
-A pause can also return that usable interrupt result **and** an error when its conversation commit succeeded but a later synchronous flush or durable interrupt operation failed. The interrupt event and observer still fire so the stream truthfully reports that execution paused. If the conversation commit itself fails, no interrupt is emitted or returned.
-
 ## Approval interrupts
 
 Mark a tool with `tool.RequiresApproval()`:
@@ -14,28 +12,18 @@ deleteOrder := tool.New("delete_order", "Delete an order", deleteHandler,
 )
 ```
 
-An approval interrupt contains one or more `ApprovalCall` values with `CallID`, tool name, and JSON input. Continue all calls with:
+An approval interrupt contains one or more `ApprovalCall` values with call ID, tool name, and JSON input. Continue it with:
 
 ```go
 result, err := a.Resume(ctx, interrupt, agent.Approve())
 result, err = a.Resume(ctx, interrupt, agent.Deny("policy rejected the operation"))
 ```
 
-For a mixed decision, cover every pending call ID exactly:
-
-```go
-decisions := map[string]tool.Decision{
-    interrupt.Approval.Calls[0].CallID: tool.Allow(),
-    interrupt.Approval.Calls[1].CallID: tool.Deny("amount exceeds limit"),
-}
-result, err := a.Resume(ctx, interrupt, agent.Decide(decisions))
-```
-
-Validation happens before any handler runs.
+For a mixed decision, cover every pending call ID exactly with `agent.Decide`. Validation happens before any handler runs.
 
 ### Approval preflight ordering
 
-For an initial tool batch, approval-required calls are validated through lookup, authorization, schema validation, and guards before **any** sibling handler runs. If one requires approval, the Agent pauses for `InterruptApproval`; a sibling `NewHumanInputTool` is deferred rather than executed. After `Approve`, `Deny`, or `Decide` resumes the batch, deferred siblings execute normally and a human-input tool may then create a new `InterruptHumanInput`.
+For an initial batch, approval-required calls are validated through lookup, authorization, schema validation, and guards before **any** sibling handler runs. If one requires approval, the Agent pauses for `InterruptApproval`; a sibling `NewHumanInputTool` is deferred rather than executed. After `Approve`, `Deny`, or `Decide` resumes the batch, deferred siblings execute normally and a human-input tool may then create a new `InterruptHumanInput`.
 
 ## Human-input interrupts
 
@@ -54,41 +42,38 @@ result, err := a.Resume(ctx, interrupt, agent.Respond("Use account ACME-42"))
 
 Approval responses are valid only for approval interrupts; `Respond` is valid only for human-input interrupts. Use `ResumeStream` when the continued run must emit application events.
 
-## Durable interrupts
+## Durable execution pauses
 
-Configure an `InterruptStore` to resume from another process:
-
-```go
-type InterruptStore interface {
-    Save(context.Context, *agent.Interrupt) error
-    Load(context.Context, string) (*agent.Interrupt, error)
-    Claim(context.Context, string) (*agent.Interrupt, error)
-}
-```
-
-`Save` is create-only for an interrupt ID. `Load` returns only pending interrupts. `Claim` atomically consumes and returns the canonical stored interrupt; exactly one concurrent claimant may succeed, while missing or consumed IDs wrap `agent.ErrInterruptNotFound`.
+An interrupt is a projection of a paused `Execution`, not an independently persisted record. Configure an `ExecutionStore` together with a canonical `ConversationStore` for cross-process continuation:
 
 ```go
-a, err := agent.New(prov, instructions, agent.WithInterruptStore(store))
-in, err := a.LoadInterrupt(ctx, interruptID)
-result, err := a.Resume(agent.NewContext(ctx), in, agent.Approve())
+cp := checkpoint.NewMemory()
+executions := executionstore.New(cp)
+
+a, err := agent.New(prov, instructions,
+    agent.WithConversationStore(conversations),
+    agent.WithExecutionStore(executions),
+)
+
+interrupt, err := a.LoadInterrupt(ctx, executionID)
+result, err := a.Resume(agent.NewContext(ctx), interrupt, agent.Approve())
 ```
 
-The agent commits the conversation snapshot first, then creates the durable interrupt. Resume loads the canonical record, validates the response, atomically claims it, validates the claimed record again, and only then runs guardrails, tools, or providers. A claimed interrupt remains consumed even if later work fails; this favors at-most-once side effects over automatic retry. If resume pauses again, it creates a new interrupt ID—the predecessor stays consumed.
-
-Conversation-save failures suppress the pause. A later flush or interrupt-save failure returns the pause as a recovery snapshot with the error. With an explicitly configured store, that store remains authoritative: confirm or repair durable persistence before attempting resume rather than assuming the recovery snapshot is executable. Loading without a configured store returns `agent.ErrNoInterruptStore`.
-
-For a stateful conversation, the durable interrupt normally stores the canonical cursor rather than a transcript:
+Stateful execution records contain only runtime metadata and a canonical conversation cursor:
 
 ```text
+ExecutionID
+ExecutionVersion
 ConversationID
 Revision
 LastSequence
-Messages = empty
+Pause
 ```
 
-Resume reloads canonical history from the `ConversationStore`—using a range boundary when a ContextManager supplies one—and verifies the canonical cursor before handlers run. A changed revision or last sequence returns `agent.ErrConversationConflict`.
+They never contain transcript messages. Resume reloads canonical history from `ConversationStore`—using a ContextManager range boundary when present—and verifies `Revision` and `LastSequence` before running handlers. A changed canonical cursor returns `agent.ErrConversationConflict`.
 
-For a stateless invocation, there is no canonical store to reload. In that case `Interrupt.Messages` contains the resumable snapshot and remains present in the durable envelope for compatibility. The durable serializer therefore supports `Messages`, but callers should not expect populated messages for a normal persisted conversation.
+Before a durable resume executes any guardrail, tool handler, provider call, or side effect, it atomically transitions the exact observed execution version from `Paused` to `Running`. One concurrent resume wins; stale pause instances return `agent.ErrExecutionConflict`. A later pause in the same execution carries a newer `ExecutionVersion`, so old interrupt objects cannot be replayed.
 
-Use `conversation.MarshalInterrupt` and `conversation.UnmarshalInterrupt` when implementing durable stores; their JSON representation carries the conversation cursor and conditionally carries stateless messages. Alternatively, adapt a checkpointer with [`checkpoint/interruptstore`](checkpoint.md#interrupt-storage).
+The Agent commits canonical conversation changes before recording `Paused` execution state. If the conversation commit fails, no durable pause is created. If conversation commit succeeds but execution persistence fails, the error is surfaced and applications must not assume durable resume is available.
+
+For an Agent with neither `ConversationStore` nor `ExecutionStore`, same-process `Invoke → Interrupt → Resume` remains available through private local state. Its `Interrupt.Messages` snapshot is an in-process fallback, not a public durable storage model.

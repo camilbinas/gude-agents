@@ -37,7 +37,7 @@ For text-only endpoints, range over `TextStream`. Output guardrails run after li
 
 ## Resume endpoints
 
-Persist interrupts with `WithInterruptStore`, accept an interrupt ID plus a validated decision/answer, load it with `Agent.LoadInterrupt`, then call `Resume` or `ResumeStream`. Authorize that the caller owns the interrupt's conversation before resuming.
+Persist execution state with `WithExecutionStore` plus a `ConversationStore`. Accept an execution ID plus a validated decision/answer, project the paused state with `Agent.LoadInterrupt`, then call `Resume` or `ResumeStream`. Authorize that the caller owns the execution's conversation before resuming. The execution-store CAS makes only one concurrent resume winner.
 
 Call `Agent.Shutdown` during graceful server shutdown and also close provider-specific clients/exporters where required.
 

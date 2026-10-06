@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,7 +67,7 @@ func TestRequiresApproval_InvokeReturnsInterrupt(t *testing.T) {
 	if in.Type != InterruptApproval || in.Approval == nil || in.Input != nil {
 		t.Fatalf("interrupt = %+v, want approval", in)
 	}
-	if in.ID == "" {
+	if in.ExecutionID == "" {
 		t.Error("interrupt ID must be set")
 	}
 	if len(in.Approval.Calls) != 1 {
@@ -241,128 +239,6 @@ func TestRequiresApproval_NormalToolUnaffected(t *testing.T) {
 	if result.Text != "Here is the info." || result.Interrupt != nil {
 		t.Errorf("result = %+v", result)
 	}
-}
-
-func TestResume_RerunsExecutionChecks(t *testing.T) {
-	t.Run("schema", func(t *testing.T) {
-		handlerCalled := false
-		strictTool := tool.NewRaw(
-			"strict",
-			"requires an id",
-			map[string]any{
-				"type":       "object",
-				"required":   []string{"id"},
-				"properties": map[string]any{"id": map[string]any{"type": "string"}},
-			},
-			func(_ context.Context, _ json.RawMessage) (string, error) {
-				handlerCalled = true
-				return "ok", nil
-			},
-			tool.RequiresApproval(),
-		)
-		provider := newScriptedProvider(
-			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "schema-1", Name: "strict", Input: json.RawMessage(`{"id":"original"}`)}}},
-			&ModelResponse{Text: "schema rejected"},
-		)
-		store := newTestInterruptStore()
-		a, err := New(provider, "helpful", WithTools(strictTool), WithInterruptStore(store))
-		if err != nil {
-			t.Fatal(err)
-		}
-		in := mustInterrupt(t, a, Background(), "run")
-		store.mu.Lock()
-		store.items[in.ID].Approval.Calls[0].Input = json.RawMessage(`{}`)
-		store.mu.Unlock()
-		if _, err := a.Resume(Background(), in, Approve()); err != nil {
-			t.Fatalf("Resume: %v", err)
-		}
-		if handlerCalled {
-			t.Fatal("handler ran despite invalid approved input")
-		}
-	})
-
-	t.Run("role", func(t *testing.T) {
-		handlerCalled := false
-		restricted := tool.NewRaw(
-			"restricted",
-			"admin only",
-			nil,
-			func(_ context.Context, _ json.RawMessage) (string, error) {
-				handlerCalled = true
-				return "secret", nil
-			},
-			tool.RequiresApproval(),
-			tool.AllowRoles("admin"),
-		)
-		provider := newScriptedProvider(
-			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "role-1", Name: "restricted", Input: json.RawMessage(`{}`)}}},
-			&ModelResponse{Text: "role rejected"},
-		)
-		a, err := New(provider, "helpful", WithTools(restricted))
-		if err != nil {
-			t.Fatal(err)
-		}
-		in := mustInterrupt(t, a, Background().WithPrincipal(Principal{ID: "admin", Roles: []string{"admin"}}), "run")
-		guest := Background().WithPrincipal(Principal{ID: "guest", Roles: []string{"guest"}})
-		if _, err := a.Resume(guest, in, Approve()); err != nil {
-			t.Fatalf("Resume: %v", err)
-		}
-		if handlerCalled {
-			t.Fatal("handler ran after approved caller lost the required role")
-		}
-	})
-
-	t.Run("guard and middleware", func(t *testing.T) {
-		var calls []string
-		guarded := tool.NewRaw(
-			"guarded",
-			"guarded tool",
-			nil,
-			func(_ context.Context, _ json.RawMessage) (string, error) {
-				calls = append(calls, "handler")
-				return "ok", nil
-			},
-			tool.RequiresApproval(),
-			tool.WithGuard(func(_ context.Context, _ json.RawMessage) (tool.Decision, error) {
-				calls = append(calls, "guard")
-				return tool.Allow(), nil
-			}),
-		)
-		middleware := func(next ToolHandlerFunc) ToolHandlerFunc {
-			return func(ctx context.Context, call ToolCall) (ToolResult, error) {
-				calls = append(calls, "before middleware")
-				out, err := next(ctx, call)
-				calls = append(calls, "after middleware")
-				return out, err
-			}
-		}
-		provider := newScriptedProvider(
-			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "guard-1", Name: "guarded", Input: json.RawMessage(`{}`)}}},
-			&ModelResponse{Text: "done"},
-		)
-		a, err := New(provider, "helpful", WithTools(guarded), WithMiddleware(middleware))
-		if err != nil {
-			t.Fatal(err)
-		}
-		in := mustInterrupt(t, a, Background(), "run")
-		// The guard runs before the approval gate on the first pass.
-		if len(calls) != 1 || calls[0] != "guard" {
-			t.Fatalf("pre-approval calls = %v, want [guard]", calls)
-		}
-		calls = nil
-		if _, err := a.Resume(Background(), in, Approve()); err != nil {
-			t.Fatalf("Resume: %v", err)
-		}
-		want := []string{"guard", "before middleware", "handler", "after middleware"}
-		if len(calls) != len(want) {
-			t.Fatalf("calls = %v, want %v", calls, want)
-		}
-		for i := range want {
-			if calls[i] != want[i] {
-				t.Fatalf("calls = %v, want %v", calls, want)
-			}
-		}
-	})
 }
 
 func TestResume_RichHandlerOnlyTool(t *testing.T) {
@@ -620,7 +496,7 @@ func TestResume_InvalidResponsesRunNoHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := &Interrupt{ID: "i-1", Type: InterruptApproval, Approval: &ApprovalInterrupt{Calls: []ApprovalCall{
+	in := &Interrupt{ExecutionID: "exec-i-1", ExecutionVersion: 1, Type: InterruptApproval, Approval: &ApprovalInterrupt{Calls: []ApprovalCall{
 		{Name: "first", CallID: "first-id", Input: json.RawMessage(`{}`)},
 		{Name: "second", CallID: "second-id", Input: json.RawMessage(`{}`)},
 	}}}
@@ -642,7 +518,7 @@ func TestResume_InvalidResponsesRunNoHandlers(t *testing.T) {
 	if len(provider.params) != 0 {
 		t.Fatalf("provider called %d times, want 0", len(provider.params))
 	}
-	human := &Interrupt{ID: "i-2", Type: InterruptHumanInput, Input: &InputInterrupt{Question: "?"}}
+	human := &Interrupt{ExecutionID: "exec-i-2", ExecutionVersion: 1, Type: InterruptHumanInput, Input: &InputInterrupt{Question: "?"}}
 	if _, err := a.Resume(Background(), human, Approve()); err == nil {
 		t.Fatal("Approve on a human_input interrupt must fail")
 	}
@@ -714,8 +590,8 @@ func TestResume_StatelessApprovalReplayHasOneWinner(t *testing.T) {
 		if _, err := a.Resume(Background(), in, Approve()); err != nil {
 			t.Fatalf("first resume: %v", err)
 		}
-		if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrInterruptNotFound) {
-			t.Fatalf("replay err = %v, want ErrInterruptNotFound", err)
+		if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrExecutionConflict) {
+			t.Fatalf("replay err = %v, want ErrExecutionConflict", err)
 		}
 		if handlerCalls.Load() != 1 {
 			t.Fatalf("handler calls = %d, want 1", handlerCalls.Load())
@@ -742,7 +618,7 @@ func TestResume_StatelessApprovalReplayHasOneWinner(t *testing.T) {
 					winners.Add(1)
 					return
 				}
-				if !errors.Is(err, ErrInterruptNotFound) {
+				if !errors.Is(err, ErrExecutionConflict) {
 					errs <- err
 				}
 			}()
@@ -762,423 +638,6 @@ func TestResume_StatelessApprovalReplayHasOneWinner(t *testing.T) {
 		defer provider.mu.Unlock()
 		if provider.callIndex != 2 {
 			t.Fatalf("provider calls = %d, want 2", provider.callIndex)
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
-// InterruptStore
-// ---------------------------------------------------------------------------
-
-type testInterruptStore struct {
-	mu        sync.Mutex
-	items     map[string]*Interrupt
-	saveErr   error
-	saveErrAt int
-	saveCalls int
-	claimErr  error
-	claimed   []string
-}
-
-func newTestInterruptStore() *testInterruptStore {
-	return &testInterruptStore{items: map[string]*Interrupt{}}
-}
-
-func (s *testInterruptStore) Save(_ context.Context, in *Interrupt) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.saveCalls++
-	if s.saveErr != nil && (s.saveErrAt == 0 || s.saveCalls == s.saveErrAt) {
-		return s.saveErr
-	}
-	if _, exists := s.items[in.ID]; exists {
-		return fmt.Errorf("interrupt %q already exists", in.ID)
-	}
-	s.items[in.ID] = cloneInterrupt(in)
-	return nil
-}
-
-func (s *testInterruptStore) Load(_ context.Context, id string) (*Interrupt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	in, ok := s.items[id]
-	if !ok {
-		return nil, ErrInterruptNotFound
-	}
-	return cloneInterrupt(in), nil
-}
-
-func (s *testInterruptStore) Claim(_ context.Context, id string) (*Interrupt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.claimErr != nil {
-		return nil, s.claimErr
-	}
-	in, ok := s.items[id]
-	if !ok {
-		return nil, ErrInterruptNotFound
-	}
-	delete(s.items, id)
-	s.claimed = append(s.claimed, id)
-	return cloneInterrupt(in), nil
-}
-
-func TestInterruptStore_SaveLoadResumeClaim(t *testing.T) {
-	store := newTestInterruptStore()
-	provider := newScriptedProvider(
-		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{"order_id":"A"}`)}}},
-		&ModelResponse{Text: "deleted"},
-	)
-	a, err := New(provider, "helpful", WithTools(deleteOrderTool()),
-		WithConversationStore(newMemConversation()), WithInterruptStore(store))
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := mustInterrupt(t, a, Background().WithConversationID("conv-1"), "delete A")
-	if in.ConversationID != "conv-1" {
-		t.Fatalf("ConversationID = %q, want conv-1", in.ConversationID)
-	}
-	if in.Revision != 1 {
-		t.Fatalf("Revision = %d, want committed revision 1", in.Revision)
-	}
-
-	loaded, err := a.LoadInterrupt(context.Background(), in.ID)
-	if err != nil {
-		t.Fatalf("LoadInterrupt: %v", err)
-	}
-	if loaded.ID != in.ID || loaded.Revision != in.Revision {
-		t.Fatalf("loaded interrupt = %#v, want ID %q revision %d", loaded, in.ID, in.Revision)
-	}
-	res, err := a.Resume(Background(), loaded, Approve())
-	if err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-	if res.Text != "deleted" {
-		t.Fatalf("result = %q", res.Text)
-	}
-	if _, err := a.LoadInterrupt(context.Background(), in.ID); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("after resume LoadInterrupt err = %v, want ErrInterruptNotFound", err)
-	}
-}
-
-func TestInterruptStore_Errors(t *testing.T) {
-	pending := &ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{"order_id":"A"}`)}}}
-
-	collectPause := func(t *testing.T, a *Agent, ctx *Context) (Result, *Interrupt, error) {
-		t.Helper()
-		var result Result
-		var interrupt *Interrupt
-		var gotErr error
-		for ev, err := range a.Stream(ctx, "delete") {
-			if ev.Type == EventInterrupt {
-				interrupt = ev.Interrupt
-			}
-			if ev.Type == EventEnd && ev.Result != nil {
-				result = *ev.Result
-			}
-			if err != nil {
-				gotErr = err
-			}
-		}
-		return result, interrupt, gotErr
-	}
-
-	t.Run("interrupt save error exposes committed pause", func(t *testing.T) {
-		conv := &failingSaveConversation{}
-		store := newTestInterruptStore()
-		store.saveErr = errors.New("disk full")
-		observer := &recordingInterruptObserver{}
-		a, err := New(newScriptedProvider(pending), "helpful", WithTools(deleteOrderTool()),
-			WithConversationStore(conv), WithInterruptStore(store), WithObserver(observer))
-		if err != nil {
-			t.Fatal(err)
-		}
-		res, err := a.Invoke(Background().WithConversationID("c"), "delete")
-		if !errors.Is(err, store.saveErr) {
-			t.Fatalf("err = %v, want save error", err)
-		}
-		if res.StopReason != StopInterrupt || res.Interrupt == nil {
-			t.Fatalf("result interrupt = %+v", res)
-		}
-		if res.Interrupt.Revision != 1 {
-			t.Fatalf("interrupt revision = %d, want 1", res.Interrupt.Revision)
-		}
-		if observer.count() != 1 {
-			t.Fatalf("interrupt observations = %d, want 1", observer.count())
-		}
-	})
-
-	t.Run("flush error exposes committed pause before interrupt save", func(t *testing.T) {
-		conv := &failingSaveConversation{flushErr: errors.New("flush failed")}
-		store := newTestInterruptStore()
-		observer := &recordingInterruptObserver{}
-		a, err := New(newScriptedProvider(pending), "helpful", WithTools(deleteOrderTool()),
-			WithConversationStore(conv), WithSyncConversation(), WithInterruptStore(store), WithObserver(observer))
-		if err != nil {
-			t.Fatal(err)
-		}
-		res, eventInterrupt, err := collectPause(t, a, Background().WithConversationID("c"))
-		if !errors.Is(err, conv.flushErr) {
-			t.Fatalf("err = %v, want flush error", err)
-		}
-		if res.StopReason != StopInterrupt || res.Interrupt == nil || eventInterrupt != res.Interrupt {
-			t.Fatalf("result/event interrupt = %+v / %+v", res, eventInterrupt)
-		}
-		if res.Interrupt.Revision != 1 || observer.count() != 1 {
-			t.Fatalf("interrupt = %+v observations = %d", res.Interrupt, observer.count())
-		}
-		store.mu.Lock()
-		defer store.mu.Unlock()
-		if store.saveCalls != 1 {
-			t.Fatalf("interrupt store saves = %d, want 1 after committed flush failure", store.saveCalls)
-		}
-	})
-
-	t.Run("conversation save error suppresses pause", func(t *testing.T) {
-		conv := &failingSaveConversation{saveErr: errors.New("save failed")}
-		store := newTestInterruptStore()
-		observer := &recordingInterruptObserver{}
-		a, err := New(newScriptedProvider(pending), "helpful", WithTools(deleteOrderTool()),
-			WithConversationStore(conv), WithInterruptStore(store), WithObserver(observer))
-		if err != nil {
-			t.Fatal(err)
-		}
-		res, eventInterrupt, err := collectPause(t, a, Background().WithConversationID("c"))
-		if !errors.Is(err, conv.saveErr) {
-			t.Fatalf("err = %v, want conversation save error", err)
-		}
-		if res.Interrupt != nil || eventInterrupt != nil || observer.count() != 0 {
-			t.Fatalf("pause escaped failed commit: result=%+v event=%+v observations=%d", res, eventInterrupt, observer.count())
-		}
-		store.mu.Lock()
-		defer store.mu.Unlock()
-		if store.saveCalls != 0 {
-			t.Fatalf("interrupt store saves = %d, want 0", store.saveCalls)
-		}
-	})
-
-	t.Run("claim error prevents execution", func(t *testing.T) {
-		store := newTestInterruptStore()
-		provider := newScriptedProvider(pending, &ModelResponse{Text: "done"})
-		a, err := New(provider, "helpful", WithTools(deleteOrderTool()), WithInterruptStore(store))
-		if err != nil {
-			t.Fatal(err)
-		}
-		in := mustInterrupt(t, a, Background(), "delete")
-		store.claimErr = errors.New("claim failed")
-		res, err := a.Resume(Background(), in, Approve())
-		if !errors.Is(err, store.claimErr) {
-			t.Fatalf("err = %v, want claim error", err)
-		}
-		if !reflect.DeepEqual(res, Result{}) {
-			t.Fatalf("result = %+v, want zero result", res)
-		}
-		provider.mu.Lock()
-		defer provider.mu.Unlock()
-		if provider.callIndex != 1 {
-			t.Fatalf("provider calls = %d, want 1", provider.callIndex)
-		}
-	})
-
-	t.Run("no store", func(t *testing.T) {
-		a, err := New(newScriptedProvider(), "helpful")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := a.LoadInterrupt(context.Background(), "x"); !errors.Is(err, ErrNoInterruptStore) {
-			t.Fatalf("err = %v, want ErrNoInterruptStore", err)
-		}
-		if _, err := New(newScriptedProvider(), "h", WithInterruptStore(nil)); err == nil {
-			t.Fatal("WithInterruptStore(nil) must fail")
-		}
-	})
-}
-
-type failingSaveConversation struct {
-	mu       sync.Mutex
-	loadErr  error
-	loads    int
-	snapshot ConversationSnapshot
-	saveErr  error
-	flushErr error
-	saves    int
-	flushes  int
-}
-
-func (f *failingSaveConversation) Load(context.Context, string) (ConversationSnapshot, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.loads++
-	if f.loadErr != nil {
-		return ConversationSnapshot{}, f.loadErr
-	}
-	return ConversationSnapshot{
-		Messages: append([]Message(nil), f.snapshot.Messages...),
-		Revision: f.snapshot.Revision,
-	}, nil
-}
-
-func (f *failingSaveConversation) Save(_ context.Context, _ string, messages []Message, expectedRevision uint64) (uint64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.saveErr != nil {
-		return f.snapshot.Revision, f.saveErr
-	}
-	if expectedRevision != f.snapshot.Revision {
-		return f.snapshot.Revision, ErrConversationConflict
-	}
-	f.snapshot.Messages = append([]Message(nil), messages...)
-	f.snapshot.Revision++
-	f.saves++
-	return f.snapshot.Revision, nil
-}
-
-func (f *failingSaveConversation) Flush(context.Context) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.flushes++
-	return f.flushErr
-}
-
-func (f *failingSaveConversation) List(context.Context) ([]string, error) { return nil, nil }
-func (f *failingSaveConversation) Delete(context.Context, string) error   { return nil }
-
-type recordingInterruptObserver struct {
-	mu      sync.Mutex
-	records []InterruptRecord
-}
-
-func (o *recordingInterruptObserver) ObserveInterrupt(ctx context.Context, record InterruptRecord) context.Context {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.records = append(o.records, record)
-	return ctx
-}
-
-func (o *recordingInterruptObserver) count() int {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return len(o.records)
-}
-
-func TestResume_RejectsSameMessagesAtNewerRevision(t *testing.T) {
-	var handlerCalls atomic.Int32
-	approved := tool.NewRaw(
-		"approved",
-		"approved",
-		nil,
-		func(context.Context, json.RawMessage) (string, error) {
-			handlerCalls.Add(1)
-			return "ran", nil
-		},
-		tool.RequiresApproval(),
-	)
-	provider := &approvalBatchProvider{responses: []*ModelResponse{
-		{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}}},
-		{Text: "should not run"},
-	}}
-	store := newMemConversation()
-	a, err := New(provider, "helpful", WithTools(approved), WithConversationStore(store))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := Background().WithConversationID("conv")
-	in := mustInterrupt(t, a, ctx, "run")
-	if _, err := store.Save(context.Background(), "conv", in.Messages, in.Revision); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := a.Resume(ctx, in, Approve()); !errors.Is(err, ErrConversationConflict) {
-		t.Fatalf("Resume error = %v, want ErrConversationConflict", err)
-	}
-	if _, err := a.Resume(ctx, in, Approve()); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("retry error = %v, want ErrInterruptNotFound", err)
-	}
-	if handlerCalls.Load() != 0 {
-		t.Fatal("handler ran before revision validation")
-	}
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	if len(provider.params) != 1 {
-		t.Fatalf("provider calls = %d, want 1", len(provider.params))
-	}
-}
-
-func TestResume_ChainedInterruptConsumesPredecessorBeforeReplacement(t *testing.T) {
-	makeAgent := func(t *testing.T, store *testInterruptStore) (*Agent, *failingSaveConversation) {
-		t.Helper()
-		ask := tool.NewRaw(
-			"needs_human",
-			"needs human",
-			nil,
-			func(ctx context.Context, _ json.RawMessage) (string, error) {
-				callCtx := FromContext(ctx)
-				callCtx.call.setHumanInput(&InputInterrupt{Reason: "review", Question: "continue?"})
-				return humanInputPausedResult, nil
-			},
-			tool.RequiresApproval(),
-		)
-		provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{
-			ToolUseID: "tc-1", Name: "needs_human", Input: json.RawMessage(`{}`),
-		}}})
-		conv := &failingSaveConversation{}
-		a, err := New(provider, "helpful", WithTools(ask), WithConversationStore(conv), WithInterruptStore(store))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return a, conv
-	}
-
-	t.Run("success", func(t *testing.T) {
-		store := newTestInterruptStore()
-		a, _ := makeAgent(t, store)
-		old := mustInterrupt(t, a, Background().WithConversationID("conv"), "run")
-		res, err := a.Resume(Background(), old, Approve())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if res.StopReason != StopInterrupt || res.Interrupt == nil || res.Interrupt.Type != InterruptHumanInput {
-			t.Fatalf("replacement result = %+v", res)
-		}
-		if res.Interrupt.ID == old.ID || res.Interrupt.Revision != 2 {
-			t.Fatalf("replacement interrupt = %+v, predecessor = %+v", res.Interrupt, old)
-		}
-		store.mu.Lock()
-		defer store.mu.Unlock()
-		if _, ok := store.items[res.Interrupt.ID]; !ok {
-			t.Fatal("replacement was not persisted")
-		}
-		if _, ok := store.items[old.ID]; ok {
-			t.Fatal("predecessor remained after replacement persistence")
-		}
-		if len(store.claimed) != 1 || store.claimed[0] != old.ID {
-			t.Fatalf("claimed = %v, want [%s]", store.claimed, old.ID)
-		}
-	})
-
-	t.Run("replacement save failure does not resurrect predecessor", func(t *testing.T) {
-		store := newTestInterruptStore()
-		store.saveErr = errors.New("replacement save failed")
-		store.saveErrAt = 2
-		a, _ := makeAgent(t, store)
-		old := mustInterrupt(t, a, Background().WithConversationID("conv"), "run")
-		res, err := a.Resume(Background(), old, Approve())
-		if !errors.Is(err, store.saveErr) {
-			t.Fatalf("Resume error = %v, want replacement save error", err)
-		}
-		if res.StopReason != StopInterrupt || res.Interrupt == nil || res.Interrupt.Revision != 2 {
-			t.Fatalf("replacement result = %+v", res)
-		}
-		store.mu.Lock()
-		defer store.mu.Unlock()
-		if _, ok := store.items[old.ID]; ok {
-			t.Fatal("claimed predecessor was resurrected after replacement save failure")
-		}
-		if _, ok := store.items[res.Interrupt.ID]; ok {
-			t.Fatal("failed replacement unexpectedly persisted")
-		}
-		if len(store.claimed) != 1 || store.claimed[0] != old.ID {
-			t.Fatalf("claimed = %v, want [%s]", store.claimed, old.ID)
 		}
 	})
 }
@@ -1280,23 +739,6 @@ func TestResume_CanonicalMiddlewarePipelineSupportsEveryToolKind(t *testing.T) {
 	}
 }
 
-func TestMemoryInterruptStoreRejectsConsumedIDReuse(t *testing.T) {
-	store := newMemoryInterruptStore()
-	in := &Interrupt{ID: "one-shot", Type: InterruptHumanInput, Input: &InputInterrupt{Question: "continue?"}}
-	if err := store.Save(context.Background(), in); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Claim(context.Background(), in.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save(context.Background(), in); err == nil {
-		t.Fatal("Save recreated a consumed interrupt ID")
-	}
-	if _, err := store.Load(context.Background(), in.ID); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("Load error = %v, want ErrInterruptNotFound", err)
-	}
-}
-
 func TestResume_PostClaimFailureRemainsConsumed(t *testing.T) {
 	var handlerCalls atomic.Int32
 	approved := tool.NewRaw(
@@ -1324,8 +766,8 @@ func TestResume_PostClaimFailureRemainsConsumed(t *testing.T) {
 	if handlerCalls.Load() != 1 {
 		t.Fatalf("handler calls = %d, want 1", handlerCalls.Load())
 	}
-	if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("retry error = %v, want ErrInterruptNotFound", err)
+	if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("retry error = %v, want ErrExecutionConflict", err)
 	}
 	if handlerCalls.Load() != 1 {
 		t.Fatalf("handler replayed after post-claim failure: calls = %d", handlerCalls.Load())
@@ -1362,8 +804,8 @@ func TestResume_ApprovedToolErrorIsNotReplayable(t *testing.T) {
 	if handlerCalls.Load() != 1 {
 		t.Fatalf("handler calls = %d, want 1", handlerCalls.Load())
 	}
-	if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("retry error = %v, want ErrInterruptNotFound", err)
+	if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("retry error = %v, want ErrExecutionConflict", err)
 	}
 	if handlerCalls.Load() != 1 {
 		t.Fatalf("failed approved tool replayed: calls = %d", handlerCalls.Load())

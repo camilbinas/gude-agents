@@ -2,12 +2,9 @@ package agent
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -17,70 +14,49 @@ import (
 type InterruptType string
 
 const (
-	// InterruptApproval means one or more tool calls marked with
-	// tool.RequiresApproval are waiting for a human decision.
-	InterruptApproval InterruptType = "approval"
-	// InterruptHumanInput means the model called the human-input tool
-	// (NewHumanInputTool) and waits for a human answer.
+	InterruptApproval   InterruptType = "approval"
 	InterruptHumanInput InterruptType = "human_input"
 )
 
-// Interrupt describes a paused invocation. It is returned in
-// Result.Interrupt and emitted as EventInterrupt. Its Result normally has a
-// nil error; post-commit persistence failures return the usable interrupt
-// together with the error. Continue it with Agent.Resume / Agent.ResumeStream.
+// Interrupt is a public projection of a paused Execution. For durable
+// stateful executions it references canonical history with ExecutionID,
+// ExecutionVersion, ConversationID, Revision, and LastSequence. Messages is
+// retained only for private same-process stateless resume fallback.
 type Interrupt struct {
-	// ID uniquely identifies the interrupt (key for InterruptStore).
-	ID string `json:"id"`
-	// Type is InterruptApproval or InterruptHumanInput.
-	Type InterruptType `json:"type"`
-	// ConversationID is the conversation the paused invocation belongs to and
-	// is authoritative for Resume. It is empty only for interrupts produced by
-	// an Agent without a ConversationStore; resuming such an interrupt through
-	// an Agent with a store fails with ErrConversationIDRequired.
-	ConversationID string `json:"conversation_id,omitempty"`
-	// Revision is the committed append revision at the pause.
-	Revision uint64 `json:"revision"`
-	// LastSequence is the highest immutable canonical event at the pause.
-	// Resume compares it with Revision; neither is provider-facing content.
-	LastSequence uint64 `json:"last_sequence"`
-	// Approval lists the pending calls (Type == InterruptApproval).
+	ExecutionID      string `json:"execution_id"`
+	ExecutionVersion uint64 `json:"execution_version"`
+
+	Type           InterruptType `json:"type"`
+	ConversationID string        `json:"conversation_id,omitempty"`
+	Revision       uint64        `json:"revision"`
+	LastSequence   uint64        `json:"last_sequence"`
+
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`
-	// Input describes the human ask (Type == InterruptHumanInput).
-	Input *InputInterrupt `json:"input,omitempty"`
-	// Messages is retained only for stateless interrupts, which have no
-	// ConversationStore from which Resume can reload canonical history. A
-	// persisted interrupt leaves it empty and stores cursor metadata instead.
-	Messages []Message `json:"-"`
+	Input    *InputInterrupt    `json:"input,omitempty"`
+	Messages []Message          `json:"-"`
 }
 
-// ApprovalInterrupt lists the tool calls awaiting approval, in provider order.
 type ApprovalInterrupt struct {
 	Calls []ApprovalCall `json:"calls"`
 }
-
-// ApprovalCall identifies one tool call awaiting human approval.
 type ApprovalCall struct {
 	CallID string          `json:"call_id"`
 	Name   string          `json:"name"`
 	Input  json.RawMessage `json:"input,omitempty"`
 }
-
-// InputInterrupt describes what the model asked a human for.
 type InputInterrupt struct {
 	Reason   string `json:"reason"`
 	Question string `json:"question"`
 }
 
 // ResumeResponse is the human answer to an Interrupt. Build it with Approve,
-// Deny, Decide or Respond.
+// Deny, Decide, or Respond.
 type ResumeResponse struct {
 	kind      resumeKind
 	decision  tool.Decision
 	decisions map[string]tool.Decision
 	text      string
 }
-
 type resumeKind int
 
 const (
@@ -90,18 +66,10 @@ const (
 	resumeRespond
 )
 
-// Approve approves every pending call of an approval interrupt.
-func Approve() ResumeResponse {
-	return ResumeResponse{kind: resumeAll, decision: tool.Allow()}
-}
-
-// Deny denies every pending call of an approval interrupt with reason.
+func Approve() ResumeResponse { return ResumeResponse{kind: resumeAll, decision: tool.Allow()} }
 func Deny(reason string) ResumeResponse {
 	return ResumeResponse{kind: resumeAll, decision: tool.Deny(reason)}
 }
-
-// Decide supplies one decision per pending call, keyed by CallID. The map
-// must cover every pending call exactly; it is validated before any tool runs.
 func Decide(decisions map[string]tool.Decision) ResumeResponse {
 	cp := make(map[string]tool.Decision, len(decisions))
 	for k, v := range decisions {
@@ -109,66 +77,45 @@ func Decide(decisions map[string]tool.Decision) ResumeResponse {
 	}
 	return ResumeResponse{kind: resumeDecide, decisions: cp}
 }
+func Respond(text string) ResumeResponse { return ResumeResponse{kind: resumeRespond, text: text} }
 
-// Respond answers a human-input interrupt with text.
-func Respond(text string) ResumeResponse {
-	return ResumeResponse{kind: resumeRespond, text: text}
-}
-
-// InterruptStore persists pending interrupts so they can be resumed from
-// another process. Implementations must be safe for concurrent use.
-type InterruptStore interface {
-	// Save creates a pending interrupt under in.ID. It must fail rather than
-	// replace an existing pending or consumed interrupt.
-	Save(ctx context.Context, in *Interrupt) error
-	// Load returns the pending interrupt stored under id, or an error wrapping
-	// ErrInterruptNotFound when none exists or it was already consumed.
-	Load(ctx context.Context, id string) (*Interrupt, error)
-	// Claim atomically consumes and returns the pending interrupt under id.
-	// Missing and previously consumed interrupts return an error wrapping
-	// ErrInterruptNotFound. Exactly one concurrent claimant may succeed.
-	Claim(ctx context.Context, id string) (*Interrupt, error)
-}
-
-// ErrInterruptNotFound is returned (wrapped) when an interrupt does not exist.
+// ErrInterruptNotFound is retained as the public projection error returned
+// when a requested execution is absent or not currently paused.
 var ErrInterruptNotFound = errors.New("interrupt not found")
 
-// ErrNoInterruptStore is returned by LoadInterrupt when no store is configured.
-var ErrNoInterruptStore = errors.New("no interrupt store configured")
+// LoadInterrupt projects a paused durable Execution. It is a convenience API;
+// applications never manipulate persisted execution records directly.
+func (a *Agent) LoadInterrupt(ctx context.Context, executionID string) (*Interrupt, error) {
+	if a.executionStore == nil {
+		return nil, ErrNoExecutionStore
+	}
+	execution, err := a.executionStore.Load(ctx, executionID)
+	if err != nil {
+		return nil, fmt.Errorf("load execution: %w", err)
+	}
+	if execution.Status != ExecutionPaused || execution.Pause == nil {
+		return nil, fmt.Errorf("load interrupt %q: %w", executionID, ErrInterruptNotFound)
+	}
+	return interruptFromExecution(execution), nil
+}
 
-// WithInterruptStore configures durable persistence of interrupts. When set,
-// the configured store is authoritative: every executable pause must be
-// durably saved there, and Resume atomically claims it before any lifecycle,
-// provider, guardrail, or tool work begins. Persistence errors return the
-// pause as a recovery snapshot, but do not make it locally executable.
-func WithInterruptStore(s InterruptStore) Option {
-	return func(a *Agent) error {
-		if s == nil {
-			return fmt.Errorf("WithInterruptStore: store must not be nil")
-		}
-		a.interruptStore = s
-		a.interruptStoreConfigured = true
+func interruptFromExecution(execution Execution) *Interrupt {
+	in := &Interrupt{ExecutionID: execution.ID, ExecutionVersion: execution.Version, ConversationID: execution.ConversationID, Revision: execution.Revision, LastSequence: execution.LastSequence}
+	if execution.Pause != nil {
+		in.Type = execution.Pause.Type
+		in.Approval = execution.Pause.Approval
+		in.Input = execution.Pause.Input
+	}
+	return in
+}
+
+func pauseFromInterrupt(in *Interrupt) *ExecutionPause {
+	if in == nil {
 		return nil
 	}
+	return &ExecutionPause{Type: in.Type, Approval: in.Approval, Input: in.Input}
 }
 
-// LoadInterrupt loads a pending interrupt from the explicitly configured store.
-func (a *Agent) LoadInterrupt(ctx context.Context, id string) (*Interrupt, error) {
-	if !a.interruptStoreConfigured {
-		return nil, ErrNoInterruptStore
-	}
-	in, err := a.interruptStore.Load(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("load interrupt: %w", err)
-	}
-	if in == nil {
-		return nil, fmt.Errorf("load interrupt %q: %w", id, ErrInterruptNotFound)
-	}
-	return in, nil
-}
-
-// validateResume checks that r is a valid answer to in. It runs before any
-// state changes or tool handlers.
 func validateResume(in *Interrupt, r ResumeResponse) error {
 	if in == nil {
 		return fmt.Errorf("resume: nil interrupt")
@@ -217,8 +164,6 @@ func validateResume(in *Interrupt, r ResumeResponse) error {
 		return fmt.Errorf("resume: unknown interrupt type %q", in.Type)
 	}
 }
-
-// decisionFor returns the decision for callID (response already validated).
 func (r ResumeResponse) decisionFor(callID string) tool.Decision {
 	if r.kind == resumeDecide {
 		return r.decisions[callID]
@@ -226,161 +171,94 @@ func (r ResumeResponse) decisionFor(callID string) tool.Decision {
 	return r.decision
 }
 
-// newInterruptID returns 128 random bits as 32 lowercase hex characters.
-// A short read or RNG failure is returned rather than producing a
-// predictable (all-zero or partially filled) ID.
-func newInterruptID(r io.Reader) (string, error) {
-	if r == nil {
-		r = rand.Reader
-	}
-	var b [16]byte
-	if _, err := io.ReadFull(r, b[:]); err != nil {
-		return "", fmt.Errorf("generate interrupt ID: %w", err)
-	}
-	return hex.EncodeToString(b[:]), nil
-}
-
-// humanInputPausedResult is the tool result recorded for the human-input call.
 const humanInputPausedResult = "Paused — waiting for human input."
 
-// NewHumanInputTool creates a tool that lets the model pause the invocation
-// and ask a human for input. When the model calls it, Invoke returns a Result
-// with StopReason StopInterrupt and an Interrupt of type InterruptHumanInput;
-// answer it with Agent.Resume(ctx, in, Respond(text)).
-//
-// name is the tool name exposed to the model; description is appended to
-// the base description to define when the handoff should occur.
 func NewHumanInputTool(name, description string) tool.Tool {
-	base := "Pause execution and ask a human for input, a decision, or approval. " +
-		"Use when you need information you cannot determine on your own."
+	base := "Pause execution and ask a human for input, a decision, or approval. Use when you need information you cannot determine on your own."
 	if description != "" {
 		base += " " + description
 	}
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"reason": map[string]any{
-				"type":        "string",
-				"description": "Why you need human input",
-			},
-			"question": map[string]any{
-				"type":        "string",
-				"description": "The specific question or request for the human",
-			},
-		},
-		"required": []string{"reason", "question"},
-	}
-	return tool.NewRaw(
-		name,
-		base,
-		schema,
-		func(ctx context.Context, input json.RawMessage) (string, error) {
-			var params struct {
-				Reason   string `json:"reason"`
-				Question string `json:"question"`
-			}
-			if err := json.Unmarshal(input, &params); err != nil {
-				return "", fmt.Errorf("invalid human input request: %w", err)
-			}
-			c := FromContext(ctx)
-			if c == nil || c.call == nil {
-				return "", fmt.Errorf("human input tool must run inside an agent tool call")
-			}
-			c.call.setHumanInput(&InputInterrupt{Reason: params.Reason, Question: params.Question})
-			return humanInputPausedResult, nil
-		},
-	)
+	schema := map[string]any{"type": "object", "properties": map[string]any{"reason": map[string]any{"type": "string", "description": "Why you need human input"}, "question": map[string]any{"type": "string", "description": "The specific question or request for the human"}}, "required": []string{"reason", "question"}}
+	return tool.NewRaw(name, base, schema, func(ctx context.Context, input json.RawMessage) (string, error) {
+		var p struct {
+			Reason   string `json:"reason"`
+			Question string `json:"question"`
+		}
+		if err := json.Unmarshal(input, &p); err != nil {
+			return "", fmt.Errorf("invalid human input request: %w", err)
+		}
+		c := FromContext(ctx)
+		if c == nil || c.call == nil {
+			return "", fmt.Errorf("human input tool must run inside an agent tool call")
+		}
+		c.call.setHumanInput(&InputInterrupt{Reason: p.Reason, Question: p.Question})
+		return humanInputPausedResult, nil
+	})
 }
 
-// memoryInterruptStore is the private one-shot store used when no durable
-// InterruptStore is configured. It keeps direct Resume calls safe from replay
-// while LoadInterrupt remains reserved for explicitly configured stores.
-type memoryInterruptStore struct {
-	mu       sync.Mutex
-	pending  map[string]*Interrupt
-	consumed map[string]struct{}
+// localPauseRegistry is private in-process pause bookkeeping for stateless
+// agents. It is not durable and is deliberately not an ExecutionStore.
+type localPauseRegistry struct {
+	mu    sync.Mutex
+	items map[string]*Interrupt
 }
 
-func newMemoryInterruptStore() *memoryInterruptStore {
-	return &memoryInterruptStore{
-		pending:  make(map[string]*Interrupt),
-		consumed: make(map[string]struct{}),
-	}
+func newLocalPauseRegistry() *localPauseRegistry {
+	return &localPauseRegistry{items: make(map[string]*Interrupt)}
 }
-
-func (s *memoryInterruptStore) Save(_ context.Context, in *Interrupt) error {
-	if in == nil {
-		return fmt.Errorf("interrupt store: interrupt is required")
-	}
-	if in.ID == "" {
-		return fmt.Errorf("interrupt store: interrupt ID is required")
-	}
+func (s *localPauseRegistry) create(in *Interrupt) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.pending[in.ID]; exists {
-		return fmt.Errorf("interrupt store: interrupt %q already exists", in.ID)
+	if _, ok := s.items[in.ExecutionID]; ok {
+		return fmt.Errorf("execution %q: %w", in.ExecutionID, ErrExecutionConflict)
 	}
-	if _, exists := s.consumed[in.ID]; exists {
-		return fmt.Errorf("interrupt store: interrupt %q was already consumed", in.ID)
-	}
-	s.pending[in.ID] = cloneInterrupt(in)
+	s.items[in.ExecutionID] = cloneInterrupt(in)
 	return nil
 }
-
-func (s *memoryInterruptStore) Load(_ context.Context, id string) (*Interrupt, error) {
+func (s *localPauseRegistry) claim(id string, version uint64) (*Interrupt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	in, ok := s.pending[id]
+	in, ok := s.items[id]
 	if !ok {
-		return nil, fmt.Errorf("interrupt store: %q: %w", id, ErrInterruptNotFound)
+		return nil, fmt.Errorf("execution %q: %w", id, ErrExecutionConflict)
 	}
+	if in.ExecutionVersion != version {
+		return nil, fmt.Errorf("execution %q: %w", id, ErrExecutionConflict)
+	}
+	delete(s.items, id)
 	return cloneInterrupt(in), nil
 }
-
-func (s *memoryInterruptStore) Claim(_ context.Context, id string) (*Interrupt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	in, ok := s.pending[id]
-	if !ok {
-		return nil, fmt.Errorf("interrupt store: %q: %w", id, ErrInterruptNotFound)
-	}
-	delete(s.pending, id)
-	s.consumed[id] = struct{}{}
-	return cloneInterrupt(in), nil
-}
-
 func cloneInterrupt(in *Interrupt) *Interrupt {
 	if in == nil {
 		return nil
 	}
 	out := *in
 	if in.Approval != nil {
-		approval := *in.Approval
-		approval.Calls = append([]ApprovalCall(nil), in.Approval.Calls...)
-		for i := range approval.Calls {
-			approval.Calls[i].Input = append(json.RawMessage(nil), approval.Calls[i].Input...)
+		a := *in.Approval
+		a.Calls = append([]ApprovalCall(nil), a.Calls...)
+		for i := range a.Calls {
+			a.Calls[i].Input = cloneRaw(a.Calls[i].Input)
 		}
-		out.Approval = &approval
+		out.Approval = &a
 	}
 	if in.Input != nil {
-		input := *in.Input
-		out.Input = &input
+		x := *in.Input
+		out.Input = &x
 	}
 	out.Messages = make([]Message, len(in.Messages))
-	for i, msg := range in.Messages {
-		out.Messages[i].Role = msg.Role
-		out.Messages[i].Content = make([]ContentBlock, len(msg.Content))
-		for j, block := range msg.Content {
-			out.Messages[i].Content[j] = cloneContentBlock(block)
+	for i, m := range in.Messages {
+		out.Messages[i].Role = m.Role
+		out.Messages[i].Content = make([]ContentBlock, len(m.Content))
+		for j, b := range m.Content {
+			out.Messages[i].Content[j] = cloneContentBlock(b)
 		}
 	}
 	return &out
 }
-
 func cloneContentBlock(block ContentBlock) ContentBlock {
 	switch b := block.(type) {
 	case ToolUseBlock:
-		b.Input = append(json.RawMessage(nil), b.Input...)
+		b.Input = cloneRaw(b.Input)
 		return b
 	case ToolResultBlock:
 		b.Images = append([]ImageBlock(nil), b.Images...)
@@ -395,7 +273,7 @@ func cloneContentBlock(block ContentBlock) ContentBlock {
 		b.Source.Data = append([]byte(nil), b.Source.Data...)
 		return b
 	case WidgetBlock:
-		b.Payload = append(json.RawMessage(nil), b.Payload...)
+		b.Payload = cloneRaw(b.Payload)
 		return b
 	default:
 		return block

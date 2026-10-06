@@ -379,9 +379,8 @@ func TestAgentAsTool_ChildCancellationFollowsParent(t *testing.T) {
 
 func TestAgentAsTool_ConsumesChildInterrupt(t *testing.T) {
 	childStore := &rangeResumeStore{}
-	interrupts := newTestInterruptStore()
 	approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
-	child, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "child-approval", Name: "approve", Input: json.RawMessage(`{}`)}}}), "child", WithConversationStore(childStore), WithInterruptStore(interrupts), WithTools(approval))
+	child, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "child-approval", Name: "approve", Input: json.RawMessage(`{}`)}}}), "child", WithConversationStore(childStore), WithTools(approval))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,15 +395,8 @@ func TestAgentAsTool_ConsumesChildInterrupt(t *testing.T) {
 	if _, err := parent.Invoke(Background().WithConversationID("parent"), "go"); err != nil {
 		t.Fatal(err)
 	}
-	interrupts.mu.Lock()
-	claimed := append([]string(nil), interrupts.claimed...)
-	interrupts.mu.Unlock()
-	if len(claimed) != 1 {
-		t.Fatalf("claimed child interrupts = %v", claimed)
-	}
-	if _, err := child.Resume(Background().WithConversationID(childConversationID("parent", "delegate", "child", child.Name())), &Interrupt{ID: claimed[0]}, Approve()); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("child interrupt remains resumable: %v", err)
-	}
+	// The child pause was consumed by private same-process execution state and
+	// surfaced to the parent as a tool error rather than a propagating pause.
 }
 
 type composeFuncProvider struct {

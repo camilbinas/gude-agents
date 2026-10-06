@@ -39,17 +39,21 @@ type Context struct {
 // invocationConfig is the invocation-scoped configuration. It is copied by
 // value into derived contexts; scopes is treated as copy-on-write.
 type invocationConfig struct {
-	conversationID  string
-	images          []ImageBlock
-	documents       []DocumentBlock
-	inferenceConfig *InferenceConfig
-	identity        string
-	scopes          map[string]string
-	principal       *Principal
-	instructions    string
-	detailedEvents  bool
-	observers       []Observer
-	observersSet    bool
+	conversationID   string
+	executionID      string
+	executionIDSet   bool
+	executionResume  bool
+	executionVersion uint64
+	images           []ImageBlock
+	documents        []DocumentBlock
+	inferenceConfig  *InferenceConfig
+	identity         string
+	scopes           map[string]string
+	principal        *Principal
+	instructions     string
+	detailedEvents   bool
+	observers        []Observer
+	observersSet     bool
 }
 
 // kvStore is the user key/value store shared by an invocation and its tool calls.
@@ -196,6 +200,19 @@ func (c *Context) ConversationID() string { return c.cfg.conversationID }
 // ErrConversationIDRequired). Without a store the ID has no persistence effect.
 func (c *Context) WithConversationID(id string) *Context {
 	c.cfg.conversationID = id
+	return c
+}
+
+// ExecutionID returns the durable or local execution identity for this
+// invocation. It is assigned automatically when an invocation starts.
+func (c *Context) ExecutionID() string { return c.cfg.executionID }
+
+// WithExecutionID supplies a caller-owned execution identity, for example an
+// external A2A task ID. Empty IDs are rejected before invocation starts and a
+// durable ExecutionStore rejects collisions.
+func (c *Context) WithExecutionID(id string) *Context {
+	c.cfg.executionID = id
+	c.cfg.executionIDSet = true
 	return c
 }
 

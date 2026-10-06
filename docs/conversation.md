@@ -76,3 +76,7 @@ a, err := agent.New(provider, instructions, agent.WithConversationStore(store))
 ```
 
 PostgreSQL and SQLite store metadata plus append-only message rows. Redis uses same-slot metadata and stream keys. DynamoDB requires the documented partition/sort-key layout. See each backend package's Go documentation for options such as credentials, TTL, key prefixes, and table names.
+
+## Execution state
+
+Conversation answers **what happened**. An `Execution` answers **where computation currently is**. A durable execution references canonical history with `ConversationID`, `Revision`, and `LastSequence`; it never stores message snapshots. Pauses, usage, iteration, phase, and execution status belong to `ExecutionStore`, which is commonly backed by a generic `checkpoint.Checkpointer`. See [Checkpointing](checkpoint.md) and [Interrupts](interrupts.md).

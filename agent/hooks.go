@@ -289,7 +289,7 @@ func (h *hooks) onToolLog(ctx context.Context, record ToolLogRecord) context.Con
 func (h *hooks) onInterrupt(c *Context, in *Interrupt) context.Context {
 	principal, _ := c.Principal()
 	record := InterruptRecord{
-		Phase: End, InterruptID: in.ID, Type: in.Type, Principal: principal,
+		Phase: End, InterruptID: in.ExecutionID, Type: in.Type, Principal: principal,
 		ConversationID: in.ConversationID, Timestamp: time.Now(),
 	}
 	if in.Approval != nil {

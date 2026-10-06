@@ -36,11 +36,12 @@ func TestEngineAppendsOnlyNewTurnMessages(t *testing.T) {
 	}
 }
 
-func TestPersistentInterruptStoresCursorNotTranscript(t *testing.T) {
+func TestPersistentExecutionStoresCursorNotTranscript(t *testing.T) {
 	approval := tool.NewRaw("approve", "approval", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
 	provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call", Name: "approve", Input: json.RawMessage(`{}`)}}}, &ModelResponse{Text: "done"})
 	store := newTestMemoryStore()
-	a, err := New(provider, "system", WithConversationStore(store), WithTools(approval))
+	executions := newTestExecutionStore()
+	a, err := New(provider, "system", WithConversationStore(store), WithExecutionStore(executions), WithTools(approval))
 	if err != nil {
 		t.Fatal(err)
 	}

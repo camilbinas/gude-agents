@@ -268,7 +268,7 @@ func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
 		return
 	}
 	if res.StopReason == StopInterrupt {
-		a.logBackgroundError(d, "re-entry", fmt.Errorf("re-entry turn interrupted (%s, id=%s)", res.Interrupt.Type, res.Interrupt.ID))
+		a.logBackgroundError(d, "re-entry", fmt.Errorf("re-entry turn interrupted (%s, execution=%s)", res.Interrupt.Type, res.Interrupt.ExecutionID))
 		return
 	}
 	a.backgroundRegistry.notifySafely(d.conversationID, res.Text)

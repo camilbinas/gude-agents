@@ -57,10 +57,8 @@ func (a *Agent) TextStream(ctx *Context, input string) iter.Seq2[string, error] 
 }
 
 // Resume continues an interrupted invocation with the given response and
-// returns its Result. The response is validated against the interrupt before
-// any tool handler runs. Approved calls run through the full tool pipeline
-// (RBAC, schema validation, guard, middleware) with approval satisfied.
-// On success, the interrupt is deleted from the configured InterruptStore.
+// returns its Result. With an ExecutionStore, Resume atomically transitions
+// the observed paused execution to running before any tool or provider work.
 func (a *Agent) Resume(ctx *Context, in *Interrupt, r ResumeResponse) (Result, error) {
 	return collectResult(a.ResumeStream(ctx, in, r))
 }
@@ -129,20 +127,26 @@ func (a *Agent) stream(ctx *Context, spec invocationSpec) iter.Seq2[Event, error
 		}
 
 		res, err := a.execute(inv, spec)
+		if res.ExecutionID == "" {
+			res.ExecutionID = inv.ExecutionID()
+		}
 		sink.finish(Event{Type: EventEnd, Result: &res, Error: errorInfo(err)}, err)
 	}
 }
 
 // run is the per-invocation engine state.
 type run struct {
-	a               *Agent
-	c               *Context // invocation context (carries tracing span of the invoke)
-	h               hooks
-	convID          string
-	revision        uint64
-	lastSequence    uint64
-	historyBoundary uint64
-	persistedCount  int // canonical messages present when this run loaded history
+	a                *Agent
+	c                *Context // invocation context (carries tracing span of the invoke)
+	h                hooks
+	execution        *Execution
+	executionDurable bool
+	convID           string
+	revision         uint64
+	lastSequence     uint64
+	historyBoundary  uint64
+	iteration        int
+	persistedCount   int // canonical messages present when this run loaded history
 }
 
 func (r *run) detailed() bool { return r.c.cfg.detailedEvents }
@@ -176,37 +180,56 @@ func (r *run) emitLifecycle(t EventType, lc LifecycleEvent) {
 // audit, conversation lock) around the turn body.
 func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 	if spec.resume != nil {
-		if spec.resume.ID == "" {
-			return Result{}, fmt.Errorf("resume: interrupt ID is required")
+		if spec.resume.ExecutionID == "" {
+			return Result{}, fmt.Errorf("resume: execution ID is required")
 		}
-		canonical, err := a.interruptStore.Load(c, spec.resume.ID)
-		if err != nil {
-			return Result{}, fmt.Errorf("load interrupt for resume: %w", err)
+		c.cfg.executionID = spec.resume.ExecutionID
+		c.cfg.executionIDSet = true
+		var canonical *Interrupt
+		if a.executionStore != nil {
+			execution, err := a.executionStore.Load(c, spec.resume.ExecutionID)
+			if err != nil {
+				return Result{}, fmt.Errorf("load execution for resume: %w", err)
+			}
+			if execution.Status != ExecutionPaused || execution.Pause == nil || execution.Version != spec.resume.ExecutionVersion {
+				return Result{}, fmt.Errorf("resume execution %q: %w", spec.resume.ExecutionID, ErrExecutionConflict)
+			}
+			in := interruptFromExecution(execution)
+			if err := a.requireConversationID(in.ConversationID); err != nil {
+				return Result{}, fmt.Errorf("resume execution %q: %w", execution.ID, err)
+			}
+			if err := validateResume(in, spec.response); err != nil {
+				return Result{}, err
+			}
+			execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
+			claimed, err := a.executionStore.Save(c, execution, execution.Version)
+			if err != nil {
+				return Result{}, fmt.Errorf("claim execution for resume: %w", err)
+			}
+			in.ExecutionVersion = claimed.Version
+			canonical = in
+			c.cfg.executionResume = true
+			c.cfg.executionVersion = claimed.Version
+		} else {
+			if err := validateResume(spec.resume, spec.response); err != nil {
+				return Result{}, err
+			}
+			in, err := a.localPauses.claim(spec.resume.ExecutionID, spec.resume.ExecutionVersion)
+			if err != nil {
+				return Result{}, fmt.Errorf("claim local execution for resume: %w", err)
+			}
+			if err := a.requireConversationID(in.ConversationID); err != nil {
+				return Result{}, err
+			}
+			if err := validateResume(in, spec.response); err != nil {
+				return Result{}, err
+			}
+			in.ExecutionVersion++
+			canonical = in
+			c.cfg.executionResume = true
+			c.cfg.executionVersion = in.ExecutionVersion
 		}
-		if canonical == nil {
-			return Result{}, fmt.Errorf("load interrupt for resume %q: %w", spec.resume.ID, ErrInterruptNotFound)
-		}
-		// The interrupt's conversation ID is authoritative for Resume. Reject
-		// an unbound interrupt on a stateful Agent before claiming it, so the
-		// interrupt is not consumed; the resume Context's ID is never used as
-		// a substitute.
-		if err := a.requireConversationID(canonical.ConversationID); err != nil {
-			return Result{}, fmt.Errorf("resume interrupt %q: %w", spec.resume.ID, err)
-		}
-		if err := validateResume(canonical, spec.response); err != nil {
-			return Result{}, err
-		}
-		claimed, err := a.interruptStore.Claim(c, spec.resume.ID)
-		if err != nil {
-			return Result{}, fmt.Errorf("claim interrupt for resume: %w", err)
-		}
-		if claimed == nil {
-			return Result{}, fmt.Errorf("claim interrupt for resume %q: %w", spec.resume.ID, ErrInterruptNotFound)
-		}
-		if err := validateResume(claimed, spec.response); err != nil {
-			return Result{}, err
-		}
-		spec.resume = claimed
+		spec.resume = canonical
 	}
 	userMessage := spec.input
 	if spec.resume != nil && spec.resume.Type == InterruptHumanInput {
@@ -214,8 +237,6 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 	}
 	convID := c.ConversationID()
 	if spec.resume != nil {
-		// Resume stays bound to the conversation captured by the interrupt;
-		// the resume context's conversation ID is never used as a fallback.
 		convID = spec.resume.ConversationID
 	}
 	return a.lifecycle(c, convID, userMessage, func(r *run) (Result, error) {
@@ -233,27 +254,85 @@ func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *r
 	h := a.hooks(c)
 	c, invoke := h.onInvokeStart(c, a.invokeRecord(convID, userMessage, c))
 
+	if c.cfg.executionID == "" {
+		if c.cfg.executionIDSet {
+			return Result{}, fmt.Errorf("execution ID must not be empty")
+		}
+		id, err := newExecutionID(a.random)
+		if err != nil {
+			return Result{}, err
+		}
+		c.cfg.executionID = id
+	}
 	r := &run{a: a, c: c, h: h, convID: convID}
 	res, err := func() (Result, error) {
-		// Fail before any invocation work (guardrails, conversation load,
-		// retrieval, provider calls, tools, background dispatch, save).
 		if err := a.requireConversationID(convID); err != nil {
 			return Result{}, err
 		}
-		// Serialize the Load → Save region with Re_Entry_Turns and other
-		// invocations on the same conversation.
 		if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {
 			m := a.backgroundRegistry.lockFor(convID)
 			m.Lock()
 			defer m.Unlock()
 		}
-		return body(r)
+		if a.executionStore != nil {
+			if c.cfg.executionResume {
+				execution, err := a.executionStore.Load(c, c.cfg.executionID)
+				if err != nil {
+					return Result{}, fmt.Errorf("load running execution: %w", err)
+				}
+				r.execution, r.executionDurable = &execution, true
+			} else {
+				execution, err := a.executionStore.Create(c, Execution{ID: c.cfg.executionID, ConversationID: convID, Status: ExecutionRunning, Phase: ExecutionPhaseModel})
+				if err != nil {
+					return Result{}, fmt.Errorf("create execution: %w", err)
+				}
+				r.execution, r.executionDurable = &execution, true
+			}
+		} else {
+			r.execution = &Execution{ID: c.cfg.executionID, Version: c.cfg.executionVersion}
+		}
+		res, err := body(r)
+		res.ExecutionID = c.cfg.executionID
+		if finishErr := r.finalizeExecution(res, err); finishErr != nil {
+			err = errors.Join(err, finishErr)
+		}
+		return res, err
 	}()
 	if c.rt != nil {
 		res.Usage = c.rt.totalUsage()
 	}
+	if res.ExecutionID == "" {
+		res.ExecutionID = c.cfg.executionID
+	}
 	invoke.finish(res, err)
 	return res, err
+}
+
+func (r *run) finalizeExecution(res Result, runErr error) error {
+	if !r.executionDurable || r.execution == nil || res.StopReason == StopInterrupt {
+		return nil
+	}
+	execution := *r.execution
+	execution.Revision, execution.LastSequence = r.revision, r.lastSequence
+	execution.Usage = r.c.rt.totalUsage()
+	execution.Pause = nil
+	execution.Phase = ExecutionPhaseDone
+	switch {
+	case runErr == nil:
+		execution.Status = ExecutionCompleted
+	case errors.Is(runErr, context.Canceled), errors.Is(runErr, context.DeadlineExceeded):
+		execution.Status = ExecutionCanceled
+	default:
+		execution.Status = ExecutionFailed
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.c), 5*time.Second)
+	defer cancel()
+	updated, err := r.a.executionStore.Save(ctx, execution, execution.Version)
+	if err != nil {
+		return fmt.Errorf("finalize execution: %w", err)
+	}
+	r.execution = &updated
+	return nil
 }
 
 // prepareTurn applies input guardrails, loads history, retrieves RAG context
@@ -383,6 +462,7 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 	systemPrompt := a.instructionsFor(c)
 
 	for iteration := 1; iteration <= a.maxIterations; iteration++ {
+		r.iteration = iteration
 		if err := c.Err(); err != nil {
 			return Result{}, err
 		}
@@ -584,33 +664,41 @@ func (r *run) pendingInterrupt(outcomes []toolOutcome, calls []tool.Call) *Inter
 // the interrupt entirely.
 func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	a, c := r.a, r.c
-	// Fail before any persistence: without an unpredictable ID the pause
-	// cannot be registered, so neither the conversation nor the interrupt
-	// is saved.
-	id, err := newInterruptID(a.random)
-	if err != nil {
-		return Result{}, err
-	}
-	in.ID = id
+	in.ExecutionID = c.ExecutionID()
 	in.ConversationID = r.convID
 	if !r.hasConversation() {
-		// Stateless resume has no durable canonical source.
 		in.Messages = append([]Message(nil), snapshot...)
 	}
-
 	if err := c.Err(); err != nil {
 		return Result{}, err
 	}
 	committed, persistErr := r.saveConversation(snapshot, c.rt.totalUsage())
-	if committed {
-		in.Revision = r.revision
-		in.LastSequence = r.lastSequence
-	}
 	if persistErr != nil && !committed {
 		return Result{}, persistErr
 	}
-	if err := a.interruptStore.Save(c, in); err != nil {
-		persistErr = errors.Join(persistErr, fmt.Errorf("save interrupt: %w", err))
+	in.Revision, in.LastSequence = r.revision, r.lastSequence
+
+	if r.executionDurable {
+		execution := *r.execution
+		execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused
+		execution.Revision, execution.LastSequence = r.revision, r.lastSequence
+		execution.Iteration = r.iteration
+		execution.Usage = c.rt.totalUsage()
+		execution.Pause = pauseFromInterrupt(in)
+		updated, err := a.executionStore.Save(c, execution, execution.Version)
+		if err != nil {
+			persistErr = errors.Join(persistErr, fmt.Errorf("pause execution: %w", err))
+		} else {
+			r.execution = &updated
+			in.ExecutionVersion = updated.Version
+		}
+	} else {
+		in.ExecutionVersion = r.execution.Version + 1
+		if err := a.localPauses.create(in); err != nil {
+			persistErr = errors.Join(persistErr, fmt.Errorf("create local pause: %w", err))
+		} else {
+			r.execution.Version = in.ExecutionVersion
+		}
 	}
 	return r.exposeInterrupt(in, persistErr)
 }

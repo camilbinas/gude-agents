@@ -16,7 +16,8 @@ A typical construction combines tools and conversation persistence:
 a, err := agent.New(prov, "You are a support assistant.",
     agent.WithName("support"),
     agent.WithTools(lookup, refund),
-    agent.WithConversationStore(store),
+    agent.WithConversationStore(conversations),
+    agent.WithExecutionStore(executions),
 )
 ```
 
@@ -24,7 +25,7 @@ When a ConversationStore is configured, every invocation requires a non-empty Co
 
 `agent.RAGAgent(prov, instructions, retriever, opts...)` is the one convenience constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
 
-Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithSyncConversation`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithInterruptStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
+Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithSyncConversation`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
 
 ## Invocation
 
@@ -42,11 +43,12 @@ All methods share one execution lifecycle. `Invoke` drains `Stream`; `TextStream
 
 ```go
 type Result struct {
-    Text       string
-    Usage      TokenUsage
-    StopReason StopReason
-    Interrupt  *Interrupt
-    Metadata   map[string]any
+    ExecutionID string
+    Text        string
+    Usage       TokenUsage
+    StopReason  StopReason
+    Interrupt   *Interrupt
+    Metadata    map[string]any
 }
 ```
 

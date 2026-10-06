@@ -57,12 +57,6 @@ func (t *trackingConversation) LoadAfter(c context.Context, id string, a uint64)
 func (t *trackingConversation) Append(c context.Context, id string, x []Message, v uint64) (ConversationCursor, error) {
 	return appendForTest(t.Load, t.Save, c, id, x, v)
 }
-func (f *failingSaveConversation) LoadAfter(c context.Context, id string, a uint64) (ConversationSnapshot, error) {
-	return f.Load(c, id)
-}
-func (f *failingSaveConversation) Append(c context.Context, id string, m []Message, r uint64) (ConversationCursor, error) {
-	return appendForTest(f.Load, f.Save, c, id, m, r)
-}
 func (r *recordingMemory) LoadAfter(c context.Context, id string, a uint64) (ConversationSnapshot, error) {
 	return rangeForTest(r.Load, c, id, a)
 }

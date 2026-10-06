@@ -86,6 +86,19 @@ func WithConversationStore(c ConversationStore) Option {
 	}
 }
 
+// WithExecutionStore configures durable execution lifecycle and pause state.
+// It requires a ConversationStore because executions reference canonical
+// history by cursor rather than storing transcript copies.
+func WithExecutionStore(store ExecutionStore) Option {
+	return func(a *Agent) error {
+		if store == nil {
+			return fmt.Errorf("WithExecutionStore: store must not be nil")
+		}
+		a.executionStore = store
+		return nil
+	}
+}
+
 // WithContextManager configures a model-context projection. It is applied after
 // canonical range loading and before every provider call; it never changes the
 // append-only conversation log. A ContextManager can use durable

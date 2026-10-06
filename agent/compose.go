@@ -49,7 +49,7 @@ func AgentAsTool(name, description string, child *Agent) tool.Tool {
 
 			res, err := child.Invoke(childCtx, args.Message)
 			if res.StopReason == StopInterrupt && res.Interrupt != nil {
-				cleanupErr := consumeChildInterrupt(ctx, child, res.Interrupt.ID)
+				cleanupErr := consumeChildExecution(ctx, child, res.Interrupt)
 				pauseErr := fmt.Errorf("child agent %q paused with a %s interrupt; interrupts cannot propagate through AgentAsTool", name, res.Interrupt.Type)
 				if cleanupErr != nil {
 					pauseErr = errors.Join(pauseErr, cleanupErr)
@@ -80,15 +80,35 @@ func childConversationID(parentConversationID, toolCallID, toolName, childName s
 	return "agent-as-tool/v1/" + hex.EncodeToString(h.Sum(nil))
 }
 
-func consumeChildInterrupt(ctx context.Context, child *Agent, id string) error {
+func consumeChildExecution(ctx context.Context, child *Agent, interrupt *Interrupt) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_, err := child.interruptStore.Claim(cleanupCtx, id)
-	if errors.Is(err, ErrInterruptNotFound) {
+	if child.executionStore != nil {
+		execution, err := child.executionStore.Load(cleanupCtx, interrupt.ExecutionID)
+		if err != nil {
+			if errors.Is(err, ErrExecutionNotFound) {
+				return nil
+			}
+			return fmt.Errorf("load child execution %q: %w", interrupt.ExecutionID, err)
+		}
+		if execution.Status != ExecutionPaused || execution.Version != interrupt.ExecutionVersion {
+			return nil
+		}
+		execution.Status, execution.Phase, execution.Pause = ExecutionCanceled, ExecutionPhaseDone, nil
+		if _, err := child.executionStore.Save(cleanupCtx, execution, execution.Version); err != nil {
+			if errors.Is(err, ErrExecutionConflict) {
+				return nil
+			}
+			return fmt.Errorf("cancel child execution %q: %w", interrupt.ExecutionID, err)
+		}
+		return nil
+	}
+	_, err := child.localPauses.claim(interrupt.ExecutionID, interrupt.ExecutionVersion)
+	if errors.Is(err, ErrExecutionNotFound) || errors.Is(err, ErrExecutionConflict) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("consume child interrupt %q: %w", id, err)
+		return fmt.Errorf("consume child execution %q: %w", interrupt.ExecutionID, err)
 	}
 	return nil
 }

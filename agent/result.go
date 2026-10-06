@@ -18,6 +18,8 @@ const (
 // as errors, not stop reasons. On error the returned Result still carries the
 // token usage accumulated so far.
 type Result struct {
+	// ExecutionID identifies this invocation's durable or local execution.
+	ExecutionID string `json:"execution_id,omitempty"`
 	// Text is the final assistant answer after output guardrails.
 	// Empty when the invocation was interrupted.
 	Text string `json:"text"`

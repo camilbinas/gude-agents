@@ -128,36 +128,6 @@ func TestApproval_PrecedesHumanInputSibling(t *testing.T) {
 	}
 }
 
-func TestHumanInput_InterruptStoreLifecycle(t *testing.T) {
-	store := newTestInterruptStore()
-	provider := newScriptedProvider(
-		&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}},
-		&ModelResponse{Text: "thanks"},
-	)
-	a, err := New(provider, "x", WithTools(NewHumanInputTool("request_human_input", "")),
-		WithInterruptStore(store))
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := mustInterrupt(t, a, Background(), "go")
-	if _, ok := store.items[in.ID]; !ok {
-		t.Fatal("interrupt was not saved")
-	}
-	loaded, err := a.LoadInterrupt(context.Background(), in.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Resume(Background(), loaded, Respond("42")); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.claimed) != 1 || store.claimed[0] != in.ID {
-		t.Fatalf("claimed = %v, want [%s]", store.claimed, in.ID)
-	}
-	if _, err := a.Resume(Background(), in, Respond("again")); !errors.Is(err, ErrInterruptNotFound) {
-		t.Fatalf("human-input replay err = %v, want ErrInterruptNotFound", err)
-	}
-}
-
 func TestHumanInputTool_OutsideAgentFails(t *testing.T) {
 	ht := NewHumanInputTool("ask", "")
 	if _, err := ht.Handler(context.Background(), json.RawMessage(`{"reason":"r","question":"q"}`)); err == nil {
