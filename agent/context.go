@@ -294,9 +294,11 @@ func (c *Context) WithObservers(observers ...Observer) *Context {
 	return c
 }
 
-// Clone returns a new *Context with a copy of the invocation config, the same
-// parent context.Context, an empty independent key/value store and no
-// runtime state. Use it to fork independent sub-invocations.
+// Clone returns a new *Context with a copy of invocation configuration, the
+// same parent context.Context, an empty independent key/value store, no
+// runtime state, and a fresh execution identity. Use it to fork independent
+// sub-invocations. Call WithExecutionID on the clone after cloning when an
+// external protocol must supply a specific execution ID.
 func (c *Context) Clone() *Context {
 	return &Context{
 		Context: c.Context,
@@ -348,6 +350,13 @@ func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
 		clone.inferenceConfig = &inference
 	}
 	clone.observers = append([]Observer(nil), cfg.observers...)
+	// A clone is an independent sub-invocation, never a continuation of the
+	// parent's execution. Call WithExecutionID after Clone when an external
+	// protocol needs to supply a specific child identity.
+	clone.executionID = ""
+	clone.executionIDSet = false
+	clone.executionResume = false
+	clone.executionVersion = 0
 	return clone
 }
 

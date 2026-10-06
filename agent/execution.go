@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 )
 
 // ExecutionStatus is the durable lifecycle state of an invocation.
@@ -21,8 +20,9 @@ const (
 	ExecutionCanceled  ExecutionStatus = "canceled"
 )
 
-// ExecutionPhase describes the current engine section. It is intentionally
-// small: this first durable model does not attempt durable tool boundaries.
+// ExecutionPhase describes the latest durable engine boundary. It is not a
+// real-time worker heartbeat and this first model does not persist every
+// model/tool transition.
 type ExecutionPhase string
 
 const (
@@ -72,59 +72,6 @@ var (
 	ErrExecutionConflict = errors.New("execution version conflict")
 	ErrNoExecutionStore  = errors.New("no execution store configured")
 )
-
-// memoryExecutionStore is private same-process replay protection. It is used
-// only when no durable ExecutionStore is configured and may retain a stateless
-// snapshot in interrupt.Messages; it is not public persistence infrastructure.
-type memoryExecutionStore struct {
-	mu    sync.Mutex
-	items map[string]Execution
-}
-
-func newMemoryExecutionStore() *memoryExecutionStore {
-	return &memoryExecutionStore{items: make(map[string]Execution)}
-}
-
-func (s *memoryExecutionStore) Create(_ context.Context, execution Execution) (Execution, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if execution.ID == "" {
-		return Execution{}, fmt.Errorf("execution ID is required")
-	}
-	if _, exists := s.items[execution.ID]; exists {
-		return Execution{}, fmt.Errorf("execution %q: %w", execution.ID, ErrExecutionConflict)
-	}
-	execution.Version = 1
-	execution = cloneExecution(execution)
-	s.items[execution.ID] = execution
-	return cloneExecution(execution), nil
-}
-
-func (s *memoryExecutionStore) Load(_ context.Context, id string) (Execution, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	execution, ok := s.items[id]
-	if !ok {
-		return Execution{}, fmt.Errorf("execution %q: %w", id, ErrExecutionNotFound)
-	}
-	return cloneExecution(execution), nil
-}
-
-func (s *memoryExecutionStore) Save(_ context.Context, execution Execution, expectedVersion uint64) (Execution, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	stored, ok := s.items[execution.ID]
-	if !ok {
-		return Execution{}, fmt.Errorf("execution %q: %w", execution.ID, ErrExecutionNotFound)
-	}
-	if stored.Version != expectedVersion {
-		return Execution{}, fmt.Errorf("execution %q: %w", execution.ID, ErrExecutionConflict)
-	}
-	execution.Version = expectedVersion + 1
-	execution = cloneExecution(execution)
-	s.items[execution.ID] = execution
-	return cloneExecution(execution), nil
-}
 
 func cloneExecution(in Execution) Execution {
 	out := in

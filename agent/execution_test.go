@@ -76,7 +76,7 @@ func TestExecutionLifecycleCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if execution.Status != ExecutionCompleted || execution.Phase != ExecutionPhaseDone || execution.ConversationID != "conversation" || execution.Revision == 0 || execution.LastSequence == 0 {
+	if execution.Status != ExecutionCompleted || execution.Phase != ExecutionPhaseDone || execution.Iteration != 1 || execution.ConversationID != "conversation" || execution.Revision == 0 || execution.LastSequence == 0 {
 		t.Fatalf("execution = %+v", execution)
 	}
 	if execution.Usage != result.Usage {
@@ -309,5 +309,58 @@ func TestWithExecutionIDIsStableAndCollisionConflicts(t *testing.T) {
 	}
 	if _, err := a.Invoke(ctx, "again"); !errors.Is(err, ErrExecutionConflict) {
 		t.Fatalf("collision = %v", err)
+	}
+}
+
+func TestExecutionTerminalIterationTracksToolLoop(t *testing.T) {
+	lookup := tool.NewRaw("lookup", "lookup", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil })
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	a, err := New(newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "lookup-1", Name: "lookup", Input: json.RawMessage(`{}`)}}},
+		&ModelResponse{Text: "done"},
+	), "x", WithTools(lookup), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.Invoke(Background().WithConversationID("c"), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := executions.Load(context.Background(), result.ExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.Iteration != 2 {
+		t.Fatalf("iteration = %d, want 2", execution.Iteration)
+	}
+}
+
+func TestLoadInterruptMissingPreservesInterruptAndExecutionErrors(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.LoadInterrupt(context.Background(), "missing")
+	if !errors.Is(err, ErrInterruptNotFound) || !errors.Is(err, ErrExecutionNotFound) {
+		t.Fatalf("LoadInterrupt missing = %v", err)
+	}
+}
+
+func TestExecutionPauseProjectionDoesNotAliasStoreState(t *testing.T) {
+	execution := Execution{
+		ID: "exec", Version: 2,
+		Pause: &ExecutionPause{Type: InterruptApproval, Approval: &ApprovalInterrupt{Calls: []ApprovalCall{{CallID: "call", Name: "approve", Input: json.RawMessage(`{"amount":1}`)}}}},
+	}
+	interrupt := interruptFromExecution(execution)
+	interrupt.Approval.Calls[0].Input[10] = '9'
+	if got := string(execution.Pause.Approval.Calls[0].Input); got != `{"amount":1}` {
+		t.Fatalf("interrupt mutation leaked into execution: %s", got)
+	}
+	in := &Interrupt{Type: InterruptApproval, Approval: &ApprovalInterrupt{Calls: []ApprovalCall{{CallID: "call", Name: "approve", Input: json.RawMessage(`{"amount":1}`)}}}}
+	pause := pauseFromInterrupt(in)
+	pause.Approval.Calls[0].Input[10] = '9'
+	if got := string(in.Approval.Calls[0].Input); got != `{"amount":1}` {
+		t.Fatalf("pause mutation leaked into interrupt: %s", got)
 	}
 }

@@ -314,6 +314,7 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	}
 	execution := *r.execution
 	execution.Revision, execution.LastSequence = r.revision, r.lastSequence
+	execution.Iteration = r.iteration
 	execution.Usage = r.c.rt.totalUsage()
 	execution.Pause = nil
 	execution.Phase = ExecutionPhaseDone

@@ -40,3 +40,5 @@ a, err := agent.New(prov, instructions,
 An execution stores only runtime metadata: status, phase, pause data, usage, iteration, and the canonical conversation cursor (`ConversationID`, `Revision`, `LastSequence`). It never stores a conversation transcript. Conversation history remains owned by `ConversationStore`; rolling-summary state remains owned by `ContextStateStore`.
 
 The adapter namespaces execution threads as `execution:<executionID>` by default. `executionstore.WithThreadPrefix` changes that namespace. The Checkpointer history remains useful for auditing execution transitions, but applications normally interact only with `ExecutionStore` and `Agent.Resume`.
+
+`Execution.Phase` is the latest **durably recorded** engine boundary, not a live worker heartbeat. This first model records creation, pause/resume, and terminal boundaries; it does not write execution state around every model or tool transition. Consumers must not treat a polled phase as proof that a particular handler is currently running.

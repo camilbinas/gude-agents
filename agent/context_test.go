@@ -576,3 +576,24 @@ func TestContextClone_DeepCopiesInvocationConfiguration(t *testing.T) {
 		t.Fatalf("clone changed after original mutation: scope=%q image=%v inference=%d", got, clone.Images()[0].Source.Data, *clone.InferenceConfig().MaxTokens)
 	}
 }
+
+func TestContextCloneStartsFreshExecutionIdentity(t *testing.T) {
+	original := Background().WithConversationID("parent-conversation").WithExecutionID("parent-execution")
+	original.cfg.executionResume = true
+	original.cfg.executionVersion = 7
+
+	clone := original.Clone()
+	if clone.ExecutionID() != "" || clone.cfg.executionIDSet || clone.cfg.executionResume || clone.cfg.executionVersion != 0 {
+		t.Fatalf("clone retained execution lifecycle state: %+v", clone.cfg)
+	}
+	if original.ExecutionID() != "parent-execution" || !original.cfg.executionResume || original.cfg.executionVersion != 7 {
+		t.Fatalf("clone mutated parent execution state: %+v", original.cfg)
+	}
+	if clone.ConversationID() != "parent-conversation" {
+		t.Fatalf("clone lost invocation configuration")
+	}
+	clone.WithExecutionID("child-execution")
+	if clone.ExecutionID() != "child-execution" {
+		t.Fatalf("clone explicit execution ID = %q", clone.ExecutionID())
+	}
+}

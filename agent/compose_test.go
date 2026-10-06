@@ -422,3 +422,49 @@ func TestAgentAsToolChildConversationIDsDoNotCollide(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestAgentAsTool_IsolatesPersistentChildExecution(t *testing.T) {
+	parentStore, childStore := &rangeResumeStore{}, &rangeResumeStore{}
+	executions := newTestExecutionStore()
+	child, err := New(newScriptedProvider(&ModelResponse{Text: "child done"}), "child", WithConversationStore(childStore), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentProvider := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate-exec", Name: "child", Input: json.RawMessage(`{"message":"work"}`)}}},
+		&ModelResponse{Text: "parent done"},
+	)
+	parent, err := New(parentProvider, "parent", WithConversationStore(parentStore), WithExecutionStore(executions), WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := parent.Invoke(Background().WithConversationID("parent-conversation"), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExecutionID == "" {
+		t.Fatal("parent execution ID missing")
+	}
+	parentExecution, err := executions.Load(context.Background(), result.ExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childConvID := childConversationID("parent-conversation", "delegate-exec", "child", child.Name())
+	var childExecution Execution
+	executions.mu.Lock()
+	for id, execution := range executions.items {
+		if execution.ConversationID == childConvID {
+			if id == result.ExecutionID {
+				t.Fatal("child execution reused parent ID")
+			}
+			childExecution = cloneExecution(execution)
+		}
+	}
+	executions.mu.Unlock()
+	if childExecution.ID == "" {
+		t.Fatalf("child execution for %q was not created", childConvID)
+	}
+	if parentExecution.ID == childExecution.ID {
+		t.Fatal("parent and child execution IDs collided")
+	}
+}

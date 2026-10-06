@@ -77,3 +77,7 @@ Before a durable resume executes any guardrail, tool handler, provider call, or 
 The Agent commits canonical conversation changes before recording `Paused` execution state. If the conversation commit fails, no durable pause is created. If conversation commit succeeds but execution persistence fails, the error is surfaced and applications must not assume durable resume is available.
 
 For an Agent with neither `ConversationStore` nor `ExecutionStore`, same-process `Invoke → Interrupt → Resume` remains available through private local state. Its `Interrupt.Messages` snapshot is an in-process fallback, not a public durable storage model.
+
+### Frontend version safety
+
+A UI must submit a decision against the `ExecutionVersion` displayed with the pause. Never reload a newer pause and silently apply an answer that was reviewed for an older version. HTTP/API handlers should load the pause, compare the submitted version, return `409 Conflict` on mismatch, then call `Resume`; the execution CAS remains the final race-safe guard.

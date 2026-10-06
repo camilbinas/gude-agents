@@ -91,6 +91,9 @@ func (a *Agent) LoadInterrupt(ctx context.Context, executionID string) (*Interru
 	}
 	execution, err := a.executionStore.Load(ctx, executionID)
 	if err != nil {
+		if errors.Is(err, ErrExecutionNotFound) {
+			return nil, fmt.Errorf("load interrupt %q: %w", executionID, errors.Join(ErrInterruptNotFound, err))
+		}
 		return nil, fmt.Errorf("load execution: %w", err)
 	}
 	if execution.Status != ExecutionPaused || execution.Pause == nil {
@@ -100,6 +103,7 @@ func (a *Agent) LoadInterrupt(ctx context.Context, executionID string) (*Interru
 }
 
 func interruptFromExecution(execution Execution) *Interrupt {
+	execution = cloneExecution(execution)
 	in := &Interrupt{ExecutionID: execution.ID, ExecutionVersion: execution.Version, ConversationID: execution.ConversationID, Revision: execution.Revision, LastSequence: execution.LastSequence}
 	if execution.Pause != nil {
 		in.Type = execution.Pause.Type
@@ -113,7 +117,7 @@ func pauseFromInterrupt(in *Interrupt) *ExecutionPause {
 	if in == nil {
 		return nil
 	}
-	return &ExecutionPause{Type: in.Type, Approval: in.Approval, Input: in.Input}
+	return cloneExecution(Execution{Pause: &ExecutionPause{Type: in.Type, Approval: in.Approval, Input: in.Input}}).Pause
 }
 
 func validateResume(in *Interrupt, r ResumeResponse) error {

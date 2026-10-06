@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,7 +29,8 @@ type chatRequest struct {
 	Message        string `json:"message"`
 }
 type resumeRequest struct {
-	Answer string `json:"answer"`
+	ExecutionVersion uint64 `json:"execution_version"`
+	Answer           string `json:"answer"`
 }
 
 func main() {
@@ -103,15 +105,31 @@ func resume(a *agent.Agent) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if request.ExecutionVersion == 0 {
+			http.Error(w, "execution_version is required", http.StatusBadRequest)
+			return
+		}
 		interrupt, err := a.LoadInterrupt(r.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			if errors.Is(err, agent.ErrInterruptNotFound) || errors.Is(err, agent.ErrExecutionNotFound) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		if err := validateResumeVersion(interrupt, request.ExecutionVersion); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 		ctx := agent.NewContext(r.Context()).WithConversationID(interrupt.ConversationID)
 		result, err := a.Resume(ctx, interrupt, agent.Respond(request.Answer))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			if errors.Is(err, agent.ErrExecutionConflict) || errors.Is(err, agent.ErrConversationConflict) {
+				http.Error(w, err.Error(), http.StatusConflict)
+			} else {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+			}
 			return
 		}
 		writeJSON(w, result)
@@ -124,4 +142,14 @@ func writeSSE(w http.ResponseWriter, event string, value any) {
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func validateResumeVersion(interrupt *agent.Interrupt, observed uint64) error {
+	if observed == 0 {
+		return fmt.Errorf("execution_version is required")
+	}
+	if interrupt.ExecutionVersion != observed {
+		return fmt.Errorf("stale execution version: observed %d, current %d", observed, interrupt.ExecutionVersion)
+	}
+	return nil
 }
