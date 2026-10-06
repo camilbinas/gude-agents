@@ -712,3 +712,231 @@ func TestToolInputHashSurvivesExecutionJSONRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip hash=%q, want %q; encoded=%s", got, hash, encoded)
 	}
 }
+
+// failNthAppendStore injects one durable append failure while preserving the
+// underlying append-only transcript for a subsequent recovery attempt.
+type failNthAppendStore struct {
+	ConversationStore
+	failAt  int
+	appends atomic.Int32
+}
+
+func (s *failNthAppendStore) Append(ctx context.Context, conversationID string, messages []Message, expectedRevision uint64) (ConversationCursor, error) {
+	if len(messages) > 0 && int(s.appends.Add(1)) == s.failAt {
+		return ConversationCursor{}, errors.New("injected ToolUse append failure")
+	}
+	return s.ConversationStore.Append(ctx, conversationID, messages, expectedRevision)
+}
+
+func TestRecoverExecutionRepairsRealPlannedBoundaryWithoutReplacingUserTurn(t *testing.T) {
+	base, executions := newTestMemoryStore(), newTestExecutionStore()
+	conversations := &failNthAppendStore{ConversationStore: base, failAt: 2}
+	var calls atomic.Int32
+	charge := tool.NewRaw("charge", "charge", nil, func(context.Context, json.RawMessage) (string, error) {
+		calls.Add(1)
+		return "charged", nil
+	})
+	a, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{
+		ToolUseID: "charge", Name: "charge", Input: json.RawMessage(`{"amount":7}`),
+	}}}), "x", WithTools(charge), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.Invoke(Background().WithConversationID("conversation"), "charge invoice")
+	if err == nil || !strings.Contains(err.Error(), "injected ToolUse append failure") {
+		t.Fatalf("Invoke error = %v, want injected ToolUse append failure", err)
+	}
+	planned, err := executions.Load(context.Background(), result.ExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.ToolBatch == nil || planned.ToolBatch.Calls[0].Status != ToolExecutionPlanned || planned.LastSequence == 0 {
+		t.Fatalf("planned execution = %+v", planned)
+	}
+	if _, err := a.RecoverExecution(Background(), result.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := base.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 3 || snapshot.Messages[0].Role != RoleUser {
+		t.Fatalf("recovered messages = %#v", snapshot.Messages)
+	}
+	text, ok := snapshot.Messages[0].Content[0].(TextBlock)
+	if !ok || text.Text != "charge invoice" {
+		t.Fatalf("original user turn was replaced: %#v", snapshot.Messages[0])
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestResumeUnknownOutcomeCheckpointsDefinitiveSibling(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	approved := tool.NewRaw("approved", "approved", nil, func(context.Context, json.RawMessage) (string, error) {
+		return "approved", nil
+	}, tool.RequiresApproval())
+	unknown := tool.NewRaw("unknown", "unknown", nil, func(context.Context, json.RawMessage) (string, error) {
+		return "", tool.OutcomeUnknown(errors.New("external response lost"))
+	})
+	a, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{
+		{ToolUseID: "approved", Name: "approved", Input: json.RawMessage(`{}`)},
+		{ToolUseID: "unknown", Name: "unknown", Input: json.RawMessage(`{}`)},
+	}}), "x", WithTools(approved, unknown), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := Background().WithConversationID("conversation")
+	paused, err := a.Invoke(ctx, "go")
+	if err != nil || paused.Interrupt == nil {
+		t.Fatalf("Invoke = %+v, %v", paused, err)
+	}
+	_, err = a.Resume(ctx, paused.Interrupt, Approve())
+	if !errors.Is(err, ErrToolExecutionUncertain) {
+		t.Fatalf("Resume error = %v, want uncertainty", err)
+	}
+	snapshot, err := conversations.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 3 {
+		t.Fatalf("messages = %#v", snapshot.Messages)
+	}
+	resultBlock, ok := snapshot.Messages[2].Content[0].(ToolResultBlock)
+	if !ok || resultBlock.ToolUseID != "approved" || resultBlock.Content != "approved" {
+		t.Fatalf("definitive resume sibling = %#v", snapshot.Messages[2].Content)
+	}
+	execution, err := executions.Load(context.Background(), paused.ExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.ToolBatch == nil || execution.ToolBatch.Calls[0].Status != ToolExecutionCompleted || execution.ToolBatch.Calls[1].Status != ToolExecutionInFlight {
+		t.Fatalf("execution = %+v", execution)
+	}
+}
+
+func TestExecutionRejectsLaterToolCallIDReuseAndAllowsIndependentExecution(t *testing.T) {
+	t.Run("later iteration rejects distinct input before handler", func(t *testing.T) {
+		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+		var calls atomic.Int32
+		echo := tool.NewRaw("echo", "echo", nil, func(context.Context, json.RawMessage) (string, error) {
+			calls.Add(1)
+			return "ok", nil
+		})
+		a, err := New(newScriptedProvider(
+			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "reused", Name: "echo", Input: json.RawMessage(`{"value":1}`)}}},
+			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "reused", Name: "echo", Input: json.RawMessage(`{"value":2}`)}}},
+		), "x", WithTools(echo), WithConversationStore(conversations), WithExecutionStore(executions))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.Invoke(Background().WithConversationID("conversation"), "go")
+		if err == nil || !strings.Contains(err.Error(), "reuses call ID \"reused\" with different name or input") {
+			t.Fatalf("Invoke error = %v, want call ID reuse rejection", err)
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("handler calls = %d, want only the first iteration", calls.Load())
+		}
+	})
+
+	t.Run("independent executions may reuse call IDs", func(t *testing.T) {
+		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+		var calls atomic.Int32
+		echo := tool.NewRaw("echo", "echo", nil, func(context.Context, json.RawMessage) (string, error) {
+			calls.Add(1)
+			return "ok", nil
+		})
+		first, err := New(newScriptedProvider(
+			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "shared", Name: "echo", Input: json.RawMessage(`{"value":1}`)}}},
+			&ModelResponse{Text: "first done"},
+		), "x", WithTools(echo), WithConversationStore(conversations), WithExecutionStore(executions))
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := New(newScriptedProvider(
+			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "shared", Name: "echo", Input: json.RawMessage(`{"value":2}`)}}},
+			&ModelResponse{Text: "second done"},
+		), "x", WithTools(echo), WithConversationStore(conversations), WithExecutionStore(executions))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := Background().WithConversationID("conversation")
+		if _, err := first.Invoke(ctx, "first"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := second.Invoke(ctx, "second"); err != nil {
+			t.Fatal(err)
+		}
+		if calls.Load() != 2 {
+			t.Fatalf("handler calls = %d, want 2 independent executions", calls.Load())
+		}
+	})
+}
+
+// blockFirstReadyClaimStore lets a second worker win the same Ready call's
+// durable claim, exercising the loser path without manufacturing a result.
+type blockFirstReadyClaimStore struct {
+	*testExecutionStore
+	entered chan struct{}
+	release chan struct{}
+	blocked atomic.Bool
+}
+
+func (s *blockFirstReadyClaimStore) Save(ctx context.Context, execution Execution, expected uint64) (Execution, error) {
+	if execution.ToolBatch != nil && len(execution.ToolBatch.Calls) == 1 && execution.ToolBatch.Calls[0].Status == ToolExecutionInFlight && s.blocked.CompareAndSwap(false, true) {
+		close(s.entered)
+		<-s.release
+	}
+	return s.testExecutionStore.Save(ctx, execution, expected)
+}
+
+func TestReadyClaimRaceDoesNotCreateFalseToolResult(t *testing.T) {
+	conversations, base := newTestMemoryStore(), newTestExecutionStore()
+	seeded := seedInFlightToolExecution(t, conversations, base, true)
+	seeded.ToolBatch.Calls[0].Status = ToolExecutionReady
+	if _, err := base.Save(context.Background(), seeded, seeded.Version); err != nil {
+		t.Fatal(err)
+	}
+	executions := &blockFirstReadyClaimStore{testExecutionStore: base, entered: make(chan struct{}), release: make(chan struct{})}
+	var calls atomic.Int32
+	charge := tool.NewRaw("charge", "charge", nil, func(context.Context, json.RawMessage) (string, error) {
+		calls.Add(1)
+		return "charged", nil
+	}, tool.WithReplaySafe())
+	first, err := New(newScriptedProvider(), "x", WithTools(charge), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(newScriptedProvider(), "x", WithTools(charge), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := first.RecoverExecution(Background(), seeded.ID)
+		firstResult <- err
+	}()
+	<-executions.entered
+	if _, err := second.RecoverExecution(Background(), seeded.ID); err != nil {
+		t.Fatal(err)
+	}
+	close(executions.release)
+	if err := <-firstResult; !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("losing recovery error = %v, want execution conflict", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+	snapshot, err := conversations.Load(context.Background(), seeded.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 2 {
+		t.Fatalf("false coordination result appended: %#v", snapshot.Messages)
+	}
+	result, ok := snapshot.Messages[1].Content[0].(ToolResultBlock)
+	if !ok || result.ToolUseID != "call-1" || result.Content != "charged" {
+		t.Fatalf("canonical result = %#v", snapshot.Messages[1].Content)
+	}
+}

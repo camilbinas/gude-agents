@@ -3,19 +3,30 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
+// toolOutcomeKind classifies exactly one durable result for a tool call.
+// Only toolOutcomeDefinitive can become a canonical ToolResult block.
+type toolOutcomeKind uint8
+
+const (
+	toolOutcomeDefinitive toolOutcomeKind = iota
+	toolOutcomePendingApproval
+	toolOutcomeDeferred
+	toolOutcomeUnknown
+	toolOutcomeCoordinationFailure
+)
+
 // toolOutcome is the result of running one tool call through the pipeline.
 type toolOutcome struct {
+	kind       toolOutcomeKind
 	result     ToolResultBlock
 	widgets    []WidgetBlock
-	pending    bool            // waiting for human approval; result is not final
-	deferred   bool            // deferred until approval interrupt resumes
-	uncertain  bool            // external outcome unknown; no result is canonical
 	humanInput *InputInterrupt // set when the call requested human input
 	err        error           // terminal recovery/coordinator error; never model-visible
 }
@@ -69,9 +80,9 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 		if len(approvals) > 0 {
 			run(approvals)
 			for _, i := range approvals {
-				if outcomes[i].pending {
+				if outcomes[i].kind == toolOutcomePendingApproval {
 					for _, sibling := range remaining {
-						outcomes[sibling] = toolOutcome{deferred: true}
+						outcomes[sibling] = toolOutcome{kind: toolOutcomeDeferred}
 					}
 					return outcomes
 				}
@@ -104,7 +115,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 		callRT.recoveryReplay = r.recovering && durable.Status == ToolExecutionInFlight
 	}
 	callC := parent.forToolCall(callRT)
-	out := toolOutcome{result: ToolResultBlock{ToolUseID: tc.ToolUseID}}
+	out := toolOutcome{kind: toolOutcomeDefinitive, result: ToolResultBlock{ToolUseID: tc.ToolUseID}}
 
 	started := false
 	emitStart := func() {
@@ -187,7 +198,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	// 5. Approval gate.
 	if t.NeedsApproval() && decision == nil {
 		tf.finish(nil, "approval required", false, true, "")
-		out.pending = true
+		out.kind = toolOutcomePendingApproval
 		return out
 	}
 
@@ -196,7 +207,17 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	if claimErr != nil {
 		tf.finish(claimErr, "", true, false, "")
 		out.err = claimErr
-		return fail(claimErr.Error(), ErrorCodeOutcomeUnknown, time.Since(begin))
+		if errors.Is(claimErr, ErrToolExecutionUncertain) {
+			out.kind = toolOutcomeUnknown
+			emitEnd("", &ErrorInfo{Code: ErrorCodeOutcomeUnknown, Message: claimErr.Error()}, time.Since(begin))
+		} else {
+			// A lost Ready→InFlight claim is a coordination failure, not an
+			// execution result. The caller must retain the active batch for a
+			// winner/recovery to resolve; never acknowledge it to the model.
+			out.kind = toolOutcomeCoordinationFailure
+			emitEnd("", &ErrorInfo{Code: ErrorCodeOutcomeUnknown, Message: claimErr.Error()}, time.Since(begin))
+		}
+		return out
 	}
 	callRT.idempotencyKey, callRT.recoveryReplay = key, recoveryReplay
 
@@ -249,7 +270,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 				ExecutionID: r.c.ExecutionID(), CallID: tc.ToolUseID, ToolName: tc.Name, IdempotencyKey: key,
 			}
 			tf.finish(uncertain, "", true, true, "")
-			out.uncertain = true
+			out.kind = toolOutcomeUnknown
 			out.err = uncertain
 			emitEnd("", &ErrorInfo{Code: ErrorCodeOutcomeUnknown, Message: err.Error()}, dur)
 			return out

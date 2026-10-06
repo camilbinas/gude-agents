@@ -137,9 +137,12 @@ var ErrExecutionRecoveryUnsupported = errors.New("execution recovery state unsup
 type Execution struct {
 	ID string `json:"id"`
 
-	ConversationID string `json:"conversation_id,omitempty"`
-	Revision       uint64 `json:"revision"`
-	LastSequence   uint64 `json:"last_sequence"`
+	ConversationID       string `json:"conversation_id,omitempty"`
+	Revision             uint64 `json:"revision"`
+	LastSequence         uint64 `json:"last_sequence"`
+	StartRevision        uint64 `json:"start_revision"`
+	StartLastSequence    uint64 `json:"start_last_sequence"`
+	StartCursorPersisted bool   `json:"start_cursor_persisted"`
 
 	Status    ExecutionStatus     `json:"status"`
 	Phase     ExecutionPhase      `json:"phase"`
