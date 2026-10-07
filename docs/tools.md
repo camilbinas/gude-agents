@@ -172,6 +172,8 @@ execution, err := a.ReconcileToolExecution(
 
 Use `ToolResolutionFailed` to append an error ToolResult or `ToolResolutionRetry` to make the same call eligible for recovery again with its original key. Reconciliation is CAS-protected by `executionVersion`; a stale version returns `ErrExecutionConflict`.
 
+A ToolResult append has a mandatory durability barrier: when the configured conversation store implements `Flusher`, the agent must receive a successful `Flush` before it marks calls completed, clears the active batch, or clears a manual-resolution claim. This applies even when `WithSyncConversation` is not enabled. If an append committed but its flush acknowledgement is lost, recovery recognizes the canonical result, retries the barrier without replaying the handler or duplicating the result, and only then clears recovery state.
+
 This mechanism intentionally does not add provider-response replay, durable background-worker execution, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
 
 ### Operational limits

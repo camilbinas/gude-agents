@@ -342,45 +342,44 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	return nil
 }
 
-// prepareTurn applies input guardrails, loads history, retrieves RAG context
-// and builds the user message. ragStart is the index of the transient RAG
-// turn pair in messages, or -1.
-func (r *run) prepareTurn(input string) (messages []Message, ragStart int, err error) {
+// prepareTurn applies input guardrails, loads canonical history, retrieves
+// transient RAG context, and builds the canonical user message.
+func (r *run) prepareTurnMessages(input string) (turnMessages, error) {
 	a, c, h := r.a, r.c, &r.h
-	ragStart = -1
+	var messages turnMessages
 
 	msg := input
 	for _, g := range a.inputGuardrails {
 		gC, gf := h.onGuardrailStart(c, "input", msg)
+		var err error
 		msg, err = g(gC, msg)
 		gf.finish(err, msg)
 		if err != nil {
-			return nil, -1, &GuardrailError{Direction: "input", Cause: err}
+			return turnMessages{}, &GuardrailError{Direction: "input", Cause: err}
 		}
 	}
 
 	if r.hasConversation() {
 		boundary := uint64(0)
+		var err error
 		if a.contextManager != nil {
 			boundary, err = a.contextManager.HistoryBoundary(c, r.convID)
 			if err != nil {
-				return nil, -1, fmt.Errorf("context history boundary: %w", err)
+				return turnMessages{}, fmt.Errorf("context history boundary: %w", err)
 			}
 		}
 		loadC, cf := h.onConversationStart(c, ConversationRecord{Operation: "load_after", ConversationID: r.convID})
 		snapshot, lerr := a.conversation.LoadAfter(loadC, r.convID, boundary)
 		cf.finish(lerr, len(snapshot.Messages), snapshot.Revision)
 		if lerr != nil {
-			return nil, -1, fmt.Errorf("conversation load: %w", lerr)
+			return turnMessages{}, fmt.Errorf("conversation load: %w", lerr)
 		}
-		r.revision = snapshot.Revision
-		r.lastSequence = snapshot.LastSequence
-		r.historyBoundary = boundary
+		r.revision, r.lastSequence, r.historyBoundary = snapshot.Revision, snapshot.LastSequence, boundary
 		r.persistedCount = len(snapshot.Messages)
 		if err := r.persistExecutionStartCursor(); err != nil {
-			return nil, -1, err
+			return turnMessages{}, err
 		}
-		messages = snapshot.Messages
+		messages.canonical = append(messages.canonical, snapshot.Messages...)
 	}
 
 	if a.retriever != nil {
@@ -388,7 +387,7 @@ func (r *run) prepareTurn(input string) (messages []Message, ragStart int, err e
 		docs, rerr := a.retriever.Retrieve(retC, msg)
 		rf.finish(rerr, len(docs))
 		if rerr != nil {
-			return nil, -1, fmt.Errorf("retriever: %w", rerr)
+			return turnMessages{}, fmt.Errorf("retriever: %w", rerr)
 		}
 		if len(docs) > 0 {
 			formatter := a.contextFormatter
@@ -396,8 +395,7 @@ func (r *run) prepareTurn(input string) (messages []Message, ragStart int, err e
 				formatter = rag.DefaultContextFormatter
 			}
 			if contextStr := formatter(docs); contextStr != "" {
-				ragStart = len(messages)
-				messages = append(messages,
+				messages.transient = append(messages.transient,
 					Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: ragPreamble + contextStr}}},
 					Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: "OK"}}},
 				)
@@ -408,13 +406,13 @@ func (r *run) prepareTurn(input string) (messages []Message, ragStart int, err e
 	images := c.Images()
 	for _, img := range images {
 		if verr := img.Source.Validate(); verr != nil {
-			return nil, -1, verr
+			return turnMessages{}, verr
 		}
 	}
 	documents := c.Documents()
 	for _, doc := range documents {
 		if verr := doc.Source.Validate(); verr != nil {
-			return nil, -1, verr
+			return turnMessages{}, verr
 		}
 	}
 	if len(images) > 0 || len(documents) > 0 {
@@ -428,9 +426,32 @@ func (r *run) prepareTurn(input string) (messages []Message, ragStart int, err e
 	for _, img := range images {
 		content = append(content, img)
 	}
-	content = append(content, TextBlock{Text: msg})
-	messages = append(messages, Message{Role: RoleUser, Content: content})
-	return messages, ragStart, nil
+	messages.appendCanonical(Message{Role: RoleUser, Content: append(content, TextBlock{Text: msg})})
+	return messages, nil
+}
+
+// prepareTurn is retained for the structured-output path. Normal turns use
+// prepareTurnMessages so tool persistence never observes a mixed slice.
+func (r *run) prepareTurn(input string) ([]Message, int, error) {
+	messages, err := r.prepareTurnMessages(input)
+	if err != nil {
+		return nil, -1, err
+	}
+	if len(messages.transient) == 0 {
+		return messages.canonical, -1, nil
+	}
+	return messages.providerMessages(r.persistedCount), r.persistedCount, nil
+}
+
+// persisted is a legacy structured-output adapter. Tool execution uses
+// turnMessages and cannot pass transient messages to persistence.
+func persisted(messages []Message, ragStart int) []Message {
+	if ragStart < 0 || ragStart+2 > len(messages) {
+		return messages
+	}
+	out := make([]Message, 0, len(messages)-2)
+	out = append(out, messages[:ragStart]...)
+	return append(out, messages[ragStart+2:]...)
 }
 
 // inferenceConfig merges and validates the inference config of the invocation.
@@ -444,7 +465,7 @@ func (r *run) inferenceConfig() (*InferenceConfig, error) {
 
 // freshTurn runs a user-initiated turn.
 func (r *run) freshTurn(input string) (Result, error) {
-	messages, ragStart, err := r.prepareTurn(input)
+	messages, err := r.prepareTurnMessages(input)
 	if err != nil {
 		return Result{}, err
 	}
@@ -452,21 +473,11 @@ func (r *run) freshTurn(input string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return r.loop(messages, ragStart, cfg)
-}
-
-// persisted returns messages without the transient RAG turn pair.
-func persisted(messages []Message, ragStart int) []Message {
-	if ragStart < 0 || ragStart+2 > len(messages) {
-		return messages
-	}
-	out := make([]Message, 0, len(messages)-2)
-	out = append(out, messages[:ragStart]...)
-	return append(out, messages[ragStart+2:]...)
+	return r.loopTurn(messages, cfg)
 }
 
 // loop is the model/tool iteration loop shared by every entry point.
-func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceConfig) (Result, error) {
+func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) (Result, error) {
 	a, c, h := r.a, r.c, &r.h
 	modelID := a.modelID()
 	systemPrompt := a.instructionsFor(c)
@@ -487,7 +498,7 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 		}
 
 		toolSpecs, availableTools := a.filterTools(iterC)
-		converseMessages, err := r.modelMessages(iterC, messages, ragStart, systemPrompt, toolSpecs)
+		converseMessages, err := r.modelTurnMessages(iterC, messages, systemPrompt, toolSpecs)
 		if err != nil {
 			endIteration(0, false, err)
 			return Result{}, err
@@ -561,13 +572,13 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 				// The canonical transcript owns all assistant text. Persist the
 				// pre-tool delta (including the user request) before Planned, then
 				// keep any accompanying assistant text in its own canonical turn.
-				if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
+				if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
 					return Result{}, err
 				}
 				if resp.Text != "" {
-					messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
-					if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
+					messages.appendCanonical(Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
+					if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 						endIteration(0, false, err)
 						return Result{}, err
 					}
@@ -577,8 +588,8 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 					return Result{}, err
 				}
 				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls})
-				messages = append(messages, assistant)
-				if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
+				messages.appendCanonical(assistant)
+				if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
 					return Result{}, err
 				}
@@ -587,13 +598,11 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 					return Result{}, err
 				}
 			} else {
-				messages = append(messages, assistant)
+				messages.appendCanonical(assistant)
 			}
 
-			toolUseIndex := len(messages) - 1
-			batch := r.coordinateToolBatch(iterC, resp.ToolCalls, availableTools, nil, &messages, func(messages []Message) []Message {
-				return persisted(messages, ragStart)
-			})
+			toolUseIndex := len(messages.canonical) - 1
+			batch := r.coordinateToolBatch(iterC, resp.ToolCalls, availableTools, nil, &messages)
 			if batch.err != nil {
 				endIteration(len(resp.ToolCalls), false, batch.err)
 				return Result{}, batch.err
@@ -603,14 +612,14 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 			if !r.executionDurable {
 				// Widget blocks are generated by handlers. Stateless executions keep
 				// their existing inline widget representation.
-				messages[toolUseIndex] = toolUseMessageWithWidgets(resp, batch.outcomes)
+				messages.canonical[toolUseIndex] = toolUseMessageWithWidgets(resp, batch.outcomes)
 			}
 
 			if err := c.Err(); err != nil {
 				return Result{}, err
 			}
 			if batch.interrupt != nil {
-				return r.interrupt(batch.interrupt, persisted(messages, ragStart))
+				return r.interrupt(batch.interrupt, messages.canonical)
 			}
 			continue
 		}
@@ -628,7 +637,7 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 			}
 		}
 		if finalText != "" {
-			messages = append(messages, Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
+			messages.appendCanonical(Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
 		}
 		endIteration(0, true, nil)
 
@@ -636,7 +645,7 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 		if err := c.Err(); err != nil {
 			return Result{}, err
 		}
-		if _, err := r.saveConversation(persisted(messages, ragStart), c.rt.totalUsage()); err != nil {
+		if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 			return Result{}, err
 		}
 		return Result{Text: finalText, StopReason: StopEndTurn, Metadata: resp.Metadata}, nil
@@ -646,6 +655,16 @@ func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceC
 	h.onLimit(c, "max_iterations", a.maxIterations, limitErr)
 	r.emitLifecycle(EventMaxIterations, LifecycleEvent{Limit: a.maxIterations})
 	return Result{}, limitErr
+}
+
+// loop is the compatibility entry point used by background re-entry. It
+// converts its legacy transient pair immediately into turnMessages.
+func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceConfig) (Result, error) {
+	turn := turnMessages{canonical: persisted(messages, ragStart)}
+	if ragStart >= 0 && ragStart+2 <= len(messages) {
+		turn.transient = append(turn.transient, messages[ragStart:ragStart+2]...)
+	}
+	return r.loopTurn(turn, inferenceConfig)
 }
 
 func toolUseMessage(resp *ModelResponse) Message {
@@ -886,14 +905,12 @@ func (r *run) beginToolExecution(callID, toolName string) (key string, recoveryR
 	return key, recoveryReplay, err
 }
 
-// checkpointToolResults appends completed results before removing their
-// durable intent records. Pending/deferred approval calls remain recoverable.
+// checkpointToolResults appends completed results before acknowledging their
+// durable intent records. A configured Flusher is mandatory at this boundary,
+// regardless of WithSyncConversation.
 func (r *run) checkpointToolResults(messages []Message, outcomes []toolOutcome) error {
 	if !r.executionDurable {
 		return nil
-	}
-	if _, err := r.saveConversation(messages, r.c.rt.totalUsage()); err != nil {
-		return err
 	}
 	completed := make(map[string]struct{}, len(outcomes))
 	for _, outcome := range outcomes {
@@ -901,7 +918,44 @@ func (r *run) checkpointToolResults(messages []Message, outcomes []toolOutcome) 
 			completed[outcome.result.ToolUseID] = struct{}{}
 		}
 	}
+	if len(completed) == 0 {
+		return nil
+	}
+	committed, err := r.saveConversation(messages, r.c.rt.totalUsage())
+	if err != nil && !committed {
+		return err
+	}
+	if flushErr := r.flushToolResultBarrier(); flushErr != nil {
+		return errors.Join(err, flushErr)
+	}
 	return r.removeToolCalls(completed)
+}
+
+// completeCanonicalToolResults acknowledges result blocks found during
+// recovery/preparation. It deliberately flushes even when no append delta
+// remains, covering a lost acknowledgement after a committed append.
+func (r *run) completeCanonicalToolResults(completed map[string]struct{}) error {
+	if len(completed) == 0 {
+		return nil
+	}
+	if err := r.flushToolResultBarrier(); err != nil {
+		return err
+	}
+	return r.removeToolCalls(completed)
+}
+
+func (r *run) flushToolResultBarrier() error {
+	if !r.hasConversation() {
+		return nil
+	}
+	flusher, ok := r.a.conversation.(Flusher)
+	if !ok {
+		return nil
+	}
+	if err := flusher.Flush(r.c); err != nil {
+		return fmt.Errorf("conversation flush: %w", err)
+	}
+	return nil
 }
 
 func (r *run) removeToolCalls(completed map[string]struct{}) error {
@@ -993,7 +1047,7 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 		return cloneExecution(*r.execution), err
 	}
 	if len(completed) > 0 {
-		if err := r.removeToolCalls(completed); err != nil {
+		if err := r.completeCanonicalToolResults(completed); err != nil {
 			return cloneExecution(*r.execution), err
 		}
 	}
@@ -1018,7 +1072,8 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	}
 	decisions := r.persistedApprovalDecisions(calls)
 	_, available := a.filterTools(base)
-	batch := r.coordinateToolBatch(base, calls, available, decisions, &messages, func(messages []Message) []Message { return messages })
+	batchMessages := turnMessages{canonical: messages}
+	batch := r.coordinateToolBatch(base, calls, available, decisions, &batchMessages)
 	if batch.err != nil {
 		return cloneExecution(*r.execution), batch.err
 	}
@@ -1123,6 +1178,89 @@ func canonicalPendingToolCalls(messages []Message, batch *ToolBatchExecution) ([
 		}
 	}
 	return pending, nil
+}
+
+// prepareToolBatch is the shared durable dispatch preflight for invocation,
+// approval resume, and recovery. It validates the active ToolUse boundary,
+// acknowledges canonical results through the required flush barrier, filters
+// completed calls, and realigns decisions to the calls that remain.
+func (r *run) prepareToolBatch(messages []Message, requested []tool.Call, decisions []*tool.Decision) ([]tool.Call, []*tool.Decision, error) {
+	if !r.executionDurable {
+		return requested, decisions, nil
+	}
+	if r.execution == nil || r.execution.ToolBatch == nil {
+		return nil, nil, ErrExecutionRecoveryUnsupported
+	}
+	calls, canonicalResults, err := activeToolBatchFromMessages(messages, r.execution.ToolBatch)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(requested) > 0 && len(requested) != len(calls) {
+		return nil, nil, ErrExecutionRecoveryUnsupported
+	}
+	for i, call := range calls {
+		if len(requested) > 0 && (requested[i].ToolUseID != call.ToolUseID || requested[i].Name != call.Name) {
+			return nil, nil, ErrExecutionRecoveryUnsupported
+		}
+	}
+	if len(canonicalResults) > 0 {
+		if err := r.completeCanonicalToolResults(canonicalResults); err != nil {
+			return nil, nil, err
+		}
+		if r.execution.ToolBatch == nil {
+			return nil, nil, nil
+		}
+	}
+	decisionByID := make(map[string]*tool.Decision, len(decisions))
+	for i, decision := range decisions {
+		if i < len(requested) && decision != nil {
+			d := *decision
+			decisionByID[requested[i].ToolUseID] = &d
+		}
+	}
+	remaining := make([]tool.Call, 0, len(calls))
+	remainingDecisions := make([]*tool.Decision, 0, len(calls))
+	for i, call := range calls {
+		if r.execution.ToolBatch.Calls[i].Status == ToolExecutionCompleted {
+			continue
+		}
+		remaining = append(remaining, call)
+		remainingDecisions = append(remainingDecisions, decisionByID[call.ToolUseID])
+	}
+	if persisted := r.persistedApprovalDecisions(remaining); persisted != nil {
+		remainingDecisions = persisted
+	}
+	if decisions == nil && r.persistedApprovalDecisions(remaining) == nil {
+		return remaining, nil, nil
+	}
+	return remaining, remainingDecisions, nil
+}
+
+func activeToolBatchFromMessages(messages []Message, batch *ToolBatchExecution) ([]tool.Call, map[string]struct{}, error) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if message.Role != RoleAssistant || len(message.Content) != len(batch.Calls) {
+			continue
+		}
+		match := true
+		for j, block := range message.Content {
+			use, ok := block.(ToolUseBlock)
+			if !ok {
+				match = false
+				break
+			}
+			call := batch.Calls[j]
+			hash, err := toolInputHash(use.Input)
+			if err != nil || use.ToolUseID != call.CallID || use.Name != call.Name || hash != call.InputHash {
+				match = false
+				break
+			}
+		}
+		if match {
+			return activeToolBatch(messages[i:], batch)
+		}
+	}
+	return nil, nil, ErrExecutionRecoveryUnsupported
 }
 
 func (r *run) persistedApprovalDecisions(calls []tool.Call) []*tool.Decision {
@@ -1293,6 +1431,9 @@ func (r *run) finishResolutionClaim(messages *[]Message) error {
 			return err
 		}
 	}
+	if err := r.flushToolResultBarrier(); err != nil {
+		return err
+	}
 	return r.persistExecution(func(execution *Execution) error {
 		if execution.ToolBatch == nil || execution.ToolBatch.Resolution == nil || execution.ToolBatch.Resolution.CallID != claim.CallID {
 			return ErrExecutionConflict
@@ -1423,7 +1564,7 @@ func (r *run) exposeInterrupt(in *Interrupt, err error) (Result, error) {
 // resumeTurn continues an interrupted invocation (response already validated).
 func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
-	var messages []Message
+	var messages turnMessages
 	var err error
 	if r.hasConversation() {
 		boundary := uint64(0)
@@ -1449,9 +1590,9 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		r.lastSequence = snapshot.LastSequence
 		r.historyBoundary = boundary
 		r.persistedCount = len(snapshot.Messages)
-		messages = append([]Message(nil), snapshot.Messages...)
+		messages.canonical = append(messages.canonical, snapshot.Messages...)
 	} else {
-		messages = append([]Message(nil), in.Messages...)
+		messages.canonical = append(messages.canonical, in.Messages...)
 	}
 
 	cfg, err := r.inferenceConfig()
@@ -1470,13 +1611,13 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 				return Result{}, &GuardrailError{Direction: "input", Cause: err}
 			}
 		}
-		messages = append(messages, Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
+		messages.appendCanonical(Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
 
 	case InterruptApproval:
 		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
 			return Result{}, err
 		}
-		calls, fallbackDecisions, err := approvalResumeBatch(messages, in.Approval, resp)
+		calls, fallbackDecisions, err := approvalResumeBatch(messages.canonical, in.Approval, resp)
 		if err != nil {
 			return Result{}, err
 		}
@@ -1485,7 +1626,7 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 			decisions = fallbackDecisions
 		}
 		_, available := a.filterTools(c)
-		batch := r.coordinateToolBatch(c, calls, available, decisions, &messages, func(messages []Message) []Message { return messages })
+		batch := r.coordinateToolBatch(c, calls, available, decisions, &messages)
 		if batch.err != nil {
 			return Result{}, batch.err
 		}
@@ -1493,11 +1634,11 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 			return Result{}, err
 		}
 		if batch.interrupt != nil {
-			return r.interrupt(batch.interrupt, messages)
+			return r.interrupt(batch.interrupt, messages.canonical)
 		}
 	}
 
-	return r.loop(messages, -1, cfg)
+	return r.loopTurn(messages, cfg)
 }
 
 // approvalResumeBatch reconstructs the original model tool batch from the
@@ -1544,26 +1685,6 @@ func approvalResumeBatch(messages []Message, approval *ApprovalInterrupt, resp R
 	return nil, nil, errors.New("resume approval interrupt tool batch not found")
 }
 
-// mergeToolResults appends results to the conversation. If the last message
-// already holds tool results of the same assistant turn (calls completed
-// before the pause), the new results are merged into it and ordered like the
-// ToolUseBlocks of the preceding assistant message.
-func mergeToolResults(messages []Message, results []ContentBlock) []Message {
-	if n := len(messages); n >= 2 && messages[n-1].Role == RoleUser && onlyToolResults(messages[n-1].Content) {
-		combined := append(append([]ContentBlock(nil), messages[n-1].Content...), results...)
-		order := map[string]int{}
-		for i, b := range messages[n-2].Content {
-			if tu, ok := b.(ToolUseBlock); ok {
-				order[tu.ToolUseID] = i
-			}
-		}
-		sortByOrder(combined, order)
-		out := append([]Message(nil), messages[:n-1]...)
-		return append(out, Message{Role: RoleUser, Content: combined})
-	}
-	return append(messages, Message{Role: RoleUser, Content: results})
-}
-
 func onlyToolResults(blocks []ContentBlock) bool {
 	if len(blocks) == 0 {
 		return false
@@ -1574,24 +1695,6 @@ func onlyToolResults(blocks []ContentBlock) bool {
 		}
 	}
 	return true
-}
-
-// sortByOrder stably sorts tool result blocks by their call position.
-func sortByOrder(blocks []ContentBlock, order map[string]int) {
-	pos := func(b ContentBlock) int {
-		if tr, ok := b.(ToolResultBlock); ok {
-			if p, ok := order[tr.ToolUseID]; ok {
-				return p
-			}
-		}
-		return len(order) + 1
-	}
-	// insertion sort: batches are small
-	for i := 1; i < len(blocks); i++ {
-		for j := i; j > 0 && pos(blocks[j]) < pos(blocks[j-1]); j-- {
-			blocks[j], blocks[j-1] = blocks[j-1], blocks[j]
-		}
-	}
 }
 
 // stripToolBlocks returns messages without ToolUseBlock / ToolResultBlock
@@ -1766,20 +1869,26 @@ func (a *Agent) invokeRecord(convID, userMessage string, c *Context) InvokeRecor
 	}
 }
 
-// modelMessages builds a disposable provider projection. messages retains only
-// canonical recent history, transient RAG and the current durable delta; it is
-// never overwritten with a summary/window/filter projection.
+// modelMessages is retained for structured output. Normal execution calls
+// modelTurnMessages with the structural representation directly.
 func (r *run) modelMessages(ctx context.Context, messages []Message, ragStart int, system string, tools []tool.Spec) ([]Message, error) {
-	if r.a.contextManager == nil {
-		return messages, nil
+	turn := turnMessages{canonical: persisted(messages, ragStart)}
+	if ragStart >= 0 && ragStart+2 <= len(messages) {
+		turn.transient = append(turn.transient, messages[ragStart:ragStart+2]...)
 	}
-	canonical := persisted(messages, ragStart)
+	return r.modelTurnMessages(ctx, turn, system, tools)
+}
+
+// modelMessages builds a disposable provider projection. Canonical history and
+// transient RAG context remain structurally separate, so persistence callers
+// can never accidentally append provider-only messages.
+func (r *run) modelTurnMessages(ctx context.Context, messages turnMessages, system string, tools []tool.Spec) ([]Message, error) {
+	canonical := messages.canonical
 	if r.persistedCount > len(canonical) {
 		return nil, fmt.Errorf("context projection: canonical history regressed")
 	}
-	var transient []Message
-	if ragStart >= 0 && ragStart+2 <= len(messages) {
-		transient = append([]Message(nil), messages[ragStart:ragStart+2]...)
+	if r.a.contextManager == nil {
+		return messages.providerMessages(r.persistedCount), nil
 	}
 	out, err := r.a.contextManager.Prepare(ctx, ContextManagerInput{
 		ConversationID: r.convID,
@@ -1788,7 +1897,7 @@ func (r *run) modelMessages(ctx context.Context, messages []Message, ragStart in
 		LastSequence:   r.lastSequence,
 		Recent:         canonical[:r.persistedCount],
 		Current:        canonical[r.persistedCount:],
-		Transient:      transient,
+		Transient:      append([]Message(nil), messages.transient...),
 		System:         system,
 		Tools:          tools,
 	})
