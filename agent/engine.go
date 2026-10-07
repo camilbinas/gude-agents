@@ -1066,7 +1066,7 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 		}
 	}
 
-	calls, err := canonicalPendingToolCalls(messages, r.execution.ToolBatch)
+	calls, _, err := activeToolBatch(messages, r.execution.ToolBatch)
 	if err != nil {
 		return cloneExecution(*r.execution), err
 	}
@@ -1186,7 +1186,7 @@ func canonicalPendingToolCalls(messages []Message, batch *ToolBatchExecution) ([
 // completed calls, and realigns decisions to the calls that remain.
 func (r *run) prepareToolBatch(messages []Message, requested []tool.Call, decisions []*tool.Decision) ([]tool.Call, []*tool.Decision, error) {
 	if !r.executionDurable {
-		return requested, decisions, nil
+		return filterCompletedToolCalls(messages, requested, decisions)
 	}
 	if r.execution == nil || r.execution.ToolBatch == nil {
 		return nil, nil, ErrExecutionRecoveryUnsupported
@@ -1259,6 +1259,78 @@ func activeToolBatchFromMessages(messages []Message, batch *ToolBatchExecution) 
 		if match {
 			return activeToolBatch(messages[i:], batch)
 		}
+	}
+	return nil, nil, ErrExecutionRecoveryUnsupported
+}
+
+// filterCompletedToolCalls gives local (non-ExecutionStore) approval resumes
+// the same append-only completed-call exclusion as durable batches. It finds
+// the matching assistant ToolUse turn, examines only its following ToolResult
+// messages, and keeps decisions aligned with the calls that still need work.
+func filterCompletedToolCalls(messages []Message, requested []tool.Call, decisions []*tool.Decision) ([]tool.Call, []*tool.Decision, error) {
+	if len(requested) == 0 {
+		return requested, decisions, nil
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if message.Role != RoleAssistant {
+			continue
+		}
+		uses := make([]ToolUseBlock, 0, len(message.Content))
+		for _, block := range message.Content {
+			use, ok := block.(ToolUseBlock)
+			if !ok {
+				continue
+			}
+			uses = append(uses, use)
+		}
+		if len(uses) != len(requested) {
+			continue
+		}
+		matched := true
+		for j, call := range requested {
+			hash, err := toolInputHash(uses[j].Input)
+			requestedHash, requestedErr := toolInputHash(call.Input)
+			if err != nil || requestedErr != nil || uses[j].ToolUseID != call.ToolUseID || uses[j].Name != call.Name || hash != requestedHash {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		completed := make(map[string]struct{})
+		for _, later := range messages[i+1:] {
+			if later.Role == RoleAssistant {
+				break
+			}
+			if later.Role != RoleUser || !onlyToolResults(later.Content) {
+				continue
+			}
+			for _, block := range later.Content {
+				result := block.(ToolResultBlock)
+				completed[result.ToolUseID] = struct{}{}
+			}
+		}
+		remaining := make([]tool.Call, 0, len(requested))
+		remainingDecisions := make([]*tool.Decision, 0, len(requested))
+		for j, call := range requested {
+			if _, done := completed[call.ToolUseID]; done {
+				continue
+			}
+			remaining = append(remaining, call)
+			if j < len(decisions) {
+				remainingDecisions = append(remainingDecisions, decisions[j])
+			} else {
+				remainingDecisions = append(remainingDecisions, nil)
+			}
+		}
+		if decisions == nil {
+			// A fresh invocation must retain nil decisions so executeBatch performs
+			// approval preflight before any sibling handler can run.
+			return remaining, nil, nil
+		}
+		return remaining, remainingDecisions, nil
 	}
 	return nil, nil, ErrExecutionRecoveryUnsupported
 }

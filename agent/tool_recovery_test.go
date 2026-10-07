@@ -1155,3 +1155,82 @@ func TestResolutionClaimFlushFailureRetainsClaimUntilAcknowledged(t *testing.T) 
 		t.Fatalf("messages=%#v err=%v", snapshot.Messages, err)
 	}
 }
+
+func TestRecoverExecutionFiltersCompletedSiblingBeforeReplay(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	var knownCalls, retryCalls atomic.Int32
+	known := tool.NewRaw("known", "known", nil, func(context.Context, json.RawMessage) (string, error) {
+		knownCalls.Add(1)
+		return "known result", nil
+	})
+	retry := tool.NewRaw("retry", "retry", nil, func(context.Context, json.RawMessage) (string, error) {
+		if retryCalls.Add(1) == 1 {
+			return "", tool.OutcomeUnknown(errors.New("response lost"))
+		}
+		return "replayed result", nil
+	}, tool.WithReplaySafe())
+	a, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{
+		{ToolUseID: "known", Name: "known", Input: json.RawMessage(`{}`)},
+		{ToolUseID: "retry", Name: "retry", Input: json.RawMessage(`{}`)},
+	}}), "x", WithTools(known, retry), WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.Invoke(Background().WithConversationID("conversation"), "go")
+	if !errors.Is(err, ErrToolExecutionUncertain) {
+		t.Fatalf("Invoke error = %v", err)
+	}
+	if _, err := a.RecoverExecution(Background(), result.ExecutionID); err != nil {
+		t.Fatalf("RecoverExecution error = %v", err)
+	}
+	if knownCalls.Load() != 1 || retryCalls.Load() != 2 {
+		t.Fatalf("known=%d retry=%d", knownCalls.Load(), retryCalls.Load())
+	}
+	snapshot, err := conversations.Load(context.Background(), "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, message := range snapshot.Messages {
+		for _, block := range message.Content {
+			if result, ok := block.(ToolResultBlock); ok {
+				ids = append(ids, result.ToolUseID)
+			}
+		}
+	}
+	if strings.Join(ids, ",") != "known,retry" {
+		t.Fatalf("result ids = %v", ids)
+	}
+}
+
+func TestStatelessApprovalResumeSkipsCompletedDeniedSibling(t *testing.T) {
+	var guardCalls, deniedHandlers, approvedHandlers atomic.Int32
+	denied := tool.NewRaw("denied", "denied", nil, func(context.Context, json.RawMessage) (string, error) {
+		deniedHandlers.Add(1)
+		return "must not run", nil
+	}, tool.RequiresApproval(), tool.WithGuard(func(context.Context, json.RawMessage) (tool.Decision, error) {
+		guardCalls.Add(1)
+		return tool.Deny("blocked"), nil
+	}))
+	approved := tool.NewRaw("approved", "approved", nil, func(context.Context, json.RawMessage) (string, error) {
+		approvedHandlers.Add(1)
+		return "approved", nil
+	}, tool.RequiresApproval())
+	a, err := New(newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "denied", Name: "denied", Input: json.RawMessage(`{}`)}, {ToolUseID: "approved", Name: "approved", Input: json.RawMessage(`{}`)}}},
+		&ModelResponse{Text: "done"},
+	), "x", WithTools(denied, approved))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := a.Invoke(Background(), "go")
+	if err != nil || paused.Interrupt == nil || paused.Interrupt.Approval == nil {
+		t.Fatalf("Invoke = %+v, %v", paused, err)
+	}
+	if _, err := a.Resume(Background(), paused.Interrupt, Approve()); err != nil {
+		t.Fatal(err)
+	}
+	if guardCalls.Load() != 1 || deniedHandlers.Load() != 0 || approvedHandlers.Load() != 1 {
+		t.Fatalf("guard=%d denied=%d approved=%d", guardCalls.Load(), deniedHandlers.Load(), approvedHandlers.Load())
+	}
+}
