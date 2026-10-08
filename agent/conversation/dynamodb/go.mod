@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1
 	github.com/aws/smithy-go v1.25.1
-	github.com/camilbinas/gude-agents v1.7.4
+	github.com/camilbinas/gude-agents v1.8.0
 	pgregory.net/rapid v1.2.0
 )
 
