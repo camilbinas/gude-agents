@@ -78,6 +78,7 @@ const (
 type memoryLease struct {
 	state                       leaseState
 	tokens                      []TokenReservation
+	window                      time.Duration // maximum request/token window captured at Reserve
 	pendingUntil, terminalUntil time.Time
 }
 type tokenEvent struct {
@@ -144,7 +145,7 @@ func (m *MemoryStore) Reserve(ctx context.Context, reservation Reservation) (boo
 		m.counter("t:"+r.Key, r.Strategy, r.Window).reserved += r.Amount
 	}
 	window := reservationWindow(reservation)
-	m.leases[reservation.ID] = memoryLease{state: pending, tokens: append([]TokenReservation(nil), reservation.Tokens...), pendingUntil: now.Add(m.pendingTTL(window)), terminalUntil: now.Add(m.terminalTTL(window))}
+	m.leases[reservation.ID] = memoryLease{state: pending, tokens: append([]TokenReservation(nil), reservation.Tokens...), window: window, pendingUntil: now.Add(m.pendingTTL(window)), terminalUntil: now.Add(m.terminalTTL(window))}
 	return true, nil
 }
 func (m *MemoryStore) Commit(ctx context.Context, id string, actual int) error {
@@ -167,7 +168,7 @@ func (m *MemoryStore) Commit(ctx context.Context, id string, actual int) error {
 	}
 	m.settle(now, &lease, actual)
 	lease.state = committed
-	lease.terminalUntil = now.Add(m.terminalTTL(reservationWindow(Reservation{Tokens: lease.tokens})))
+	lease.terminalUntil = now.Add(m.terminalTTL(lease.window))
 	m.leases[id] = lease
 	return nil
 }
@@ -188,7 +189,7 @@ func (m *MemoryStore) Release(ctx context.Context, id string) error {
 	}
 	m.settle(now, &lease, -1)
 	lease.state = released
-	lease.terminalUntil = now.Add(m.terminalTTL(reservationWindow(Reservation{Tokens: lease.tokens})))
+	lease.terminalUntil = now.Add(m.terminalTTL(lease.window))
 	m.leases[id] = lease
 	return nil
 }
@@ -212,7 +213,7 @@ func (m *MemoryStore) cleanup(now time.Time) {
 		if l.state == pending && !now.Before(l.pendingUntil) {
 			m.settle(now, &l, -1)
 			l.state = expired
-			l.terminalUntil = now.Add(m.terminalTTL(reservationWindow(Reservation{Tokens: l.tokens})))
+			l.terminalUntil = now.Add(m.terminalTTL(l.window))
 			m.leases[id] = l
 		}
 		if l.state != pending && !now.Before(l.terminalUntil) {

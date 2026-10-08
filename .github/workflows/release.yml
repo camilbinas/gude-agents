@@ -337,27 +337,17 @@ jobs:
             exit 1
           fi
 
-          # Validate the exact committed tree that will receive every tag.
-          workspace="$PWD/go.work"
-          failed=()
-          while read -r module_dir; do
-            ok=true
-            (cd "$module_dir" && GOWORK="$workspace" go build ./...) || ok=false
-            (cd "$module_dir" && GOWORK="$workspace" go vet ./...) || ok=false
-            case "$module_dir" in
-              examples|integration)
-                (cd "$module_dir" && GOWORK="$workspace" go test -run '^$' ./...) || ok=false
-                ;;
-              *)
-                (cd "$module_dir" && GOWORK="$workspace" go test ./...) || ok=false
-                ;;
-            esac
-            if [ "$ok" != true ]; then
-              failed+=("$module_dir")
-            fi
-          done < "$RUNNER_TEMP/all-modules.txt"
-          if [ "${#failed[@]}" -gt 0 ]; then
-            echo "::error::Committed release tree validation failed: ${failed[*]}"
+          # The source revision was fully built, vetted, and tested before
+          # internal requirements were rewritten. Those rewritten requirements
+          # intentionally name tags that do not exist until this release is
+          # pushed, so rebuilding them would resolve unpublished versions from
+          # the module proxy. Prove the taggable commit differs from the tested
+          # source only in go.mod files instead.
+          release_base=$(cat "$RUNNER_TEMP/release-base.txt")
+          unexpected_release_change=$(git diff --name-only "$release_base" "$release_commit" -- . ':!**/go.mod' || true)
+          if [ -n "$unexpected_release_change" ]; then
+            echo "::error::Release commit changes validated source outside go.mod:"
+            printf '%s\n' "$unexpected_release_change"
             exit 1
           fi
 
