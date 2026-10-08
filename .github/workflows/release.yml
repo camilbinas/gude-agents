@@ -344,7 +344,7 @@ jobs:
           # the module proxy. Prove the taggable commit differs from the tested
           # source only in go.mod files instead.
           release_base=$(cat "$RUNNER_TEMP/release-base.txt")
-          unexpected_release_change=$(git diff --name-only "$release_base" "$release_commit" -- . ':!**/go.mod' || true)
+          unexpected_release_change=$(git diff --name-only "$release_base" "$release_commit" | grep -vE '(^|/)go\.mod$' || true)
           if [ -n "$unexpected_release_change" ]; then
             echo "::error::Release commit changes validated source outside go.mod:"
             printf '%s\n' "$unexpected_release_change"
