@@ -64,7 +64,9 @@ func (w *Window) HistoryBoundary(ctx context.Context, id string) (uint64, error)
 	}
 }
 func (w *Window) Prepare(_ context.Context, in agent.ContextManagerInput) (agent.ContextManagerOutput, error) {
-	return agent.ContextManagerOutput{Messages: append(append([]agent.Message(nil), in.Recent...), in.Current...)}, nil
+	messages := append(append([]agent.Message(nil), in.Recent...), in.Transient...)
+	messages = append(messages, in.Current...)
+	return agent.ContextManagerOutput{Messages: messages}, nil
 }
 
 // Filter is a model-only text projection. It never changes the canonical

@@ -956,3 +956,102 @@ func newTestRaw(name, description string, schema map[string]any, handler func(co
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+func TestBackgroundReEntryUsesDistinctExecutionAndDeduplicatesCompletion(t *testing.T) {
+	release := make(chan struct{})
+	notified := make(chan string, 2)
+	background := newTestBackgroundRaw("background", "background", "started", map[string]any{"type": "object"},
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			<-release
+			return "finished", nil
+		})
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	a, err := New(newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}},
+		&ModelResponse{Text: "foreground complete"},
+		&ModelResponse{Text: "background complete"},
+	), "sys", WithTools(background), WithConversationStore(conversations), WithExecutionStore(executions), WithBackgroundNotify(func(_ string, text string) { notified <- text }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := a.Invoke(Background().WithConversationID("c"), "start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case text := <-notified:
+		if text != "background complete" {
+			t.Fatalf("notification = %q", text)
+		}
+	default:
+		t.Fatal("missing background notification")
+	}
+	// A duplicate completion for the same local dispatch cannot re-enter or notify.
+	a.reEntryTurn(backgroundDispatch{conversationID: "c", toolUseID: "bg-1"}, completionResult{result: "duplicate"})
+	select {
+	case text := <-notified:
+		t.Fatalf("unexpected duplicate notification %q", text)
+	default:
+	}
+	executions.mu.Lock()
+	defer executions.mu.Unlock()
+	if len(executions.items) != 2 {
+		t.Fatalf("execution count = %d, want origin plus re-entry", len(executions.items))
+	}
+	if _, ok := executions.items[origin.ExecutionID]; !ok {
+		t.Fatalf("origin execution %q changed or disappeared", origin.ExecutionID)
+	}
+}
+
+type backgroundReentryFailureProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *backgroundReentryFailureProvider) Name() string { return "background-failure" }
+func (p *backgroundReentryFailureProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	switch p.calls {
+	case 1:
+		return &ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}}, nil
+	case 2:
+		return &ModelResponse{Text: "foreground complete"}, nil
+	default:
+		return nil, errors.New("background provider failed")
+	}
+}
+
+func TestBackgroundReEntryProviderFailureIsLogged(t *testing.T) {
+	release := make(chan struct{})
+	background := newTestBackgroundRaw("background", "background", "started", map[string]any{"type": "object"},
+		func(_ context.Context, _ json.RawMessage) (string, error) {
+			<-release
+			return "finished", nil
+		})
+	observer := &principalCapturingToolLogObserver{}
+	a, err := New(&backgroundReentryFailureProvider{}, "sys", WithTools(background), WithConversationStore(newTestMemoryStore()), WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(Background().WithConversationID("c"), "start"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	for _, record := range observer.records {
+		if strings.Contains(record.Message, "background error [re-entry]") && record.Err != nil {
+			return
+		}
+	}
+	t.Fatalf("re-entry provider failure was not observable: %#v", observer.records)
+}

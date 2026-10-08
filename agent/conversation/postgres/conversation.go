@@ -78,7 +78,11 @@ func (m *Conversation) migrateLegacy(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("postgres conversation: query legacy: %w", err)
 	}
-	defer rows.Close()
+	type legacyConversation struct {
+		id   string
+		msgs []agent.Message
+	}
+	legacy := make([]legacyConversation, 0)
 	for rows.Next() {
 		var id string
 		var raw []byte
@@ -89,17 +93,23 @@ func (m *Conversation) migrateLegacy(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("postgres conversation: decode legacy %q: %w", id, err)
 		}
-		for i, msg := range msgs {
-			if err := m.insertMessage(ctx, tx, id, uint64(i+1), msg); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = $1 WHERE %s = $2`, m.cfg.tableName, m.cfg.colID), len(msgs), id); err != nil {
-			return fmt.Errorf("postgres conversation: update legacy metadata: %w", err)
-		}
+		legacy = append(legacy, legacyConversation{id: id, msgs: msgs})
 	}
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	// pgx permits only one active result stream on a transaction connection.
+	// Drain and close the locked legacy query before issuing migration writes.
+	rows.Close()
+	for _, row := range legacy {
+		for i, msg := range row.msgs {
+			if err := m.insertMessage(ctx, tx, row.id, uint64(i+1), msg); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = $1 WHERE %s = $2`, m.cfg.tableName, m.cfg.colID), len(row.msgs), row.id); err != nil {
+			return fmt.Errorf("postgres conversation: update legacy metadata: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("postgres conversation: commit legacy migration: %w", err)

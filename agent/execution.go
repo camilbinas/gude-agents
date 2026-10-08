@@ -144,13 +144,16 @@ type Execution struct {
 	StartLastSequence    uint64 `json:"start_last_sequence"`
 	StartCursorPersisted bool   `json:"start_cursor_persisted"`
 
-	Status    ExecutionStatus     `json:"status"`
-	Phase     ExecutionPhase      `json:"phase"`
-	Iteration int                 `json:"iteration"`
-	Pause     *ExecutionPause     `json:"pause,omitempty"`
-	ToolBatch *ToolBatchExecution `json:"tool_batch,omitempty"`
-	Usage     TokenUsage          `json:"usage"`
-	Version   uint64              `json:"version"`
+	Status    ExecutionStatus `json:"status"`
+	Phase     ExecutionPhase  `json:"phase"`
+	Iteration int             `json:"iteration"`
+	Pause     *ExecutionPause `json:"pause,omitempty"`
+	// PendingPause makes a post-tool-result human/approval pause recoverable
+	// until its final paused representation has been acknowledged by the store.
+	PendingPause *ExecutionPause     `json:"pending_pause,omitempty"`
+	ToolBatch    *ToolBatchExecution `json:"tool_batch,omitempty"`
+	Usage        TokenUsage          `json:"usage"`
+	Version      uint64              `json:"version"`
 }
 
 // ExecutionStore persists small durable execution state. Create is create-only;
@@ -185,6 +188,9 @@ func cloneExecution(in Execution) Execution {
 			pause.Input = &input
 		}
 		out.Pause = &pause
+	}
+	if in.PendingPause != nil {
+		out.PendingPause = cloneExecution(Execution{Pause: in.PendingPause}).Pause
 	}
 	if in.ToolBatch != nil {
 		batch := *in.ToolBatch

@@ -164,7 +164,7 @@ func (m *Conversation) Append(ctx context.Context, id string, msgs []agent.Messa
 	}
 	next, nextLast := rev+1, last+uint64(len(msgs))
 	names := map[string]string{"#revision": "revision", "#last": "last_sequence", "#pk": m.pkAttribute}
-	values := map[string]dbtypes.AttributeValue{":expected": avn(expected), ":next": avn(next), ":last": avn(nextLast), ":zero": avn(0)}
+	values := map[string]dbtypes.AttributeValue{":expected": avn(expected), ":next": avn(next), ":last": avn(nextLast)}
 	update := &dbtypes.Update{TableName: aws.String(m.table), Key: m.key(id, "META"), UpdateExpression: aws.String("SET #revision = :next, #last = :last"), ConditionExpression: aws.String("attribute_not_exists(#pk) OR #revision = :expected"), ExpressionAttributeNames: names, ExpressionAttributeValues: values}
 	if m.ttl > 0 {
 		update.UpdateExpression = aws.String("SET #revision = :next, #last = :last, #ttl = :ttl")
@@ -231,7 +231,7 @@ func (m *Conversation) SaveContextState(ctx context.Context, id, key string, dat
 	}
 	next := expected + 1
 	names := map[string]string{"#f": field, "#r": revField}
-	values := map[string]dbtypes.AttributeValue{":data": avs(string(data)), ":next": avn(next), ":expected": avn(expected), ":zero": avn(0)}
+	values := map[string]dbtypes.AttributeValue{":data": avs(string(data)), ":next": avn(next), ":expected": avn(expected)}
 	condition := "attribute_not_exists(#r) OR #r = :expected"
 	update := "SET #f = :data, #r = :next"
 	if m.ttl > 0 {

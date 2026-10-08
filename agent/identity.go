@@ -110,10 +110,10 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 
 // --- Agent-level RBAC helpers ---
 
-// RoleFilter returns a ToolFilter that enforces tool.AllowRoles / tool.DenyRoles
-// declarations against the Principal on the context. Tools without a role policy
-// are always allowed. Invocations without a Principal are denied for tools that
-// declare an allowlist.
+// RoleFilter returns a ToolFilter that enforces declared tool role and
+// attribute policies against the Principal on the context. Tools without a
+// policy are always allowed. Any declared role or attribute policy requires a
+// Principal, including deny-only policies, so filtering matches execution.
 //
 // Attach it at construction time alongside WithToolFilter, or use
 // WithRoleEnforcement which installs it automatically.
@@ -122,10 +122,7 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 func RoleFilter() ToolFilter {
 	return func(c *Context, t tool.Tool) bool {
 		p, ok := c.Principal()
-		if !ok {
-			return t.RolesAllowed(nil)
-		}
-		return t.AllowedWithAttrs(p.Roles, p.Attrs)
+		return t.AllowedForPrincipal(ok, p.Roles, p.Attrs)
 	}
 }
 

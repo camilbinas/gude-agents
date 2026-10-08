@@ -333,3 +333,30 @@ func TestLoadAfterReturnsErrorOnLaterPageMalformedData(t *testing.T) {
 		t.Fatalf("LoadAfter error=%v queries=%d", err, queries)
 	}
 }
+
+func TestWriteExpressionsContainNoUnusedValues(t *testing.T) {
+	client := &scriptedDynamo{}
+	store := testConversation(client)
+	client.getFn = func(context.Context, *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		return &dynamodb.GetItemOutput{}, nil
+	}
+	client.transactFn = func(_ context.Context, in *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		values := in.TransactItems[0].Update.ExpressionAttributeValues
+		if _, found := values[":zero"]; found {
+			t.Fatalf("Append sent unused :zero expression value: %#v", values)
+		}
+		return &dynamodb.TransactWriteItemsOutput{}, nil
+	}
+	if _, err := store.Append(context.Background(), "conversation", []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "one"}}}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	client.updateFn = func(_ context.Context, in *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		if _, found := in.ExpressionAttributeValues[":zero"]; found {
+			t.Fatalf("SaveContextState sent unused :zero expression value: %#v", in.ExpressionAttributeValues)
+		}
+		return &dynamodb.UpdateItemOutput{}, nil
+	}
+	if _, err := store.SaveContextState(context.Background(), "conversation", "summary", []byte(`{"v":1}`), 0); err != nil {
+		t.Fatal(err)
+	}
+}

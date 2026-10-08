@@ -2,18 +2,21 @@ package agent
 
 import "context"
 
-// RateLimiter is the engine-facing contract for provider-call admission.
-// Concrete policies, stores, and options live in agent/ratelimit so the core
-// agent package remains independent of a particular limiter implementation.
-type RateLimiter interface {
-	AcquireLease(ctx context.Context, key string, req ModelRequest) (RateLimitLease, error)
+// RateLimitRequest describes one physical provider attempt. Key scopes the
+// per-customer budget; Request is the exact provider request being dispatched.
+type RateLimitRequest struct {
+	Key     string
+	Request ModelRequest
 }
 
-// RateLimitLease owns one provider attempt's rate-limit accounting.
-// Commit reconciles actual usage, Fail conservatively finalizes ambiguous
-// attempts, and Release frees only process-local execution concurrency.
-type RateLimitLease interface {
-	Commit(ctx context.Context, usage TokenUsage) error
-	Fail(ctx context.Context) error
-	Release()
+// RateLimitLease is an opaque reservation returned by a RateLimiter.
+type RateLimitLease interface{ RateLimitLease() }
+
+// RateLimiter is the engine-facing provider-attempt accounting contract.
+// Reserve admits one attempt, Commit reconciles confirmed usage, and Release
+// conservatively settles an attempt whose provider usage is uncertain.
+type RateLimiter interface {
+	Reserve(context.Context, RateLimitRequest) (RateLimitLease, error)
+	Commit(context.Context, RateLimitLease, TokenUsage) error
+	Release(context.Context, RateLimitLease) error
 }

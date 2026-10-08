@@ -1,13 +1,8 @@
 # Rate limiting
 
-`RateLimiter` controls provider-call admission. Attach one to an agent with `agent.WithRateLimiter`:
+Attach a `*ratelimit.RateLimiter` with `agent.WithRateLimiter`. The engine uses one lease-only contract for every physical provider attempt:
 
 ```go
-import (
-    "github.com/camilbinas/gude-agents/agent"
-    "github.com/camilbinas/gude-agents/agent/ratelimit"
-)
-
 limiter, err := ratelimit.NewRateLimiter(
     ratelimit.RPM(60),
     ratelimit.TPM(100_000),
@@ -16,31 +11,24 @@ limiter, err := ratelimit.NewRateLimiter(
 a, err := agent.New(provider, "You are helpful.", agent.WithRateLimiter(limiter))
 ```
 
-## Lease lifecycle
+## v1 lease API
 
-Every real provider attempt acquires a rate-limit lease before dispatch. The lease owns:
+The engine-facing `agent.RateLimiter` exposes only `Reserve(ctx, request)`, `Commit(ctx, lease, actualUsage)`, and `Release(ctx, lease)`. A lease is opaque. `Commit` records confirmed actual usage; `Release` terminally and conservatively settles the original reservation when dispatch may have happened but usage is unknown. Both return lifecycle errors detectable with `errors.Is`: `agent.ErrRateLimitLeaseTerminal`, `agent.ErrRateLimitLeaseCrossTerminal`, `agent.ErrRateLimitLeaseUnknown`, and `agent.ErrRateLimitLeaseExpired`.
 
-- an RPM reservation;
-- an estimated TPM reservation when a token estimator is available;
-- a process-local `MaxConcurrent` slot.
+Reserve happens once per provider attempt, including retries. A successful attempt commits actual usage. Any provider error or cancellation after dispatch releases the reservation conservatively; it is not automatically refunded. The engine never retries after visible stream output. A cancellation observed before provider dispatch results in no provider call; callers that can prove no dispatch should avoid reserving that attempt.
 
-A successful attempt reconciles its estimate to actual `TokenUsage`. A smaller actual value releases excess token capacity; a larger actual value is recorded as reality, even if it temporarily pushes usage above the configured TPM limit. Later admissions are blocked until capacity expires.
+## Cost and scope
 
-A failed or ambiguous provider attempt conservatively finalizes its estimated TPM reservation. This may over-count a failed request, but it does not silently under-count possibly consumed provider tokens. Every retry is a new provider attempt and receives a new lease.
+RPM is charged at reservation. TPM reserves the request estimator plus the configured `InferenceConfig.MaxTokens` output bound when present, then commits actual usage. If `MaxTokens` is absent, the documented default output fallback is zero because no provider-independent maximum is known; configure `WithOutputReservationFallback` when an application has a safe bound. `WithoutTokenReservation` disables estimated TPM reservations only.
 
-Estimator failures fail open for TPM reservation: RPM and concurrency still apply, while token reservation is skipped. `WithoutTokenReservation()` explicitly disables estimated TPM reservation; `WithoutPreFlight()` remains an alias for compatibility.
+Per-key and global counters are atomic and additive. `MaxConcurrent` is process-local even with Redis. `WithFailFast` returns `agent.ErrRateLimitExceeded`; `WithBlock` waits for capacity or cancellation.
 
-## Limits and scopes
+## Lease retention and backends
 
-- **RPM** is a hard request-admission reservation.
-- **TPM** reserves estimated tokens at admission, then reconciles to actual provider usage.
-- **MaxConcurrent** is process-local, including when `WithStore` is configured. It is not a distributed semaphore.
-- Per-key and global limits are additive. A call must reserve every applicable counter or none.
+`MemoryStore` and the Redis store are lease-only backends. `WithPendingLeaseTTL` / `WithTerminalLeaseTTL` configure MemoryStore retention; Redis exposes the equivalent `redis.WithLeaseTTLs`. Values must be positive. Effective pending retention is at least twice the largest rate window, so it outlives the window and cannot silently refund abandoned capacity. When a pending lease expires, its estimate is conservatively settled and late terminal operations return `ErrRateLimitLeaseExpired`. Terminal records remain for at least the relevant counter window to detect duplicate and cross-terminal operations.
 
-`WithBlock()` waits for admission capacity; `WithFailFast()` returns `agent.ErrRateLimitExceeded` immediately. Cancellation before admission leaves no reservation or concurrency slot. Accounting after a provider attempt uses a bounded context that survives caller cancellation.
+Redis uses server time and a same-slot Lua transaction for atomic per-key/global reserve, commit, and release. It supports sliding windows. Raw script status values never escape the backend; callers receive the typed lifecycle errors above.
 
-## Distributed stores
+## Migration
 
-`WithStore` distributes RPM and TPM lease accounting, not concurrency. The Redis store uses Redis server time and atomically reserves per-key plus global lease counters in one hash slot. Redis currently supports sliding windows for lease reservations; requesting `WithFixedWindow()` with that store fails explicitly rather than silently changing strategy.
-
-Token estimates are intentionally advisory. Explicit provider or request output limits remain provider-owned configuration; rate-limit token reservations govern future admission and do not override model settings.
+This is a breaking v1 removal. Replace all direct admission/usage bookkeeping with an `agent.RateLimiter` implementation and pass it through `agent.WithRateLimiter`. Do not retain legacy acquire/record or separate check APIs; they no longer exist. See the support matrix and evaluation cases for the tested retention, retry, and uncertain-dispatch boundaries.

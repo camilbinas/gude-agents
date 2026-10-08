@@ -112,3 +112,48 @@ func TestAppendConcurrentCASOneWinner(t *testing.T) {
 		t.Fatalf("wins=%d", wins)
 	}
 }
+
+func runContextStateConformance(t *testing.T, store agent.ConversationManager) {
+	t.Helper()
+	stateStore, ok := store.(agent.ContextStateStore)
+	if !ok {
+		t.Fatalf("%T lacks ContextStateStore", store)
+	}
+	ctx := context.Background()
+	if _, err := stateStore.SaveContextState(ctx, "state-only", "one", []byte(`{"v":1}`), 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.SaveContextState(ctx, "state-only", "two", []byte(`{"v":2}`), 0); err != nil {
+		t.Fatal(err)
+	}
+	one, err := stateStore.LoadContextState(ctx, "state-only", "one")
+	if err != nil || string(one.Data) != `{"v":1}` || one.Revision != 1 {
+		t.Fatalf("first namespace=%+v err=%v", one, err)
+	}
+	if _, err := stateStore.SaveContextState(ctx, "state-only", "one", []byte(`not json`), 1); err == nil {
+		t.Fatal("invalid context state JSON was accepted")
+	}
+	listed, err := store.List(ctx)
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("state-only conversation listed=%v err=%v", listed, err)
+	}
+	if err := store.Delete(ctx, "state-only"); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := stateStore.LoadContextState(ctx, "state-only", "one")
+	if err != nil || deleted.Revision != 0 || len(deleted.Data) != 0 {
+		t.Fatalf("deleted state=%+v err=%v", deleted, err)
+	}
+}
+
+func TestContextStateConformanceInMemory(t *testing.T) {
+	runContextStateConformance(t, conv.NewInMemory())
+}
+func TestContextStateConformanceSQLite(t *testing.T) {
+	store, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runContextStateConformance(t, store)
+}

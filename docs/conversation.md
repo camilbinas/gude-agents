@@ -60,7 +60,7 @@ a, _ := agent.New(provider, instructions,
 
 ## Backends and migration
 
-Memory, PostgreSQL, SQLite, Redis and DynamoDB expose the same append/range/CAS semantics with backend-native storage. PostgreSQL and SQLite migrate legacy `messages` snapshots once into ordered message rows and no longer read/rewrite the blob at runtime. Redis stores metadata plus a same-slot stream. DynamoDB requires a HASH+RANGE layout with `META` and `MSG#...` items; append batches above its 24-message transactional limit fail explicitly rather than partially writing.
+Memory, PostgreSQL, SQLite, Redis and DynamoDB expose the same append/range/CAS semantics with backend-native storage. PostgreSQL and SQLite migrate legacy `messages` snapshots once into ordered message rows and no longer read/rewrite the blob at runtime. Redis stores metadata plus a same-slot stream; when `WithTTL` is set, canonical appends and derived-state writes refresh the metadata and stream together, so all data for a conversation expires as one unit. DynamoDB requires a HASH+RANGE layout with `META` and `MSG#...` items; append batches above its 24-message transactional limit fail explicitly rather than partially writing.
 
 For Redis and DynamoDB, deploy the new layout with a migration plan before switching traffic. Existing snapshot keys/items are not silently destroyed or dual-read forever.
 
@@ -75,7 +75,7 @@ if err != nil { return err }
 a, err := agent.New(provider, instructions, agent.WithConversationStore(store))
 ```
 
-PostgreSQL and SQLite store metadata plus append-only message rows. Redis uses same-slot metadata and stream keys. DynamoDB requires the documented partition/sort-key layout. See each backend package's Go documentation for options such as credentials, TTL, key prefixes, and table names.
+PostgreSQL and SQLite store metadata plus append-only message rows. The PostgreSQL constructor applies only additive migrations and expects the caller-owned metadata table to exist. Redis uses same-slot metadata and stream keys. DynamoDB requires the documented partition/sort-key layout. See each backend package's Go documentation for options such as credentials, TTL, key prefixes, and table names.
 
 ## Execution state
 

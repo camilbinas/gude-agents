@@ -51,6 +51,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Every release starts from the current master tip. If it moves while
+      # validation runs, publishing fails below and a fresh run recomputes both
+      # version and validation against the new source revision.
+      - name: Record release base revision
+        run: |
+          set -euo pipefail
+          git fetch origin master
+          base=$(git rev-parse HEAD)
+          remote_base=$(git rev-parse origin/master)
+          if [ "$base" != "$remote_base" ]; then
+            echo "::error::Checkout $base is not the current origin/master $remote_base; start a new release run."
+            exit 1
+          fi
+          printf '%s\n' "$base" > "$RUNNER_TEMP/release-base.txt"
+
       # go.work is the local-development overlay: it makes every workspace
       # module resolve to this checkout, independent of the versions recorded
       # in go.mod. The tag/manifest logic below deliberately uses tracked
@@ -296,20 +311,10 @@ jobs:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: echo "Dry run completed for ${NEW_VERSION}; no release was published."
 
-      # The verification step above can run for several minutes, during which
-      # master may move (another push, a manually merged PR, etc). A bare
-      # push would then be rejected as non-fast-forward and fail the whole
-      # run. Retry by fetching and rebasing our release commit onto the new
-      # tip before pushing again, bounded to a few attempts.
-      #
-      # Known limitation: NEW_VERSION was computed earlier from the commit
-      # log as it stood at checkout. If master gained its own conventional
-      # commits while this job ran, rebasing replays our release commit
-      # correctly but does not recompute the version bump against those new
-      # commits. A conflicting go.mod change (e.g. a concurrent release
-      # already landed) is treated as unrecoverable here rather than resolved
-      # automatically.
-      - name: Commit, tag, and push atomically
+      # Do not rebase a validated release commit. If master advances during
+      # validation, a fresh run must recompute the version and revalidate the
+      # new source revision before it can create tags.
+      - name: Commit, tag, and push the validated revision atomically
         if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)
         env:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
@@ -325,53 +330,69 @@ jobs:
               git add "$module_dir/go.mod"
             fi
           done < "$RUNNER_TEMP/published-modules.txt"
-
           git diff --cached --quiet || git commit -m "chore: release ${NEW_VERSION}"
+          release_commit=$(git rev-parse HEAD)
+          if ! git diff --quiet; then
+            echo "::error::Release commit has uncommitted changes; refusing to tag an unvalidated tree."
+            exit 1
+          fi
+
+          # Validate the exact committed tree that will receive every tag.
+          workspace="$PWD/go.work"
+          failed=()
+          while read -r module_dir; do
+            ok=true
+            (cd "$module_dir" && GOWORK="$workspace" go build ./...) || ok=false
+            (cd "$module_dir" && GOWORK="$workspace" go vet ./...) || ok=false
+            case "$module_dir" in
+              examples|integration)
+                (cd "$module_dir" && GOWORK="$workspace" go test -run '^$' ./...) || ok=false
+                ;;
+              *)
+                (cd "$module_dir" && GOWORK="$workspace" go test ./...) || ok=false
+                ;;
+            esac
+            if [ "$ok" != true ]; then
+              failed+=("$module_dir")
+            fi
+          done < "$RUNNER_TEMP/all-modules.txt"
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::Committed release tree validation failed: ${failed[*]}"
+            exit 1
+          fi
+
+          # A moved master invalidates the calculated version and prior checks.
+          # Never rebase: fail so the next run starts and validates from scratch.
+          git fetch origin master --tags
+          release_base=$(cat "$RUNNER_TEMP/release-base.txt")
+          remote_base=$(git rev-parse origin/master)
+          if [ "$remote_base" != "$release_base" ]; then
+            echo "::error::origin/master advanced from $release_base to $remote_base during release validation; start a new release run."
+            exit 1
+          fi
 
           refs=(HEAD:master)
           while read -r tag; do
+            git tag -f "$tag" "$release_commit" >/dev/null
+            local_tag_commit=$(git rev-parse "$tag")
+            if [ "$local_tag_commit" != "$release_commit" ]; then
+              echo "::error::Tag $tag does not resolve to release commit $release_commit."
+              exit 1
+            fi
             refs+=("refs/tags/${tag}:refs/tags/${tag}")
           done < "$RUNNER_TEMP/tags.txt"
 
-          tag_refs() {
-            while read -r tag; do
-              git tag -f "$tag" >/dev/null
-            done < "$RUNNER_TEMP/tags.txt"
-          }
-          tag_refs
+          git push --atomic origin "${refs[@]}"
 
-          max_attempts=5
-          attempt=1
-          push_output="$RUNNER_TEMP/push-output.txt"
-          while true; do
-            if git push --atomic origin "${refs[@]}" 2> "$push_output"; then
-              cat "$push_output" >&2
-              break
-            fi
-            cat "$push_output" >&2
-
-            if grep -q 'already exists' "$push_output"; then
-              echo "::error::A target tag already exists on origin — a concurrent release likely published the same version. Not retrying."
+          # Confirm that every remote tag resolves to the exact commit tested
+          # and published by this run; lightweight tags are intentional here.
+          while read -r tag; do
+            remote_tag_commit=$(git ls-remote origin "refs/tags/$tag" | awk 'NR == 1 { print $1 }')
+            if [ "$remote_tag_commit" != "$release_commit" ]; then
+              echo "::error::Remote tag $tag resolves to $remote_tag_commit, expected $release_commit."
               exit 1
             fi
-
-            if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "::error::Push rejected after $max_attempts attempts; giving up."
-              exit 1
-            fi
-
-            echo "Push rejected (attempt $attempt/$max_attempts) — fetching and rebasing onto origin/master..."
-            git fetch origin master
-            if ! git rebase origin/master; then
-              git rebase --abort
-              echo "::error::Rebase onto origin/master failed, likely a conflicting go.mod change from a concurrent release. Manual intervention required."
-              exit 1
-            fi
-            tag_refs
-
-            attempt=$((attempt + 1))
-            sleep 2
-          done
+          done < "$RUNNER_TEMP/tags.txt"
 
       - name: Create GitHub release
         if: steps.version.outputs.skip == 'false' && (github.event_name == 'push' || inputs.dry_run == false)

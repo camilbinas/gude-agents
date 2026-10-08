@@ -10,6 +10,15 @@ import (
 // ErrRateLimitExceeded is returned when a rate limit is exceeded in FailFast mode.
 var ErrRateLimitExceeded = errors.New("rate limit exceeded")
 
+// Lease lifecycle errors are returned by rate limiter Commit and Release.
+// They are sentinels so callers can use errors.Is without backend coupling.
+var (
+	ErrRateLimitLeaseTerminal      = errors.New("rate limit lease already terminal")
+	ErrRateLimitLeaseCrossTerminal = errors.New("rate limit lease terminal action conflicts")
+	ErrRateLimitLeaseUnknown       = errors.New("rate limit lease is unknown")
+	ErrRateLimitLeaseExpired       = errors.New("rate limit lease expired")
+)
+
 // ErrTokenBudgetExceeded is returned when cumulative token usage exceeds the configured budget.
 var ErrTokenBudgetExceeded = errors.New("token budget exceeded")
 

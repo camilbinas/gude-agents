@@ -162,12 +162,14 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 
 	// 2. RBAC / ABAC — defense in depth against calls that bypassed filterTools.
-	if hasPrincipal && !t.AllowedWithAttrs(principal.Roles, principal.Attrs) {
+	// Any declared policy requires a Principal; unrestricted tools remain open.
+	if !t.AllowedForPrincipal(hasPrincipal, principal.Roles, principal.Attrs) {
 		denialReason := DenialReasonAttrCondition
-		if !t.RolesAllowed(principal.Roles) {
+		reason := "caller does not satisfy the required tool attributes"
+		if !hasPrincipal || !t.RolesAllowed(principal.Roles) {
 			denialReason = DenialReasonRolePolicy
+			reason = "caller does not have the required principal or role"
 		}
-		reason := "caller does not have the required role"
 		denyErr := fmt.Errorf("%w: tool=%q reason=%q", ErrToolCallDenied, tc.Name, reason)
 		dur := time.Since(begin)
 		tf.finish(denyErr, "", true, false, denialReason)
@@ -307,6 +309,10 @@ func (r *run) dispatchBackground(c *Context, t tool.Tool, tc tool.Call, input js
 		return "", fmt.Errorf("background tool requires a conversation id")
 	}
 	cfg := c.cfg
+	// A detached completion is a new invocation, not a continuation of the
+	// foreground execution that dispatched it.
+	cfg.executionID, cfg.executionIDSet = "", false
+	cfg.executionResume, cfg.executionVersion = false, 0
 	cfg.images, cfg.documents = nil, nil
 	if cfg.principal != nil {
 		// Deep-copy the principal before crossing into the detached

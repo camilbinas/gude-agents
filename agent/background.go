@@ -7,6 +7,10 @@
 // Durable persistence of pending Background_Dispatches across process restarts
 // is an explicit non-goal for v1.
 //
+// Durable ExecutionStore records created for re-entry model turns are distinct
+// child invocations. Dispatch/completion tracking and deduplication remain
+// local to this process; they are not restart-durable in v1.
+//
 // Streaming chunks from a Re_Entry_Turn are not delivered to the Notify_Callback
 // in v1. The callback receives only the complete final assistant text. Streaming-
 // aware notification is a future extension.
@@ -79,10 +83,11 @@ type backgroundRegistry struct {
 	stateMu sync.Mutex
 	closing bool
 
-	// mu guards the locks map. It is held only during map lookup/insertion,
-	// never across the protected critical section.
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	// mu guards the locks and completed maps. It is held only during map
+	// lookup/insertion, never across a protected critical section.
+	mu        sync.Mutex
+	locks     map[string]*sync.Mutex
+	completed map[string]struct{}
 
 	// notify is the Notify_Callback registered via WithBackgroundNotify, or nil.
 	notify func(conversationID, agentMessage string)
@@ -97,10 +102,11 @@ type backgroundRegistry struct {
 // if not provided or nil, notification is a no-op.
 func newBackgroundRegistry(a *Agent, notify func(conversationID, agentMessage string), logger Logger) *backgroundRegistry {
 	return &backgroundRegistry{
-		agent:  a,
-		locks:  make(map[string]*sync.Mutex),
-		notify: notify,
-		logger: logger,
+		agent:     a,
+		locks:     make(map[string]*sync.Mutex),
+		completed: make(map[string]struct{}),
+		notify:    notify,
+		logger:    logger,
 	}
 }
 
@@ -118,6 +124,20 @@ func (r *backgroundRegistry) lockFor(conversationID string) *sync.Mutex {
 		r.locks[conversationID] = m
 	}
 	return m
+}
+
+// claimCompletion permits one local completion re-entry per originating
+// conversation/tool-use pair. It deliberately scopes deduplication to this
+// process, matching v1's in-memory dispatch lifecycle.
+func (r *backgroundRegistry) claimCompletion(d backgroundDispatch) bool {
+	key := d.conversationID + "\x00" + d.toolUseID
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.completed[key]; exists {
+		return false
+	}
+	r.completed[key] = struct{}{}
+	return true
 }
 
 // ErrAgentShuttingDown is returned for background dispatches after Shutdown started.
@@ -234,21 +254,37 @@ func (a *Agent) reEntryTurn(d backgroundDispatch, completion completionResult) {
 	if a.backgroundRegistry == nil || a.conversation == nil || d.conversationID == "" {
 		return
 	}
+	if !a.backgroundRegistry.claimCompletion(d) {
+		return
+	}
 
 	base := NewContext(context.Background())
 	base.cfg = d.cfg
+	// Defense in depth: a re-entry always creates a new execution, even when
+	// constructed directly rather than through dispatchBackground.
+	base.cfg.executionID, base.cfg.executionIDSet = "", false
+	base.cfg.executionResume, base.cfg.executionVersion = false, 0
 	base.cfg.conversationID = d.conversationID
 	c := base.forInvocation(base, &invocationRuntime{})
 
 	res, err := a.lifecycle(c, d.conversationID, "", func(r *run) (Result, error) {
-		loadC, cf := r.h.onConversationStart(r.c, ConversationRecord{Operation: "load", ConversationID: r.convID})
-		snapshot, err := a.conversation.Load(loadC, r.convID)
+		boundary := uint64(0)
+		if a.contextManager != nil {
+			var err error
+			boundary, err = a.contextManager.HistoryBoundary(r.c, r.convID)
+			if err != nil {
+				return Result{}, fmt.Errorf("re-entry context history boundary: %w", err)
+			}
+		}
+		loadC, cf := r.h.onConversationStart(r.c, ConversationRecord{Operation: "load_after", ConversationID: r.convID})
+		snapshot, err := a.conversation.LoadAfter(loadC, r.convID, boundary)
 		cf.finish(err, len(snapshot.Messages), snapshot.Revision)
 		if err != nil {
 			return Result{}, fmt.Errorf("re-entry load: %w", err)
 		}
 		r.revision = snapshot.Revision
 		r.lastSequence = snapshot.LastSequence
+		r.historyBoundary = boundary
 		r.persistedCount = len(snapshot.Messages)
 		// Append the synthesized completion and persist it before re-entry.
 		history := append(snapshot.Messages, completion.toMessage(d.toolUseID))

@@ -75,6 +75,13 @@ func (b toolBatchCoordinator) run() coordinatedToolBatch {
 		return result
 	}
 	if in := b.r.pendingInterrupt(outcomes, calls); in != nil {
+		// Persist the pause payload before definitive tool results can clear the
+		// active ToolBatch. If the final paused transition loses its acknowledgement,
+		// RecoverExecution can project this exact pause without replaying a handler.
+		if err := b.r.persistPendingPause(in); err != nil {
+			result.err = err
+			return result
+		}
 		appendDefinitive()
 		if err := b.r.checkpointToolResults(b.messages.canonical, outcomes); err != nil {
 			result.err = err

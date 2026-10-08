@@ -91,6 +91,7 @@ return {next,nextlast}
 // are checked independently of canonical revision/last_sequence.
 var saveStateScript = goredis.NewScript(`
 local meta=KEYS[1]
+local stream=KEYS[2]
 local field=ARGV[1]
 local revfield=ARGV[2]
 local expected=ARGV[3]
@@ -101,7 +102,9 @@ if not current then current='0' end
 if current ~= expected then return -1 end
 local next=tonumber(current)+1
 redis.call('HSET',meta,field,data,revfield,next)
-if ttl > 0 then redis.call('PEXPIRE',meta,ttl) else redis.call('PERSIST',meta) end
+-- Metadata, canonical events, and derived state form one conversation. Refresh
+-- (or remove) the expiry together so a live cursor cannot outlast its stream.
+if ttl > 0 then redis.call('PEXPIRE',meta,ttl); redis.call('PEXPIRE',stream,ttl) else redis.call('PERSIST',meta); redis.call('PERSIST',stream) end
 return next
 `)
 
@@ -220,7 +223,7 @@ func (m *Conversation) SaveContextState(ctx context.Context, id, key string, dat
 		return 0, fmt.Errorf("redis conversation: context state %q is invalid JSON", key)
 	}
 	field, revfield := m.stateFields(key)
-	result, err := saveStateScript.Run(ctx, m.client, []string{m.metaKey(id)}, field, revfield, expected, string(data), m.ttl.Milliseconds()).Int64()
+	result, err := saveStateScript.Run(ctx, m.client, []string{m.metaKey(id), m.streamKey(id)}, field, revfield, expected, string(data), m.ttl.Milliseconds()).Int64()
 	if err != nil {
 		return 0, fmt.Errorf("redis conversation: save context state: %w", err)
 	}

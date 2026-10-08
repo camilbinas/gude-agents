@@ -233,6 +233,9 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 			c.cfg.executionVersion = in.ExecutionVersion
 		}
 		spec.resume = canonical
+		// Resume always uses the canonical paused conversation identity before
+		// lifecycle hooks, tools, guardrails, rate limiting, and provider work.
+		c.cfg.conversationID = canonical.ConversationID
 	}
 	userMessage := spec.input
 	if spec.resume != nil && spec.resume.Type == InterruptHumanInput {
@@ -284,6 +287,8 @@ func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *r
 					return Result{}, fmt.Errorf("load running execution: %w", err)
 				}
 				r.execution, r.executionDurable = &execution, true
+				r.iteration = execution.Iteration
+				c.rt.seedUsage(execution.Usage)
 			} else {
 				execution, err := a.executionStore.Create(c, Execution{ID: c.cfg.executionID, ConversationID: convID, Status: ExecutionRunning, Phase: ExecutionPhaseModel})
 				if err != nil {
@@ -482,7 +487,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 	modelID := a.modelID()
 	systemPrompt := a.instructionsFor(c)
 
-	for iteration := 1; iteration <= a.maxIterations; iteration++ {
+	for iteration := r.iteration + 1; iteration <= a.maxIterations; iteration++ {
 		r.iteration = iteration
 		if err := c.Err(); err != nil {
 			return Result{}, err
@@ -561,6 +566,12 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 		})
 
 		cumulative := c.rt.addUsage(resp.Usage)
+		// Persist known model progress before token-limit, tool, or output work so
+		// a later pause/failure/recovery never loses logical invocation counters.
+		if err := r.persistRuntimeProgress(); err != nil {
+			endIteration(0, false, err)
+			return Result{}, err
+		}
 		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
 			endIteration(0, false, ErrTokenBudgetExceeded)
 			return Result{}, ErrTokenBudgetExceeded
@@ -724,6 +735,29 @@ func (r *run) persistExecution(change func(*Execution) error) error {
 	}
 	r.execution = &updated
 	return nil
+}
+
+func (r *run) persistRuntimeProgress() error {
+	return r.persistExecution(func(execution *Execution) error {
+		execution.Iteration = r.iteration
+		execution.Usage = r.c.rt.totalUsage()
+		return nil
+	})
+}
+
+// persistPendingPause records a bounded pause payload before completed tool
+// records are acknowledged. This keeps human-input/approval pauses recoverable
+// across a crash or failed final pause acknowledgement.
+func (r *run) persistPendingPause(in *Interrupt) error {
+	if !r.executionDurable {
+		return nil
+	}
+	return r.persistExecution(func(execution *Execution) error {
+		execution.PendingPause = pauseFromInterrupt(in)
+		execution.Iteration = r.iteration
+		execution.Usage = r.c.rt.totalUsage()
+		return nil
+	})
 }
 
 func (r *run) persistExecutionStartCursor() error {
@@ -996,7 +1030,20 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	if err != nil {
 		return Execution{}, fmt.Errorf("load execution for recovery: %w", err)
 	}
-	if execution.Status == ExecutionPaused && execution.Phase == ExecutionPhasePaused && execution.Pause != nil && execution.ToolBatch != nil {
+	if execution.PendingPause != nil {
+		// A completed ToolResult checkpoint may have cleared ToolBatch before the
+		// final pause CAS was acknowledged. Project the pre-recorded pause rather
+		// than entering any provider or handler path.
+		execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused
+		execution.Pause = cloneExecution(Execution{Pause: execution.PendingPause}).Pause
+		execution.PendingPause = nil
+		updated, saveErr := a.executionStore.Save(ctx, execution, execution.Version)
+		if saveErr != nil {
+			return execution, fmt.Errorf("recover pending pause: %w", saveErr)
+		}
+		return updated, nil
+	}
+	if execution.Status == ExecutionPaused && execution.Phase == ExecutionPhasePaused && execution.Pause != nil {
 		// Recovery is idempotent once it has durably recreated an approval/input
 		// pause; callers can project it with LoadInterrupt and Resume it later.
 		return execution, nil
@@ -1164,20 +1211,6 @@ func activeToolBatch(messages []Message, batch *ToolBatchExecution) ([]tool.Call
 		}
 	}
 	return calls, results, nil
-}
-
-func canonicalPendingToolCalls(messages []Message, batch *ToolBatchExecution) ([]tool.Call, error) {
-	calls, _, err := activeToolBatch(messages, batch)
-	if err != nil {
-		return nil, err
-	}
-	pending := calls[:0]
-	for i, call := range calls {
-		if batch.Calls[i].Status != ToolExecutionCompleted {
-			pending = append(pending, call)
-		}
-	}
-	return pending, nil
 }
 
 // prepareToolBatch is the shared durable dispatch preflight for invocation,
@@ -1392,6 +1425,7 @@ func (r *run) pauseRecoveredExecution(in *Interrupt) error {
 		execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused
 		execution.Revision, execution.LastSequence = r.revision, r.lastSequence
 		execution.Pause = pauseFromInterrupt(in)
+		execution.PendingPause = nil
 		return nil
 	})
 }
@@ -1607,6 +1641,7 @@ func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 		execution.Iteration = r.iteration
 		execution.Usage = c.rt.totalUsage()
 		execution.Pause = pauseFromInterrupt(in)
+		execution.PendingPause = nil
 		updated, err := a.executionStore.Save(c, execution, execution.Version)
 		if err != nil {
 			persistErr = errors.Join(persistErr, fmt.Errorf("pause execution: %w", err))
@@ -1840,7 +1875,7 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req Mo
 		var lease RateLimitLease
 		if a.rateLimiter != nil {
 			var err error
-			lease, err = a.rateLimiter.AcquireLease(ctx, convID, req)
+			lease, err = a.rateLimiter.Reserve(ctx, RateLimitRequest{Key: convID, Request: req})
 			if err != nil {
 				return nil, err
 			}
@@ -1868,9 +1903,7 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req Mo
 		}
 		if err == nil {
 			if lease != nil {
-				commitErr := lease.Commit(ctx, resp.Usage)
-				lease.Release()
-				if commitErr != nil {
+				if commitErr := a.rateLimiter.Commit(ctx, lease, resp.Usage); commitErr != nil {
 					return nil, commitErr
 				}
 			}
@@ -1878,10 +1911,10 @@ func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req Mo
 		}
 
 		if lease != nil {
-			failErr := lease.Fail(ctx)
-			lease.Release()
-			if failErr != nil {
-				return nil, errors.Join(err, failErr)
+			// A provider error may follow an accepted dispatch, including a
+			// cancellation during streaming. Conservatively settle the estimate.
+			if releaseErr := a.rateLimiter.Release(ctx, lease); releaseErr != nil {
+				return nil, errors.Join(err, releaseErr)
 			}
 		}
 
@@ -1959,16 +1992,20 @@ func (r *run) modelTurnMessages(ctx context.Context, messages turnMessages, syst
 	if r.persistedCount > len(canonical) {
 		return nil, fmt.Errorf("context projection: canonical history regressed")
 	}
+	recent, current := messages.projectedCanonical(r.persistedCount)
 	if r.a.contextManager == nil {
-		return messages.providerMessages(r.persistedCount), nil
+		out := make([]Message, 0, len(recent)+len(messages.transient)+len(current))
+		out = append(out, recent...)
+		out = append(out, messages.transient...)
+		return append(out, current...), nil
 	}
 	out, err := r.a.contextManager.Prepare(ctx, ContextManagerInput{
 		ConversationID: r.convID,
 		Boundary:       r.historyBoundary,
 		Revision:       r.revision,
 		LastSequence:   r.lastSequence,
-		Recent:         canonical[:r.persistedCount],
-		Current:        canonical[r.persistedCount:],
+		Recent:         recent,
+		Current:        current,
 		Transient:      append([]Message(nil), messages.transient...),
 		System:         system,
 		Tools:          tools,

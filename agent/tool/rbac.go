@@ -134,10 +134,24 @@ func (t Tool) RolesAllowed(roles []string) bool {
 
 // AllowedWithAttrs reports whether the given roles and attribute map satisfy
 // the tool's full policy (role allowlist/denylist + ABAC conditions).
-// Returns true when no policy is set. Called by agent.Tool.AllowedFor.
+// Returns true when no policy is set.
 func (t Tool) AllowedWithAttrs(roles []string, attrs map[string]string) bool {
 	if t.rolePolicy == nil {
 		return true
+	}
+	return t.rolePolicy.allowedWithAttrs(roles, attrs)
+}
+
+// AllowedForPrincipal reports whether a caller may use this tool. Any declared
+// role or attribute policy requires an explicit Principal; unrestricted tools
+// remain available without one. Agent filtering and the execution pipeline use
+// this same check so a filtered-call bypass cannot weaken the policy.
+func (t Tool) AllowedForPrincipal(hasPrincipal bool, roles []string, attrs map[string]string) bool {
+	if t.rolePolicy == nil {
+		return true
+	}
+	if !hasPrincipal {
+		return false
 	}
 	return t.rolePolicy.allowedWithAttrs(roles, attrs)
 }

@@ -8,21 +8,15 @@ import (
 	"time"
 )
 
-// RequestReservation describes one request counter.
-type RequestReservation struct {
+// RequestCounter describes one RPM counter included in an atomic reservation.
+type RequestCounter struct {
 	Key      string
 	Limit    int
 	Window   time.Duration
 	Strategy WindowStrategy
 }
 
-// TokenCounter identifies one token-rate counter that receives recorded usage.
-type TokenCounter struct {
-	Key    string
-	Window time.Duration
-}
-
-// TokenReservation describes an estimated token reservation.
+// TokenReservation describes one TPM counter and its estimated charge.
 type TokenReservation struct {
 	Key      string
 	Limit    int
@@ -31,352 +25,306 @@ type TokenReservation struct {
 	Amount   int
 }
 
-// RateLimitReservation identifies one provider attempt.
-type RateLimitReservation struct {
+// Reservation describes every counter reserved by a single opaque lease.
+type Reservation struct {
 	ID       string
-	Requests []RequestReservation
+	Requests []RequestCounter
 	Tokens   []TokenReservation
 }
 
-// RateLimitLeaseStore reserves and reconciles leases atomically.
-type RateLimitLeaseStore interface {
-	ReserveLease(ctx context.Context, reservation RateLimitReservation) (bool, error)
-	CommitLease(ctx context.Context, id string, tokens []TokenReservation, actual int) error
-	FailLease(ctx context.Context, id string, tokens []TokenReservation) error
+// Store is the lease-only persistence contract implemented by MemoryStore and
+// the Redis backend. Every terminal operation is idempotency-aware and returns
+// typed lifecycle errors rather than backend status codes.
+type Store interface {
+	Reserve(context.Context, Reservation) (bool, error)
+	Commit(context.Context, string, int) error
+	Release(context.Context, string) error
 }
 
-// RateLimitStore persists legacy counters.
-type RateLimitStore interface {
-	// ReserveRequests is the legacy request-counter API.
-	ReserveRequests(ctx context.Context, reservations []RequestReservation) (bool, error)
+type StoreConfig struct {
+	PendingTTL, TerminalTTL               time.Duration
+	pendingConfigured, terminalConfigured bool
+}
+type StoreOption func(*StoreConfig)
 
-	// RecordTokens records amount tokens of actual usage on every counter.
-	// It records reality and never rejects for exceeding a limit; limits are
-	// enforced before later calls. It must record on all counters or none
-	// (refunding earlier counters on failure, with the same over-count-only
-	// guarantee as ReserveRequests).
-	RecordTokens(ctx context.Context, counters []TokenCounter, amount int) error
-
-	// GetTokenCount returns the tokens recorded for key within window.
-	GetTokenCount(ctx context.Context, key string, window time.Duration) (int, error)
+// WithPendingLeaseTTL configures a positive minimum pending TTL. The effective
+// value is always at least twice the largest rate window in the reservation.
+func WithPendingLeaseTTL(ttl time.Duration) StoreOption {
+	return func(c *StoreConfig) { c.PendingTTL, c.pendingConfigured = ttl, true }
 }
 
-// MemoryStore is a process-local RateLimitStore.
+// WithTerminalLeaseTTL configures a positive minimum terminal-retention TTL.
+func WithTerminalLeaseTTL(ttl time.Duration) StoreOption {
+	return func(c *StoreConfig) { c.TerminalTTL, c.terminalConfigured = ttl, true }
+}
+
+// MemoryStore is a lease-only, process-local Store.
 type MemoryStore struct {
 	mu       sync.Mutex
-	requests map[string][]time.Time
-	tokens   map[string][]tokenEvent
 	leases   map[string]memoryLease
-	counters map[string]*memoryLeaseCounter
+	counters map[string]*memoryCounter
 	now      func() time.Time
+	config   StoreConfig
 }
-
-type memoryLeaseState uint8
+type leaseState uint8
 
 const (
-	memoryLeasePending memoryLeaseState = iota
-	memoryLeaseCommitted
-	memoryLeaseFailed
+	pending leaseState = iota
+	committed
+	released
+	expired
 )
 
 type memoryLease struct {
-	state  memoryLeaseState
-	tokens []TokenReservation
+	state                       leaseState
+	tokens                      []TokenReservation
+	pendingUntil, terminalUntil time.Time
+}
+type tokenEvent struct {
+	at     time.Time
+	tokens int
+}
+type memoryCounter struct {
+	strategy                   WindowStrategy
+	window                     time.Duration
+	requests                   []time.Time
+	tokens                     []tokenEvent
+	reserved                   int
+	fixedStart                 time.Time
+	fixedRequests, fixedTokens int
 }
 
-type memoryLeaseCounter struct {
-	strategy WindowStrategy
-	window   time.Duration
-
-	requests []time.Time
-	tokens   []tokenEvent
-	reserved int
-
-	fixedStart    time.Time
-	fixedRequests int
-	fixedTokens   int
+// NewMemoryStore creates a validated lease-only MemoryStore.
+func NewMemoryStore(opts ...StoreOption) (*MemoryStore, error) {
+	c := StoreConfig{}
+	for _, opt := range opts {
+		opt(&c)
+	}
+	if (c.pendingConfigured && c.PendingTTL <= 0) || (c.terminalConfigured && c.TerminalTTL <= 0) {
+		return nil, errors.New("lease TTLs must be positive when configured")
+	}
+	return &MemoryStore{leases: map[string]memoryLease{}, counters: map[string]*memoryCounter{}, now: time.Now, config: c}, nil
 }
 
-// NewMemoryStore creates an empty MemoryStore.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
-		requests: make(map[string][]time.Time),
-		tokens:   make(map[string][]tokenEvent),
-		leases:   make(map[string]memoryLease),
-		counters: make(map[string]*memoryLeaseCounter),
-		now:      time.Now,
-	}
-}
-
-var errInvalidWindow = errors.New("rate limit store: window must be > 0")
-
-// pruneRequests drops request timestamps before cutoff.
-func pruneRequests(requests []time.Time, cutoff time.Time) []time.Time {
-	i := sort.Search(len(requests), func(j int) bool {
-		return !requests[j].Before(cutoff)
-	})
-	return requests[i:]
-}
-
-// pruneTokens drops token events before cutoff.
-func pruneTokens(tokens []tokenEvent, cutoff time.Time) []tokenEvent {
-	i := sort.Search(len(tokens), func(j int) bool {
-		return !tokens[j].at.Before(cutoff)
-	})
-	return tokens[i:]
-}
-
-// sumTokens returns the total tokens in events.
-func sumTokens(tokens []tokenEvent) int {
-	total := 0
-	for _, e := range tokens {
-		total += e.tokens
-	}
-	return total
-}
-
-// ReserveRequests implements RateLimitStore atomically under one lock.
-func (ms *MemoryStore) ReserveRequests(_ context.Context, reservations []RequestReservation) (bool, error) {
-	for _, r := range reservations {
-		if r.Window <= 0 {
-			return false, errInvalidWindow
-		}
-	}
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-
-	now := ms.now()
-	for _, r := range reservations {
-		events := pruneRequests(ms.requests[r.Key], now.Add(-r.Window))
-		ms.setRequests(r.Key, events)
-		if len(events) >= r.Limit {
-			return false, nil
-		}
-	}
-	for _, r := range reservations {
-		ms.requests[r.Key] = append(ms.requests[r.Key], now)
-	}
-	return true, nil
-}
-
-// RecordTokens implements RateLimitStore atomically under one lock.
-func (ms *MemoryStore) RecordTokens(_ context.Context, counters []TokenCounter, amount int) error {
-	for _, c := range counters {
-		if c.Window <= 0 {
-			return errInvalidWindow
-		}
-	}
-	if amount <= 0 || len(counters) == 0 {
-		return nil
-	}
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-
-	now := ms.now()
-	for _, c := range counters {
-		events := pruneTokens(ms.tokens[c.Key], now.Add(-c.Window))
-		ms.tokens[c.Key] = append(events, tokenEvent{at: now, tokens: amount})
-	}
-	return nil
-}
-
-// GetTokenCount implements RateLimitStore.
-func (ms *MemoryStore) GetTokenCount(_ context.Context, key string, window time.Duration) (int, error) {
-	if window <= 0 {
-		return 0, errInvalidWindow
-	}
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-
-	events := pruneTokens(ms.tokens[key], ms.now().Add(-window))
-	if len(events) == 0 {
-		delete(ms.tokens, key)
-		return 0, nil
-	}
-	ms.tokens[key] = events
-	return sumTokens(events), nil
-}
-
-// setRequests stores pruned events, dropping empty keys so idle counters do
-// not accumulate. Caller holds ms.mu.
-func (ms *MemoryStore) setRequests(key string, events []time.Time) {
-	if len(events) == 0 {
-		delete(ms.requests, key)
-		return
-	}
-	ms.requests[key] = events
-}
-
-// ReserveLease implements RateLimitLeaseStore under one mutex. It charges RPM
-// immediately and reserves estimated TPM so concurrent callers cannot spend
-// the same token capacity.
-func (ms *MemoryStore) ReserveLease(ctx context.Context, reservation RateLimitReservation) (bool, error) {
+func (m *MemoryStore) Reserve(ctx context.Context, reservation Reservation) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if reservation.ID == "" {
-		return false, errors.New("rate limit store: lease ID is required")
+		return false, errors.New("rate limit reservation requires an ID")
 	}
-	for _, r := range reservation.Requests {
-		if r.Window <= 0 || r.Limit <= 0 {
-			return false, errInvalidWindow
-		}
+	if err := validateReservation(reservation); err != nil {
+		return false, err
 	}
-	for _, r := range reservation.Tokens {
-		if r.Window <= 0 || r.Limit <= 0 || r.Amount < 0 {
-			return false, errInvalidWindow
-		}
-	}
-
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	if _, ok := ms.leases[reservation.ID]; ok {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	m.cleanup(now)
+	if _, ok := m.leases[reservation.ID]; ok {
 		return true, nil
 	}
-	now := ms.now()
-	reqCounters := make([]*memoryLeaseCounter, 0, len(reservation.Requests))
 	for _, r := range reservation.Requests {
-		c := ms.leaseCounter("req:"+r.Key, r.Strategy, r.Window)
+		c := m.counter("r:"+r.Key, r.Strategy, r.Window)
 		c.prune(now)
 		if c.requestCount() >= r.Limit {
 			return false, nil
 		}
-		reqCounters = append(reqCounters, c)
 	}
-	tokCounters := make([]*memoryLeaseCounter, 0, len(reservation.Tokens))
 	for _, r := range reservation.Tokens {
-		c := ms.leaseCounter("tok:"+r.Key, r.Strategy, r.Window)
+		c := m.counter("t:"+r.Key, r.Strategy, r.Window)
 		c.prune(now)
 		if c.tokenCount()+c.reserved+r.Amount > r.Limit {
 			return false, nil
 		}
-		tokCounters = append(tokCounters, c)
 	}
-	for _, c := range reqCounters {
-		c.addRequest(now)
+	for _, r := range reservation.Requests {
+		m.counter("r:"+r.Key, r.Strategy, r.Window).addRequest(now)
 	}
-	for i, c := range tokCounters {
-		c.reserved += reservation.Tokens[i].Amount
+	for _, r := range reservation.Tokens {
+		m.counter("t:"+r.Key, r.Strategy, r.Window).reserved += r.Amount
 	}
-	ms.leases[reservation.ID] = memoryLease{state: memoryLeasePending, tokens: append([]TokenReservation(nil), reservation.Tokens...)}
+	window := reservationWindow(reservation)
+	m.leases[reservation.ID] = memoryLease{state: pending, tokens: append([]TokenReservation(nil), reservation.Tokens...), pendingUntil: now.Add(m.pendingTTL(window)), terminalUntil: now.Add(m.terminalTTL(window))}
 	return true, nil
 }
-
-// CommitLease replaces an estimated reservation with actual provider usage.
-// Actual usage may exceed the estimate because provider consumption is reality;
-// future admissions are blocked until the excess expires.
-func (ms *MemoryStore) CommitLease(ctx context.Context, id string, tokens []TokenReservation, actual int) error {
+func (m *MemoryStore) Commit(ctx context.Context, id string, actual int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if actual < 0 {
 		actual = 0
 	}
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	lease, ok := ms.leases[id]
-	if !ok || lease.state == memoryLeaseCommitted {
-		return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	m.cleanup(now)
+	lease, ok := m.leases[id]
+	if !ok {
+		return ErrLeaseUnknown
 	}
-	if lease.state != memoryLeasePending {
-		return errors.New("rate limit store: lease already failed")
+	if lease.state != pending {
+		return terminalError(lease.state, committed)
 	}
-	now := ms.now()
-	for _, r := range lease.tokens {
-		c := ms.leaseCounter("tok:"+r.Key, r.Strategy, r.Window)
-		c.prune(now)
-		c.reserved -= r.Amount
-		if c.reserved < 0 {
-			c.reserved = 0
-		}
-		c.addTokens(now, actual)
-	}
-	lease.state = memoryLeaseCommitted
-	ms.leases[id] = lease
+	m.settle(now, &lease, actual)
+	lease.state = committed
+	lease.terminalUntil = now.Add(m.terminalTTL(reservationWindow(Reservation{Tokens: lease.tokens})))
+	m.leases[id] = lease
 	return nil
 }
-
-// FailLease conservatively finalizes the estimated reservation when provider
-// usage is ambiguous. It never silently refunds potentially consumed tokens.
-func (ms *MemoryStore) FailLease(ctx context.Context, id string, tokens []TokenReservation) error {
+func (m *MemoryStore) Release(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	lease, ok := ms.leases[id]
-	if !ok || lease.state == memoryLeaseFailed {
-		return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	m.cleanup(now)
+	lease, ok := m.leases[id]
+	if !ok {
+		return ErrLeaseUnknown
 	}
-	if lease.state != memoryLeasePending {
-		return errors.New("rate limit store: lease already committed")
+	if lease.state != pending {
+		return terminalError(lease.state, released)
 	}
-	now := ms.now()
+	m.settle(now, &lease, -1)
+	lease.state = released
+	lease.terminalUntil = now.Add(m.terminalTTL(reservationWindow(Reservation{Tokens: lease.tokens})))
+	m.leases[id] = lease
+	return nil
+}
+func (m *MemoryStore) settle(now time.Time, lease *memoryLease, actual int) {
 	for _, r := range lease.tokens {
-		c := ms.leaseCounter("tok:"+r.Key, r.Strategy, r.Window)
+		c := m.counter("t:"+r.Key, r.Strategy, r.Window)
 		c.prune(now)
 		c.reserved -= r.Amount
 		if c.reserved < 0 {
 			c.reserved = 0
 		}
-		c.addTokens(now, r.Amount)
+		n := actual
+		if n < 0 {
+			n = r.Amount
+		}
+		c.addTokens(now, n)
 	}
-	lease.state = memoryLeaseFailed
-	ms.leases[id] = lease
-	return nil
 }
-
-func (ms *MemoryStore) leaseCounter(key string, strategy WindowStrategy, window time.Duration) *memoryLeaseCounter {
-	if c := ms.counters[key]; c != nil {
+func (m *MemoryStore) cleanup(now time.Time) {
+	for id, l := range m.leases {
+		if l.state == pending && !now.Before(l.pendingUntil) {
+			m.settle(now, &l, -1)
+			l.state = expired
+			l.terminalUntil = now.Add(m.terminalTTL(reservationWindow(Reservation{Tokens: l.tokens})))
+			m.leases[id] = l
+		}
+		if l.state != pending && !now.Before(l.terminalUntil) {
+			delete(m.leases, id)
+		}
+	}
+}
+func (m *MemoryStore) pendingTTL(window time.Duration) time.Duration {
+	ttl := 2 * window
+	if m.config.PendingTTL > ttl {
+		ttl = m.config.PendingTTL
+	}
+	return ttl
+}
+func (m *MemoryStore) terminalTTL(window time.Duration) time.Duration {
+	ttl := window
+	if m.config.TerminalTTL > ttl {
+		ttl = m.config.TerminalTTL
+	}
+	return ttl
+}
+func (m *MemoryStore) counter(key string, strategy WindowStrategy, window time.Duration) *memoryCounter {
+	if c := m.counters[key]; c != nil {
 		return c
 	}
-	c := &memoryLeaseCounter{strategy: strategy, window: window}
-	ms.counters[key] = c
+	c := &memoryCounter{strategy: strategy, window: window}
+	m.counters[key] = c
 	return c
 }
-
-func (c *memoryLeaseCounter) prune(now time.Time) {
+func (c *memoryCounter) prune(now time.Time) {
 	if c.strategy == FixedWindow {
 		if c.fixedStart.IsZero() || now.Sub(c.fixedStart) >= c.window {
-			c.fixedStart = now
-			c.fixedRequests = 0
-			c.fixedTokens = 0
-			c.reserved = 0
+			c.fixedStart, c.fixedRequests, c.fixedTokens, c.reserved = now, 0, 0, 0
 		}
 		return
 	}
-	c.requests = pruneRequests(c.requests, now.Add(-c.window))
-	c.tokens = pruneTokens(c.tokens, now.Add(-c.window))
+	cutoff := now.Add(-c.window)
+	c.requests = pruneTimes(c.requests, cutoff)
+	c.tokens = pruneTokenEvents(c.tokens, cutoff)
 }
-
-func (c *memoryLeaseCounter) requestCount() int {
+func (c *memoryCounter) requestCount() int {
 	if c.strategy == FixedWindow {
 		return c.fixedRequests
 	}
 	return len(c.requests)
 }
-
-func (c *memoryLeaseCounter) tokenCount() int {
+func (c *memoryCounter) tokenCount() int {
 	if c.strategy == FixedWindow {
 		return c.fixedTokens
 	}
-	return sumTokens(c.tokens)
+	total := 0
+	for _, e := range c.tokens {
+		total += e.tokens
+	}
+	return total
 }
-
-func (c *memoryLeaseCounter) addRequest(now time.Time) {
+func (c *memoryCounter) addRequest(now time.Time) {
 	if c.strategy == FixedWindow {
 		c.fixedRequests++
 		return
 	}
 	c.requests = append(c.requests, now)
 }
-
-func (c *memoryLeaseCounter) addTokens(now time.Time, amount int) {
-	if c.strategy == FixedWindow {
-		c.fixedTokens += amount
+func (c *memoryCounter) addTokens(now time.Time, n int) {
+	if n <= 0 {
 		return
 	}
-	if amount > 0 {
-		c.tokens = append(c.tokens, tokenEvent{at: now, tokens: amount})
+	if c.strategy == FixedWindow {
+		c.fixedTokens += n
+		return
 	}
+	c.tokens = append(c.tokens, tokenEvent{now, n})
+}
+func pruneTimes(events []time.Time, cutoff time.Time) []time.Time {
+	return events[sort.Search(len(events), func(i int) bool { return !events[i].Before(cutoff) }):]
+}
+func pruneTokenEvents(events []tokenEvent, cutoff time.Time) []tokenEvent {
+	return events[sort.Search(len(events), func(i int) bool { return !events[i].at.Before(cutoff) }):]
+}
+func reservationWindow(r Reservation) time.Duration {
+	var w time.Duration
+	for _, c := range r.Requests {
+		if c.Window > w {
+			w = c.Window
+		}
+	}
+	for _, c := range r.Tokens {
+		if c.Window > w {
+			w = c.Window
+		}
+	}
+	return w
+}
+func validateReservation(r Reservation) error {
+	for _, c := range r.Requests {
+		if c.Limit <= 0 || c.Window <= 0 {
+			return errors.New("invalid request counter")
+		}
+	}
+	for _, c := range r.Tokens {
+		if c.Limit <= 0 || c.Window <= 0 || c.Amount < 0 {
+			return errors.New("invalid token counter")
+		}
+	}
+	return nil
+}
+func terminalError(state, requested leaseState) error {
+	if state == expired {
+		return ErrLeaseExpired
+	}
+	if state == requested {
+		return ErrLeaseTerminal
+	}
+	return ErrLeaseCrossTerminal
 }

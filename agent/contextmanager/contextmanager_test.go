@@ -7,6 +7,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
+	"github.com/camilbinas/gude-agents/agent/rag"
 )
 
 func message(text string) agent.Message {
@@ -176,5 +177,57 @@ func TestProviderSummarizerRendersToolError(t *testing.T) {
 	}
 	if !strings.Contains(text, "Summary so far:\nprior summary") {
 		t.Errorf("missing existing-summary preamble\n--- got ---\n%s", text)
+	}
+}
+
+type staticRetriever struct{ docs []rag.Document }
+
+func (r staticRetriever) Retrieve(context.Context, string) ([]rag.Document, error) {
+	return r.docs, nil
+}
+
+func TestWindowProjectsTransientRAGContextWithoutPersistence(t *testing.T) {
+	store := conversation.NewInMemory()
+	ctx := context.Background()
+	if _, err := store.Append(ctx, "c", []agent.Message{message("older canonical")}, 0); err != nil {
+		t.Fatal(err)
+	}
+	window, err := NewWindow(store, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &captureProvider{}
+	a, err := agent.New(provider, "sys", agent.WithConversationStore(store), agent.WithContextManager(window), agent.WithRetriever(staticRetriever{docs: []rag.Document{{Content: "retrieved transient"}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Invoke(agent.Background().WithConversationID("c"), "current user"); err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, msg := range provider.last.Messages {
+		for _, block := range msg.Content {
+			if text, ok := block.(agent.TextBlock); ok {
+				texts = append(texts, text.Text)
+			}
+		}
+	}
+	projected := strings.Join(texts, "\n")
+	if !strings.Contains(projected, "retrieved transient") || !strings.Contains(projected, "current user") {
+		t.Fatalf("Window provider projection = %q", projected)
+	}
+	if strings.Index(projected, "retrieved transient") > strings.Index(projected, "current user") {
+		t.Fatalf("transient context must precede current message: %q", projected)
+	}
+	snapshot, err := store.Load(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range snapshot.Messages {
+		for _, block := range msg.Content {
+			if text, ok := block.(agent.TextBlock); ok && strings.Contains(text.Text, "retrieved transient") {
+				t.Fatalf("transient RAG context was persisted: %#v", snapshot.Messages)
+			}
+		}
 	}
 }

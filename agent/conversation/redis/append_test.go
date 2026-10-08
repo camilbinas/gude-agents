@@ -51,3 +51,25 @@ func TestAppendKeysShareOneClusterSlot(t *testing.T) {
 		t.Fatal("unstable key")
 	}
 }
+
+func TestContextStateWriteRefreshesConversationTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store, err := New(Options{Addr: mr.Addr()}, WithTTL(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.Append(ctx, "ttl", []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "one"}}}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	mr.FastForward(30 * time.Second)
+	if _, err := store.SaveContextState(ctx, "ttl", "summary", []byte(`{"v":1}`), 0); err != nil {
+		t.Fatal(err)
+	}
+	mr.FastForward(31 * time.Second)
+	snapshot, err := store.Load(ctx, "ttl")
+	if err != nil || snapshot.Revision != 1 || snapshot.LastSequence != 1 || len(snapshot.Messages) != 1 {
+		t.Fatalf("state refresh split conversation lifetime: snapshot=%+v err=%v", snapshot, err)
+	}
+}

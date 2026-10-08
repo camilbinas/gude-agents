@@ -47,14 +47,19 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 	rawTable := cfg.tableName
 	table := sqliteIdentifier(rawTable)
 	messages := sqliteIdentifier(rawTable + "_messages")
+	// SQLite pragmas such as foreign_keys are connection-local. modernc's
+	// _pragma URI option applies them to every connection opened by database/sql,
+	// so Delete's ON DELETE CASCADE remains correct when the pool grows.
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	dsn = fmt.Sprintf("%s%s_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)", dsn, separator, cfg.busyTimeout.Milliseconds())
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite conversation: open: %w", err)
 	}
 	closeOnErr := func(err error) (*Conversation, error) { _ = db.Close(); return nil, err }
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=%d; PRAGMA foreign_keys=ON;", cfg.busyTimeout.Milliseconds())); err != nil {
-		return closeOnErr(fmt.Errorf("sqlite conversation: pragmas: %w", err))
-	}
 	// Keep legacy messages TEXT nullable: old callers may have created the
 	// snapshot layout. Runtime reads and writes exclusively use message rows.
 	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (

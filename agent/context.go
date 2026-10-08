@@ -71,6 +71,12 @@ type invocationRuntime struct {
 	sink  *eventSink // nil = events are discarded
 }
 
+func (r *invocationRuntime) seedUsage(u TokenUsage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.usage = u
+}
+
 func (r *invocationRuntime) addUsage(u TokenUsage) TokenUsage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
