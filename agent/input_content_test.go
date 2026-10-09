@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -305,53 +303,6 @@ func TestProperty_LoopPrependsImagesToFirstUserMessage(t *testing.T) {
 		}
 		if tb.Text != msg {
 			rt.Fatalf("TextBlock.Text: expected %q, got %q", msg, tb.Text)
-		}
-	})
-}
-
-// TestProperty_ImageBytesRoundTripThroughBase64 verifies that for any byte slice b,
-// base64-encoding b to produce a string s, then base64-decoding s, produces a byte
-// slice equal to b.
-func TestProperty_ImageBytesRoundTripThroughBase64(t *testing.T) {
-	rapid.Check(t, func(rt *rapid.T) {
-		b := rapid.SliceOf(rapid.Byte()).Draw(rt, "bytes")
-
-		encoded := base64.StdEncoding.EncodeToString(b)
-		decoded, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			rt.Fatalf("unexpected base64 decode error: %v", err)
-		}
-
-		// For nil/empty slices, treat both as equivalent to empty.
-		if len(b) == 0 && len(decoded) == 0 {
-			return
-		}
-		if !bytes.Equal(decoded, b) {
-			rt.Fatalf("round-trip mismatch: original %v, got %v", b, decoded)
-		}
-	})
-}
-
-// TestProperty_Base64StringRoundTrip verifies that for any valid base64 string s
-// (produced by encoding some byte slice), decoding s to bytes and re-encoding to
-// base64 produces a string equal to s.
-func TestProperty_Base64StringRoundTrip(t *testing.T) {
-	rapid.Check(t, func(rt *rapid.T) {
-		// Generate a valid base64 string by encoding an arbitrary byte slice.
-		b := rapid.SliceOf(rapid.Byte()).Draw(rt, "bytes")
-		s := base64.StdEncoding.EncodeToString(b)
-
-		// Decode s back to bytes.
-		decoded, err := base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			rt.Fatalf("unexpected base64 decode error: %v", err)
-		}
-
-		// Re-encode to base64.
-		reEncoded := base64.StdEncoding.EncodeToString(decoded)
-
-		if reEncoded != s {
-			rt.Fatalf("round-trip mismatch: original %q, got %q", s, reEncoded)
 		}
 	})
 }

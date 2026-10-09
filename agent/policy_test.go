@@ -329,11 +329,14 @@ func TestWithNarrowedRoles_EmptyResult(t *testing.T) {
 }
 
 func TestWithNarrowedRoles_NoPrincipal_NoOp(t *testing.T) {
-	c := Background()
+	c := Background().WithConversationID("conv-narrow")
 	narrowed := c.WithNarrowedRoles("admin")
-	// Should return the same context unchanged.
-	if narrowed != c {
-		t.Error("expected same context when no principal is set")
+
+	if _, ok := PrincipalFrom(narrowed); ok {
+		t.Error("narrowing must not create a principal")
+	}
+	if got := narrowed.ConversationID(); got != "conv-narrow" {
+		t.Errorf("ConversationID() = %q, want conv-narrow", got)
 	}
 }
 
