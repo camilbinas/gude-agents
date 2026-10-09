@@ -2,6 +2,7 @@ package tiktoken
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	agent "github.com/camilbinas/gude-agents/agent"
@@ -122,6 +123,47 @@ func TestEstimateTokens_CombinedSources(t *testing.T) {
 	// "hello world" as concatenated is 2 tokens (hello + space world).
 	if got != 2 {
 		t.Fatalf("expected 2 tokens for 'hello' + ' world', got %d", got)
+	}
+}
+
+func TestEstimateTokens_CountsToolCallAndResultContent(t *testing.T) {
+	est, err := New("cl100k_base")
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	ctx := context.Background()
+	large := strings.Repeat("the quick brown fox jumps over the lazy dog ", 200)
+
+	tests := []struct {
+		name  string
+		block agent.ContentBlock
+	}{
+		{"tool use input", agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: []byte(`{"q":"` + large + `"}`)}},
+		{"malformed tool use input", agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: []byte(`{"q":` + large)}},
+		{"tool result content", agent.ToolResultBlock{ToolUseID: "tu-1", Content: large}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			small := agent.ModelRequest{Messages: []agent.Message{
+				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
+			}}
+			big := agent.ModelRequest{Messages: []agent.Message{
+				{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}, tt.block}},
+			}}
+
+			base, err := est.EstimateTokens(ctx, small)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, err := est.EstimateTokens(ctx, big)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got <= base+100 {
+				t.Fatalf("large tool content should add substantial tokens: base=%d got=%d", base, got)
+			}
+		})
 	}
 }
 

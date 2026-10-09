@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"pgregory.net/rapid"
 )
 
 // ---------------------------------------------------------------------------
@@ -328,3 +330,116 @@ func TestWithProviderRetry_DoesNotRetryAfterThinkingEvent(t *testing.T) {
 		t.Fatalf("events = %#v, want reasoning thinking event", events)
 	}
 }
+
+// unknownBlock is a custom ContentBlock implementation that is not one of the
+// registered block types. It is used to verify that provider switch statements
+// have a safe default and do not panic on unknown types.
+type unknownBlock struct{}
+
+func (unknownBlock) contentBlock() {}
+
+// TestKnownContentBlocks_AllImplementInterface verifies that all known ContentBlock
+// types satisfy the sealed interface at compile time and runtime.
+//
+// Requirements: 1.1
+func TestKnownContentBlocks_AllImplementInterface(t *testing.T) {
+	var _ ContentBlock = TextBlock{Text: "hello"}
+	var _ ContentBlock = ToolUseBlock{ToolUseID: "id", Name: "tool"}
+	var _ ContentBlock = ToolResultBlock{ToolUseID: "id", Content: "result"}
+	// If this compiles and runs, all known ContentBlock types satisfy the interface.
+}
+
+// Feature: prompt-caching-support, Property 6: TokenUsage.Total() excludes cache tokens
+
+// TestProperty_TokenUsageTotalExcludesCacheTokens verifies that for any TokenUsage
+// value with arbitrary InputTokens, OutputTokens, CacheReadTokens, and
+// CacheWriteTokens, Total() returns exactly InputTokens + OutputTokens and never
+// includes cache tokens in the sum.
+//
+// **Validates: Requirements 5.9, 8.1**
+func TestProperty_TokenUsageTotalExcludesCacheTokens(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		// Generate arbitrary token counts including negative values to stress
+		// the invariant across the full int range.
+		inputTokens := rapid.Int().Draw(rt, "inputTokens")
+		outputTokens := rapid.Int().Draw(rt, "outputTokens")
+		cacheReadTokens := rapid.Int().Draw(rt, "cacheReadTokens")
+		cacheWriteTokens := rapid.Int().Draw(rt, "cacheWriteTokens")
+
+		u := TokenUsage{
+			InputTokens:      inputTokens,
+			OutputTokens:     outputTokens,
+			CacheReadTokens:  cacheReadTokens,
+			CacheWriteTokens: cacheWriteTokens,
+		}
+
+		got := u.Total()
+		want := inputTokens + outputTokens
+
+		if got != want {
+			rt.Fatalf(
+				"Total() = %d, want %d (InputTokens=%d, OutputTokens=%d, CacheReadTokens=%d, CacheWriteTokens=%d)",
+				got, want, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
+			)
+		}
+	})
+}
+
+type capabilityTestProvider struct {
+	caps ModelCapabilities
+}
+
+func (capabilityTestProvider) Name() string { return "capability-test" }
+func (capabilityTestProvider) Stream(context.Context, ModelRequest, func(ModelEvent)) (*ModelResponse, error) {
+	return &ModelResponse{}, nil
+}
+func (p capabilityTestProvider) Capabilities() ModelCapabilities { return p.caps }
+
+type plainProvider struct{}
+
+func (plainProvider) Name() string { return "plain" }
+func (plainProvider) Stream(context.Context, ModelRequest, func(ModelEvent)) (*ModelResponse, error) {
+	return &ModelResponse{}, nil
+}
+
+func TestCapabilitiesOf(t *testing.T) {
+	want := ModelCapabilities{
+		ContextWindowTokens:    200000,
+		MaxOutputTokens:        16000,
+		ToolUse:                Supported,
+		NativeStructuredOutput: Unsupported,
+		ToolChoice:             ToolChoiceCapabilities{Auto: Supported, Required: Supported, Specific: Unsupported},
+	}
+
+	if got := CapabilitiesOf(capabilityTestProvider{caps: want}); got != want {
+		t.Fatalf("CapabilitiesOf(capability provider) = %#v, want %#v", got, want)
+	}
+	if got := CapabilitiesOf(plainProvider{}); got != (ModelCapabilities{}) {
+		t.Fatalf("CapabilitiesOf(plain provider) = %#v, want unknown zero value", got)
+	}
+	if got := CapabilitiesOf(nil); got != (ModelCapabilities{}) {
+		t.Fatalf("CapabilitiesOf(nil) = %#v, want unknown zero value", got)
+	}
+}
+
+func TestMergeModelCapabilitiesPreservesUnspecifiedFields(t *testing.T) {
+	base := ModelCapabilities{
+		ContextWindowTokens:    200000,
+		MaxOutputTokens:        16000,
+		ToolUse:                Supported,
+		NativeStructuredOutput: Unsupported,
+		ToolChoice:             ToolChoiceCapabilities{Auto: Supported, Required: Supported, Specific: Unsupported},
+	}
+	got := MergeModelCapabilities(base, ModelCapabilities{
+		ToolChoice: ToolChoiceCapabilities{Specific: Supported},
+	})
+	want := base
+	want.ToolChoice.Specific = Supported
+	if got != want {
+		t.Fatalf("MergeModelCapabilities() = %#v, want %#v", got, want)
+	}
+}
+
+var _ Provider = plainProvider{}
+var _ Provider = capabilityTestProvider{}
+var _ CapabilityProvider = capabilityTestProvider{}

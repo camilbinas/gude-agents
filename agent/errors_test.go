@@ -4,55 +4,50 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-
-	"pgregory.net/rapid"
 )
 
-// TestProperty5 verifies that errors.As succeeds at every wrapping depth
-// for ProviderError, ToolError, and GuardrailError.
-func TestProperty5(t *testing.T) {
-	t.Run("ProviderError", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			depth := rapid.IntRange(1, 10).Draw(t, "depth")
-			base := &ProviderError{Cause: errors.New("provider failure")}
-			var chain error = base
-			for i := 0; i < depth; i++ {
-				chain = fmt.Errorf("wrap %d: %w", i, chain)
-			}
-			var target *ProviderError
-			if !errors.As(chain, &target) {
-				t.Fatalf("errors.As failed for ProviderError at depth %d", depth)
-			}
-		})
-	})
+// TestWrappedFrameworkErrorsSupportErrorsAs verifies that errors.As finds each
+// framework error type through arbitrarily deep fmt.Errorf wrapping and that
+// the original cause stays reachable.
+func TestWrappedFrameworkErrorsSupportErrorsAs(t *testing.T) {
+	cause := errors.New("root cause")
 
-	t.Run("ToolError", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			depth := rapid.IntRange(1, 10).Draw(t, "depth")
-			base := &ToolError{ToolName: "my_tool", Cause: errors.New("tool failure")}
-			var chain error = base
-			for i := 0; i < depth; i++ {
-				chain = fmt.Errorf("wrap %d: %w", i, chain)
-			}
-			var target *ToolError
-			if !errors.As(chain, &target) {
-				t.Fatalf("errors.As failed for ToolError at depth %d", depth)
-			}
-		})
-	})
+	tests := []struct {
+		name string
+		err  error
+		as   func(error) bool
+	}{
+		{
+			name: "ProviderError",
+			err:  &ProviderError{Cause: cause},
+			as:   func(err error) bool { var target *ProviderError; return errors.As(err, &target) },
+		},
+		{
+			name: "ToolError",
+			err:  &ToolError{ToolName: "my_tool", Cause: cause},
+			as:   func(err error) bool { var target *ToolError; return errors.As(err, &target) },
+		},
+		{
+			name: "GuardrailError",
+			err:  &GuardrailError{Direction: "input", Cause: cause},
+			as:   func(err error) bool { var target *GuardrailError; return errors.As(err, &target) },
+		},
+	}
 
-	t.Run("GuardrailError", func(t *testing.T) {
-		rapid.Check(t, func(t *rapid.T) {
-			depth := rapid.IntRange(1, 10).Draw(t, "depth")
-			base := &GuardrailError{Direction: "input", Cause: errors.New("guardrail failure")}
-			var chain error = base
-			for i := 0; i < depth; i++ {
-				chain = fmt.Errorf("wrap %d: %w", i, chain)
-			}
-			var target *GuardrailError
-			if !errors.As(chain, &target) {
-				t.Fatalf("errors.As failed for GuardrailError at depth %d", depth)
-			}
-		})
-	})
+	for _, tt := range tests {
+		for _, depth := range []int{0, 1, 3, 10} {
+			t.Run(fmt.Sprintf("%s/depth=%d", tt.name, depth), func(t *testing.T) {
+				chain := tt.err
+				for i := 0; i < depth; i++ {
+					chain = fmt.Errorf("wrap %d: %w", i, chain)
+				}
+				if !tt.as(chain) {
+					t.Fatalf("errors.As did not find %s through %d wrapping levels", tt.name, depth)
+				}
+				if !errors.Is(chain, cause) {
+					t.Fatalf("errors.Is did not reach the root cause through %s", tt.name)
+				}
+			})
+		}
+	}
 }

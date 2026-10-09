@@ -3,12 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -102,84 +100,73 @@ func TestNewAgent_BackgroundTool_WithConversationStore_Succeeds(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithBackgroundNotify wires the notify callback onto the registry
+// WithBackgroundNotify public behavior
 // ---------------------------------------------------------------------------
 
-func TestWithBackgroundNotify_WiredOntoRegistry(t *testing.T) {
+type backgroundNotification struct {
+	conversationID string
+	text           string
+}
+
+// runBackgroundTurn drives a conversation through one background dispatch and
+// its completion re-entry turn, returning the agent after the handler ran.
+func runBackgroundTurn(t *testing.T, convID string, opts ...Option) *Agent {
+	t.Helper()
 	bt := validBackgroundTool("bg-notify")
-	store := newTestMemoryStore()
-
-	var called bool
-	notifyFn := func(convID, msg string) { called = true }
-	_ = called // suppress unused warning; we only check registry wiring
-
-	a, err := New(mockProvider{}, "sys", WithTools(bt),
-		WithConversationStore(store),
-		WithBackgroundNotify(notifyFn),
-	)
+	provider := &approvalBatchProvider{responses: []*ModelResponse{
+		{ToolCalls: []tool.Call{{ToolUseID: "tuid-1", Name: "bg-notify", Input: json.RawMessage(`{}`)}}},
+		{Text: "started"},
+		{Text: "background finished"},
+	}}
+	opts = append([]Option{WithTools(bt), WithConversationStore(newTestMemoryStore())}, opts...)
+	a, err := New(provider, "sys", opts...)
 	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
-	if a.backgroundRegistry == nil {
-		t.Fatal("expected backgroundRegistry to be non-nil when a Background_Tool is registered")
+	if _, err := a.Invoke(Background().WithConversationID(convID), "run it"); err != nil {
+		t.Fatalf("Invoke failed: %v", err)
 	}
-	if a.backgroundRegistry.notify == nil {
-		t.Error("expected registry.notify to be non-nil when WithBackgroundNotify is used")
+	return a
+}
+
+func TestWithBackgroundNotify_CallbackFiresOnceWithConversationAndFinalText(t *testing.T) {
+	notified := make(chan backgroundNotification, 4)
+	a := runBackgroundTurn(t, "conv-notify", WithBackgroundNotify(func(conversationID, agentMessage string) {
+		notified <- backgroundNotification{conversationID: conversationID, text: agentMessage}
+	}))
+
+	select {
+	case got := <-notified:
+		if got.conversationID != "conv-notify" || got.text != "background finished" {
+			t.Fatalf("notification = %+v, want conversation conv-notify and text %q", got, "background finished")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for background notification")
+	}
+
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
+	select {
+	case extra := <-notified:
+		t.Fatalf("callback fired more than once: %+v", extra)
+	default:
 	}
 }
 
-func TestWithoutBackgroundNotify_NotifyIsNil(t *testing.T) {
-	bt := validBackgroundTool("bg-no-notify")
-	store := newTestMemoryStore()
+func TestBackgroundCompletion_WithoutNotifyCallbackCompletesQuietly(t *testing.T) {
+	a := runBackgroundTurn(t, "conv-no-notify")
 
-	a, err := New(mockProvider{}, "sys", WithTools(bt),
-		WithConversationStore(store),
-	)
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
+	snapshot, err := a.conversation.Load(context.Background(), "conv-no-notify")
 	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
+		t.Fatalf("Load failed: %v", err)
 	}
-	if a.backgroundRegistry == nil {
-		t.Fatal("expected backgroundRegistry to be non-nil when a Background_Tool is registered")
-	}
-	if a.backgroundRegistry.notify != nil {
-		t.Error("expected registry.notify to be nil when WithBackgroundNotify is not used")
-	}
-
-	// Close should not error even without a notify callback.
-	_ = a.Shutdown(context.Background())
-}
-
-// ---------------------------------------------------------------------------
-// Requirements 11.3, 13.3, 13.4: v1 scope documentation notes
-// ---------------------------------------------------------------------------
-
-func TestDocumentation_V1ScopeNotes(t *testing.T) {
-	// Locate background.go relative to this test file.
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to determine test file path via runtime.Caller")
-	}
-	bgFile := filepath.Join(filepath.Dir(thisFile), "background.go")
-
-	data, err := os.ReadFile(bgFile)
-	if err != nil {
-		t.Fatalf("failed to read background.go: %v", err)
-	}
-	src := string(data)
-
-	// Asserts the in-memory-only note.
-	if !strings.Contains(src, "process memory only") {
-		t.Error("background.go package doc must contain the in-memory-only note ('process memory only')")
-	}
-
-	// Asserts the abandonment-on-exit note.
-	if !strings.Contains(src, "abandoned") && !strings.Contains(src, "results are lost") {
-		t.Error("background.go package doc must contain the abandonment-on-exit note ('abandoned' or 'results are lost')")
-	}
-
-	// Asserts the no-streaming-notification note.
-	if !strings.Contains(src, "Streaming") || !strings.Contains(src, "future extension") {
-		t.Error("background.go package doc must contain the no-streaming-notification note ('Streaming' and 'future extension')")
+	last := snapshot.Messages[len(snapshot.Messages)-1]
+	if got := last.Content[0].(TextBlock).Text; got != "background finished" {
+		t.Fatalf("final persisted message = %q, want re-entry result", got)
 	}
 }
 

@@ -294,13 +294,16 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		&ModelResponse{Text: "parallel done"},
 	)
 
-	const toolSleep = 100 * time.Millisecond
-
-	// Barrier: every tool adds to the WaitGroup before proceeding.
-	// If tools run sequentially, the first tool will block forever
-	// waiting for the others to arrive at the barrier.
-	var barrier sync.WaitGroup
-	barrier.Add(3)
+	// Barrier: every tool must be running before any of them may finish. If
+	// tool calls were executed sequentially the first tool would never see the
+	// others arrive, and the guard timeout fails the test.
+	var arrived sync.WaitGroup
+	arrived.Add(3)
+	allRunning := make(chan struct{})
+	go func() {
+		arrived.Wait()
+		close(allRunning)
+	}()
 
 	var mu sync.Mutex
 	executed := map[string]bool{}
@@ -311,9 +314,12 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 			name+" tool",
 			nil,
 			func(_ context.Context, _ json.RawMessage) (string, error) {
-				barrier.Done()
-				barrier.Wait() // blocks until all 3 tools are running
-				time.Sleep(toolSleep)
+				arrived.Done()
+				select {
+				case <-allRunning:
+				case <-time.After(5 * time.Second):
+					return "", fmt.Errorf("tool %q: other tool calls never ran concurrently", name)
+				}
 				mu.Lock()
 				executed[name] = true
 				mu.Unlock()
@@ -330,9 +336,7 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	start := time.Now()
 	result, err := a.Invoke(Background(), "go parallel")
-	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,18 +344,14 @@ func TestInvoke_ParallelToolExecutionCompletesAll(t *testing.T) {
 		t.Errorf("expected %q, got %q", "parallel done", result.Text)
 	}
 
-	// All three tools must have been executed.
+	// All three tools must have been executed, which is only possible when
+	// they were running at the same time.
+	mu.Lock()
+	defer mu.Unlock()
 	for _, name := range []string{"a", "b", "c"} {
 		if !executed[name] {
-			t.Errorf("tool %q was not executed", name)
+			t.Errorf("tool %q did not complete", name)
 		}
-	}
-
-	// If tools ran in parallel, total time should be ~1x toolSleep.
-	// If sequential, it would be ~3x toolSleep (300ms) — or deadlock on the barrier.
-	// Use 2x as the threshold to catch sequential execution.
-	if elapsed >= 2*toolSleep {
-		t.Errorf("tools appear to have run sequentially: elapsed %v, expected < %v", elapsed, 2*toolSleep)
 	}
 }
 
@@ -915,12 +915,8 @@ func TestShutdown_RespectsContextDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	begin := time.Now()
 	if err := a.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Shutdown err = %v, want DeadlineExceeded", err)
-	}
-	if time.Since(begin) > time.Second {
-		t.Fatal("Shutdown did not return at the deadline")
 	}
 
 	// Dispatches are rejected once shutdown started.

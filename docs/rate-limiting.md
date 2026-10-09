@@ -19,7 +19,7 @@ Reserve happens once per provider attempt, including retries. A successful attem
 
 ## Cost and scope
 
-RPM is charged at reservation. TPM reserves the request estimator plus the configured `InferenceConfig.MaxTokens` output bound when present, then commits actual usage. If `MaxTokens` is absent, the documented default output fallback is zero because no provider-independent maximum is known; configure `WithOutputReservationFallback` when an application has a safe bound. `WithoutTokenReservation` disables estimated TPM reservations only.
+RPM is charged at reservation. TPM reserves the request estimator plus the configured `InferenceConfig.MaxTokens` output bound when present, then commits actual usage. If `MaxTokens` is absent, the documented default output fallback is zero because no provider-independent maximum is known; configure `WithOutputReservationFallback` when an application has a safe bound. `WithoutTokenReservation` disables estimated TPM reservations only. The built-in `agent.CharEstimator` and the `tokencount/tiktoken` estimator count the system prompt, text, tool-use (ID, name, raw input bytes), tool-result (ID, content), and serialized tool specs. Image and document payloads are not estimated, so requests carrying large binary attachments are under-counted.
 
 Per-key and global counters are atomic and additive. `MaxConcurrent` is process-local even with Redis. `WithFailFast` returns `agent.ErrRateLimitExceeded`; `WithBlock` waits for capacity or cancellation.
 

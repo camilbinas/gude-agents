@@ -14,6 +14,253 @@ import (
 	"pgregory.net/rapid"
 )
 
+// testMemoryStore is a simple in-process Memory for testing.
+type testMemoryStore struct {
+	mu   sync.RWMutex
+	data map[string]ConversationSnapshot
+}
+
+func newTestMemoryStore() *testMemoryStore {
+	return &testMemoryStore{data: make(map[string]ConversationSnapshot)}
+}
+
+func (s *testMemoryStore) Load(_ context.Context, id string) (ConversationSnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot, ok := s.data[id]
+	if !ok {
+		return ConversationSnapshot{Messages: []Message{}}, nil
+	}
+	cp := make([]Message, len(snapshot.Messages))
+	for i, m := range snapshot.Messages {
+		content := make([]ContentBlock, len(m.Content))
+		copy(content, m.Content)
+		cp[i] = Message{Role: m.Role, Content: content}
+	}
+	return ConversationSnapshot{Messages: cp, Revision: snapshot.Revision}, nil
+}
+
+func (s *testMemoryStore) Save(_ context.Context, id string, msgs []Message, expectedRevision uint64) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.data[id].Revision
+	if current != expectedRevision {
+		return 0, ErrConversationConflict
+	}
+	cp := make([]Message, len(msgs))
+	for i, m := range msgs {
+		content := make([]ContentBlock, len(m.Content))
+		copy(content, m.Content)
+		cp[i] = Message{Role: m.Role, Content: content}
+	}
+	next := current + 1
+	s.data[id] = ConversationSnapshot{Messages: cp, Revision: next}
+	return next, nil
+}
+
+func (s *testMemoryStore) List(_ context.Context) ([]string, error) { return nil, nil }
+func (s *testMemoryStore) Delete(_ context.Context, _ string) error { return nil }
+
+func TestAgent_LoadsHistoryOnSecondInvocation(t *testing.T) {
+	sp := newScriptedProvider(
+		&ModelResponse{Text: "first reply"},
+		&ModelResponse{Text: "second reply"},
+	)
+
+	store := newTestMemoryStore()
+	a, err := New(sp, "sys", WithConversationStore(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result1, err := a.Invoke(Background().WithConversationID("conv-1"), "hello")
+	if err != nil {
+		t.Fatalf("first invoke: %v", err)
+	}
+	if result1.Text != "first reply" {
+		t.Errorf("expected %q, got %q", "first reply", result1.Text)
+	}
+
+	result2, err := a.Invoke(Background().WithConversationID("conv-1"), "follow up")
+	if err != nil {
+		t.Fatalf("second invoke: %v", err)
+	}
+	if result2.Text != "second reply" {
+		t.Errorf("expected %q, got %q", "second reply", result2.Text)
+	}
+
+	snapshot, err := store.Load(context.Background(), "conv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := snapshot.Messages
+
+	if len(saved) != 4 {
+		t.Fatalf("expected 4 messages in memory, got %d", len(saved))
+	}
+
+	expectations := []struct {
+		role Role
+		text string
+	}{
+		{RoleUser, "hello"},
+		{RoleAssistant, "first reply"},
+		{RoleUser, "follow up"},
+		{RoleAssistant, "second reply"},
+	}
+
+	for i, exp := range expectations {
+		if saved[i].Role != exp.role {
+			t.Errorf("message[%d] role: expected %q, got %q", i, exp.role, saved[i].Role)
+		}
+		tb := saved[i].Content[0].(TextBlock)
+		if tb.Text != exp.text {
+			t.Errorf("message[%d] text: expected %q, got %q", i, exp.text, tb.Text)
+		}
+	}
+}
+
+func TestAgent_WorksWithoutConversation(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "no memory response"})
+	a, err := New(sp, "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.Invoke(Background().WithConversationID("conv-1"), "hi")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "no memory response" {
+		t.Errorf("expected %q, got %q", "no memory response", result.Text)
+	}
+}
+
+type failingMemory struct{}
+
+func (failingMemory) Load(_ context.Context, _ string) (ConversationSnapshot, error) {
+	return ConversationSnapshot{}, fmt.Errorf("disk on fire")
+}
+
+func (failingMemory) Save(_ context.Context, _ string, _ []Message, _ uint64) (uint64, error) {
+	return 0, nil
+}
+
+func (failingMemory) List(_ context.Context) ([]string, error) { return nil, nil }
+func (failingMemory) Delete(_ context.Context, _ string) error { return nil }
+
+func TestAgent_ConversationLoadFailureReturnsError(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "should not reach"})
+	a, err := New(sp, "sys", WithConversationStore(failingMemory{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.Invoke(Background().WithConversationID("conv-1"), "hi")
+	if err == nil {
+		t.Fatal("expected error from memory load failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "conversation load") {
+		t.Errorf("expected error to contain 'conversation load', got: %v", err)
+	}
+}
+
+// trackingFlusher implements ConversationStore and Flusher.
+// It records whether Flush was called.
+type trackingFlusher struct {
+	flushed bool
+	mu      sync.Mutex
+	data    map[string]ConversationSnapshot
+}
+
+func newTrackingFlusher() *trackingFlusher {
+	return &trackingFlusher{data: make(map[string]ConversationSnapshot)}
+}
+
+func (w *trackingFlusher) Load(_ context.Context, id string) (ConversationSnapshot, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.data[id], nil
+}
+
+func (w *trackingFlusher) Save(_ context.Context, id string, msgs []Message, expectedRevision uint64) (uint64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.data[id].Revision != expectedRevision {
+		return 0, ErrConversationConflict
+	}
+	next := expectedRevision + 1
+	w.data[id] = ConversationSnapshot{Messages: msgs, Revision: next}
+	return next, nil
+}
+
+func (w *trackingFlusher) List(_ context.Context) ([]string, error) { return nil, nil }
+func (w *trackingFlusher) Delete(_ context.Context, _ string) error { return nil }
+
+func (w *trackingFlusher) Flush(context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.flushed = true
+	return nil
+}
+
+func TestAgent_ShutdownCallsConversationFlusher(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
+	flusher := newTrackingFlusher()
+
+	a, err := New(sp, "sys", WithConversationStore(flusher))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = a.Shutdown(context.Background())
+
+	flusher.mu.Lock()
+	defer flusher.mu.Unlock()
+	if !flusher.flushed {
+		t.Fatal("expected Shutdown to call Flush on Flusher")
+	}
+}
+
+func TestAgent_Close_NoopWithoutConversation(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
+	a, err := New(sp, "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not panic.
+	_ = a.Shutdown(context.Background())
+	_ = a.Shutdown(context.Background()) // safe to call multiple times
+}
+
+func TestAgent_ShutdownNoopWhenConversationIsNotFlusher(t *testing.T) {
+	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
+	store := newTestMemoryStore() // does not implement Flusher
+
+	a, err := New(sp, "sys", WithConversationStore(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not panic — store doesn't implement Flush.
+	_ = a.Shutdown(context.Background())
+}
+
+func testSaveLatest(ctx context.Context, store ConversationStore, id string, messages []Message) error {
+	snapshot, err := store.Load(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = store.Append(ctx, id, messages, snapshot.Revision)
+	return err
+}
+
+func testLoadMessages(ctx context.Context, store ConversationStore, id string) ([]Message, error) {
+	snapshot, err := store.Load(ctx, id)
+	return snapshot.Messages, err
+}
+
 // --- Unit tests for rag.DefaultContextFormatter ---
 
 func TestDefaultContextFormatter_EmptySlice(t *testing.T) {
@@ -150,46 +397,64 @@ func TestRAGAgent_NilRetrieverErrors(t *testing.T) {
 	}
 }
 
-// TestRAGAgent_SameDefaultsAsNew verifies RAGAgent is not a preset: apart from
-// the retriever it applies exactly the defaults of New.
-func TestRAGAgent_SameDefaultsAsNew(t *testing.T) {
-	retriever := &countingRetriever{}
-	viaRAG, err := RAGAgent(mockProvider{}, "sys", retriever)
-	if err != nil {
-		t.Fatal(err)
-	}
-	viaNew, err := New(mockProvider{}, "sys", WithRetriever(retriever))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if viaRAG.retriever != viaNew.retriever {
-		t.Error("retriever differs")
-	}
-	if viaRAG.maxIterations != viaNew.maxIterations {
-		t.Errorf("maxIterations = %d, New default = %d", viaRAG.maxIterations, viaNew.maxIterations)
-	}
-	if viaRAG.parallelTools != viaNew.parallelTools {
-		t.Errorf("parallelTools = %v, New default = %v", viaRAG.parallelTools, viaNew.parallelTools)
-	}
-	if viaRAG.tokenBudget != viaNew.tokenBudget || viaRAG.conversation != viaNew.conversation ||
-		(viaRAG.contextFormatter == nil) != (viaNew.contextFormatter == nil) {
-		t.Error("RAGAgent applied defaults that New does not")
-	}
-}
+// TestRAGAgent_RetrievesAndAcceptsNewOptions verifies RAGAgent behaves like
+// New with a retriever: New options are accepted, retrieval happens once for
+// the turn, the custom formatter shapes the provider input, and the retrieved
+// context is not persisted to the conversation.
+func TestRAGAgent_RetrievesAndAcceptsNewOptions(t *testing.T) {
+	retriever := &countingRetriever{docs: []rag.Document{{Content: "retrieved fact"}}}
+	provider := newCapturingProvider(&ModelResponse{Text: "answer"})
+	store := newTestMemoryStore()
 
-func TestRAGAgent_SetsRetrieverAndAppliesOpts(t *testing.T) {
-	retriever := &countingRetriever{docs: []rag.Document{{Content: "ctx"}}}
-
-	a, err := RAGAgent(mockProvider{}, "sys", retriever, WithMaxIterations(3))
+	a, err := RAGAgent(provider, "sys", retriever,
+		WithMaxIterations(3),
+		WithConversationStore(store),
+		WithContextFormatter(func(docs []rag.Document) string { return "FORMATTED:" + docs[0].Content }),
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if a.retriever != retriever {
-		t.Error("expected RAGAgent to configure the given retriever")
+
+	ctx := Background().WithConversationID("rag-conv")
+	if _, err := a.Invoke(ctx, "question"); err != nil {
+		t.Fatalf("Invoke failed: %v", err)
 	}
-	if a.maxIterations != 3 {
-		t.Errorf("expected maxIterations=3 from opts, got %d", a.maxIterations)
+
+	if got := retriever.callCount(); got != 1 {
+		t.Fatalf("retriever calls = %d, want 1", got)
 	}
+	if len(provider.captured) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.captured))
+	}
+	if !requestContainsText(provider.captured[0], "FORMATTED:retrieved fact") {
+		t.Fatalf("provider request missing custom-formatted context: %+v", provider.captured[0].Messages)
+	}
+
+	snapshot, err := store.Load(ctx, "rag-conv")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	for i, msg := range snapshot.Messages {
+		for _, block := range msg.Content {
+			if tb, ok := block.(TextBlock); ok && strings.Contains(tb.Text, "retrieved fact") {
+				t.Fatalf("persisted message %d contains retrieved context: %q", i, tb.Text)
+			}
+		}
+	}
+	if len(snapshot.Messages) != 2 {
+		t.Fatalf("persisted messages = %d, want user + assistant", len(snapshot.Messages))
+	}
+}
+
+func requestContainsText(req ModelRequest, needle string) bool {
+	for _, msg := range req.Messages {
+		for _, block := range msg.Content {
+			if tb, ok := block.(TextBlock); ok && strings.Contains(tb.Text, needle) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestAgent_RetrieverCalledOnce(t *testing.T) {
@@ -750,5 +1015,134 @@ func TestNewRetrieverTool_CustomFormatter(t *testing.T) {
 	// Verify the default formatter was NOT used.
 	if strings.Contains(result, "Relevant context:") {
 		t.Fatalf("expected custom formatter to replace default, but found default format in %q", result)
+	}
+}
+
+func humanInputCall(id string) tool.Call {
+	return tool.Call{
+		ToolUseID: id,
+		Name:      "request_human_input",
+		Input:     json.RawMessage(`{"reason":"need info","question":"What is the order ID?"}`),
+	}
+}
+
+func TestHumanInputTool_InvokeReturnsInterrupt(t *testing.T) {
+	provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}})
+	a, err := New(provider, "You are helpful.", WithTools(NewHumanInputTool("request_human_input", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := a.Invoke(Background(), "Process refund #123")
+	if err != nil {
+		t.Fatalf("Invoke error: %v", err)
+	}
+	if res.StopReason != StopInterrupt || res.Interrupt == nil {
+		t.Fatalf("result = %+v, want interrupt", res)
+	}
+	in := res.Interrupt
+	if in.Type != InterruptHumanInput || in.Input == nil || in.Approval != nil {
+		t.Fatalf("interrupt = %+v, want human_input", in)
+	}
+	if in.Input.Reason != "need info" || in.Input.Question != "What is the order ID?" {
+		t.Errorf("input = %+v", in.Input)
+	}
+	if len(in.Messages) == 0 {
+		t.Fatal("expected a message snapshot")
+	}
+	last := in.Messages[len(in.Messages)-1]
+	tr, ok := last.Content[0].(ToolResultBlock)
+	if !ok || tr.ToolUseID != "h1" || tr.Content != humanInputPausedResult {
+		t.Fatalf("last snapshot message = %#v, want paused tool result", last)
+	}
+}
+
+func TestResume_RespondContinuesAfterHumanInput(t *testing.T) {
+	provider := &approvalBatchProvider{responses: []*ModelResponse{
+		{ToolCalls: []tool.Call{humanInputCall("h1")}},
+		{Text: "Refund processed for order 456."},
+	}}
+	a, err := New(provider, "You are helpful.", WithTools(NewHumanInputTool("request_human_input", "")),
+		WithInputGuardrail(func(_ *Context, s string) (string, error) { return s + "!", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := mustInterrupt(t, a, Background(), "Process a refund")
+
+	res, err := a.Resume(Background(), in, Respond("Order 456"))
+	if err != nil {
+		t.Fatalf("Resume failed: %v", err)
+	}
+	if res.Text != "Refund processed for order 456." || res.StopReason != StopEndTurn {
+		t.Errorf("result = %+v", res)
+	}
+	msgs := provider.params[1].Messages
+	last := msgs[len(msgs)-1]
+	if tb, ok := last.Content[len(last.Content)-1].(TextBlock); !ok || tb.Text != "Order 456!" {
+		t.Fatalf("resumed user message = %#v, want guardrail-processed answer", last)
+	}
+}
+
+// TestHumanInput_PreservesConversationContext verifies that earlier tool
+// results are part of the snapshot.
+func TestHumanInput_PreservesConversationContext(t *testing.T) {
+	lookup := newTestRaw("lookup", "looks up", map[string]any{"type": "object"},
+		func(context.Context, json.RawMessage) (string, error) { return "order 42 found", nil })
+	provider := newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "t1", Name: "lookup", Input: json.RawMessage(`{}`)}}},
+		&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}},
+	)
+	a, err := New(provider, "You are helpful.", WithTools(lookup, NewHumanInputTool("request_human_input", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := mustInterrupt(t, a, Background(), "Find order")
+	found := false
+	for _, m := range in.Messages {
+		for _, b := range m.Content {
+			if tr, ok := b.(ToolResultBlock); ok && tr.Content == "order 42 found" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("earlier tool result missing from snapshot")
+	}
+}
+
+// TestApproval_PrecedesHumanInputSibling verifies that approval preflight
+// defers a human-input sibling without executing it.
+func TestApproval_PrecedesHumanInputSibling(t *testing.T) {
+	called := false
+	danger := newTestRaw("danger", "danger", map[string]any{"type": "object"},
+		func(context.Context, json.RawMessage) (string, error) { called = true; return "boom", nil },
+		tool.RequiresApproval())
+	provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{
+		{ToolUseID: "d1", Name: "danger", Input: json.RawMessage(`{}`)},
+		humanInputCall("h1"),
+	}})
+	a, err := New(provider, "x", WithTools(danger, NewHumanInputTool("request_human_input", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := mustInterrupt(t, a, Background(), "go")
+	if in.Type != InterruptApproval || in.Approval == nil || len(in.Approval.Calls) != 1 || in.Approval.Calls[0].CallID != "d1" {
+		t.Fatalf("interrupt = %#v, want approval for d1", in)
+	}
+	if called {
+		t.Fatal("approval-required tool must not run")
+	}
+	last := in.Messages[len(in.Messages)-1]
+	if last.Role != RoleAssistant || len(last.Content) != 2 {
+		t.Fatalf("snapshot = %#v, want original assistant tool batch", last)
+	}
+}
+
+func TestHumanInputTool_OutsideAgentFails(t *testing.T) {
+	ht := NewHumanInputTool("ask", "")
+	if _, err := ht.Handler(context.Background(), json.RawMessage(`{"reason":"r","question":"q"}`)); err == nil {
+		t.Fatal("expected error outside an agent tool call")
+	}
+	if _, err := ht.Handler(context.Background(), json.RawMessage(`not json`)); err == nil || errors.Is(err, context.Canceled) {
+		t.Fatal("expected invalid input error")
 	}
 }
