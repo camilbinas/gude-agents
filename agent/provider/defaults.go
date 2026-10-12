@@ -4,7 +4,7 @@ package provider
 // ThinkingOutputHeadroom is the number of output tokens reserved for the model's
 // final answer when thinking/reasoning is enabled and no explicit max_tokens has
 // been set. Providers that require max_tokens > thinking_budget (Anthropic, Bedrock
-// Claude, Gemini) add this on top of the thinking budget so the model has room to
+// Claude) add this on top of the thinking budget so the model has room to
 // both reason and produce a response.
 const ThinkingOutputHeadroom = 8192
 
@@ -12,7 +12,7 @@ const ThinkingOutputHeadroom = 8192
 // Use the predefined constants — arbitrary string values are not supported and
 // will either be rejected by the upstream API (for enum-style providers like
 // OpenAI and Bedrock Nova 2) or silently disable thinking (for budget-style
-// providers like Anthropic, Bedrock Claude, and Gemini, where unknown levels
+// providers like Anthropic and Bedrock Claude, where unknown levels
 // resolve to a zero budget).
 //
 // For direct control over the token budget on budget-style providers, use the
@@ -22,7 +22,7 @@ type ThinkingEffort string
 // Predefined thinking effort levels. Not every provider supports every level:
 //   - OpenAI: minimal, low, medium, high
 //   - Bedrock Nova 2: low, medium, high
-//   - Anthropic, Bedrock Claude, Gemini: all four (mapped to a token budget)
+//   - Anthropic, Bedrock Claude: all four (mapped to a token budget)
 const (
 	ThinkingMinimal ThinkingEffort = "minimal"
 	ThinkingLow     ThinkingEffort = "low"
@@ -31,7 +31,7 @@ const (
 )
 
 // ThinkingBudgets maps effort levels to default token budgets for providers
-// that take an integer budget (Anthropic, Bedrock Claude, Gemini). For finer
+// that take an integer budget (Anthropic, Bedrock Claude). For finer
 // control, use the provider-specific WithThinkingBudget option.
 var ThinkingBudgets = map[ThinkingEffort]int64{
 	ThinkingMinimal: 1024,

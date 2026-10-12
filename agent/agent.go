@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -54,8 +53,8 @@ type Agent struct {
 	// crypto/rand.Reader; tests substitute failing readers.
 	random io.Reader
 
-	backgroundRegistry *backgroundRegistry
-	bgNotify           func(conversationID, agentMessage string)
+	// conversationLocks serializes same-conversation work within this Agent.
+	conversationLocks conversationLocks
 }
 
 // New creates an Agent with immutable instructions and construction options.
@@ -86,15 +85,9 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 		if err := t.Validate(); err != nil {
 			return nil, err
 		}
-		if t.IsBackground() && a.conversation == nil {
-			return nil, fmt.Errorf("tool %q: background and detached tools require a conversation store; use WithConversationStore", t.Spec.Name)
-		}
 	}
 	if a.executionStore != nil && a.conversation == nil {
 		return nil, fmt.Errorf("ExecutionStore requires ConversationStore")
-	}
-	if a.conversation != nil {
-		a.backgroundRegistry = newBackgroundRegistry(a, a.bgNotify, nil)
 	}
 	return a, nil
 }
@@ -140,16 +133,14 @@ func (a *Agent) instructionsFor(c *Context) string {
 	return a.instructions
 }
 
-// Shutdown waits for background tools, re-entry turns, and conversation flushes.
+// Shutdown flushes the conversation store when it implements Flusher. It does
+// not interrupt or wait for invocations that are still running; callers drain
+// those first (for example by stopping the HTTP server that issues them).
 func (a *Agent) Shutdown(ctx context.Context) error {
-	var err error
-	if a.backgroundRegistry != nil {
-		err = errors.Join(err, a.backgroundRegistry.shutdown(ctx))
-	}
 	if flusher, ok := a.conversation.(Flusher); ok {
-		err = errors.Join(err, flusher.Flush(ctx))
+		return flusher.Flush(ctx)
 	}
-	return err
+	return nil
 }
 
 // ToolSpecs returns a current snapshot of provider-facing tool specifications.

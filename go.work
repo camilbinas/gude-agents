@@ -7,7 +7,6 @@ use (
 	./agent/checkpoint/dynamodb
 	./agent/checkpoint/postgres
 	./agent/checkpoint/redis
-	./agent/conversation/dynamodb
 	./agent/conversation/postgres
 	./agent/conversation/redis
 	./agent/conversation/sqlite
@@ -22,14 +21,12 @@ use (
 	./agent/provider/anthropic
 	./agent/provider/bedrock
 	./agent/provider/fallback
-	./agent/provider/gemini
 	./agent/provider/ollama
 	./agent/provider/openai
 	./agent/provider/registry
 	./agent/provider/vllm
 	./agent/rag/bedrock
 	./agent/rag/document/pdf
-	./agent/rag/gemini
 	./agent/rag/openai
 	./agent/rag/postgres
 	./agent/rag/redis

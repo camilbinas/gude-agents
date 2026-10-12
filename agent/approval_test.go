@@ -673,15 +673,6 @@ func TestResume_CanonicalMiddlewarePipelineSupportsEveryToolKind(t *testing.T) {
 				}, objectSchema, tool.RequiresApproval())
 			},
 		},
-		{
-			name: "background",
-			build: func(done chan struct{}) tool.Tool {
-				return tool.NewBackground[json.RawMessage]("work", "background work", "queued", func(context.Context, json.RawMessage) (string, error) {
-					close(done)
-					return "background result", nil
-				}, objectSchema, tool.RequiresApproval())
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -690,7 +681,6 @@ func TestResume_CanonicalMiddlewarePipelineSupportsEveryToolKind(t *testing.T) {
 			provider := newScriptedProvider(
 				&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "provider-call-id", Name: "work", Input: json.RawMessage(`{}`)}}},
 				&ModelResponse{Text: "resumed"},
-				&ModelResponse{Text: "re-entry"},
 			)
 			var middlewareCalls atomic.Int32
 			var middlewareCall ToolCall

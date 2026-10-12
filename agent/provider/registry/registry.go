@@ -26,7 +26,6 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/provider/anthropic"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
-	"github.com/camilbinas/gude-agents/agent/provider/gemini"
 	"github.com/camilbinas/gude-agents/agent/provider/ollama"
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
 )
@@ -68,7 +67,7 @@ func Register(name string, cheapest, standard, smartest Factory) {
 	}
 }
 
-// RegisterBuiltins registers the built-in providers (bedrock, anthropic, openai, gemini,
+// RegisterBuiltins registers the built-in providers (bedrock, anthropic, openai,
 // ollama) with their default tier mappings. Call this once at startup.
 //
 // vLLM is not included because it has no fixed model catalog — the available model
@@ -88,11 +87,6 @@ func RegisterBuiltins() {
 		func() (agent.Provider, error) { return openai.Cheapest() },
 		func() (agent.Provider, error) { return openai.Standard() },
 		func() (agent.Provider, error) { return openai.Smartest() },
-	)
-	Register("gemini",
-		func() (agent.Provider, error) { return gemini.Cheapest() },
-		func() (agent.Provider, error) { return gemini.Standard() },
-		func() (agent.Provider, error) { return gemini.Smartest() },
 	)
 	Register("ollama",
 		func() (agent.Provider, error) { return ollama.Cheapest() },

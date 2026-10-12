@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -103,7 +102,7 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 // executeCall is the single tool pipeline used by normal and resumed
 // execution: lookup, RBAC/ABAC, schema validation, guard, approval gate
 // (skipped when already approved), middleware, handler selection
-// (plain / rich / background), widgets, audit, hooks and result conversion.
+// (plain / rich), widgets, audit, hooks and result conversion.
 //
 // decision is nil for normal execution. For a resumed approval it carries the
 // human decision: Allow satisfies the approval gate, Deny short-circuits.
@@ -228,14 +227,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	// observers receive it through ToolCallRecord instead.
 	emitStart()
 	inner := func(hc context.Context, call ToolCall) (ToolResult, error) {
-		execC := FromContext(hc)
-		if execC == nil {
-			execC = toolC
-		}
 		switch {
-		case t.IsBackground():
-			text, err := r.dispatchBackground(execC, t, tc, call.Input)
-			return ToolResult{Text: text}, err
 		case t.RichHandler != nil:
 			o, err := t.RichHandler(hc, call.Input)
 			if err != nil {
@@ -296,43 +288,4 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 	emitEnd(result.Text, info, dur)
 	return out
-}
-
-// dispatchBackground hands a Background_Tool call to the background registry
-// and returns its ack string synchronously.
-func (r *run) dispatchBackground(c *Context, t tool.Tool, tc tool.Call, input json.RawMessage) (string, error) {
-	a := r.a
-	if a.conversation == nil || a.backgroundRegistry == nil {
-		return "", fmt.Errorf("background tool requires a conversation store")
-	}
-	if r.convID == "" {
-		return "", fmt.Errorf("background tool requires a conversation id")
-	}
-	cfg := c.cfg
-	// A detached completion is a new invocation, not a continuation of the
-	// foreground execution that dispatched it.
-	cfg.executionID, cfg.executionIDSet = "", false
-	cfg.executionResume, cfg.executionVersion = false, 0
-	cfg.images, cfg.documents = nil, nil
-	if cfg.principal != nil {
-		// Deep-copy the principal before crossing into the detached
-		// background goroutine: cfg.principal currently aliases the
-		// invocation's principal, and the background handler may run
-		// concurrently with the rest of this invocation.
-		cloned := clonePrincipal(*cfg.principal)
-		cfg.principal = &cloned
-	}
-	if err := a.backgroundRegistry.dispatch(backgroundDispatch{
-		toolName:       tc.Name,
-		toolUseID:      tc.ToolUseID,
-		conversationID: r.convID,
-		cfg:            cfg,
-		rawInput:       input,
-		handler:        t.Handler,
-		ack:            t.Ack(),
-		dispatchedAt:   time.Now(),
-	}); err != nil {
-		return "", err
-	}
-	return t.Ack(), nil
 }

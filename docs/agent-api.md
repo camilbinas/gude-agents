@@ -87,7 +87,7 @@ Configure images and documents on `Context` before invocation. Tools can call `a
 err := a.Shutdown(ctx)
 ```
 
-Shutdown waits for background tools and re-entry turns, then flushes a conversation store that implements `agent.Flusher`.
+Shutdown flushes a conversation store that implements `agent.Flusher` and returns its error. It does not cancel or wait for invocations that are still running, so stop admitting work and let in-flight invocations finish before calling it. With a store that has no `Flush`, it is a no-op.
 
 ### Thinking events
 

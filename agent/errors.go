@@ -60,7 +60,7 @@ func (e *ProviderError) Is(target error) bool {
 // Use errors.Is or errors.As to distinguish provider creation failures from
 // runtime provider call failures (ProviderError).
 type ProviderCreationError struct {
-	Provider string // provider name (e.g. "bedrock", "anthropic", "openai", "gemini")
+	Provider string // provider name (e.g. "bedrock", "anthropic", "openai")
 	Cause    error
 }
 

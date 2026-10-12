@@ -58,9 +58,6 @@ type Image struct {
 // RichHandler is the function signature for tools that return rich output.
 type RichHandler[T any] func(ctx context.Context, input T) (*Output, error)
 
-// BackgroundHandler is the function signature for background and detached tools.
-type BackgroundHandler[T any] func(ctx context.Context, input T) (string, error)
-
 // Option configures a Tool.
 type Option func(*Tool)
 
@@ -131,13 +128,12 @@ type executionKind uint8
 const (
 	executionPlain executionKind = iota
 	executionRich
-	executionBackground
 )
 
 // Tool pairs a provider-facing specification with one canonical handler adapter.
 // Tools should be created with NewSimple (no input), New (typed input),
-// NewRich (typed input, rich output), NewBackground (typed input, background
-// execution), or NewRaw (raw JSON with an explicit schema).
+// NewRich (typed input, rich output), or NewRaw (raw JSON with an explicit
+// schema).
 type Tool struct {
 	Spec Spec
 
@@ -148,7 +144,6 @@ type Tool struct {
 	Guard       func(context.Context, json.RawMessage) (Decision, error)
 
 	kind          executionKind
-	ack           string
 	needsApproval bool
 	replaySafe    bool
 	rolePolicy    *rolePolicy
@@ -172,16 +167,8 @@ func WithSchema(schema map[string]any) Option {
 	}
 }
 
-// IsBackground reports whether the tool completes asynchronously with conversation re-entry.
-func (t Tool) IsBackground() bool {
-	return t.kind == executionBackground
-}
-
 // IsRich reports whether the tool returns rich output.
 func (t Tool) IsRich() bool { return t.kind == executionRich }
-
-// Ack returns the immediate acknowledgement for background or detached tools.
-func (t Tool) Ack() string { return t.ack }
 
 // NeedsApproval reports whether this tool requires explicit human approval.
 func (t Tool) NeedsApproval() bool { return t.needsApproval }
@@ -201,14 +188,6 @@ func (t Tool) Validate() error {
 	if t.Handler == nil && t.RichHandler == nil {
 		return fmt.Errorf("tool %q: handler is required", t.Spec.Name)
 	}
-	if t.IsBackground() {
-		if t.ack == "" {
-			return fmt.Errorf("tool %q: background and detached tools require a non-empty ack string", t.Spec.Name)
-		}
-		if t.Handler == nil {
-			return fmt.Errorf("tool %q: background and detached tools require a plain handler", t.Spec.Name)
-		}
-	}
 	if t.Spec.InputSchema == nil {
 		return fmt.Errorf("tool %q: input schema is required", t.Spec.Name)
 	}
@@ -217,7 +196,7 @@ func (t Tool) Validate() error {
 
 // New creates a Tool from a typed string handler and generates its JSON Schema from T.
 func New[T any](name, description string, handler Handler[T], opts ...Option) Tool {
-	return newPlain(name, description, GenerateSchema[T](), adaptString(handler), executionPlain, "", opts...)
+	return newPlain(name, description, GenerateSchema[T](), adaptString(handler), opts...)
 }
 
 // NewSimple creates a Tool that takes no input. Its provider-facing schema is
@@ -231,7 +210,7 @@ func NewSimple(name, description string, handler func(context.Context) (string, 
 			return handler(ctx)
 		}
 	}
-	return newPlain(name, description, map[string]any{"type": "object"}, h, executionPlain, "", opts...)
+	return newPlain(name, description, map[string]any{"type": "object"}, h, opts...)
 }
 
 // NewRaw creates a Tool whose handler receives unprocessed JSON and whose
@@ -242,7 +221,7 @@ func NewRaw(name, description string, schema map[string]any, handler Handler[jso
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
 	}
-	return newPlain(name, description, schema, handler, executionPlain, "", opts...)
+	return newPlain(name, description, schema, handler, opts...)
 }
 
 // NewRich creates a Tool from a typed rich-output handler.
@@ -264,19 +243,10 @@ func NewRich[T any](name, description string, handler RichHandler[T], opts ...Op
 	return t
 }
 
-// NewBackground creates a typed asynchronous tool. It immediately returns ack,
-// runs the handler on a detached context (not the caller's), completes outside
-// the originating model turn, persists its completion, and triggers re-entry.
-func NewBackground[T any](name, description, ack string, handler BackgroundHandler[T], opts ...Option) Tool {
-	return newPlain(name, description, GenerateSchema[T](), adaptString(handler), executionBackground, ack, opts...)
-}
-
-func newPlain(name, description string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), kind executionKind, ack string, opts ...Option) Tool {
+func newPlain(name, description string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), opts ...Option) Tool {
 	t := Tool{
 		Spec:    Spec{Name: name, Description: description, InputSchema: schema},
 		Handler: handler,
-		kind:    kind,
-		ack:     ack,
 	}
 	applyOptions(&t, opts)
 	return t

@@ -23,7 +23,7 @@ import (
 func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 	t.Parallel()
 	providerName := os.Getenv("MODEL_PROVIDER")
-	if providerName != "" && providerName != "bedrock" && providerName != "gemini" {
+	if providerName != "" && providerName != "bedrock" {
 		t.Skipf("skipping thinking test for provider %q (not supported)", providerName)
 	}
 
@@ -75,7 +75,7 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 	t.Parallel()
 	providerName := os.Getenv("MODEL_PROVIDER")
-	if providerName != "" && providerName != "bedrock" && providerName != "gemini" {
+	if providerName != "" && providerName != "bedrock" {
 		t.Skipf("skipping thinking test for provider %q (not supported)", providerName)
 	}
 

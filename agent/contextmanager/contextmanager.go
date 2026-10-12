@@ -373,7 +373,7 @@ func renderBlock(b agent.ContentBlock) string {
 // The covered messages (and any existing summary) are rendered into a single
 // user message rather than replayed as a live transcript. This keeps the
 // request provider-portable: the model request always ends with a user
-// message, which providers such as Amazon Bedrock, Anthropic, and Gemini
+// message, which providers such as Amazon Bedrock and Anthropic
 // require (they reject a conversation ending in an assistant turn, treating it
 // as an unsupported assistant prefill). It also means the summarizer never
 // feeds the model orphaned tool_use/tool_result blocks from the covered

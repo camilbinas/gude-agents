@@ -40,10 +40,8 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/gemini v0.81.0 // indirect
 	github.com/camilbinas/gude-agents/agent/provider/ollama v0.81.0 // indirect
 	github.com/camilbinas/gude-agents/agent/provider/openai v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/gemini v0.81.0 // indirect
 	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.81.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
@@ -73,7 +71,6 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
-	google.golang.org/genai v1.54.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect

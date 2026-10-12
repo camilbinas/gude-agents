@@ -846,102 +846,38 @@ func TestInvoke_DifferentOverridesPerCall(t *testing.T) {
 	}
 }
 
-func TestToolRegistrySupportsDynamicBackgroundTools(t *testing.T) {
-	handlerDone := make(chan struct{})
+func TestToolRegistrySupportsDynamicTools(t *testing.T) {
 	sp := newScriptedProvider(
-		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}},
-		&ModelResponse{Text: "initial response"},
-		&ModelResponse{Text: "background response"},
+		&ModelResponse{ToolCalls: []tool.Call{toolCall("dyn-1", "dynamic")}},
+		&ModelResponse{Text: "done"},
 	)
-
 	var registry tool.Registry
-	a, err := New(sp, "sys", WithToolRegistry(&registry), WithConversationStore(newTestMemoryStore()))
+	a, err := New(sp, "sys", WithToolRegistry(&registry))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	backgroundTool := tool.NewBackground[json.RawMessage](
-		"background",
-		"Runs in the background",
-		"Background work started.",
-		func(_ context.Context, _ json.RawMessage) (string, error) {
-			close(handlerDone)
-			return "finished", nil
-		},
-		tool.WithSchema(map[string]any{"type": "object"}),
-	)
-	if err := registry.Register(backgroundTool); err != nil {
+	// The tool is registered after the Agent was constructed.
+	var ran bool
+	dynamic := tool.NewRaw("dynamic", "Registered after New", nil,
+		func(context.Context, json.RawMessage) (string, error) {
+			ran = true
+			return "ok", nil
+		})
+	if err := registry.Register(dynamic); err != nil {
 		t.Fatalf("Register returned an error: %v", err)
 	}
 
-	result, err := a.Invoke(Background().WithConversationID("conv-1"), "start background work")
+	result, err := a.Invoke(Background(), "use the dynamic tool")
 	if err != nil {
 		t.Fatalf("Invoke returned an error: %v", err)
 	}
-	if result.Text != "initial response" {
-		t.Fatalf("expected initial response, got %q", result.Text)
-	}
-
-	_ = a.Shutdown(context.Background())
-	select {
-	case <-handlerDone:
-	case <-time.After(time.Second):
-		t.Fatal("background handler did not run")
-	}
-}
-
-func TestShutdown_RespectsContextDeadline(t *testing.T) {
-	release := make(chan struct{})
-	started := make(chan struct{})
-	bg := tool.NewBackground[json.RawMessage]("slow", "slow background work", "started",
-		func(_ context.Context, _ json.RawMessage) (string, error) {
-			close(started)
-			<-release
-			return "finished", nil
-		}, tool.WithSchema(map[string]any{"type": "object"}))
-	sp := newScriptedProvider(
-		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "slow")}},
-		&ModelResponse{Text: "initial"},
-		&ModelResponse{Text: "after background"},
-	)
-	a, err := New(sp, "sys", WithTools(bg), WithConversationStore(newTestMemoryStore()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Invoke(Background().WithConversationID("conv-1"), "go"); err != nil {
-		t.Fatal(err)
-	}
-	<-started
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := a.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Shutdown err = %v, want DeadlineExceeded", err)
-	}
-
-	// Dispatches are rejected once shutdown started.
-	sp2 := newScriptedProvider(
-		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-2", "slow")}},
-		&ModelResponse{Text: "rejected"},
-	)
-	a.provider = sp2
-	res, err := a.Invoke(Background().WithConversationID("conv-2"), "again")
-	if err != nil || res.Text != "rejected" {
-		t.Fatalf("Invoke after shutdown = %+v, %v", res, err)
-	}
-
-	close(release)
-	if err := a.Shutdown(context.Background()); err != nil {
-		t.Fatalf("second Shutdown: %v", err)
+	if !ran || result.Text != "done" {
+		t.Fatalf("dynamic tool ran=%v, result=%q", ran, result.Text)
 	}
 }
 
 // newTestBackgroundRaw adapts raw-message test fixtures to the canonical generic constructor.
-func newTestBackgroundRaw(name, description, ack string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), opts ...tool.Option) tool.Tool {
-	opts = append(opts, tool.WithSchema(schema))
-	return tool.NewBackground[json.RawMessage](name, description, ack, handler, opts...)
-}
-
 // newTestRaw adapts hand-written schema fixtures to the canonical raw constructor.
 func newTestRaw(name, description string, schema map[string]any, handler func(context.Context, json.RawMessage) (string, error), opts ...tool.Option) tool.Tool {
 	opts = append(opts, tool.WithSchema(schema))
@@ -951,103 +887,4 @@ func newTestRaw(name, description string, schema map[string]any, handler func(co
 // contains is shared by root agent tests that assert error text.
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
-}
-
-func TestBackgroundReEntryUsesDistinctExecutionAndDeduplicatesCompletion(t *testing.T) {
-	release := make(chan struct{})
-	notified := make(chan string, 2)
-	background := newTestBackgroundRaw("background", "background", "started", map[string]any{"type": "object"},
-		func(_ context.Context, _ json.RawMessage) (string, error) {
-			<-release
-			return "finished", nil
-		})
-	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
-	a, err := New(newScriptedProvider(
-		&ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}},
-		&ModelResponse{Text: "foreground complete"},
-		&ModelResponse{Text: "background complete"},
-	), "sys", WithTools(background), WithConversationStore(conversations), WithExecutionStore(executions), WithBackgroundNotify(func(_ string, text string) { notified <- text }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	origin, err := a.Invoke(Background().WithConversationID("c"), "start")
-	if err != nil {
-		t.Fatal(err)
-	}
-	close(release)
-	if err := a.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case text := <-notified:
-		if text != "background complete" {
-			t.Fatalf("notification = %q", text)
-		}
-	default:
-		t.Fatal("missing background notification")
-	}
-	// A duplicate completion for the same local dispatch cannot re-enter or notify.
-	a.reEntryTurn(backgroundDispatch{conversationID: "c", toolUseID: "bg-1"}, completionResult{result: "duplicate"})
-	select {
-	case text := <-notified:
-		t.Fatalf("unexpected duplicate notification %q", text)
-	default:
-	}
-	executions.mu.Lock()
-	defer executions.mu.Unlock()
-	if len(executions.items) != 2 {
-		t.Fatalf("execution count = %d, want origin plus re-entry", len(executions.items))
-	}
-	if _, ok := executions.items[origin.ExecutionID]; !ok {
-		t.Fatalf("origin execution %q changed or disappeared", origin.ExecutionID)
-	}
-}
-
-type backgroundReentryFailureProvider struct {
-	mu    sync.Mutex
-	calls int
-}
-
-func (p *backgroundReentryFailureProvider) Name() string { return "background-failure" }
-func (p *backgroundReentryFailureProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.calls++
-	switch p.calls {
-	case 1:
-		return &ModelResponse{ToolCalls: []tool.Call{toolCall("bg-1", "background")}}, nil
-	case 2:
-		return &ModelResponse{Text: "foreground complete"}, nil
-	default:
-		return nil, errors.New("background provider failed")
-	}
-}
-
-func TestBackgroundReEntryProviderFailureIsLogged(t *testing.T) {
-	release := make(chan struct{})
-	background := newTestBackgroundRaw("background", "background", "started", map[string]any{"type": "object"},
-		func(_ context.Context, _ json.RawMessage) (string, error) {
-			<-release
-			return "finished", nil
-		})
-	observer := &principalCapturingToolLogObserver{}
-	a, err := New(&backgroundReentryFailureProvider{}, "sys", WithTools(background), WithConversationStore(newTestMemoryStore()), WithObserver(observer))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Invoke(Background().WithConversationID("c"), "start"); err != nil {
-		t.Fatal(err)
-	}
-	close(release)
-	if err := a.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	for _, record := range observer.records {
-		if strings.Contains(record.Message, "background error [re-entry]") && record.Err != nil {
-			return
-		}
-	}
-	t.Fatalf("re-entry provider failure was not observable: %#v", observer.records)
 }

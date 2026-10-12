@@ -253,9 +253,8 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 	})
 }
 
-// lifecycle wraps an invocation body with the unified observer dispatcher and
-// the per-conversation lock. It is shared by every entry point, including
-// structured output and background re-entry turns.
+// lifecycle wraps an invocation body with the unified observer dispatcher. It
+// is shared by every entry point, including structured output.
 func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *run) (Result, error)) (Result, error) {
 	h := a.hooks(c)
 	c, invoke := h.onInvokeStart(c, a.invokeRecord(convID, userMessage, c))
@@ -275,8 +274,8 @@ func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *r
 		if err := a.requireConversationID(convID); err != nil {
 			return Result{}, err
 		}
-		if a.backgroundRegistry != nil && a.conversation != nil && convID != "" {
-			m := a.backgroundRegistry.lockFor(convID)
+		if a.conversation != nil && convID != "" {
+			m := a.conversationLocks.lockFor(convID)
 			m.Lock()
 			defer m.Unlock()
 		}
@@ -668,16 +667,6 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 	return Result{}, limitErr
 }
 
-// loop is the compatibility entry point used by background re-entry. It
-// converts its legacy transient pair immediately into turnMessages.
-func (r *run) loop(messages []Message, ragStart int, inferenceConfig *InferenceConfig) (Result, error) {
-	turn := turnMessages{canonical: persisted(messages, ragStart)}
-	if ragStart >= 0 && ragStart+2 <= len(messages) {
-		turn.transient = append(turn.transient, messages[ragStart:ragStart+2]...)
-	}
-	return r.loopTurn(turn, inferenceConfig)
-}
-
 func toolUseMessage(resp *ModelResponse) Message {
 	content := make([]ContentBlock, 0, len(resp.ToolCalls)+1)
 	if resp.Text != "" {
@@ -850,9 +839,7 @@ func (r *run) planToolBatch(calls []tool.Call) error {
 			}
 			replaySafe := false
 			if registered, ok := r.a.toolRegistry.Lookup(call.Name); ok {
-				// Background dispatch has independent completion/re-entry
-				// semantics and intentionally is not made replayable here.
-				replaySafe = registered.ReplaySafe() && !registered.IsBackground()
+				replaySafe = registered.ReplaySafe()
 			}
 			batch.Calls[i] = ToolExecution{
 				CallID: call.ToolUseID, Name: call.Name, Status: ToolExecutionPlanned,
@@ -915,9 +902,6 @@ func (r *run) beginToolExecution(callID, toolName string) (key string, recoveryR
 			call := &execution.ToolBatch.Calls[i]
 			if call.CallID != callID {
 				continue
-			}
-			if registered, ok := r.a.toolRegistry.Lookup(toolName); ok && registered.IsBackground() && call.Status == ToolExecutionInFlight {
-				return &ToolExecutionUncertainError{ExecutionID: execution.ID, CallID: callID, ToolName: toolName, IdempotencyKey: call.IdempotencyKey}
 			}
 			switch call.Status {
 			case ToolExecutionReady:
@@ -1057,11 +1041,9 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	// A single Agent serializes recovery with its normal per-conversation work.
 	// The store CAS still protects durable state when different processes race;
 	// replay-safe handlers must honor their idempotency key across processes.
-	if a.backgroundRegistry != nil {
-		m := a.backgroundRegistry.lockFor(execution.ConversationID)
-		m.Lock()
-		defer m.Unlock()
-	}
+	m := a.conversationLocks.lockFor(execution.ConversationID)
+	m.Lock()
+	defer m.Unlock()
 	base := ctx.Clone()
 	base.WithConversationID(execution.ConversationID).WithExecutionID(execution.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
@@ -1104,9 +1086,6 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	for _, call := range r.execution.ToolBatch.Calls {
 		if call.Status != ToolExecutionInFlight {
 			continue
-		}
-		if registered, ok := a.toolRegistry.Lookup(call.Name); ok && registered.IsBackground() {
-			return cloneExecution(*r.execution), &ToolExecutionUncertainError{ExecutionID: r.execution.ID, CallID: call.CallID, ToolName: call.Name, IdempotencyKey: call.IdempotencyKey}
 		}
 		if !call.ReplaySafe {
 			return cloneExecution(*r.execution), &ToolExecutionUncertainError{ExecutionID: r.execution.ID, CallID: call.CallID, ToolName: call.Name, IdempotencyKey: call.IdempotencyKey}

@@ -10,7 +10,6 @@ There are five constructors. Every constructor accepts named `tool.Option` value
 func NewSimple(name, description string, handler func(context.Context) (string, error), opts ...tool.Option) tool.Tool
 func New[T any](name, description string, handler tool.Handler[T], opts ...tool.Option) tool.Tool
 func NewRich[T any](name, description string, handler tool.RichHandler[T], opts ...tool.Option) tool.Tool
-func NewBackground[T any](name, description, ack string, handler tool.BackgroundHandler[T], opts ...tool.Option) tool.Tool
 func NewRaw(name, description string, schema map[string]any, handler tool.Handler[json.RawMessage], opts ...tool.Option) tool.Tool
 ```
 
@@ -21,7 +20,6 @@ Choose in this order:
 | `NewSimple` | no input |
 | `New[T]` | ordinary structured Go input |
 | `NewRich[T]` | structured input + text/image output |
-| `NewBackground[T]` | structured input + background execution |
 | `NewRaw` | manually controlled JSON and schema (dynamic schemas, adapters, MCP-style tools) |
 
 `NewSimple` exposes the schema `{"type":"object"}`:
@@ -69,9 +67,9 @@ deleteOrder := tool.NewRaw("delete_order", "Delete an order permanently",
 )
 ```
 
-For rich or background tools that need raw input, use `json.RawMessage` as the type parameter plus `WithSchema`.
+For rich tools that need raw input, use `json.RawMessage` as the type parameter plus `WithSchema`.
 
-`NewRich` returns `*tool.Output` with text and optional images. `NewBackground` acknowledges immediately, runs the handler on a detached context outside the originating model turn, persists completion, and triggers a conversation re-entry turn. It requires a non-empty acknowledgement and an agent conversation store (enforced by `agent.New`). Because a store-backed Agent requires a non-empty conversation ID on every invocation, an invocation without one fails with `agent.ErrConversationIDRequired` before the model runs, so a background tool can never be dispatched without a conversation.
+`NewRich` returns `*tool.Output` with text and optional images.
 
 ## Options
 
@@ -110,7 +108,7 @@ See [Middleware](middleware.md), [RBAC](rbac.md), and [Interrupts](interrupts.md
 
 Constructor choice is independent from policy: `ToolFilter` controls what the model can see, RBAC/ABAC controls who may execute it, `WithGuard` enforces runtime business rules, `RequiresApproval` pauses for human authorization, and input/output guardrails control content. Observers and audit record what happened. See [RBAC](rbac.md), [Interrupts](interrupts.md), [Guardrails](guardrails.md), and [Observability](observability.md).
 
-The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, A2A, web-search, rich-image, background, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.
+The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, A2A, web-search, rich-image, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.
 
 
 ## Durable tool recovery
@@ -154,7 +152,7 @@ Recover an incomplete running execution without replaying the previous provider 
 execution, err := a.RecoverExecution(agent.Background(), executionID)
 ```
 
-`RecoverExecution` repairs an incomplete running execution only; it does not continue the model loop or make any model/provider request. Recovery reads only the suffix beginning at the active ToolUse cursor, validates the exact call IDs, names, and canonical input hashes, and accepts only later, non-duplicate results for that batch. It rejects unrelated transcript advances. Recovery repairs a crash between `Planned` and `Ready`, clears a batch whose results are already canonical, and replays an `InFlight` call only when that call was declared `tool.WithReplaySafe()`. It reuses the exact idempotency key. An unsafe ambiguous call returns `*agent.ToolExecutionUncertainError` (matching `agent.ErrToolExecutionUncertain`) without calling the handler. Detached background tools are never automatically replayed by this mechanism.
+`RecoverExecution` repairs an incomplete running execution only; it does not continue the model loop or make any model/provider request. Recovery reads only the suffix beginning at the active ToolUse cursor, validates the exact call IDs, names, and canonical input hashes, and accepts only later, non-duplicate results for that batch. It rejects unrelated transcript advances. Recovery repairs a crash between `Planned` and `Ready`, clears a batch whose results are already canonical, and replays an `InFlight` call only when that call was declared `tool.WithReplaySafe()`. It reuses the exact idempotency key. An unsafe ambiguous call returns `*agent.ToolExecutionUncertainError` (matching `agent.ErrToolExecutionUncertain`) without calling the handler.
 
 An approval-required Ready batch recovers as a durable pause before any sibling handler is run. Human allow/deny decisions are saved in the active call state before handlers resume, so recovery after `Resume` uses the same decisions.
 
@@ -174,7 +172,7 @@ Use `ToolResolutionFailed` to append an error ToolResult or `ToolResolutionRetry
 
 A ToolResult append has a mandatory durability barrier: when the configured conversation store implements `Flusher`, the agent must receive a successful `Flush` before it marks calls completed, clears the active batch, or clears a manual-resolution claim. This applies even when `WithSyncConversation` is not enabled. If an append committed but its flush acknowledgement is lost, recovery recognizes the canonical result, retries the barrier without replaying the handler or duplicating the result, and only then clears recovery state.
 
-This mechanism intentionally does not add provider-response replay, durable background-worker execution, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
+This mechanism intentionally does not add provider-response replay, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
 
 ### Operational limits
 

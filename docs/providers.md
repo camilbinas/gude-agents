@@ -87,16 +87,14 @@ The catalog intentionally covers only current models with primary-source evidenc
 | Direct Anthropic Claude Sonnet 4.6, Sonnet 5 | 1,000,000 | 128,000 | Native schema output unavailable through Gude | [Anthropic model overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview) |
 | Direct Anthropic Claude Sonnet 5.5, Opus 5.5 | 1,000,000 | 128,000 | Auto tool use supported; required/named forced choice unsupported; native schema output unavailable through Gude | [Anthropic Sonnet 5.5 changes](https://platform.claude.com/docs/en/models/sonnet-5-5/whats-new-sonnet-5-5) · [Anthropic Opus 5.5 changes](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5) |
 | OpenAI GPT-5.6 / GPT-5.6 Sol | 1,050,000 | 128,000 | Function calling supported; native structured outputs exist upstream but are not yet implemented by Gude's Chat Completions adapter | [OpenAI model page](https://platform.openai.com/docs/models/gpt-5.6) |
-| Gemini 3.8 Flash | 1,048,576 | 65,536 | Function calling supported; native structured outputs exist upstream but are not yet implemented by Gude | [Google model page](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) |
 
-The native structured-output column describes what can be used through the configured Gude provider, not the underlying model in isolation. This distinction is why OpenAI and Gemini remain `agent.Unsupported` for `NativeStructuredOutput` until their adapters implement a native response-schema path.
+The native structured-output column describes what can be used through the configured Gude provider, not the underlying model in isolation. This distinction is why OpenAI remains `agent.Unsupported` for `NativeStructuredOutput` until its adapter implements a native response-schema path.
 
 
 ## Built-ins
 
 - [Anthropic](providers/anthropic.md)
 - [Amazon Bedrock](providers/bedrock.md)
-- [Gemini](providers/gemini.md)
 - [OpenAI and compatible endpoints](providers/openai.md)
 - [Ollama](providers/ollama.md)
 - [vLLM](providers/vllm.md)

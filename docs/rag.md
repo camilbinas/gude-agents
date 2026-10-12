@@ -71,7 +71,7 @@ for i, chunk := range chunks {
 
 `SplitText` counts runes. `chunkSize` must be positive and `overlap` must be in `[0, chunkSize)`.
 
-The package includes an in-memory manager plus PostgreSQL and Redis stores; embedder integrations include Bedrock, Gemini, and OpenAI. Bedrock also provides Knowledge Base retrieval and reranking. Choose a backend that explicitly supports any metadata/full-text capability you use.
+The package includes an in-memory manager plus PostgreSQL and Redis stores; embedder integrations include Bedrock and OpenAI. Bedrock also provides Knowledge Base retrieval and reranking. Choose a backend that explicitly supports any metadata/full-text capability you use.
 
 ## Backend and managed retriever setup
 

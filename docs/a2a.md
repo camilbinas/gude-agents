@@ -1,5 +1,7 @@
 # Agent-to-Agent protocol
 
+> **Status: experimental.** A2A is not part of the stable v1 compatibility promise. See the [support matrix](support-matrix.md).
+
 `agent/a2a` exposes configured agents over A2A and converts remote agent skills into ordinary tools.
 
 ## Serve an agent

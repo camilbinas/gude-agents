@@ -315,17 +315,6 @@ func WithMaxOutputTokens(n int) Option {
 	}
 }
 
-// WithBackgroundNotify registers a callback that is invoked after a Background_Tool's
-// Re_Entry_Turn completes successfully. The callback receives the Conversation_ID and
-// the final assistant message produced by the reactive turn. The callback is wired onto
-// the backgroundRegistry at construction time (see agent.New).
-func WithBackgroundNotify(fn func(conversationID, agentMessage string)) Option {
-	return func(a *Agent) error {
-		a.bgNotify = fn
-		return nil
-	}
-}
-
 // WithCaching enables all supported prompt caching. It sets CachingEnabled on
 // each provider call (causing providers to automatically inject cache markers
 // on DocumentBlocks and system prompts) and enables summary caching on any

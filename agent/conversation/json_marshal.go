@@ -7,7 +7,7 @@ import (
 )
 
 // jsonContentBlock is the JSON envelope for an agent.ContentBlock with a type
-// discriminator field. Used by the Redis, blob, and DynamoDB memory drivers.
+// discriminator field. Used by the Redis memory driver.
 type jsonContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`

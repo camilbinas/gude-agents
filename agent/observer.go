@@ -142,8 +142,7 @@ type LimitRecord struct {
 	Duration  time.Duration
 }
 
-// ToolLogRecord describes a log message emitted by a tool or background-tool
-// lifecycle operation.
+// ToolLogRecord describes a log message emitted by a tool.
 type ToolLogRecord struct {
 	Phase          Phase
 	CallID         string

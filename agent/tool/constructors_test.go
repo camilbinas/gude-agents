@@ -22,7 +22,7 @@ func TestNewSimple_SchemaAndHandler(t *testing.T) {
 	if !reflect.DeepEqual(tl.Spec.InputSchema, objectSchema) {
 		t.Fatalf("schema = %#v, want %#v", tl.Spec.InputSchema, objectSchema)
 	}
-	if tl.IsRich() || tl.IsBackground() || tl.RichHandler != nil {
+	if tl.IsRich() || tl.RichHandler != nil {
 		t.Fatal("NewSimple must produce a plain tool")
 	}
 	for _, input := range []string{`{}`, `{"ignored":1}`} {

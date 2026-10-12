@@ -220,27 +220,6 @@ func TestDurableToolBoundaryPersistsIntentBeforeHandlerAndClearsAfterResult(t *t
 	}
 }
 
-func TestReplaySafeBackgroundDispatchRemainsUncertain(t *testing.T) {
-	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
-	seedInFlightToolExecution(t, conversations, executions, true)
-	// The seeded call is represented as a plain tool so this test verifies the
-	// recovery policy from the registered background definition instead.
-	background := tool.NewBackground("charge", "charge", "accepted", func(context.Context, json.RawMessage) (string, error) {
-		t.Fatal("background handler must not be replayed")
-		return "", nil
-	}, tool.WithReplaySafe())
-	a, err := New(newScriptedProvider(), "x", WithTools(background), WithConversationStore(conversations), WithExecutionStore(executions))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Persisted replay policy is the source of truth. A legacy/inconsistent
-	// record marked replay-safe is still not dispatched as a background tool.
-	_, err = a.RecoverExecution(Background(), "execution-1")
-	if err == nil || !errors.Is(err, ErrToolExecutionUncertain) {
-		t.Fatalf("RecoverExecution error = %v, want uncertainty", err)
-	}
-}
-
 func TestConcurrentRecoveryHasOneSameAgentWinner(t *testing.T) {
 	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
 	seedInFlightToolExecution(t, conversations, executions, true)

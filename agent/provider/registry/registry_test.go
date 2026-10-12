@@ -2,6 +2,8 @@ package registry
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -157,5 +159,54 @@ func TestNames(t *testing.T) {
 	names := Names()
 	if len(names) != 2 {
 		t.Fatalf("expected 2 names, got %d: %v", len(names), names)
+	}
+}
+
+func TestRegisterBuiltinsRegistersExactlyTheSupportedProviders(t *testing.T) {
+	mu.Lock()
+	old := registry
+	registry = make(map[string]entry)
+	mu.Unlock()
+	defer func() {
+		mu.Lock()
+		registry = old
+		mu.Unlock()
+	}()
+
+	RegisterBuiltins()
+
+	got := Names()
+	sort.Strings(got)
+	want := []string{"anthropic", "bedrock", "ollama", "openai"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("built-in providers = %v, want %v", got, want)
+	}
+
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, name := range want {
+		e := registry[name]
+		if e.cheapest == nil || e.standard == nil || e.smartest == nil {
+			t.Errorf("built-in %q is missing a tier factory", name)
+		}
+	}
+}
+
+func TestNew_UnregisteredBuiltinNameReturnsError(t *testing.T) {
+	mu.Lock()
+	old := registry
+	registry = make(map[string]entry)
+	mu.Unlock()
+	defer func() {
+		mu.Lock()
+		registry = old
+		mu.Unlock()
+	}()
+
+	RegisterBuiltins()
+
+	// vLLM is intentionally not a built-in tier provider.
+	if _, err := New("vllm", Standard); err == nil {
+		t.Fatal("expected an error for a provider that is not registered")
 	}
 }

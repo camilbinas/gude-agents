@@ -32,7 +32,7 @@ result, err := a.Invoke(ctx, "What changed?")
 
 ## Integrate and operate
 
-- [Providers](providers.md): [Anthropic](providers/anthropic.md), [Amazon Bedrock](providers/bedrock.md), [Gemini](providers/gemini.md), [OpenAI](providers/openai.md), [Ollama](providers/ollama.md), and [vLLM](providers/vllm.md)
+- [Providers](providers.md): [Anthropic](providers/anthropic.md), [Amazon Bedrock](providers/bedrock.md), [OpenAI](providers/openai.md), [Ollama](providers/ollama.md), and [vLLM](providers/vllm.md)
 - [HTTP services](http.md), [MCP](mcp.md), and [A2A](a2a.md)
 - [Observability and audit](observability.md)
 - [Release support matrix](support-matrix.md) and [deterministic evaluation cases](evaluation-cases-v1.md)

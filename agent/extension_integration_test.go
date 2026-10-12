@@ -222,6 +222,52 @@ func TestAgent_ShutdownCallsConversationFlusher(t *testing.T) {
 	}
 }
 
+// failingFlusher is a ConversationStore whose Flush blocks until release is
+// closed or the context ends, then returns flushErr.
+type failingFlusher struct {
+	*testMemoryStore
+	release  chan struct{}
+	flushErr error
+}
+
+func (f *failingFlusher) Flush(ctx context.Context) error {
+	select {
+	case <-f.release:
+		return f.flushErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestAgent_ShutdownReturnsFlushError(t *testing.T) {
+	want := errors.New("flush failed")
+	release := make(chan struct{})
+	close(release)
+	a, err := New(newScriptedProvider(), "sys", WithConversationStore(&failingFlusher{
+		testMemoryStore: newTestMemoryStore(), release: release, flushErr: want,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Shutdown(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Shutdown error = %v, want %v", err, want)
+	}
+}
+
+func TestAgent_ShutdownHonorsContextWhileFlushing(t *testing.T) {
+	a, err := New(newScriptedProvider(), "sys", WithConversationStore(&failingFlusher{
+		testMemoryStore: newTestMemoryStore(), release: make(chan struct{}),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown error = %v, want context.Canceled", err)
+	}
+}
+
 func TestAgent_Close_NoopWithoutConversation(t *testing.T) {
 	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
 	a, err := New(sp, "sys")
