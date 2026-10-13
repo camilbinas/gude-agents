@@ -173,6 +173,49 @@ func TestToBedrockContentBlocks_Empty(t *testing.T) {
 	}
 }
 
+func TestToBedrockContentBlocks_BlankTextDropped(t *testing.T) {
+	// Bedrock rejects blank text content blocks, so an empty TextBlock must
+	// not be emitted. A following non-empty block should survive.
+	blocks, err := toBedrockContentBlocks([]agent.ContentBlock{
+		agent.TextBlock{Text: ""},
+		agent.ToolUseBlock{ToolUseID: "tu-1", Name: "search", Input: json.RawMessage(`{}`)},
+	}, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected blank text dropped (1 block), got %d", len(blocks))
+	}
+	if _, ok := blocks[0].(*types.ContentBlockMemberToolUse); !ok {
+		t.Errorf("expected surviving block to be tool use, got %T", blocks[0])
+	}
+}
+
+func TestToBedrockMessages_AllBlankTextGetsPlaceholder(t *testing.T) {
+	// A message whose only block is blank text would otherwise serialize to an
+	// empty content array, which Bedrock also rejects. The builder substitutes
+	// a minimal placeholder so the request stays valid.
+	msgs, err := toBedrockMessages([]agent.Message{
+		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: ""}}},
+	}, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].Content) != 1 {
+		t.Fatalf("expected 1 placeholder block, got %d", len(msgs[0].Content))
+	}
+	tb, ok := msgs[0].Content[0].(*types.ContentBlockMemberText)
+	if !ok {
+		t.Fatalf("expected placeholder text block, got %T", msgs[0].Content[0])
+	}
+	if tb.Value == "" {
+		t.Error("placeholder text must not be blank")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // toBedrockMessages
 // ---------------------------------------------------------------------------
