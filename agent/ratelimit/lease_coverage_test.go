@@ -129,3 +129,95 @@ func TestLeaseOnlyFixedWindowResetsAdmission(t *testing.T) {
 		t.Fatalf("next fixed window Reserve = %v, %v", ok, err)
 	}
 }
+
+func TestMemoryRPMOnlyTerminalRetentionExpiresAtRequestWindow(t *testing.T) {
+	store := memoryStore(t)
+	now := time.Unix(0, 0)
+	store.now = func() time.Time { return now }
+	reservation := Reservation{ID: "rpm", Requests: []RequestCounter{{Key: "customer", Limit: 10, Window: time.Minute, Strategy: SlidingWindow}}}
+	ok, err := store.Reserve(context.Background(), reservation)
+	if err != nil || !ok {
+		t.Fatalf("Reserve = %v, %v", ok, err)
+	}
+	if err := store.Commit(context.Background(), reservation.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(59 * time.Second)
+	_, _ = store.Reserve(context.Background(), Reservation{ID: "trigger-before", Requests: []RequestCounter{{Key: "other", Limit: 10, Window: time.Minute, Strategy: SlidingWindow}}})
+	if err := store.Commit(context.Background(), reservation.ID, 0); !errors.Is(err, agent.ErrRateLimitLeaseTerminal) {
+		t.Fatalf("RPM terminal lease expired early: %v", err)
+	}
+	now = now.Add(2 * time.Second)
+	_, _ = store.Reserve(context.Background(), Reservation{ID: "trigger-after", Requests: []RequestCounter{{Key: "other", Limit: 10, Window: time.Minute, Strategy: SlidingWindow}}})
+	if err := store.Commit(context.Background(), reservation.ID, 0); !errors.Is(err, agent.ErrRateLimitLeaseUnknown) {
+		t.Fatalf("RPM terminal lease retained too long: %v", err)
+	}
+}
+
+func TestLeaseGlobalRequestRejectionDoesNotChargePerKey(t *testing.T) {
+	store := memoryStore(t)
+	global := Reservation{ID: "fill-global", Requests: []RequestCounter{{Key: "global", Limit: 1, Window: time.Minute, Strategy: SlidingWindow}}}
+	if ok, err := store.Reserve(context.Background(), global); err != nil || !ok {
+		t.Fatalf("fill global = %v, %v", ok, err)
+	}
+	rejected := Reservation{ID: "rejected", Requests: []RequestCounter{
+		{Key: "key:a", Limit: 10, Window: time.Minute, Strategy: SlidingWindow},
+		{Key: "global", Limit: 1, Window: time.Minute, Strategy: SlidingWindow},
+	}}
+	if ok, err := store.Reserve(context.Background(), rejected); err != nil || ok {
+		t.Fatalf("global rejection = %v, %v", ok, err)
+	}
+	store.mu.Lock()
+	counter := store.counters["r:key:a"]
+	count := 0
+	if counter != nil {
+		count = counter.requestCount()
+	}
+	store.mu.Unlock()
+	if count != 0 {
+		t.Fatalf("per-key RPM was charged on global rejection: %d", count)
+	}
+}
+
+func TestLeaseBlockModeUnblocksAfterWindowExpiry(t *testing.T) {
+	limiter := limiterForTest(t, RequestRateLimit(1, 1), WithBlock())
+	first, err := limiter.Reserve(context.Background(), agent.RateLimitRequest{Key: "customer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = limiter.Release(context.Background(), first) }()
+	done := make(chan error, 1)
+	go func() {
+		_, err := limiter.Reserve(context.Background(), agent.RateLimitRequest{Key: "customer"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("blocked reservation returned early: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked reservation did not unblock after window expiry")
+	}
+}
+
+func TestLeaseFixedWindowTokensAndGlobalLimits(t *testing.T) {
+	store := memoryStore(t)
+	now := time.Unix(0, 0)
+	store.now = func() time.Time { return now }
+	reservation := Reservation{ID: "one", Tokens: []TokenReservation{
+		{Key: "key:a", Limit: 10, Window: time.Minute, Strategy: FixedWindow, Amount: 6},
+		{Key: "global", Limit: 10, Window: time.Minute, Strategy: FixedWindow, Amount: 6},
+	}}
+	if ok, err := store.Reserve(context.Background(), reservation); err != nil || !ok {
+		t.Fatalf("first reserve = %v, %v", ok, err)
+	}
+	reservation.ID = "two"
+	if ok, err := store.Reserve(context.Background(), reservation); err != nil || ok {
+		t.Fatalf("fixed global token rejection = %v, %v", ok, err)
+	}
+	now = now.Add(time.Minute + time.Nanosecond)
+	if ok, err := store.Reserve(context.Background(), reservation); err != nil || !ok {
+		t.Fatalf("fixed token reserve after reset = %v, %v", ok, err)
+	}
+}
