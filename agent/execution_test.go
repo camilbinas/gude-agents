@@ -103,7 +103,7 @@ func TestExecutionPauseLoadInterruptAndResume(t *testing.T) {
 	if paused.StopReason != StopInterrupt || paused.Interrupt == nil || paused.ExecutionID != paused.Interrupt.ExecutionID {
 		t.Fatalf("pause = %+v", paused)
 	}
-	if len(paused.Interrupt.Messages) != 0 || paused.Interrupt.ExecutionVersion == 0 {
+	if paused.Interrupt.ExecutionVersion == 0 {
 		t.Fatalf("interrupt = %+v", paused.Interrupt)
 	}
 	execution, err := executions.Load(context.Background(), paused.ExecutionID)
@@ -193,21 +193,101 @@ func TestExecutionConversationConflictPreventsSideEffects(t *testing.T) {
 	}
 }
 
-func TestStatelessPauseResumeStillWorks(t *testing.T) {
+func pauseTestTools() (tool.Tool, tool.Tool) {
 	approve := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
-	a, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call", Name: "approve", Input: json.RawMessage(`{}`)}}}, &ModelResponse{Text: "done"}), "x", WithTools(approve))
+	human := NewHumanInputTool("ask_human", "Ask a human for input")
+	return approve, human
+}
+
+// TestPauseRequiresConversationAndExecutionStores covers every store
+// combination that is missing at least one half of the pause model.
+func TestPauseRequiresConversationAndExecutionStores(t *testing.T) {
+	approve, human := pauseTestTools()
+	toolCalls := map[string]*ModelResponse{
+		"approval":    {ToolCalls: []tool.Call{{ToolUseID: "call", Name: "approve", Input: json.RawMessage(`{}`)}}},
+		"human_input": {ToolCalls: []tool.Call{{ToolUseID: "call", Name: human.Spec.Name, Input: json.RawMessage(`{"reason":"r","question":"q?"}`)}}},
+	}
+	stores := map[string]func() []Option{
+		"no stores":         func() []Option { return nil },
+		"conversation only": func() []Option { return []Option{WithConversationStore(newTestMemoryStore())} },
+	}
+	for kind, response := range toolCalls {
+		for name, build := range stores {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				a, err := New(newScriptedProvider(response), "x", append(build(), WithTools(approve, human))...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := Background()
+				if name == "conversation only" {
+					ctx = ctx.WithConversationID("c")
+				}
+				res, err := a.Invoke(ctx, "go")
+				if !errors.Is(err, ErrPauseStorageRequired) {
+					t.Fatalf("Invoke error = %v, want ErrPauseStorageRequired", err)
+				}
+				if res.Interrupt != nil || res.StopReason == StopInterrupt {
+					t.Fatalf("result = %+v, want no interrupt", res)
+				}
+			})
+		}
+	}
+}
+
+func TestPauseHandlerDoesNotRunWithoutStores(t *testing.T) {
+	var calls atomic.Int32
+	approve := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) {
+		calls.Add(1)
+		return "ok", nil
+	}, tool.RequiresApproval())
+	a, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call", Name: "approve", Input: json.RawMessage(`{}`)}}}), "x", WithTools(approve))
 	if err != nil {
 		t.Fatal(err)
 	}
-	paused, err := a.Invoke(Background(), "go")
+	if _, err := a.Invoke(Background(), "go"); !errors.Is(err, ErrPauseStorageRequired) {
+		t.Fatalf("Invoke error = %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("gated handler ran %d times without a pause", calls.Load())
+	}
+}
+
+func TestResumeRequiresConversationAndExecutionStores(t *testing.T) {
+	a, err := New(newScriptedProvider(&ModelResponse{Text: "done"}), "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paused.Interrupt.Messages) == 0 {
-		t.Fatal("stateless pause lost local snapshot")
+	in := &Interrupt{ExecutionID: "e", ExecutionVersion: 1, Type: InterruptApproval, Approval: &ApprovalInterrupt{Calls: []ApprovalCall{{CallID: "c", Name: "approve"}}}}
+	if _, err := a.Resume(Background(), in, Approve()); !errors.Is(err, ErrPauseStorageRequired) {
+		t.Fatalf("Resume error = %v, want ErrPauseStorageRequired", err)
 	}
-	if _, err := a.Resume(Background(), paused.Interrupt, Approve()); err != nil {
+}
+
+func TestPauseResumeWithExplicitMemoryStores(t *testing.T) {
+	approve, _ := pauseTestTools()
+	_, executions, stores := pauseStores()
+	a, err := New(newScriptedProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call", Name: "approve", Input: json.RawMessage(`{}`)}}},
+		&ModelResponse{Text: "done"},
+	), "x", append(stores, WithTools(approve))...)
+	if err != nil {
 		t.Fatal(err)
+	}
+	ctx := Background().WithConversationID("c")
+	paused, err := a.Invoke(ctx, "go")
+	if err != nil || paused.Interrupt == nil {
+		t.Fatalf("pause = %+v, %v", paused, err)
+	}
+	stored, err := executions.Load(context.Background(), paused.ExecutionID)
+	if err != nil || stored.Status != ExecutionPaused {
+		t.Fatalf("stored execution = %+v, %v", stored, err)
+	}
+	result, err := a.Resume(ctx, paused.Interrupt, Approve())
+	if err != nil || result.Text != "done" {
+		t.Fatalf("resume = %+v, %v", result, err)
+	}
+	if _, err := a.Resume(ctx, paused.Interrupt, Approve()); !errors.Is(err, ErrExecutionConflict) {
+		t.Fatalf("second resume error = %v, want ErrExecutionConflict", err)
 	}
 }
 
@@ -366,18 +446,15 @@ func TestExecutionPauseProjectionDoesNotAliasStoreState(t *testing.T) {
 }
 
 func TestResumeUsesCanonicalConversationIdentity(t *testing.T) {
-	for _, durable := range []bool{false, true} {
-		t.Run(map[bool]string{false: "local", true: "durable"}[durable], func(t *testing.T) {
+	{
+		t.Run("durable", func(t *testing.T) {
 			var seen string
 			approve := tool.NewRaw("approve", "approve", nil, func(ctx context.Context, _ json.RawMessage) (string, error) {
 				seen = FromContext(ctx).ConversationID()
 				return "ok", nil
 			}, tool.RequiresApproval())
 			conversations := newTestMemoryStore()
-			opts := []Option{WithTools(approve), WithConversationStore(conversations)}
-			if durable {
-				opts = append(opts, WithExecutionStore(newTestExecutionStore()))
-			}
+			opts := []Option{WithTools(approve), WithConversationStore(conversations), WithExecutionStore(newTestExecutionStore())}
 			a, err := New(newScriptedProvider(
 				&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call", Name: "approve", Input: json.RawMessage(`{}`)}}},
 				&ModelResponse{Text: "done"},

@@ -20,7 +20,7 @@ Child execution receives a clone of the parent invocation context: cancellation,
 
 When a child has a `ConversationStore`, `AgentAsTool` automatically isolates it from the parent transcript. The child conversation ID is deterministically derived from the parent conversation ID, tool-call ID, wrapper tool name, and child agent identity. Normal callers should not manually invent a separate child ID. A persistent child therefore requires the parent invocation to have a conversation ID and to be inside a tool call.
 
-Child interrupts do not propagate through `AgentAsTool`. If a child pauses for approval or human input, the wrapper consumes the child interrupt and returns a tool error to the parent; durable child continuation is not yet supported through this adapter.
+Child interrupts do not propagate through `AgentAsTool`. A child follows the same rule as any agent: pausing needs both a conversation store and an execution store, and a child without them fails with `agent.ErrPauseStorageRequired`, which the parent sees as a tool error. If a child that does have both stores pauses for approval or human input, the wrapper cancels the child execution and returns a tool error to the parent; child continuation is not supported through this adapter.
 
 Tool calls run in parallel by default, so independent specialist calls execute simultaneously. Use `agent.WithSequentialTools()` when child operations are not independent and must run one at a time.
 

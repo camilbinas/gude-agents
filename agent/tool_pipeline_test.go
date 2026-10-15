@@ -329,7 +329,7 @@ func TestNewSimple_RunsThroughCanonicalPipeline(t *testing.T) {
 			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "health", Input: json.RawMessage(`{}`)}}},
 			&ModelResponse{Text: "done"},
 		)
-		a, err := New(p, "sys", WithTools(health), WithRoleEnforcement())
+		a, err := New(p, "sys", withPauseStores(), WithTools(health), WithRoleEnforcement())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -338,7 +338,7 @@ func TestNewSimple_RunsThroughCanonicalPipeline(t *testing.T) {
 
 	t.Run("executes", func(t *testing.T) {
 		var calls atomic.Int32
-		res, err := newAgent(t, &calls).Invoke(Background(), "check")
+		res, err := newAgent(t, &calls).Invoke(Background().WithConversationID("simple-pipeline"), "check")
 		if err != nil || res.Text != "done" || calls.Load() != 1 {
 			t.Fatalf("text=%q err=%v calls=%d", res.Text, err, calls.Load())
 		}
@@ -346,7 +346,7 @@ func TestNewSimple_RunsThroughCanonicalPipeline(t *testing.T) {
 
 	t.Run("approval interrupts before handler", func(t *testing.T) {
 		var calls atomic.Int32
-		res, err := newAgent(t, &calls, tool.RequiresApproval()).Invoke(Background(), "check")
+		res, err := newAgent(t, &calls, tool.RequiresApproval()).Invoke(Background().WithConversationID("simple-pipeline"), "check")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +360,7 @@ func TestNewSimple_RunsThroughCanonicalPipeline(t *testing.T) {
 
 	t.Run("role policy denies", func(t *testing.T) {
 		var calls atomic.Int32
-		ctx := Background().WithPrincipal(Principal{ID: "u", Roles: []string{"guest"}})
+		ctx := Background().WithConversationID("simple-pipeline").WithPrincipal(Principal{ID: "u", Roles: []string{"guest"}})
 		if _, err := newAgent(t, &calls, tool.AllowRoles("admin")).Invoke(ctx, "check"); err != nil {
 			t.Fatal(err)
 		}

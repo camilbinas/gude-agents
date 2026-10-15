@@ -35,6 +35,24 @@ type ConversationSnapshot struct {
 // returns ErrConversationConflict without changing history. An empty Append is
 // a checked no-op: it requires the expected revision and returns the current
 // cursor without creating a conversation or advancing either value.
+//
+// A successful Append is committed before it returns, according to the
+// persistence model the implementation documents:
+//
+//  1. The supplied messages were appended atomically under the revision CAS.
+//  2. The returned cursor describes a state that a subsequent Load or
+//     LoadAfter on the same store observes.
+//  3. The write is committed, not queued. A store that advertises crash
+//     recovery (PostgreSQL, Redis with persistence, SQLite on disk) must not
+//     acknowledge a write that can disappear after a crash. A memory-backed
+//     store satisfies the contract within the running process only; its
+//     history is lost when the process exits.
+//
+// The engine relies on this for its ordering protocol: it appends messages,
+// then records the returned cursor in the ExecutionStore. That is an ordering
+// rule, not a distributed transaction. The two stores commit independently, so
+// a crash between them is repaired by RecoverExecution rather than rolled back.
+// No later flush step exists or is assumed.
 type ConversationStore interface {
 	// Load returns the complete canonical transcript. It is for export,
 	// auditing, debugging and forking; normal model calls should use LoadAfter.
@@ -69,12 +87,6 @@ type ConversationManager interface {
 	ConversationStore
 	List(ctx context.Context) ([]string, error)
 	Delete(ctx context.Context, conversationID string) error
-}
-
-// Flusher is implemented by stores that perform asynchronous persistence work.
-// Flush waits until work accepted before the call has completed or ctx expires.
-type Flusher interface {
-	Flush(ctx context.Context) error
 }
 
 // ErrConversationConflict indicates Append's expected revision was stale.

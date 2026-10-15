@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -18,10 +17,11 @@ const (
 	InterruptHumanInput InterruptType = "human_input"
 )
 
-// Interrupt is a public projection of a paused Execution. For durable
-// stateful executions it references canonical history with ExecutionID,
-// ExecutionVersion, ConversationID, Revision, and LastSequence. Messages is
-// retained only for private same-process stateless resume fallback.
+// Interrupt is a public projection of a paused Execution. It references
+// canonical history with ExecutionID, ExecutionVersion, ConversationID,
+// Revision, and LastSequence. A pause is always backed by both a
+// ConversationStore (the transcript) and an ExecutionStore (the resumable
+// state); see ErrPauseStorageRequired.
 type Interrupt struct {
 	ExecutionID      string `json:"execution_id"`
 	ExecutionVersion uint64 `json:"execution_version"`
@@ -33,7 +33,6 @@ type Interrupt struct {
 
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`
 	Input    *InputInterrupt    `json:"input,omitempty"`
-	Messages []Message          `json:"-"`
 }
 
 type ApprovalInterrupt struct {
@@ -198,88 +197,4 @@ func NewHumanInputTool(name, description string) tool.Tool {
 		c.call.setHumanInput(&InputInterrupt{Reason: p.Reason, Question: p.Question})
 		return humanInputPausedResult, nil
 	})
-}
-
-// localPauseRegistry is private in-process pause bookkeeping for stateless
-// agents. It is not durable and is deliberately not an ExecutionStore.
-type localPauseRegistry struct {
-	mu    sync.Mutex
-	items map[string]*Interrupt
-}
-
-func newLocalPauseRegistry() *localPauseRegistry {
-	return &localPauseRegistry{items: make(map[string]*Interrupt)}
-}
-func (s *localPauseRegistry) create(in *Interrupt) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.items[in.ExecutionID]; ok {
-		return fmt.Errorf("execution %q: %w", in.ExecutionID, ErrExecutionConflict)
-	}
-	s.items[in.ExecutionID] = cloneInterrupt(in)
-	return nil
-}
-func (s *localPauseRegistry) claim(id string, version uint64) (*Interrupt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	in, ok := s.items[id]
-	if !ok {
-		return nil, fmt.Errorf("execution %q: %w", id, ErrExecutionConflict)
-	}
-	if in.ExecutionVersion != version {
-		return nil, fmt.Errorf("execution %q: %w", id, ErrExecutionConflict)
-	}
-	delete(s.items, id)
-	return cloneInterrupt(in), nil
-}
-func cloneInterrupt(in *Interrupt) *Interrupt {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	if in.Approval != nil {
-		a := *in.Approval
-		a.Calls = append([]ApprovalCall(nil), a.Calls...)
-		for i := range a.Calls {
-			a.Calls[i].Input = cloneRaw(a.Calls[i].Input)
-		}
-		out.Approval = &a
-	}
-	if in.Input != nil {
-		x := *in.Input
-		out.Input = &x
-	}
-	out.Messages = make([]Message, len(in.Messages))
-	for i, m := range in.Messages {
-		out.Messages[i].Role = m.Role
-		out.Messages[i].Content = make([]ContentBlock, len(m.Content))
-		for j, b := range m.Content {
-			out.Messages[i].Content[j] = cloneContentBlock(b)
-		}
-	}
-	return &out
-}
-func cloneContentBlock(block ContentBlock) ContentBlock {
-	switch b := block.(type) {
-	case ToolUseBlock:
-		b.Input = cloneRaw(b.Input)
-		return b
-	case ToolResultBlock:
-		b.Images = append([]ImageBlock(nil), b.Images...)
-		for i := range b.Images {
-			b.Images[i].Source.Data = append([]byte(nil), b.Images[i].Source.Data...)
-		}
-		return b
-	case ImageBlock:
-		b.Source.Data = append([]byte(nil), b.Source.Data...)
-		return b
-	case DocumentBlock:
-		b.Source.Data = append([]byte(nil), b.Source.Data...)
-		return b
-	case WidgetBlock:
-		b.Payload = cloneRaw(b.Payload)
-		return b
-	default:
-		return block
-	}
 }

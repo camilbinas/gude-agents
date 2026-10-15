@@ -1061,21 +1061,32 @@ func TestResumeSkipsCompletedGuardDeniedApprovalSibling(t *testing.T) {
 	}
 }
 
-type failToolResultFlushStore struct {
+// failToolResultAppendStore rejects Append calls that carry a tool result
+// while fail is set, simulating a store that cannot commit the result.
+type failToolResultAppendStore struct {
 	*testMemoryStore
 	fail atomic.Bool
 }
 
-func (s *failToolResultFlushStore) Flush(context.Context) error {
+func (s *failToolResultAppendStore) Append(ctx context.Context, id string, messages []Message, expectedRevision uint64) (ConversationCursor, error) {
 	if s.fail.Load() {
-		return errors.New("injected flush failure")
+		for _, message := range messages {
+			for _, block := range message.Content {
+				if _, ok := block.(ToolResultBlock); ok {
+					return ConversationCursor{}, errors.New("injected append failure")
+				}
+			}
+		}
 	}
-	return nil
+	return s.testMemoryStore.Append(ctx, id, messages, expectedRevision)
 }
 
-func TestToolResultFlushFailureRetainsRecoveryStateUntilAcknowledged(t *testing.T) {
+// TestToolResultAppendFailureLeavesCallUncertain verifies that a result that
+// could not be committed is never acknowledged: the unsafe call stays
+// InFlight, is not replayed, and requires reconciliation.
+func TestToolResultAppendFailureLeavesCallUncertain(t *testing.T) {
 	base, executions := newTestMemoryStore(), newTestExecutionStore()
-	conversations := &failToolResultFlushStore{testMemoryStore: base}
+	conversations := &failToolResultAppendStore{testMemoryStore: base}
 	conversations.fail.Store(true)
 	var calls atomic.Int32
 	charge := tool.NewRaw("charge", "charge", nil, func(context.Context, json.RawMessage) (string, error) { calls.Add(1); return "charged", nil })
@@ -1084,45 +1095,40 @@ func TestToolResultFlushFailureRetainsRecoveryStateUntilAcknowledged(t *testing.
 		t.Fatal(err)
 	}
 	result, err := a.Invoke(Background().WithConversationID("conversation"), "go")
-	if err == nil || !strings.Contains(err.Error(), "injected flush failure") {
+	if err == nil || !strings.Contains(err.Error(), "injected append failure") {
 		t.Fatalf("Invoke error = %v", err)
 	}
 	stored, err := executions.Load(context.Background(), result.ExecutionID)
 	if err != nil || stored.ToolBatch == nil || stored.ToolBatch.Calls[0].Status != ToolExecutionInFlight {
-		t.Fatalf("execution after failed flush = %+v, %v", stored, err)
-	}
-	if _, err := a.RecoverExecution(Background(), result.ExecutionID); err == nil {
-		t.Fatal("RecoverExecution succeeded while flush still fails")
+		t.Fatalf("execution after failed append = %+v, %v", stored, err)
 	}
 	conversations.fail.Store(false)
-	recovered, err := a.RecoverExecution(Background(), result.ExecutionID)
-	if err != nil || recovered.ToolBatch != nil || calls.Load() != 1 {
-		t.Fatalf("recovered=%+v err=%v handler calls=%d", recovered, err, calls.Load())
+	if _, err := a.RecoverExecution(Background(), result.ExecutionID); !errors.Is(err, ErrToolExecutionUncertain) {
+		t.Fatalf("RecoverExecution error = %v, want uncertainty", err)
 	}
-	snapshot, err := base.Load(context.Background(), "conversation")
-	if err != nil || len(snapshot.Messages) != 3 {
-		t.Fatalf("messages=%#v err=%v", snapshot.Messages, err)
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1 (no replay of an unsafe call)", calls.Load())
 	}
 }
 
-func TestResolutionClaimFlushFailureRetainsClaimUntilAcknowledged(t *testing.T) {
+func TestResolutionClaimAppendFailureRetainsClaimUntilAcknowledged(t *testing.T) {
 	base, executions := newTestMemoryStore(), newTestExecutionStore()
 	seeded := seedInFlightToolExecution(t, base, executions, false)
-	conversations := &failToolResultFlushStore{testMemoryStore: base}
+	conversations := &failToolResultAppendStore{testMemoryStore: base}
 	conversations.fail.Store(true)
 	a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.ReconcileToolExecution(Background(), seeded.ID, seeded.Version, "call-1", ToolResolution{Outcome: ToolResolutionSucceeded, Output: "captured"}); err == nil {
-		t.Fatal("reconciliation succeeded while flush fails")
+		t.Fatal("reconciliation succeeded while the result append fails")
 	}
 	claimed, err := executions.Load(context.Background(), seeded.ID)
 	if err != nil || claimed.ToolBatch == nil || claimed.ToolBatch.Resolution == nil {
-		t.Fatalf("claim after failed flush = %+v, %v", claimed, err)
+		t.Fatalf("claim after failed append = %+v, %v", claimed, err)
 	}
 	if _, err := a.RecoverExecution(Background(), seeded.ID); err == nil {
-		t.Fatal("claim recovery succeeded while flush fails")
+		t.Fatal("claim recovery succeeded while the result append fails")
 	}
 	conversations.fail.Store(false)
 	recovered, err := a.RecoverExecution(Background(), seeded.ID)
@@ -1182,7 +1188,7 @@ func TestRecoverExecutionFiltersCompletedSiblingBeforeReplay(t *testing.T) {
 	}
 }
 
-func TestStatelessApprovalResumeSkipsCompletedDeniedSibling(t *testing.T) {
+func TestApprovalResumeSkipsCompletedDeniedSibling(t *testing.T) {
 	var guardCalls, deniedHandlers, approvedHandlers atomic.Int32
 	denied := tool.NewRaw("denied", "denied", nil, func(context.Context, json.RawMessage) (string, error) {
 		deniedHandlers.Add(1)
@@ -1198,11 +1204,11 @@ func TestStatelessApprovalResumeSkipsCompletedDeniedSibling(t *testing.T) {
 	a, err := New(newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "denied", Name: "denied", Input: json.RawMessage(`{}`)}, {ToolUseID: "approved", Name: "approved", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "done"},
-	), "x", WithTools(denied, approved))
+	), "x", withPauseStores(), WithTools(denied, approved))
 	if err != nil {
 		t.Fatal(err)
 	}
-	paused, err := a.Invoke(Background(), "go")
+	paused, err := a.Invoke(Background().WithConversationID("denied-sibling"), "go")
 	if err != nil || paused.Interrupt == nil || paused.Interrupt.Approval == nil {
 		t.Fatalf("Invoke = %+v, %v", paused, err)
 	}

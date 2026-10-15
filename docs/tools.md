@@ -73,7 +73,7 @@ For rich tools that need raw input, use `json.RawMessage` as the type parameter 
 
 ## Options
 
-- `RequiresApproval()` pauses before execution.
+- `RequiresApproval()` pauses before execution. Pausing needs a `ConversationStore` and an `ExecutionStore`; see [Interrupts](interrupts.md).
 - `WithGuard(fn)` performs tool-specific policy validation.
 - `AllowRoles(...)`, `DenyRoles(...)`, and `AllowWhen(...)` apply authorization policy.
 - `WithSchema(schema)` replaces the generated/default JSON schema. Options apply after the constructor, so on `NewRaw` a `WithSchema` option overrides the positional schema.
@@ -170,7 +170,7 @@ execution, err := a.ReconcileToolExecution(
 
 Use `ToolResolutionFailed` to append an error ToolResult or `ToolResolutionRetry` to make the same call eligible for recovery again with its original key. Reconciliation is CAS-protected by `executionVersion`; a stale version returns `ErrExecutionConflict`.
 
-A ToolResult append has a mandatory durability barrier: when the configured conversation store implements `Flusher`, the agent must receive a successful `Flush` before it marks calls completed, clears the active batch, or clears a manual-resolution claim. This applies even when `WithSyncConversation` is not enabled. If an append committed but its flush acknowledgement is lost, recovery recognizes the canonical result, retries the barrier without replaying the handler or duplicating the result, and only then clears recovery state.
+A ToolResult append is the durability boundary: the agent marks calls completed, clears the active batch, or clears a manual-resolution claim only after `ConversationStore.Append` has returned successfully, because a successful `Append` is committed when it returns. If an append committed but its acknowledgement is lost (for example a crash before the execution record is updated), recovery recognizes the canonical result, completes the acknowledgement without replaying the handler or duplicating the result, and only then clears recovery state. The conversation and execution stores commit independently, so this is an ordering protocol with repair, not a distributed transaction.
 
 This mechanism intentionally does not add provider-response replay, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
 

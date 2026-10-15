@@ -188,50 +188,33 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 		}
 		c.cfg.executionID = spec.resume.ExecutionID
 		c.cfg.executionIDSet = true
-		var canonical *Interrupt
-		if a.executionStore != nil {
-			execution, err := a.executionStore.Load(c, spec.resume.ExecutionID)
-			if err != nil {
-				return Result{}, fmt.Errorf("load execution for resume: %w", err)
-			}
-			if execution.Status != ExecutionPaused || execution.Pause == nil || execution.Version != spec.resume.ExecutionVersion {
-				return Result{}, fmt.Errorf("resume execution %q: %w", spec.resume.ExecutionID, ErrExecutionConflict)
-			}
-			in := interruptFromExecution(execution)
-			if err := a.requireConversationID(in.ConversationID); err != nil {
-				return Result{}, fmt.Errorf("resume execution %q: %w", execution.ID, err)
-			}
-			if err := validateResume(in, spec.response); err != nil {
-				return Result{}, err
-			}
-			execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
-			claimed, err := a.executionStore.Save(c, execution, execution.Version)
-			if err != nil {
-				return Result{}, fmt.Errorf("claim execution for resume: %w", err)
-			}
-			in.ExecutionVersion = claimed.Version
-			canonical = in
-			c.cfg.executionResume = true
-			c.cfg.executionVersion = claimed.Version
-		} else {
-			if err := validateResume(spec.resume, spec.response); err != nil {
-				return Result{}, err
-			}
-			in, err := a.localPauses.claim(spec.resume.ExecutionID, spec.resume.ExecutionVersion)
-			if err != nil {
-				return Result{}, fmt.Errorf("claim local execution for resume: %w", err)
-			}
-			if err := a.requireConversationID(in.ConversationID); err != nil {
-				return Result{}, err
-			}
-			if err := validateResume(in, spec.response); err != nil {
-				return Result{}, err
-			}
-			in.ExecutionVersion++
-			canonical = in
-			c.cfg.executionResume = true
-			c.cfg.executionVersion = in.ExecutionVersion
+		if a.executionStore == nil || a.conversation == nil {
+			return Result{}, fmt.Errorf("resume execution %q: %w", spec.resume.ExecutionID, ErrPauseStorageRequired)
 		}
+		var canonical *Interrupt
+		execution, err := a.executionStore.Load(c, spec.resume.ExecutionID)
+		if err != nil {
+			return Result{}, fmt.Errorf("load execution for resume: %w", err)
+		}
+		if execution.Status != ExecutionPaused || execution.Pause == nil || execution.Version != spec.resume.ExecutionVersion {
+			return Result{}, fmt.Errorf("resume execution %q: %w", spec.resume.ExecutionID, ErrExecutionConflict)
+		}
+		in := interruptFromExecution(execution)
+		if err := a.requireConversationID(in.ConversationID); err != nil {
+			return Result{}, fmt.Errorf("resume execution %q: %w", execution.ID, err)
+		}
+		if err := validateResume(in, spec.response); err != nil {
+			return Result{}, err
+		}
+		execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
+		claimed, err := a.executionStore.Save(c, execution, execution.Version)
+		if err != nil {
+			return Result{}, fmt.Errorf("claim execution for resume: %w", err)
+		}
+		in.ExecutionVersion = claimed.Version
+		canonical = in
+		c.cfg.executionResume = true
+		c.cfg.executionVersion = claimed.Version
 		spec.resume = canonical
 		// Resume always uses the canonical paused conversation identity before
 		// lifecycle hooks, tools, guardrails, rate limiting, and provider work.
@@ -296,7 +279,9 @@ func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *r
 				r.execution, r.executionDurable = &execution, true
 			}
 		} else {
-			r.execution = &Execution{ID: c.cfg.executionID, Version: c.cfg.executionVersion}
+			// No ExecutionStore: ordinary runs only. The identity-only record
+			// is never persisted and a run on this path cannot pause.
+			r.execution = &Execution{ID: c.cfg.executionID}
 		}
 		res, err := body(r)
 		res.ExecutionID = c.cfg.executionID
@@ -582,13 +567,13 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 				// The canonical transcript owns all assistant text. Persist the
 				// pre-tool delta (including the user request) before Planned, then
 				// keep any accompanying assistant text in its own canonical turn.
-				if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
+				if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
 					return Result{}, err
 				}
 				if resp.Text != "" {
 					messages.appendCanonical(Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
-					if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
+					if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 						endIteration(0, false, err)
 						return Result{}, err
 					}
@@ -599,7 +584,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 				}
 				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls})
 				messages.appendCanonical(assistant)
-				if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
+				if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
 					return Result{}, err
 				}
@@ -655,7 +640,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 		if err := c.Err(); err != nil {
 			return Result{}, err
 		}
-		if _, err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
+		if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 			return Result{}, err
 		}
 		return Result{Text: finalText, StopReason: StopEndTurn, Metadata: resp.Metadata}, nil
@@ -924,8 +909,8 @@ func (r *run) beginToolExecution(callID, toolName string) (key string, recoveryR
 }
 
 // checkpointToolResults appends completed results before acknowledging their
-// durable intent records. A configured Flusher is mandatory at this boundary,
-// regardless of WithSyncConversation.
+// durable intent records. ConversationStore.Append is committed when it
+// returns, so the acknowledgement may follow it directly.
 func (r *run) checkpointToolResults(messages []Message, outcomes []toolOutcome) error {
 	if !r.executionDurable {
 		return nil
@@ -939,41 +924,20 @@ func (r *run) checkpointToolResults(messages []Message, outcomes []toolOutcome) 
 	if len(completed) == 0 {
 		return nil
 	}
-	committed, err := r.saveConversation(messages, r.c.rt.totalUsage())
-	if err != nil && !committed {
+	if err := r.saveConversation(messages, r.c.rt.totalUsage()); err != nil {
 		return err
-	}
-	if flushErr := r.flushToolResultBarrier(); flushErr != nil {
-		return errors.Join(err, flushErr)
 	}
 	return r.removeToolCalls(completed)
 }
 
 // completeCanonicalToolResults acknowledges result blocks found during
-// recovery/preparation. It deliberately flushes even when no append delta
-// remains, covering a lost acknowledgement after a committed append.
+// recovery/preparation, covering a lost acknowledgement after a committed
+// append.
 func (r *run) completeCanonicalToolResults(completed map[string]struct{}) error {
 	if len(completed) == 0 {
 		return nil
 	}
-	if err := r.flushToolResultBarrier(); err != nil {
-		return err
-	}
 	return r.removeToolCalls(completed)
-}
-
-func (r *run) flushToolResultBarrier() error {
-	if !r.hasConversation() {
-		return nil
-	}
-	flusher, ok := r.a.conversation.(Flusher)
-	if !ok {
-		return nil
-	}
-	if err := flusher.Flush(r.c); err != nil {
-		return fmt.Errorf("conversation flush: %w", err)
-	}
-	return nil
 }
 
 func (r *run) removeToolCalls(completed map[string]struct{}) error {
@@ -1135,7 +1099,7 @@ func (r *run) recoverToolUses(messages *[]Message) error {
 			content = append(content, ToolUseBlock{ToolUseID: call.CallID, Name: call.Name, Input: cloneRaw(call.Input)})
 		}
 		*messages = append(*messages, Message{Role: RoleAssistant, Content: content})
-		if _, err := r.saveConversation(*messages, r.c.rt.totalUsage()); err != nil {
+		if err := r.saveConversation(*messages, r.c.rt.totalUsage()); err != nil {
 			return err
 		}
 	}
@@ -1194,7 +1158,7 @@ func activeToolBatch(messages []Message, batch *ToolBatchExecution) ([]tool.Call
 
 // prepareToolBatch is the shared durable dispatch preflight for invocation,
 // approval resume, and recovery. It validates the active ToolUse boundary,
-// acknowledges canonical results through the required flush barrier, filters
+// acknowledges canonical results, filters
 // completed calls, and realigns decisions to the calls that remain.
 func (r *run) prepareToolBatch(messages []Message, requested []tool.Call, decisions []*tool.Decision) ([]tool.Call, []*tool.Decision, error) {
 	if !r.executionDurable {
@@ -1512,12 +1476,9 @@ func (r *run) finishResolutionClaim(messages *[]Message) error {
 		}
 	} else {
 		*messages = append(*messages, Message{Role: RoleUser, Content: []ContentBlock{expected}})
-		if _, err := r.saveConversation(*messages, r.c.rt.totalUsage()); err != nil {
+		if err := r.saveConversation(*messages, r.c.rt.totalUsage()); err != nil {
 			return err
 		}
-	}
-	if err := r.flushToolResultBarrier(); err != nil {
-		return err
 	}
 	return r.persistExecution(func(execution *Execution) error {
 		if execution.ToolBatch == nil || execution.ToolBatch.Resolution == nil || execution.ToolBatch.Resolution.CallID != claim.CallID {
@@ -1593,48 +1554,42 @@ func (r *run) pendingInterrupt(outcomes []toolOutcome, calls []tool.Call) *Inter
 }
 
 // interrupt finalizes a paused invocation. Conversation persistence happens
-// before interrupt registration. If the conversation commit succeeds but a
-// later Flush or interrupt Save fails, the pause is still observed and returned
-// with the error as a recovery snapshot. A failed conversation commit suppresses
-// the interrupt entirely.
+// before the pause is recorded in the ExecutionStore. If the conversation
+// commit succeeds but the execution Save fails, the pause is still observed and
+// returned with the error as a recovery snapshot. A failed conversation commit
+// suppresses the interrupt entirely.
 func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	a, c := r.a, r.c
+	// A pause is persisted execution state that references the canonical
+	// transcript. Without both stores there is nothing to resume from, and no
+	// process-local fallback exists.
+	if !r.hasConversation() || !r.executionDurable {
+		return Result{}, ErrPauseStorageRequired
+	}
 	in.ExecutionID = c.ExecutionID()
 	in.ConversationID = r.convID
-	if !r.hasConversation() {
-		in.Messages = append([]Message(nil), snapshot...)
-	}
 	if err := c.Err(); err != nil {
 		return Result{}, err
 	}
-	committed, persistErr := r.saveConversation(snapshot, c.rt.totalUsage())
-	if persistErr != nil && !committed {
-		return Result{}, persistErr
+	if err := r.saveConversation(snapshot, c.rt.totalUsage()); err != nil {
+		return Result{}, err
 	}
+	var persistErr error
 	in.Revision, in.LastSequence = r.revision, r.lastSequence
 
-	if r.executionDurable {
-		execution := *r.execution
-		execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused
-		execution.Revision, execution.LastSequence = r.revision, r.lastSequence
-		execution.Iteration = r.iteration
-		execution.Usage = c.rt.totalUsage()
-		execution.Pause = pauseFromInterrupt(in)
-		execution.PendingPause = nil
-		updated, err := a.executionStore.Save(c, execution, execution.Version)
-		if err != nil {
-			persistErr = errors.Join(persistErr, fmt.Errorf("pause execution: %w", err))
-		} else {
-			r.execution = &updated
-			in.ExecutionVersion = updated.Version
-		}
+	execution := *r.execution
+	execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused
+	execution.Revision, execution.LastSequence = r.revision, r.lastSequence
+	execution.Iteration = r.iteration
+	execution.Usage = c.rt.totalUsage()
+	execution.Pause = pauseFromInterrupt(in)
+	execution.PendingPause = nil
+	updated, err := a.executionStore.Save(c, execution, execution.Version)
+	if err != nil {
+		persistErr = errors.Join(persistErr, fmt.Errorf("pause execution: %w", err))
 	} else {
-		in.ExecutionVersion = r.execution.Version + 1
-		if err := a.localPauses.create(in); err != nil {
-			persistErr = errors.Join(persistErr, fmt.Errorf("create local pause: %w", err))
-		} else {
-			r.execution.Version = in.ExecutionVersion
-		}
+		r.execution = &updated
+		in.ExecutionVersion = updated.Version
 	}
 	return r.exposeInterrupt(in, persistErr)
 }
@@ -1652,34 +1607,33 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
 	var messages turnMessages
 	var err error
-	if r.hasConversation() {
-		boundary := uint64(0)
-		if a.contextManager != nil {
-			boundary, err = a.contextManager.HistoryBoundary(c, r.convID)
-			if err != nil {
-				return Result{}, fmt.Errorf("context history boundary: %w", err)
-			}
-		}
-		loadC, cf := r.h.onConversationStart(c, ConversationRecord{Operation: "load_after", ConversationID: r.convID})
-		snapshot, err := a.conversation.LoadAfter(loadC, r.convID, boundary)
-		cf.finish(err, len(snapshot.Messages), snapshot.Revision)
-		if err != nil {
-			return Result{}, fmt.Errorf("resume conversation load: %w", err)
-		}
-		// LastSequence is authoritative for append-capable stores. The zero
-		// fallback preserves resumability for legacy durable interrupt records
-		// and test stores that predate sequence metadata.
-		if snapshot.Revision != in.Revision || (in.LastSequence != 0 && snapshot.LastSequence != 0 && snapshot.LastSequence != in.LastSequence) {
-			return Result{}, fmt.Errorf("resume conversation %q advanced after interrupt: %w", r.convID, ErrConversationConflict)
-		}
-		r.revision = snapshot.Revision
-		r.lastSequence = snapshot.LastSequence
-		r.historyBoundary = boundary
-		r.persistedCount = len(snapshot.Messages)
-		messages.canonical = append(messages.canonical, snapshot.Messages...)
-	} else {
-		messages.canonical = append(messages.canonical, in.Messages...)
+	if !r.hasConversation() {
+		return Result{}, ErrPauseStorageRequired
 	}
+	boundary := uint64(0)
+	if a.contextManager != nil {
+		boundary, err = a.contextManager.HistoryBoundary(c, r.convID)
+		if err != nil {
+			return Result{}, fmt.Errorf("context history boundary: %w", err)
+		}
+	}
+	loadC, cf := r.h.onConversationStart(c, ConversationRecord{Operation: "load_after", ConversationID: r.convID})
+	snapshot, err := a.conversation.LoadAfter(loadC, r.convID, boundary)
+	cf.finish(err, len(snapshot.Messages), snapshot.Revision)
+	if err != nil {
+		return Result{}, fmt.Errorf("resume conversation load: %w", err)
+	}
+	// LastSequence is authoritative for append-capable stores. The zero
+	// fallback preserves resumability for legacy durable interrupt records
+	// and test stores that predate sequence metadata.
+	if snapshot.Revision != in.Revision || (in.LastSequence != 0 && snapshot.LastSequence != 0 && snapshot.LastSequence != in.LastSequence) {
+		return Result{}, fmt.Errorf("resume conversation %q advanced after interrupt: %w", r.convID, ErrConversationConflict)
+	}
+	r.revision = snapshot.Revision
+	r.lastSequence = snapshot.LastSequence
+	r.historyBoundary = boundary
+	r.persistedCount = len(snapshot.Messages)
+	messages.canonical = append(messages.canonical, snapshot.Messages...)
 
 	cfg, err := r.inferenceConfig()
 	if err != nil {
@@ -1810,18 +1764,19 @@ func stripToolBlocks(msgs []Message) []Message {
 // saveConversation appends only the canonical messages produced by this run.
 // The historical prefix loaded at invocation start is never sent back to the
 // store, and model-only RAG/normalization projections never enter the event
-// log. committed is true once Append commits even if a later Flush fails.
-func (r *run) saveConversation(messages []Message, cumulative TokenUsage) (committed bool, err error) {
+// log. Append is committed when it returns, so a nil error means the delta is
+// visible to subsequent reads of the same store.
+func (r *run) saveConversation(messages []Message, cumulative TokenUsage) error {
 	a, c, h := r.a, r.c, &r.h
 	if !r.hasConversation() {
-		return false, nil
+		return nil
 	}
 	if r.persistedCount > len(messages) {
-		return false, fmt.Errorf("conversation append: canonical history regressed")
+		return fmt.Errorf("conversation append: canonical history regressed")
 	}
 	delta := messages[r.persistedCount:]
 	if len(delta) == 0 {
-		return true, nil
+		return nil
 	}
 	saveC := c.withContext(WithTokenUsage(c.Context, cumulative))
 	saveC, cf := h.onConversationStart(saveC, ConversationRecord{
@@ -1830,19 +1785,12 @@ func (r *run) saveConversation(messages []Message, cumulative TokenUsage) (commi
 	cursor, err := a.conversation.Append(saveC, r.convID, delta, r.revision)
 	cf.finish(err, len(delta), cursor.Revision)
 	if err != nil {
-		return false, fmt.Errorf("conversation append: %w", err)
+		return fmt.Errorf("conversation append: %w", err)
 	}
 	r.revision = cursor.Revision
 	r.lastSequence = cursor.LastSequence
 	r.persistedCount = len(messages)
-	if a.syncConversation {
-		if flusher, ok := a.conversation.(Flusher); ok {
-			if err := flusher.Flush(c); err != nil {
-				return true, fmt.Errorf("conversation flush: %w", err)
-			}
-		}
-	}
-	return true, nil
+	return nil
 }
 
 // callProviderWithRetry calls Provider.Stream with optional timeout and retry.

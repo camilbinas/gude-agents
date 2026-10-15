@@ -23,13 +23,11 @@ type Agent struct {
 	parallelTools   bool
 	tokenBudget     int
 
-	conversation     ConversationStore
-	contextManager   ContextManager
-	executionStore   ExecutionStore
-	localPauses      *localPauseRegistry
-	syncConversation bool
-	normStrategy     *NormStrategy
-	normDisabled     bool
+	conversation   ConversationStore
+	contextManager ContextManager
+	executionStore ExecutionStore
+	normStrategy   *NormStrategy
+	normDisabled   bool
 
 	retriever        rag.Retriever
 	contextFormatter rag.ContextFormatter
@@ -68,7 +66,6 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 		toolRegistry:  &tool.Registry{},
 		maxIterations: 10,
 		parallelTools: true,
-		localPauses:   newLocalPauseRegistry(),
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -131,16 +128,6 @@ func (a *Agent) instructionsFor(c *Context) string {
 		}
 	}
 	return a.instructions
-}
-
-// Shutdown flushes the conversation store when it implements Flusher. It does
-// not interrupt or wait for invocations that are still running; callers drain
-// those first (for example by stopping the HTTP server that issues them).
-func (a *Agent) Shutdown(ctx context.Context) error {
-	if flusher, ok := a.conversation.(Flusher); ok {
-		return flusher.Flush(ctx)
-	}
-	return nil
 }
 
 // ToolSpecs returns a current snapshot of provider-facing tool specifications.

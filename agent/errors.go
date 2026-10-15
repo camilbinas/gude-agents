@@ -140,3 +140,11 @@ func (e *StructuredOutputError) Is(target error) bool {
 	_, ok := target.(*StructuredOutputError)
 	return ok
 }
+
+// ErrPauseStorageRequired is returned when a run needs to pause (tool approval
+// or human input) or resume, but the Agent is not configured with both a
+// ConversationStore and an ExecutionStore. A paused run is persisted execution
+// state that references the canonical transcript, so pausing needs both. The
+// Agent never creates in-memory stores on its own; select them explicitly, for
+// example conversation.NewInMemory() and execution.NewMemory().
+var ErrPauseStorageRequired = errors.New("agent: pausing and resuming require both a ConversationStore and an ExecutionStore; configure them with WithConversationStore and WithExecutionStore")

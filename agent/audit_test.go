@@ -172,7 +172,7 @@ func TestAudit_InterruptRecordsAndApprovalRedaction(t *testing.T) {
 		provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{
 			ToolUseID: "ask-1", Name: "ask", Input: json.RawMessage(`{"reason":"r","question":"q"}`),
 		}}})
-		a, err := New(provider, "sys", WithTools(NewHumanInputTool("ask", "ask")), WithAudit(sink))
+		a, err := New(provider, "sys", withPauseStores(), WithTools(NewHumanInputTool("ask", "ask")), WithAudit(sink))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func TestAudit_InterruptRecordsAndApprovalRedaction(t *testing.T) {
 			ToolUseID: "approve-1", Name: "approve", Input: json.RawMessage(`{"secret":true}`),
 		}}})
 		approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
-		a, err := New(provider, "sys", WithTools(approval), WithAudit(sink))
+		a, err := New(provider, "sys", withPauseStores(), WithTools(approval), WithAudit(sink))
 		if err != nil {
 			t.Fatal(err)
 		}

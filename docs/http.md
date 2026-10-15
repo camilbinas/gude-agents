@@ -39,6 +39,6 @@ For text-only endpoints, range over `TextStream`. Output guardrails run after li
 
 Persist execution state with `WithExecutionStore` plus a `ConversationStore`. A frontend must submit both the execution ID and the **ExecutionVersion it displayed** with every approval or human-input answer. The server loads the current pause, compares that version, and returns `409 Conflict` when it differs; `Agent.Resume` performs a second CAS so a race after the comparison remains safe. Authorize that the caller owns the execution's conversation before resuming.
 
-Call `Agent.Shutdown` during graceful server shutdown and also close provider-specific clients/exporters where required.
+On graceful shutdown, stop the HTTP server first so in-flight requests finish, then close provider-specific clients, stores, and exporters where required. The Agent itself has nothing to shut down.
 
 [`examples/http-server`](../examples/http-server/) provides a compact `net/http` reference with `POST /chat` SSE streaming, request-context cancellation, conversation IDs, an interrupt resume endpoint, and graceful shutdown. It is intentionally not a production authentication system.

@@ -39,7 +39,7 @@ func main() {
     }
     a, err := agent.New(prov, "Answer clearly and use tools when useful.",
         agent.WithTools(weather),
-        agent.WithConversationStore(conversation.NewInMemory()),
+        agent.WithConversationStore(conversation.NewInMemory()), // process-local: history is lost when the program exits
     )
     if err != nil {
         log.Fatal(err)
@@ -55,10 +55,6 @@ func main() {
     }
     fmt.Println(result.Text)
     fmt.Println("tokens:", result.Usage.Total())
-
-    if err := a.Shutdown(context.Background()); err != nil {
-        log.Fatal(err)
-    }
 }
 ```
 
@@ -99,7 +95,7 @@ Breaking out of either iterator cancels the invocation. Consume through `EventEn
 
 ## Continue an interrupt
 
-An interrupt is a successful paused result, not an error:
+An interrupt is a successful paused result, not an error. Pausing needs both a conversation store and an execution store (`agent.WithConversationStore` and `agent.WithExecutionStore`, for example `conversation.NewInMemory()` and `execution.NewMemory()`); without them the run fails with `agent.ErrPauseStorageRequired`.
 
 ```go
 result, err := a.Invoke(ctx, "Delete order 42")

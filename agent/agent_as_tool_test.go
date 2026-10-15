@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -377,10 +378,30 @@ func TestAgentAsTool_ChildCancellationFollowsParent(t *testing.T) {
 	}
 }
 
-func TestAgentAsTool_ConsumesChildInterrupt(t *testing.T) {
-	childStore := &rangeResumeStore{}
+// childToolResultText returns the text of the tool result a parent saw for
+// the delegated call in its second provider request.
+func childToolResultText(t *testing.T, parentProvider *capturingProvider) string {
+	t.Helper()
+	if len(parentProvider.captured) < 2 {
+		t.Fatalf("parent provider calls = %d, want 2", len(parentProvider.captured))
+	}
+	for _, message := range parentProvider.captured[1].Messages {
+		for _, block := range message.Content {
+			if result, ok := block.(ToolResultBlock); ok && result.ToolUseID == "delegate" {
+				return result.Content
+			}
+		}
+	}
+	t.Fatal("parent never saw a tool result for the delegated call")
+	return ""
+}
+
+// A child agent follows the same persistence rule as any other agent: pausing
+// needs both stores. Without an ExecutionStore the child cannot pause, and the
+// configuration error reaches the parent as an ordinary tool error.
+func TestAgentAsTool_ChildPauseWithoutExecutionStoreIsConfigurationError(t *testing.T) {
 	approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
-	child, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "child-approval", Name: "approve", Input: json.RawMessage(`{}`)}}}), "child", WithConversationStore(childStore), WithTools(approval))
+	child, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "child-approval", Name: "approve", Input: json.RawMessage(`{}`)}}}), "child", WithConversationStore(newTestMemoryStore()), WithTools(approval))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,15 +409,55 @@ func TestAgentAsTool_ConsumesChildInterrupt(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}},
 		&ModelResponse{Text: "recovered"},
 	)
-	parent, err := New(parentProvider, "parent", WithConversationStore(&rangeResumeStore{}), WithTools(AgentAsTool("child", "child", child)))
+	parent, err := New(parentProvider, "parent", WithConversationStore(newTestMemoryStore()), WithTools(AgentAsTool("child", "child", child)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parent.Invoke(Background().WithConversationID("parent"), "go"); err != nil {
+	result, err := parent.Invoke(Background().WithConversationID("parent"), "go")
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("parent result = %+v, %v", result, err)
+	}
+	if got := childToolResultText(t, parentProvider); !strings.Contains(got, ErrPauseStorageRequired.Error()) {
+		t.Fatalf("child tool result = %q, want the pause storage configuration error", got)
+	}
+}
+
+// With both stores, a child pause cannot propagate through AgentAsTool. The
+// parent sees a tool error and the child's paused execution is canceled so it
+// cannot be resumed later.
+func TestAgentAsTool_ChildPauseWithStoresIsCanceled(t *testing.T) {
+	approval := tool.NewRaw("approve", "approve", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil }, tool.RequiresApproval())
+	childExecutions := newTestExecutionStore()
+	child, err := New(newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "child-approval", Name: "approve", Input: json.RawMessage(`{}`)}}}), "child",
+		WithConversationStore(newTestMemoryStore()), WithExecutionStore(childExecutions), WithTools(approval))
+	if err != nil {
 		t.Fatal(err)
 	}
-	// The child pause was consumed by private same-process execution state and
-	// surfaced to the parent as a tool error rather than a propagating pause.
+	parentProvider := newCapturingProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}},
+		&ModelResponse{Text: "recovered"},
+	)
+	parent, err := New(parentProvider, "parent", WithConversationStore(newTestMemoryStore()), WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := parent.Invoke(Background().WithConversationID("parent"), "go")
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("parent result = %+v, %v", result, err)
+	}
+	if got := childToolResultText(t, parentProvider); !strings.Contains(got, "interrupts cannot propagate through AgentAsTool") {
+		t.Fatalf("child tool result = %q", got)
+	}
+	childExecutions.mu.Lock()
+	defer childExecutions.mu.Unlock()
+	if len(childExecutions.items) != 1 {
+		t.Fatalf("child executions = %d, want 1", len(childExecutions.items))
+	}
+	for _, execution := range childExecutions.items {
+		if execution.Status != ExecutionCanceled {
+			t.Fatalf("child execution status = %q, want canceled", execution.Status)
+		}
+	}
 }
 
 type composeFuncProvider struct {

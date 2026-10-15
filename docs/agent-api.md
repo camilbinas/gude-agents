@@ -25,7 +25,7 @@ When a ConversationStore is configured, every invocation requires a non-empty Co
 
 `agent.RAGAgent(prov, instructions, retriever, opts...)` is the one convenience constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
 
-Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithSyncConversation`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
+Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
 
 ## Invocation
 
@@ -37,7 +37,7 @@ func (a *Agent) Resume(ctx *agent.Context, in *agent.Interrupt, response agent.R
 func (a *Agent) ResumeStream(ctx *agent.Context, in *agent.Interrupt, response agent.ResumeResponse) iter.Seq2[agent.Event, error]
 ```
 
-All methods share one execution lifecycle. `Invoke` drains `Stream`; `TextStream` projects only live text events. `Resume` and `ResumeStream` continue the exact snapshot carried by an interrupt.
+All methods share one execution lifecycle. `Invoke` drains `Stream`; `TextStream` projects only live text events. `Resume` and `ResumeStream` continue a paused execution loaded from the `ExecutionStore`; pausing and resuming need both a `ConversationStore` and an `ExecutionStore`.
 
 ## Result
 
@@ -81,13 +81,10 @@ Conversation messages contain `TextBlock`, `ToolUseBlock`, or `ToolResultBlock` 
 
 Configure images and documents on `Context` before invocation. Tools can call `agent.EmitWidget(ctx, block)` and `agent.EmitEvent(ctx, name, payload)` using the standard `context.Context` they receive. Emissions appear in `Stream`; widgets are also associated with their tool call for persistence.
 
-## Shutdown
+## Stopping
+An Agent owns no goroutines or write buffers and has no `Close` or `Shutdown` method. To stop serving, stop admitting new invocations (for example `http.Server.Shutdown`), let in-flight invocations finish or cancel their contexts, then close the resources you own: provider clients, stores, and metric or trace exporters.
 
-```go
-err := a.Shutdown(ctx)
-```
-
-Shutdown flushes a conversation store that implements `agent.Flusher` and returns its error. It does not cancel or wait for invocations that are still running, so stop admitting work and let in-flight invocations finish before calling it. With a store that has no `Flush`, it is a no-op.
+`ConversationStore.Append` is committed when it returns, so there is nothing for the Agent to flush at shutdown. Memory-backed stores satisfy that within the running process only.
 
 ### Thinking events
 

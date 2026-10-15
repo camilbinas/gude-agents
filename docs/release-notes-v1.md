@@ -30,7 +30,7 @@ Run durable asynchronous jobs in an application-owned worker, queue, or
 scheduler. A job may invoke an Agent normally, but the framework does not own
 cross-process dispatch, ownership, retries, dead-letter handling, or delivery.
 
-`Agent.Shutdown(ctx)` now only flushes a conversation store that implements `agent.Flusher`. It no longer waits for background work because none exists. Same-conversation invocations and `RecoverExecution` calls are still serialized within one `Agent`.
+`Agent.Shutdown(ctx)` now only flushes a conversation store that implements `agent.Flusher` (both are removed in the conversation durability section below). It no longer waits for background work because none exists. Same-conversation invocations and `RecoverExecution` calls are still serialized within one `Agent`.
 
 ### DynamoDB ConversationStore
 
@@ -42,3 +42,32 @@ DynamoDB checkpoint support, where configured, is independent and is not a
 conversation-history migration path.
 
 The supported conversation backends are in-memory, SQLite, PostgreSQL, and Redis. `agent/checkpoint/dynamodb` is unchanged.
+
+## Conversation durability, pause persistence, and execution stores
+
+These are deliberate breaking API changes made before the production v1 release. No deprecated aliases or compatibility shims are provided.
+
+### `ConversationStore.Append` commits before it returns
+
+A successful `Append` atomically appends the messages under the revision check, returns a cursor that a later read observes, and is committed before it returns according to the store's documented persistence model. Memory-backed stores satisfy this only within the running process. Persistent stores must not acknowledge a write that can disappear after a crash. This is an ordering guarantee between `ConversationStore` and `ExecutionStore`, not a distributed transaction.
+
+Removed: `agent.WithSyncConversation`, the `agent.Flusher` interface, the engine's post-append and tool-result flush barriers, and `Agent.Shutdown`. `Shutdown` only flushed a `Flusher`, so nothing remains for it to do. Stop serving by stopping the HTTP server and closing the resources you own. A custom store that buffered writes must now commit in `Append`.
+
+### One pause mechanism: persisted execution state
+
+Pausing (tool approval or human input) and resuming now require both a `ConversationStore` and an `ExecutionStore`. The process-local pause registry and `Interrupt.Messages` are removed. An agent that needs to pause without both stores fails with `agent.ErrPauseStorageRequired`; the agent never creates in-memory stores on its own. A conversation store without an execution store remains valid for runs that never pause. A child agent used through `AgentAsTool` follows the same rule.
+
+Migration: configure both stores, and invoke with a conversation ID.
+
+```go
+a, err := agent.New(provider, instructions,
+    agent.WithConversationStore(conversation.NewInMemory()),
+    agent.WithExecutionStore(execution.NewMemory()),
+)
+```
+
+Memory-backed stores lose the transcript and every paused execution when the process exits and never evict. Use a durable conversation backend and `execution.New(checkpointer)` for pauses that must survive a restart.
+
+### `agent/execution` replaces `agent/checkpoint/executionstore`
+
+The checkpoint-to-`ExecutionStore` adapter moved to its own module, `github.com/camilbinas/gude-agents/agent/execution`, with `execution.New(checkpointer)` and `execution.NewMemory()`. The old import path no longer exists and no forwarding package is left behind. `agent.ExecutionStore` keeps its name and stays in the root package.

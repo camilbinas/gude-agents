@@ -2,6 +2,8 @@
 
 Approvals and human questions use one pause/resume model. Normally a pause returns `Result{StopReason: agent.StopInterrupt, Interrupt: ...}` with a nil error. A stream emits `EventInterrupt`, followed by `EventEnd` carrying the same result.
 
+A paused run is persisted execution state. Pausing and resuming therefore require both a `ConversationStore` (the canonical transcript) and an `ExecutionStore` (the resumable state); see [Execution pauses](#execution-pauses). An agent without both stores cannot pause: the run fails with `agent.ErrPauseStorageRequired`.
+
 ## Approval interrupts
 
 Mark a tool with `tool.RequiresApproval()`:
@@ -31,7 +33,11 @@ Add the built-in pause tool:
 
 ```go
 askHuman := agent.NewHumanInputTool("ask_human", "Ask when required account data is missing")
-a, err := agent.New(prov, instructions, agent.WithTools(askHuman))
+a, err := agent.New(prov, instructions,
+    agent.WithTools(askHuman),
+    agent.WithConversationStore(conversations),
+    agent.WithExecutionStore(executions),
+)
 ```
 
 Continue this type only with `Respond`:
@@ -42,22 +48,26 @@ result, err := a.Resume(ctx, interrupt, agent.Respond("Use account ACME-42"))
 
 Approval responses are valid only for approval interrupts; `Respond` is valid only for human-input interrupts. Use `ResumeStream` when the continued run must emit application events.
 
-## Durable execution pauses
-
-An interrupt is a projection of a paused `Execution`, not an independently persisted record. Configure an `ExecutionStore` together with a canonical `ConversationStore` for cross-process continuation:
+## Execution pauses
+An interrupt is a projection of a paused `Execution`, not an independently persisted record. There is one persistence model: configure an `ExecutionStore` together with a canonical `ConversationStore`. The package `agent/execution` provides the stores:
 
 ```go
-cp := checkpoint.NewMemory()
-executions := executionstore.New(cp)
+// Memory-backed, explicit, and process-local (examples, tests, development):
+conversations := conversation.NewInMemory()
+executions := execution.NewMemory()
+
+// Durable: adapt any checkpoint.Checkpointer (PostgreSQL, Redis, DynamoDB).
+executions = execution.New(checkpointer)
 
 a, err := agent.New(prov, instructions,
     agent.WithConversationStore(conversations),
     agent.WithExecutionStore(executions),
 )
-
 interrupt, err := a.LoadInterrupt(ctx, executionID)
 result, err := a.Resume(agent.NewContext(ctx), interrupt, agent.Approve())
 ```
+
+Memory-backed stores lose the transcript and every paused execution when the process exits, are not shared between processes, and never evict. The agent never creates them on its own; pick them explicitly. A conversation store without an execution store is fine for ordinary runs that never pause.
 
 Stateful execution records contain only runtime metadata and a canonical conversation cursor:
 
@@ -74,9 +84,9 @@ They never contain transcript messages. Resume reloads canonical history from `C
 
 Before a durable resume executes any guardrail, tool handler, provider call, or side effect, it atomically transitions the exact observed execution version from `Paused` to `Running`. One concurrent resume wins; stale pause instances return `agent.ErrExecutionConflict`. A later pause in the same execution carries a newer `ExecutionVersion`, so old interrupt objects cannot be replayed.
 
-The Agent commits canonical conversation changes before recording `Paused` execution state. If the conversation commit fails, no durable pause is created. If conversation commit succeeds but execution persistence fails, the error is surfaced and applications must not assume durable resume is available.
+The Agent commits canonical conversation changes before recording `Paused` execution state. If the conversation commit fails, no pause is created. If the conversation commit succeeds but execution persistence fails, the error is surfaced and applications must not assume resume is available. This ordering is not a distributed transaction: the two stores commit independently.
 
-For an Agent with neither `ConversationStore` nor `ExecutionStore`, same-process `Invoke → Interrupt → Resume` remains available through private local state. Its `Interrupt.Messages` snapshot is an in-process fallback, not a public durable storage model.
+The Agent keeps no process-local pause state. If a run needs to pause (approval or human input) and either store is missing, it returns `agent.ErrPauseStorageRequired` instead of creating a pause that could not be resumed. Resuming without both stores returns the same error. The same rule applies to a child agent used through `AgentAsTool`: a child pause is not propagated to the parent, and a child without both stores cannot pause at all.
 
 ### Frontend version safety
 

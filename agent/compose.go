@@ -103,12 +103,7 @@ func consumeChildExecution(ctx context.Context, child *Agent, interrupt *Interru
 		}
 		return nil
 	}
-	_, err := child.localPauses.claim(interrupt.ExecutionID, interrupt.ExecutionVersion)
-	if errors.Is(err, ErrExecutionNotFound) || errors.Is(err, ErrExecutionConflict) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("consume child execution %q: %w", interrupt.ExecutionID, err)
-	}
+	// A child can only report an interrupt when it has an ExecutionStore, so
+	// there is no other pause state to consume.
 	return nil
 }

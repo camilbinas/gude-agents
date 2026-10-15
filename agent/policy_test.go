@@ -558,11 +558,11 @@ func TestApprovalResumeDeniesProtectedToolWithoutPrincipal(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "call-1", Name: "protected", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "denied"},
 	)
-	a, err := New(provider, "test", WithTools(protected))
+	a, err := New(provider, "test", withPauseStores(), WithTools(protected))
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial := Background().WithPrincipal(Principal{ID: "u1", Attrs: map[string]string{"tenant": "acme"}})
+	initial := Background().WithConversationID("protected-approval").WithPrincipal(Principal{ID: "u1", Attrs: map[string]string{"tenant": "acme"}})
 	paused, err := a.Invoke(initial, "run")
 	if err != nil || paused.Interrupt == nil || paused.Interrupt.Type != InterruptApproval {
 		t.Fatalf("Invoke = %+v, %v; want approval interrupt", paused, err)

@@ -1,8 +1,15 @@
 // Run: go run ./http-server
 //
 // A standard-library HTTP service with one long-lived Agent, one invocation
-// Context per request, SSE streaming, durable execution pauses, and graceful
-// shutdown. The in-memory stores are replaceable with durable backends.
+// Context per request, SSE streaming, resumable execution pauses, and graceful
+// shutdown.
+//
+// A pause is persisted execution state that references the transcript, so the
+// agent needs both a ConversationStore and an ExecutionStore. This example uses
+// the in-process memory implementations: the transcript and every paused
+// execution are lost when the process exits and are not shared between
+// replicas. For pauses that survive a restart, use a durable ConversationStore
+// and execution.New with a durable checkpoint.Checkpointer.
 package main
 
 import (
@@ -18,9 +25,8 @@ import (
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/checkpoint"
-	"github.com/camilbinas/gude-agents/agent/checkpoint/executionstore"
 	"github.com/camilbinas/gude-agents/agent/conversation"
+	"github.com/camilbinas/gude-agents/agent/execution"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
@@ -35,7 +41,7 @@ type resumeRequest struct {
 
 func main() {
 	conversations := conversation.NewInMemory()
-	executions := executionstore.New(checkpoint.NewMemory())
+	executions := execution.NewMemory()
 	a, err := agent.New(
 		bedrock.Must(bedrock.Standard()),
 		"You are a support agent. Use request_human_input when an essential detail is missing.",
@@ -46,8 +52,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer a.Shutdown(context.Background())
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat", chat(a))
 	mux.HandleFunc("POST /interrupt/{id}/resume", resume(a))

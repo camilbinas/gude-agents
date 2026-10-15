@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -887,4 +888,20 @@ func newTestRaw(name, description string, schema map[string]any, handler func(co
 // contains is shared by root agent tests that assert error text.
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
+}
+
+// TestAgentHasNoProcessLocalLifecycleState pins the single-persistence model:
+// the Agent owns no generic shutdown/flush hook, no synchronous-conversation
+// switch, and no process-local pause registry. Pauses live in the configured
+// ExecutionStore, and Append is committed when it returns.
+func TestAgentHasNoProcessLocalLifecycleState(t *testing.T) {
+	agentType := reflect.TypeOf(&Agent{})
+	if _, ok := agentType.MethodByName("Shutdown"); ok {
+		t.Error("Agent must not expose Shutdown")
+	}
+	for _, field := range []string{"syncConversation", "localPauses"} {
+		if _, ok := agentType.Elem().FieldByName(field); ok {
+			t.Errorf("Agent must not have a %s field", field)
+		}
+	}
 }

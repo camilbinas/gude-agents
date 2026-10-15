@@ -1,8 +1,12 @@
-// Package executionstore adapts a generic checkpoint.Checkpointer to the
-// agent.ExecutionStore semantic API. Execution payloads contain runtime state
-// and conversation cursors only; transcript ownership remains with
-// ConversationStore.
-package executionstore
+// Package execution provides agent.ExecutionStore implementations.
+//
+// New adapts any checkpoint.Checkpointer (PostgreSQL, Redis, DynamoDB, ...) to
+// agent.ExecutionStore, which makes paused runs durable. NewMemory is a
+// process-local convenience for tests, development, and examples.
+//
+// Execution payloads contain runtime state and conversation cursors only;
+// transcript ownership remains with agent.ConversationStore.
+package execution
 
 import (
 	"context"
@@ -64,7 +68,7 @@ func (s *Store) Load(ctx context.Context, id string) (agent.Execution, error) {
 		if errors.Is(err, checkpoint.ErrNotFound) {
 			return agent.Execution{}, notFound(id)
 		}
-		return agent.Execution{}, fmt.Errorf("executionstore: load: %w", err)
+		return agent.Execution{}, fmt.Errorf("execution: load: %w", err)
 	}
 	if cp.Label != checkpointLabel || len(cp.Extra) == 0 {
 		return agent.Execution{}, notFound(id)
@@ -83,7 +87,7 @@ func (s *Store) Save(ctx context.Context, execution agent.Execution, expectedVer
 		return agent.Execution{}, err
 	}
 	if expectedVersion == 0 || expectedVersion > uint64(^uint(0)>>1) {
-		return agent.Execution{}, fmt.Errorf("executionstore: save %q: %w", execution.ID, agent.ErrExecutionConflict)
+		return agent.Execution{}, fmt.Errorf("execution: save %q: %w", execution.ID, agent.ErrExecutionConflict)
 	}
 	data, err := marshal(execution)
 	if err != nil {
@@ -102,10 +106,10 @@ func (s *Store) Save(ctx context.Context, execution agent.Execution, expectedVer
 
 func (s *Store) validate(id string) error {
 	if s == nil || s.cp == nil {
-		return errors.New("executionstore: checkpointer is required")
+		return errors.New("execution: checkpointer is required")
 	}
 	if id == "" {
-		return errors.New("executionstore: execution ID is required")
+		return errors.New("execution: execution ID is required")
 	}
 	return nil
 }
@@ -117,7 +121,7 @@ func marshal(execution agent.Execution) ([]byte, error) {
 	execution.Version = 0
 	data, err := json.Marshal(execution)
 	if err != nil {
-		return nil, fmt.Errorf("executionstore: marshal execution: %w", err)
+		return nil, fmt.Errorf("execution: marshal execution: %w", err)
 	}
 	return data, nil
 }
@@ -125,10 +129,10 @@ func marshal(execution agent.Execution) ([]byte, error) {
 func unmarshal(data []byte, wantID string) (agent.Execution, error) {
 	var execution agent.Execution
 	if err := json.Unmarshal(data, &execution); err != nil {
-		return agent.Execution{}, fmt.Errorf("executionstore: unmarshal execution: %w", err)
+		return agent.Execution{}, fmt.Errorf("execution: unmarshal execution: %w", err)
 	}
 	if execution.ID != wantID {
-		return agent.Execution{}, fmt.Errorf("executionstore: stored execution ID %q does not match requested ID %q", execution.ID, wantID)
+		return agent.Execution{}, fmt.Errorf("execution: stored execution ID %q does not match requested ID %q", execution.ID, wantID)
 	}
 	return execution, nil
 }
@@ -139,12 +143,12 @@ func withVersion(execution agent.Execution, version int) agent.Execution {
 }
 
 func notFound(id string) error {
-	return fmt.Errorf("executionstore: %q: %w", id, agent.ErrExecutionNotFound)
+	return fmt.Errorf("execution: %q: %w", id, agent.ErrExecutionNotFound)
 }
 
 func mapSaveError(operation string, err error) error {
 	if errors.Is(err, checkpoint.ErrConflict) || errors.Is(err, checkpoint.ErrNotFound) {
-		return fmt.Errorf("executionstore: %s: %w", operation, errors.Join(agent.ErrExecutionConflict, err))
+		return fmt.Errorf("execution: %s: %w", operation, errors.Join(agent.ErrExecutionConflict, err))
 	}
-	return fmt.Errorf("executionstore: %s: %w", operation, err)
+	return fmt.Errorf("execution: %s: %w", operation, err)
 }

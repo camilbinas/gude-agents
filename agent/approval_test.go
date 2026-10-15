@@ -39,6 +39,9 @@ func deleteOrderTool() tool.Tool {
 // mustInterrupt invokes the agent and asserts it paused with an interrupt.
 func mustInterrupt(t *testing.T, a *Agent, c *Context, msg string) *Interrupt {
 	t.Helper()
+	if c.ConversationID() == "" {
+		c.WithConversationID("pause-" + t.Name())
+	}
 	res, err := a.Invoke(c, msg)
 	if err != nil {
 		t.Fatalf("Invoke: unexpected error %v", err)
@@ -58,12 +61,13 @@ func TestRequiresApproval_InvokeReturnsInterrupt(t *testing.T) {
 			ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{"order_id":"ORD-99"}`),
 		}}},
 	)
-	a, err := New(provider, "helpful", WithTools(deleteOrderTool()))
+	conversations, _, stores := pauseStores()
+	a, err := New(provider, "helpful", append(stores, WithTools(deleteOrderTool()))...)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	in := mustInterrupt(t, a, Background(), "delete order 99")
+	ctx := Background().WithConversationID("approval-invoke")
+	in := mustInterrupt(t, a, ctx, "delete order 99")
 	if in.Type != InterruptApproval || in.Approval == nil || in.Input != nil {
 		t.Fatalf("interrupt = %+v, want approval", in)
 	}
@@ -84,15 +88,22 @@ func TestRequiresApproval_InvokeReturnsInterrupt(t *testing.T) {
 	if input.OrderID != "ORD-99" {
 		t.Errorf("input.order_id = %q, want ORD-99", input.OrderID)
 	}
-	if len(in.Messages) == 0 {
-		t.Error("expected non-empty message snapshot")
+	// The transcript lives in the ConversationStore and the interrupt only
+	// references it.
+	snapshot, err := conversations.LoadAfter(ctx, "approval-invoke", 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The snapshot must not contain a result for the pending call (duplicate
-	// IDs on resume are rejected by providers).
-	for _, msg := range in.Messages {
+	if len(snapshot.Messages) == 0 || in.LastSequence != snapshot.LastSequence || in.Revision != snapshot.Revision {
+		t.Fatalf("interrupt cursor = (%d,%d), transcript = (%d,%d) with %d messages",
+			in.Revision, in.LastSequence, snapshot.Revision, snapshot.LastSequence, len(snapshot.Messages))
+	}
+	// The transcript must not contain a result for the pending call
+	// (duplicate IDs on resume are rejected by providers).
+	for _, msg := range snapshot.Messages {
 		for _, block := range msg.Content {
 			if tr, ok := block.(ToolResultBlock); ok && tr.ToolUseID == call.CallID {
-				t.Fatalf("snapshot contains a result for pending call %q", call.CallID)
+				t.Fatalf("transcript contains a result for pending call %q", call.CallID)
 			}
 		}
 	}
@@ -106,7 +117,7 @@ func TestRequiresApproval_StreamEmitsSameInterrupt(t *testing.T) {
 			ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{"order_id":"ORD-42"}`),
 		}}},
 	)
-	a, err := New(provider, "helpful", WithTools(deleteOrderTool()))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(deleteOrderTool()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +125,7 @@ func TestRequiresApproval_StreamEmitsSameInterrupt(t *testing.T) {
 	var evInterrupt *Interrupt
 	var end *Result
 	var types []EventType
-	for ev, err := range a.Stream(Background(), "delete order 42") {
+	for ev, err := range a.Stream(Background().WithConversationID("stream-approval"), "delete order 42") {
 		if err != nil {
 			t.Fatalf("stream error: %v", err)
 		}
@@ -151,7 +162,7 @@ func TestResume_ApproveRunsTool(t *testing.T) {
 		}}},
 		&ModelResponse{Text: "Order ORD-99 has been deleted."},
 	)
-	a, err := New(provider, "helpful", WithTools(deleteOrderTool()))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(deleteOrderTool()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +195,7 @@ func TestResume_DenySkipsHandler(t *testing.T) {
 		{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{}`)}}},
 		{Text: "I couldn't delete the order."},
 	}}
-	a, err := New(provider, "helpful", WithTools(dt))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(dt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +262,7 @@ func TestResume_RichHandlerOnlyTool(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "rich-1", Name: "screenshot", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "I reviewed the screenshot."},
 	)
-	a, err := New(provider, "helpful", WithTools(richTool))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(richTool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +336,7 @@ func TestResume_DecideBatchOrderedSequentialAndParallel(t *testing.T) {
 			allowed := tool.NewRaw("allowed", "allowed", nil, record("allowed", "allowed result"), tool.RequiresApproval())
 			free := tool.NewRaw("free", "free", nil, record("free", "free result"))
 			denied := tool.NewRaw("denied", "denied", nil, record("denied", "denied result"), tool.RequiresApproval())
-			opts := []Option{WithTools(allowed, free, denied)}
+			opts := []Option{withPauseStores(), WithTools(allowed, free, denied)}
 			if !parallel {
 				opts = append(opts, WithSequentialTools())
 			}
@@ -420,7 +431,7 @@ func TestResume_DenyAppliesToEveryCallInBatch(t *testing.T) {
 				}},
 				{Text: "nothing was done"},
 			}}
-			opts := []Option{WithTools(mk("one"), mk("two"))}
+			opts := []Option{withPauseStores(), WithTools(mk("one"), mk("two"))}
 			if !parallel {
 				opts = append(opts, WithSequentialTools())
 			}
@@ -478,28 +489,31 @@ func TestResume_DenyAppliesToEveryCallInBatch(t *testing.T) {
 // TestResume_InvalidResponsesRunNoHandlers verifies that the response is
 // validated before any handler runs.
 func TestResume_InvalidResponsesRunNoHandlers(t *testing.T) {
-	called := 0
+	var called atomic.Int32
 	makeTool := func(name string) tool.Tool {
 		return tool.NewRaw(
 			name,
 			name,
 			nil,
 			func(_ context.Context, _ json.RawMessage) (string, error) {
-				called++
+				called.Add(1)
 				return "unexpected", nil
 			},
 			tool.RequiresApproval(),
 		)
 	}
-	provider := &approvalBatchProvider{}
-	a, err := New(provider, "helpful", WithTools(makeTool("first"), makeTool("second")))
+	provider := &approvalBatchProvider{responses: []*ModelResponse{
+		{ToolCalls: []tool.Call{
+			{ToolUseID: "first-id", Name: "first", Input: json.RawMessage(`{}`)},
+			{ToolUseID: "second-id", Name: "second", Input: json.RawMessage(`{}`)},
+		}},
+	}}
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(makeTool("first"), makeTool("second"), NewHumanInputTool("ask", "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := &Interrupt{ExecutionID: "exec-i-1", ExecutionVersion: 1, Type: InterruptApproval, Approval: &ApprovalInterrupt{Calls: []ApprovalCall{
-		{Name: "first", CallID: "first-id", Input: json.RawMessage(`{}`)},
-		{Name: "second", CallID: "second-id", Input: json.RawMessage(`{}`)},
-	}}}
+	in := mustInterrupt(t, a, Background(), "run")
+	modelCalls := len(provider.params)
 	for name, resp := range map[string]ResumeResponse{
 		"missing": Decide(map[string]tool.Decision{"first-id": tool.Allow()}),
 		"extra":   Decide(map[string]tool.Decision{"first-id": tool.Allow(), "second-id": tool.Allow(), "extra": tool.Allow()}),
@@ -510,16 +524,23 @@ func TestResume_InvalidResponsesRunNoHandlers(t *testing.T) {
 			if _, err := a.Resume(Background(), in, resp); err == nil {
 				t.Fatal("expected validation error")
 			}
-			if called != 0 {
-				t.Fatalf("handler count = %d, want 0", called)
+			if called.Load() != 0 {
+				t.Fatalf("handler count = %d, want 0", called.Load())
 			}
 		})
 	}
-	if len(provider.params) != 0 {
-		t.Fatalf("provider called %d times, want 0", len(provider.params))
+	if len(provider.params) != modelCalls {
+		t.Fatalf("provider called %d more times, want 0", len(provider.params)-modelCalls)
 	}
-	human := &Interrupt{ExecutionID: "exec-i-2", ExecutionVersion: 1, Type: InterruptHumanInput, Input: &InputInterrupt{Question: "?"}}
-	if _, err := a.Resume(Background(), human, Approve()); err == nil {
+
+	// Approve on a human-input pause must fail as well.
+	humanProvider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}})
+	human, err := New(humanProvider, "helpful", withPauseStores(), WithTools(NewHumanInputTool("request_human_input", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	humanInterrupt := mustInterrupt(t, human, Background(), "ask")
+	if _, err := human.Resume(Background(), humanInterrupt, Approve()); err == nil {
 		t.Fatal("Approve on a human_input interrupt must fail")
 	}
 }
@@ -540,7 +561,7 @@ func TestResume_InvalidResponseDoesNotConsumeInterrupt(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{Text: "done"},
 	)
-	a, err := New(provider, "helpful", WithTools(approved))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(approved))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +599,7 @@ func TestResume_StatelessApprovalReplayHasOneWinner(t *testing.T) {
 			&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}}},
 			&ModelResponse{Text: "done"},
 		)
-		a, err := New(provider, "helpful", WithTools(approved))
+		a, err := New(provider, "helpful", withPauseStores(), WithTools(approved))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -691,11 +712,11 @@ func TestResume_CanonicalMiddlewarePipelineSupportsEveryToolKind(t *testing.T) {
 					return next(ctx, call)
 				}
 			}
-			a, err := New(provider, "sys",
+			_, _, stores := pauseStores()
+			a, err := New(provider, "sys", append(stores,
 				WithTools(tt.build(done)),
-				WithConversationStore(newTestMemoryStore()),
 				WithMiddleware(middleware),
-			)
+			)...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -710,9 +731,6 @@ func TestResume_CanonicalMiddlewarePipelineSupportsEveryToolKind(t *testing.T) {
 			}
 			if result.Text != "resumed" {
 				t.Fatalf("result.Text = %q", result.Text)
-			}
-			if err := a.Shutdown(context.Background()); err != nil {
-				t.Fatal(err)
 			}
 			if middlewareCalls.Load() != 1 {
 				t.Fatalf("middleware calls = %d, want 1", middlewareCalls.Load())
@@ -744,7 +762,7 @@ func TestResume_PostClaimFailureRemainsConsumed(t *testing.T) {
 	provider := &approvalBatchProvider{responses: []*ModelResponse{{
 		ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}},
 	}}}
-	a, err := New(provider, "helpful", WithTools(approved))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(approved))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -780,7 +798,7 @@ func TestResume_ApprovedToolErrorIsNotReplayable(t *testing.T) {
 	provider := &approvalBatchProvider{responses: []*ModelResponse{{
 		ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "approved", Input: json.RawMessage(`{}`)}},
 	}}}
-	a, err := New(provider, "helpful", WithTools(approved))
+	a, err := New(provider, "helpful", withPauseStores(), WithTools(approved))
 	if err != nil {
 		t.Fatal(err)
 	}

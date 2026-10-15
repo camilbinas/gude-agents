@@ -8,6 +8,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/conversation"
+	"github.com/camilbinas/gude-agents/agent/execution"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -29,6 +30,7 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 		},
 	)
 
+	conversations := conversation.NewInMemory()
 	a, err := agent.New(
 		p,
 		"You are a customer support agent. When a user asks for a refund: "+
@@ -40,15 +42,15 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 			agent.NewHumanInputTool("request_human_input", "Use when you need manager approval before processing a refund."),
 		),
 		agent.WithMaxIterations(10),
+		agent.WithConversationStore(conversations),
+		agent.WithExecutionStore(execution.NewMemory()),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	c := agent.NewContext(ctx)
-
+	c := agent.NewContext(ctx).WithConversationID("handoff-refund")
 	paused, err := a.Invoke(c, "I need a refund for order #5678")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
@@ -57,15 +59,19 @@ func TestIntegration_Handoff_PauseAndResume(t *testing.T) {
 
 	t.Logf("Interrupt reason: %s", in.Input.Reason)
 	t.Logf("Interrupt question: %s", in.Input.Question)
-	t.Logf("Messages preserved: %d", len(in.Messages))
+	snapshot, err := conversations.Load(ctx, "handoff-refund")
+	if err != nil {
+		t.Fatalf("load paused conversation: %v", err)
+	}
+	t.Logf("Messages preserved: %d", len(snapshot.Messages))
 	if in.Input.Reason == "" {
 		t.Error("expected non-empty interrupt reason")
 	}
 	if in.Input.Question == "" {
 		t.Error("expected non-empty interrupt question")
 	}
-	if len(in.Messages) < 2 {
-		t.Errorf("expected at least 2 messages in interrupt context, got %d", len(in.Messages))
+	if len(snapshot.Messages) < 2 {
+		t.Errorf("expected at least 2 messages in the persisted transcript, got %d", len(snapshot.Messages))
 	}
 
 	result, err := a.Resume(c, in, agent.Respond("Approved. Process the refund."))
@@ -90,6 +96,7 @@ func TestIntegration_Handoff_WithMemoryPersistence(t *testing.T) {
 		"You are a support agent. When the user asks to delete their account, use request_human_input to get confirmation from a supervisor. Be brief.",
 		agent.WithTools(agent.NewHumanInputTool("request_human_input", "Use when the user asks to delete their account to get supervisor confirmation.")),
 		agent.WithConversationStore(store),
+		agent.WithExecutionStore(execution.NewMemory()),
 		agent.WithMaxIterations(5),
 	)
 	if err != nil {
@@ -162,15 +169,15 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 			agent.NewHumanInputTool("request_human_input", "Use for complex issues like account deletion, billing disputes, or complaints to escalate to a human agent."),
 		),
 		agent.WithMaxIterations(5),
+		agent.WithConversationStore(conversation.NewInMemory()),
+		agent.WithExecutionStore(execution.NewMemory()),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-
-	result, err := a.Invoke(agent.NewContext(ctx), "What are your business hours?")
+	result, err := a.Invoke(agent.NewContext(ctx).WithConversationID("handoff-faq"), "What are your business hours?")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -182,7 +189,7 @@ func TestIntegration_Handoff_AgentDecidesToHandoff(t *testing.T) {
 		t.Logf("Warning: response may not contain business hours: %s", result.Text)
 	}
 
-	paused, err := a.Invoke(agent.NewContext(ctx), "I want to file a formal complaint about being overcharged $500")
+	paused, err := a.Invoke(agent.NewContext(ctx).WithConversationID("handoff-complaint"), "I want to file a formal complaint about being overcharged $500")
 	if err != nil {
 		t.Fatalf("Invoke complaint error: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/camilbinas/gude-agents/agent"
+	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/testutil"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -457,7 +458,7 @@ func TestExecutor_HumanInputInterrupt_InputRequiredThenResume(t *testing.T) {
 		}}},
 		&agent.ModelResponse{Text: "Deploying to eu-west-1"},
 	))
-	a, err := agent.New(provider, "test", agent.WithTools(agent.NewHumanInputTool("ask_human", "")))
+	a, err := agent.New(provider, "test", agent.WithTools(agent.NewHumanInputTool("ask_human", "")), agent.WithConversationStore(conversation.NewInMemory()), agent.WithExecutionStore(newTestExecutionStore()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +514,7 @@ func TestExecutor_ApprovalInterrupt_ApproveAndDeny(t *testing.T) {
 				&agent.ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "c-1", Name: "delete_order", Input: json.RawMessage(`{}`)}}},
 				&agent.ModelResponse{Text: "done"},
 			))
-			a, err := agent.New(provider, "test", agent.WithTools(del))
+			a, err := agent.New(provider, "test", agent.WithTools(del), agent.WithConversationStore(conversation.NewInMemory()), agent.WithExecutionStore(newTestExecutionStore()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -556,7 +557,7 @@ func TestExecutor_CancelDiscardsPendingInterrupt(t *testing.T) {
 		}}},
 		&agent.ModelResponse{Text: "fresh turn"},
 	))
-	a, err := agent.New(provider, "test", agent.WithTools(agent.NewHumanInputTool("ask_human", "")))
+	a, err := agent.New(provider, "test", agent.WithTools(agent.NewHumanInputTool("ask_human", "")), agent.WithConversationStore(conversation.NewInMemory()), agent.WithExecutionStore(newTestExecutionStore()))
 	if err != nil {
 		t.Fatal(err)
 	}

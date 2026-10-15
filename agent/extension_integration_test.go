@@ -165,134 +165,6 @@ func TestAgent_ConversationLoadFailureReturnsError(t *testing.T) {
 	}
 }
 
-// trackingFlusher implements ConversationStore and Flusher.
-// It records whether Flush was called.
-type trackingFlusher struct {
-	flushed bool
-	mu      sync.Mutex
-	data    map[string]ConversationSnapshot
-}
-
-func newTrackingFlusher() *trackingFlusher {
-	return &trackingFlusher{data: make(map[string]ConversationSnapshot)}
-}
-
-func (w *trackingFlusher) Load(_ context.Context, id string) (ConversationSnapshot, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.data[id], nil
-}
-
-func (w *trackingFlusher) Save(_ context.Context, id string, msgs []Message, expectedRevision uint64) (uint64, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.data[id].Revision != expectedRevision {
-		return 0, ErrConversationConflict
-	}
-	next := expectedRevision + 1
-	w.data[id] = ConversationSnapshot{Messages: msgs, Revision: next}
-	return next, nil
-}
-
-func (w *trackingFlusher) List(_ context.Context) ([]string, error) { return nil, nil }
-func (w *trackingFlusher) Delete(_ context.Context, _ string) error { return nil }
-
-func (w *trackingFlusher) Flush(context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.flushed = true
-	return nil
-}
-
-func TestAgent_ShutdownCallsConversationFlusher(t *testing.T) {
-	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
-	flusher := newTrackingFlusher()
-
-	a, err := New(sp, "sys", WithConversationStore(flusher))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_ = a.Shutdown(context.Background())
-
-	flusher.mu.Lock()
-	defer flusher.mu.Unlock()
-	if !flusher.flushed {
-		t.Fatal("expected Shutdown to call Flush on Flusher")
-	}
-}
-
-// failingFlusher is a ConversationStore whose Flush blocks until release is
-// closed or the context ends, then returns flushErr.
-type failingFlusher struct {
-	*testMemoryStore
-	release  chan struct{}
-	flushErr error
-}
-
-func (f *failingFlusher) Flush(ctx context.Context) error {
-	select {
-	case <-f.release:
-		return f.flushErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func TestAgent_ShutdownReturnsFlushError(t *testing.T) {
-	want := errors.New("flush failed")
-	release := make(chan struct{})
-	close(release)
-	a, err := New(newScriptedProvider(), "sys", WithConversationStore(&failingFlusher{
-		testMemoryStore: newTestMemoryStore(), release: release, flushErr: want,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Shutdown(context.Background()); !errors.Is(err, want) {
-		t.Fatalf("Shutdown error = %v, want %v", err, want)
-	}
-}
-
-func TestAgent_ShutdownHonorsContextWhileFlushing(t *testing.T) {
-	a, err := New(newScriptedProvider(), "sys", WithConversationStore(&failingFlusher{
-		testMemoryStore: newTestMemoryStore(), release: make(chan struct{}),
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := a.Shutdown(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Shutdown error = %v, want context.Canceled", err)
-	}
-}
-
-func TestAgent_Close_NoopWithoutConversation(t *testing.T) {
-	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
-	a, err := New(sp, "sys")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should not panic.
-	_ = a.Shutdown(context.Background())
-	_ = a.Shutdown(context.Background()) // safe to call multiple times
-}
-
-func TestAgent_ShutdownNoopWhenConversationIsNotFlusher(t *testing.T) {
-	sp := newScriptedProvider(&ModelResponse{Text: "ok"})
-	store := newTestMemoryStore() // does not implement Flusher
-
-	a, err := New(sp, "sys", WithConversationStore(store))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should not panic — store doesn't implement Flush.
-	_ = a.Shutdown(context.Background())
-}
-
 func testSaveLatest(ctx context.Context, store ConversationStore, id string, messages []Message) error {
 	snapshot, err := store.Load(ctx, id)
 	if err != nil {
@@ -1074,11 +946,13 @@ func humanInputCall(id string) tool.Call {
 
 func TestHumanInputTool_InvokeReturnsInterrupt(t *testing.T) {
 	provider := newScriptedProvider(&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}})
-	a, err := New(provider, "You are helpful.", WithTools(NewHumanInputTool("request_human_input", "")))
+	conversations, _, stores := pauseStores()
+	a, err := New(provider, "You are helpful.", append(stores, WithTools(NewHumanInputTool("request_human_input", "")))...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := a.Invoke(Background(), "Process refund #123")
+	ctx := Background().WithConversationID("hitl-invoke")
+	res, err := a.Invoke(ctx, "Process refund #123")
 	if err != nil {
 		t.Fatalf("Invoke error: %v", err)
 	}
@@ -1092,13 +966,14 @@ func TestHumanInputTool_InvokeReturnsInterrupt(t *testing.T) {
 	if in.Input.Reason != "need info" || in.Input.Question != "What is the order ID?" {
 		t.Errorf("input = %+v", in.Input)
 	}
-	if len(in.Messages) == 0 {
-		t.Fatal("expected a message snapshot")
+	snapshot, err := conversations.Load(ctx, "hitl-invoke")
+	if err != nil || len(snapshot.Messages) == 0 {
+		t.Fatalf("transcript = %+v, %v", snapshot, err)
 	}
-	last := in.Messages[len(in.Messages)-1]
+	last := snapshot.Messages[len(snapshot.Messages)-1]
 	tr, ok := last.Content[0].(ToolResultBlock)
 	if !ok || tr.ToolUseID != "h1" || tr.Content != humanInputPausedResult {
-		t.Fatalf("last snapshot message = %#v, want paused tool result", last)
+		t.Fatalf("last transcript message = %#v, want paused tool result", last)
 	}
 }
 
@@ -1107,14 +982,15 @@ func TestResume_RespondContinuesAfterHumanInput(t *testing.T) {
 		{ToolCalls: []tool.Call{humanInputCall("h1")}},
 		{Text: "Refund processed for order 456."},
 	}}
-	a, err := New(provider, "You are helpful.", WithTools(NewHumanInputTool("request_human_input", "")),
-		WithInputGuardrail(func(_ *Context, s string) (string, error) { return s + "!", nil }))
+	_, _, stores := pauseStores()
+	a, err := New(provider, "You are helpful.", append(stores, WithTools(NewHumanInputTool("request_human_input", "")),
+		WithInputGuardrail(func(_ *Context, s string) (string, error) { return s + "!", nil }))...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := mustInterrupt(t, a, Background(), "Process a refund")
-
-	res, err := a.Resume(Background(), in, Respond("Order 456"))
+	ctx := Background().WithConversationID("hitl-resume")
+	in := mustInterrupt(t, a, ctx, "Process a refund")
+	res, err := a.Resume(ctx, in, Respond("Order 456"))
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -1129,7 +1005,7 @@ func TestResume_RespondContinuesAfterHumanInput(t *testing.T) {
 }
 
 // TestHumanInput_PreservesConversationContext verifies that earlier tool
-// results are part of the snapshot.
+// results are part of the persisted transcript.
 func TestHumanInput_PreservesConversationContext(t *testing.T) {
 	lookup := newTestRaw("lookup", "looks up", map[string]any{"type": "object"},
 		func(context.Context, json.RawMessage) (string, error) { return "order 42 found", nil })
@@ -1137,13 +1013,19 @@ func TestHumanInput_PreservesConversationContext(t *testing.T) {
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "t1", Name: "lookup", Input: json.RawMessage(`{}`)}}},
 		&ModelResponse{ToolCalls: []tool.Call{humanInputCall("h1")}},
 	)
-	a, err := New(provider, "You are helpful.", WithTools(lookup, NewHumanInputTool("request_human_input", "")))
+	conversations, _, stores := pauseStores()
+	a, err := New(provider, "You are helpful.", append(stores, WithTools(lookup, NewHumanInputTool("request_human_input", "")))...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := mustInterrupt(t, a, Background(), "Find order")
+	ctx := Background().WithConversationID("hitl-context")
+	mustInterrupt(t, a, ctx, "Find order")
+	snapshot, err := conversations.Load(ctx, "hitl-context")
+	if err != nil {
+		t.Fatal(err)
+	}
 	found := false
-	for _, m := range in.Messages {
+	for _, m := range snapshot.Messages {
 		for _, b := range m.Content {
 			if tr, ok := b.(ToolResultBlock); ok && tr.Content == "order 42 found" {
 				found = true
@@ -1151,7 +1033,7 @@ func TestHumanInput_PreservesConversationContext(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("earlier tool result missing from snapshot")
+		t.Fatal("earlier tool result missing from transcript")
 	}
 }
 
@@ -1166,20 +1048,26 @@ func TestApproval_PrecedesHumanInputSibling(t *testing.T) {
 		{ToolUseID: "d1", Name: "danger", Input: json.RawMessage(`{}`)},
 		humanInputCall("h1"),
 	}})
-	a, err := New(provider, "x", WithTools(danger, NewHumanInputTool("request_human_input", "")))
+	conversations, _, stores := pauseStores()
+	a, err := New(provider, "x", append(stores, WithTools(danger, NewHumanInputTool("request_human_input", "")))...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := mustInterrupt(t, a, Background(), "go")
+	ctx := Background().WithConversationID("approval-first")
+	in := mustInterrupt(t, a, ctx, "go")
 	if in.Type != InterruptApproval || in.Approval == nil || len(in.Approval.Calls) != 1 || in.Approval.Calls[0].CallID != "d1" {
 		t.Fatalf("interrupt = %#v, want approval for d1", in)
 	}
 	if called {
 		t.Fatal("approval-required tool must not run")
 	}
-	last := in.Messages[len(in.Messages)-1]
+	snapshot, err := conversations.Load(ctx, "approval-first")
+	if err != nil || len(snapshot.Messages) == 0 {
+		t.Fatalf("transcript = %+v, %v", snapshot, err)
+	}
+	last := snapshot.Messages[len(snapshot.Messages)-1]
 	if last.Role != RoleAssistant || len(last.Content) != 2 {
-		t.Fatalf("snapshot = %#v, want original assistant tool batch", last)
+		t.Fatalf("transcript tail = %#v, want original assistant tool batch", last)
 	}
 }
 

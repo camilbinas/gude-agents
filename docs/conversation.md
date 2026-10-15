@@ -77,6 +77,11 @@ a, err := agent.New(provider, instructions, agent.WithConversationStore(store))
 
 PostgreSQL and SQLite store metadata plus append-only message rows. The PostgreSQL constructor applies only additive migrations and expects the caller-owned metadata table to exist. Redis uses same-slot metadata and stream keys. Checkpoint backends implement `checkpoint.Checkpointer`, which has different ownership and consistency semantics, and cannot be used in place of a conversation backend. See each backend package's Go documentation for options such as credentials, TTL, key prefixes, and table names.
 
+## Append durability
+A successful `Append` is committed before it returns, according to the persistence model of the selected store: the messages were appended atomically under the revision check, the returned cursor is observable by a later read, and the write is committed rather than queued. Persistent stores that advertise crash recovery must not acknowledge a write that can disappear after a crash. The in-memory store satisfies the contract only within the running process; its history is lost when the process exits.
+
+There is no agent-level synchronous-conversation option and no flush hook. Stores that batch internally must do so without weakening this contract.
+
 ## Execution state
 
 Conversation answers **what happened**. An `Execution` answers **where computation currently is**. A durable execution references canonical history with `ConversationID`, `Revision`, and `LastSequence`; it never stores message snapshots. Pauses, usage, iteration, phase, and execution status belong to `ExecutionStore`, which is commonly backed by a generic `checkpoint.Checkpointer`. See [Checkpointing](checkpoint.md) and [Interrupts](interrupts.md).

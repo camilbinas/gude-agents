@@ -54,7 +54,7 @@ func TestPersistentExecutionStoresCursorNotTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paused.Interrupt == nil || paused.Interrupt.LastSequence == 0 || len(paused.Interrupt.Messages) != 0 {
+	if paused.Interrupt == nil || paused.Interrupt.LastSequence == 0 {
 		t.Fatalf("interrupt=%+v", paused.Interrupt)
 	}
 	if _, err := a.Resume(ctx, paused.Interrupt, Approve()); err != nil {
@@ -146,7 +146,7 @@ func TestResumeUsesContextManagerRangeHistory(t *testing.T) {
 		called = true
 		return "approved", nil
 	}, tool.RequiresApproval())
-	a, err := New(provider, "sys", WithTools(approval), WithConversationStore(store), WithContextManager(manager))
+	a, err := New(provider, "sys", WithTools(approval), WithConversationStore(store), WithExecutionStore(newTestExecutionStore()), WithContextManager(manager))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +673,7 @@ func TestHandoff_WithPerInvocationConversationID(t *testing.T) {
 
 	store := newTestMemoryStore()
 	a, err := New(provider, "sys", WithTools(NewHumanInputTool("request_human_input", "")),
-		WithConversationStore(store))
+		WithConversationStore(store), WithExecutionStore(newTestExecutionStore()))
 	if err != nil {
 		t.Fatal(err)
 	}

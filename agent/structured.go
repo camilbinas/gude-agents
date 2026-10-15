@@ -157,7 +157,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 			Role:    RoleAssistant,
 			Content: []ContentBlock{TextBlock{Text: rawText}},
 		})
-		if _, err := r.saveConversation(toSave, c.rt.totalUsage()); err != nil {
+		if err := r.saveConversation(toSave, c.rt.totalUsage()); err != nil {
 			return Result{}, fmt.Errorf("structured output: %w", err)
 		}
 	}

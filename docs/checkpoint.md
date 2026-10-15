@@ -24,12 +24,12 @@ An `ExecutionStore` is the agent-level semantic adapter for durable runtime stat
 import (
     "github.com/camilbinas/gude-agents/agent"
     "github.com/camilbinas/gude-agents/agent/checkpoint"
-    "github.com/camilbinas/gude-agents/agent/checkpoint/executionstore"
+    "github.com/camilbinas/gude-agents/agent/execution"
 )
 
 conversations := conversation.NewInMemory()
 cp := checkpoint.NewMemory()
-executions := executionstore.New(cp)
+executions := execution.New(cp)
 
 a, err := agent.New(prov, instructions,
     agent.WithConversationStore(conversations),
@@ -39,6 +39,8 @@ a, err := agent.New(prov, instructions,
 
 An execution stores only runtime metadata: status, phase, pause data, usage, iteration, and the canonical conversation cursor (`ConversationID`, `Revision`, `LastSequence`). It never stores a conversation transcript. Conversation history remains owned by `ConversationStore`; rolling-summary state remains owned by `ContextStateStore`.
 
-The adapter namespaces execution threads as `execution:<executionID>` by default. `executionstore.WithThreadPrefix` changes that namespace. The Checkpointer history remains useful for auditing execution transitions, but applications normally interact only with `ExecutionStore` and `Agent.Resume`.
+The adapter namespaces execution threads as `execution:<executionID>` by default. `execution.WithThreadPrefix` changes that namespace.
+
+For tests, development, and examples, `execution.NewMemory()` wraps the in-memory checkpointer. It is process-local: executions, including paused ones, are lost when the process exits and are not shared between processes. Execution retention is not bounded by the store, and no eviction policy exists; use a durable `Checkpointer` for anything that must survive a restart. The Checkpointer history remains useful for auditing execution transitions, but applications normally interact only with `ExecutionStore` and `Agent.Resume`.
 
 `Execution.Phase` is the latest **durably recorded** engine boundary, not a live worker heartbeat. This first model records creation, pause/resume, and terminal boundaries; it does not write execution state around every model or tool transition. Consumers must not treat a polled phase as proof that a particular handler is currently running.

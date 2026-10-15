@@ -39,12 +39,6 @@ func (f failingMemory) LoadAfter(c context.Context, id string, a uint64) (Conver
 func (f failingMemory) Append(c context.Context, id string, m []Message, r uint64) (ConversationCursor, error) {
 	return appendForTest(f.Load, f.Save, c, id, m, r)
 }
-func (w *trackingFlusher) LoadAfter(c context.Context, id string, a uint64) (ConversationSnapshot, error) {
-	return rangeForTest(w.Load, c, id, a)
-}
-func (w *trackingFlusher) Append(c context.Context, id string, m []Message, r uint64) (ConversationCursor, error) {
-	return appendForTest(w.Load, w.Save, c, id, m, r)
-}
 func (r *recordingConversation) LoadAfter(c context.Context, id string, a uint64) (ConversationSnapshot, error) {
 	return rangeForTest(r.Load, c, id, a)
 }
@@ -71,3 +65,22 @@ func (s *inMemoryStore) Append(c context.Context, id string, m []Message, v uint
 }
 
 func newMemConversation() *testMemoryStore { return newTestMemoryStore() }
+
+// pauseStores returns the explicit memory-backed conversation and execution
+// stores that every pausing agent needs. Tests that pause must pass these (or
+// equivalents) to New, and invoke with a conversation ID.
+func pauseStores() (*testMemoryStore, *testExecutionStore, []Option) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	return conversations, executions, []Option{WithConversationStore(conversations), WithExecutionStore(executions)}
+}
+
+// withPauseStores configures fresh explicit memory-backed conversation and
+// execution stores. Use it for agents that must be able to pause.
+func withPauseStores() Option {
+	return func(a *Agent) error {
+		if err := WithConversationStore(newTestMemoryStore())(a); err != nil {
+			return err
+		}
+		return WithExecutionStore(newTestExecutionStore())(a)
+	}
+}

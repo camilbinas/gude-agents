@@ -188,16 +188,6 @@ func WithContextFormatter(f rag.ContextFormatter) Option {
 	}
 }
 
-// WithSyncConversation makes the agent call Flush(ctx) after each successful
-// Append, blocking until asynchronous persistence work is complete. It only has an
-// effect when the store implements Flusher.
-func WithSyncConversation() Option {
-	return func(a *Agent) error {
-		a.syncConversation = true
-		return nil
-	}
-}
-
 // WithNormalization sets the message normalization strategy.
 func WithNormalization(s NormStrategy) Option {
 	return func(a *Agent) error {

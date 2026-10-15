@@ -8,7 +8,7 @@
 
 `DeriveCard` builds an Agent Card from `Agent.Name`, instructions, and current `ToolSpecs`. Override description, version, URL, skills, or capabilities with card options. `NewServer` exposes one agent over JSON-RPC, REST, and gRPC.
 
-The executor consumes the agent's iterator-based `Stream` and continues persisted work with `ResumeStream`, preserving text, tool, and interrupt behavior at the protocol boundary. Configure a conversation and interrupt store when remote callers need durable continuation.
+The executor consumes the agent's iterator-based `Stream` and continues persisted work with `ResumeStream`, preserving text, tool, and interrupt behavior at the protocol boundary. Remote callers can only continue a paused task when the agent has both a conversation store and an execution store (`agent/execution`).
 
 ## Call a remote agent
 
