@@ -3,11 +3,11 @@ module github.com/camilbinas/gude-agents/agent/provider/registry
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v1.8.1
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v1.8.1
-	github.com/camilbinas/gude-agents/agent/provider/bedrock v1.8.1
-	github.com/camilbinas/gude-agents/agent/provider/ollama v1.8.1
-	github.com/camilbinas/gude-agents/agent/provider/openai v1.8.1
+	github.com/camilbinas/gude-agents v1.8.2
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v1.8.2
+	github.com/camilbinas/gude-agents/agent/provider/bedrock v1.8.2
+	github.com/camilbinas/gude-agents/agent/provider/ollama v1.8.2
+	github.com/camilbinas/gude-agents/agent/provider/openai v1.8.2
 )
 
 require (
@@ -31,8 +31,8 @@ require (
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/bedrock v1.8.1 // indirect
-	github.com/camilbinas/gude-agents/agent/rag/openai v1.8.1 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/bedrock v1.8.2 // indirect
+	github.com/camilbinas/gude-agents/agent/rag/openai v1.8.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/openai/openai-go/v3 v3.31.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
