@@ -16,7 +16,8 @@
 #      does not require (a missing internal reference). Test-only imports of
 #      sibling modules are tolerated, because those tests run through go.work
 #      (see "Verify workspace modules"); they only exempt the module's test
-#      dependencies from check 3;
+#      dependencies from check 3. Packages are listed with local replacements,
+#      not the workspace, so unpublished release versions never resolve;
 #   3. the module cannot be loaded with a complete go.sum. This is checked in
 #      read-only mode with every internal module replaced by its local
 #      directory, so that unpublished release versions never need to resolve
@@ -32,7 +33,6 @@ modules_file=${1:?usage: verify-module-metadata.sh <published-modules.txt> <publ
 paths_file=${2:?usage: verify-module-metadata.sh <published-modules.txt> <published-module-paths.txt>}
 root_module=${ROOT_MODULE:?ROOT_MODULE must name the repository root module path}
 repo_root=$PWD
-workspace="$repo_root/go.work"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -63,18 +63,41 @@ while read -r module_dir; do
     esac
   done
 
-  # 2. Internal modules that are imported but not required. Package loading
-  # uses the workspace so unreleased internal versions resolve locally.
+  # 2. Internal modules that are imported but not required. Packages are listed
+  # with a temporary modfile that requires and locally replaces every internal
+  # module, so release versions that are not tagged yet never need to resolve.
+  # The workspace cannot be used here: after the release rewrite go.mod points
+  # at unpublished versions that the go command would try to fetch.
+  work="$tmp/$(printf '%s' "$module_dir" | tr '/.' '__')"
+  mkdir -p "$work/all"
+  cp "$module_dir/go.mod" "$work/all/go.mod"
+  if [ -f "$module_dir/go.sum" ]; then
+    cp "$module_dir/go.sum" "$work/all/go.sum"
+  else
+    : > "$work/all/go.sum"
+  fi
+  all_args=()
+  for path in "${!dir_of[@]}"; do
+    [ "$path" = "$self" ] && continue
+    all_args+=("-replace=${path}=${dir_of[$path]}")
+    if ! printf '%s\n' "${required[@]}" | grep -qxF "$path"; then
+      all_args+=("-require=${path}@v0.0.0-00010101000000-000000000000")
+    fi
+  done
+  if [ "${#all_args[@]}" -gt 0 ]; then
+    go mod edit -modfile="$work/all/go.mod" "${all_args[@]}"
+  fi
   list_modules() {
-    (cd "$module_dir" && GOWORK="$workspace" go list -deps "$@" \
+    (cd "$module_dir" && GOWORK=off GOFLAGS=-mod=mod GOTOOLCHAIN=local \
+      go list -modfile="$work/all/go.mod" -deps "$@" \
       -f '{{if .Module}}{{.Module.Path}}{{end}}' ./... 2>"$tmp/list.err") | sort -u
   }
   if ! used=$(list_modules); then
-    errors+=("$module_dir: cannot list imports in the workspace: $(tr '\n' ' ' < "$tmp/list.err")")
+    errors+=("$module_dir: cannot list imports: $(head -c 600 "$tmp/list.err" | tr '\n' ' ')")
     continue
   fi
   if ! used_with_tests=$(list_modules -test); then
-    errors+=("$module_dir: cannot list test imports in the workspace: $(tr '\n' ' ' < "$tmp/list.err")")
+    errors+=("$module_dir: cannot list test imports: $(head -c 600 "$tmp/list.err" | tr '\n' ' ')")
     continue
   fi
   check_test_closure=true
@@ -88,13 +111,11 @@ while read -r module_dir; do
       errors+=("$module_dir imports $path but go.mod does not require it")
     else
       check_test_closure=false
-      echo "notice: $module_dir tests import $path through the workspace; test dependency checksums are not checked"
+      echo "notice: $module_dir tests import $path without requiring it; test dependency checksums are not checked"
     fi
   done <<< "$used_with_tests"
-
   # 3. Complete checksums, resolved with local replacements for every internal
   # module so only external dependencies are looked up.
-  work="$tmp/$(printf '%s' "$module_dir" | tr '/.' '__')"
   mkdir -p "$work"
   cp "$module_dir/go.mod" "$work/go.mod"
   if [ -f "$module_dir/go.sum" ]; then
