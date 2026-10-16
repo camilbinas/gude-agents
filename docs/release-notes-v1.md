@@ -38,10 +38,9 @@ Removed `agent/conversation/dynamodb`.
 
 DynamoDB is no longer supplied as a ConversationStore. Migrate canonical
 conversation history to a supported append-only store before upgrading.
-DynamoDB checkpoint support, where configured, is independent and is not a
-conversation-history migration path.
+DynamoDB remains available as an `ExecutionStore` through `agent/execution/dynamodb`; that is not a conversation-history migration path.
+The supported conversation backends are in-memory, SQLite, PostgreSQL, and Redis.
 
-The supported conversation backends are in-memory, SQLite, PostgreSQL, and Redis. `agent/checkpoint/dynamodb` is unchanged.
 
 ## Conversation durability, pause persistence, and execution stores
 
@@ -66,8 +65,39 @@ a, err := agent.New(provider, instructions,
 )
 ```
 
-Memory-backed stores lose the transcript and every paused execution when the process exits and never evict. Use a durable conversation backend and `execution.New(checkpointer)` for pauses that must survive a restart.
+Memory-backed stores lose the transcript and every paused execution when the process exits and never evict. Use a durable conversation backend and a durable execution store (`agent/execution/postgres`, `agent/execution/redis`, or `agent/execution/dynamodb`) for pauses that must survive a restart.
 
-### `agent/execution` replaces `agent/checkpoint/executionstore`
+### Execution stores implement `agent.ExecutionStore` directly
 
-The checkpoint-to-`ExecutionStore` adapter moved to its own module, `github.com/camilbinas/gude-agents/agent/execution`, with `execution.New(checkpointer)` and `execution.NewMemory()`. The old import path no longer exists and no forwarding package is left behind. `agent.ExecutionStore` keeps its name and stays in the root package.
+The checkpoint abstraction is removed. Nothing adapts a generic checkpointer to `agent.ExecutionStore` any more; each backend implements the interface itself, with its own compare-and-swap on a version counter. Removed:
+
+- `agent/checkpoint` (`Checkpointer` and the in-memory checkpointer);
+- `agent/checkpoint/postgres`, `agent/checkpoint/redis`, `agent/checkpoint/dynamodb`;
+- `agent/checkpoint/executionstore` and the `execution.New(checkpointer)` adapter that replaced it.
+
+No forwarding package or alias remains. Checkpoint tables and keys written by earlier releases are neither read nor written by the new stores; old rows can stay in place and be dropped when no deployment uses them.
+
+New packages:
+
+| Package | Constructor | Notes |
+| --- | --- | --- |
+| `agent/execution` | `execution.NewMemory()` | Process-local; lost on exit and never evicts. |
+| `agent/execution/postgres` | `postgres.New(db, postgres.WithTableName(...))` | One row per execution; you create the `executions` table (schema in the package documentation). |
+| `agent/execution/redis` | `redis.New(client, redis.WithKeyPrefix(...), redis.WithTTL(...))` | One hash per execution; atomic Lua scripts. Durable only with Redis persistence, and an expired execution is gone. |
+| `agent/execution/dynamodb` | `dynamodb.New(client, dynamodb.WithTableName(...), dynamodb.WithKeyPrefix(...))` | One item per execution with a `execution_id` partition key; conditional puts and strongly consistent reads. |
+
+```go
+import pgexec "github.com/camilbinas/gude-agents/agent/execution/postgres"
+
+executions := pgexec.New(pool)
+a, err := agent.New(provider, instructions,
+    agent.WithConversationStore(conversations),
+    agent.WithExecutionStore(executions),
+)
+```
+
+Import the Postgres, Redis, and DynamoDB packages with an alias when you also use a conversation or client package of the same name. `agent.ExecutionStore` keeps its name and stays in the root package; see [execution stores](execution-stores.md) for the contract and schemas.
+
+### Every published module builds on its own
+
+Release commits now carry complete `go.sum` files. Before this change the release rewrote internal requirements to the new version but left `go.sum` without checksums for them, so `GOWORK=off go test ./...` failed inside a nested module before compiling anything. The release workflow now publishes every module into a local file proxy in dependency order, runs `go mod tidy` against it, and verifies a consumer-style build (`GOWORK=off`, read-only `go.mod`/`go.sum`) of every module before it commits or tags. The root module no longer requires `agent/logging/debug` or `agent/logging/slog`, and the root tests no longer import sibling modules, so the internal requirement graph is acyclic.

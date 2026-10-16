@@ -24,14 +24,13 @@ Observers run in registration order at lifecycle start and reverse order at end.
 
 ## Built-in logging
 
-- `logging/auto.WithLogging()` selects colored debug output for local environments and structured logging otherwise.
 - `logging/debug.WithLogging()` writes colored development logs.
 - `logging/slog.WithLogging(...)` uses `log/slog`; configure `WithHandler` and `WithMinLevel`.
 
 ```go
-import autoslog "github.com/camilbinas/gude-agents/agent/logging/auto"
+import agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
 
-a, err := agent.New(prov, instructions, autoslog.WithLogging())
+a, err := agent.New(prov, instructions, agentslog.WithLogging())
 ```
 
 ## Metrics

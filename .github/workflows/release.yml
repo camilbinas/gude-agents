@@ -302,19 +302,41 @@ jobs:
             exit 1
           fi
 
-      # Runs after the version rewrite and before anything is committed or
-      # tagged. It fails the release when a published module requires an
-      # internal module that no longer exists, imports one it does not require,
-      # or has a go.sum that cannot load its external dependencies. Internal
-      # modules resolve to this checkout through a temporary modfile, so
-      # unpublished release versions are never fetched and no tracked file is
-      # modified.
+      # The rewritten requirements name a version that is not tagged yet, so
+      # go.sum cannot list the checksums of internal modules and no module
+      # could be built on its own (GOWORK=off). Publish every module into a
+      # local file proxy, in dependency order, and let `go mod tidy` record the
+      # checksums from it. The files tagged by the release commit are exactly
+      # the files hashed here, so the public proxy serves the same content.
+      - name: Seal module checksums
+        if: steps.version.outputs.skip == 'false'
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          export MODULE_PROXY_DIR="$RUNNER_TEMP/module-proxy"
+          bash .github/scripts/seal-module-sums.sh \
+            "$RUNNER_TEMP/published-modules.txt" \
+            "$RUNNER_TEMP/published-module-paths.txt"
+          unexpected=$(git status --porcelain --untracked-files=all | awk '{ print $2 }' | grep -vE '(^|/)go\.(mod|sum)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Checksum sealing changed files other than go.mod and go.sum:"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+      # Runs after the version rewrite and checksum sealing, before anything is
+      # committed or tagged. It fails the release when a published module
+      # requires an internal module that no longer exists, imports one it does
+      # not require, or cannot be built on its own with GOWORK=off, which also
+      # proves go.sum is complete. Unpublished release versions are served by
+      # the local proxy and no tracked file is modified.
       - name: Verify module metadata
         if: steps.version.outputs.skip == 'false'
         env:
           GOTOOLCHAIN: local
         run: |
           set -euo pipefail
+          export MODULE_PROXY_DIR="$RUNNER_TEMP/module-proxy"
           bash .github/scripts/verify-module-metadata.sh \
             "$RUNNER_TEMP/published-modules.txt" \
             "$RUNNER_TEMP/published-module-paths.txt"
@@ -340,11 +362,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           while read -r module_dir; do
-            if [ "$module_dir" = . ]; then
-              git add go.mod
-            else
-              git add "$module_dir/go.mod"
-            fi
+            prefix=$module_dir/
+            if [ "$module_dir" = . ]; then prefix=; fi
+            git add "${prefix}go.mod"
+            if [ -f "${prefix}go.sum" ]; then git add "${prefix}go.sum"; fi
           done < "$RUNNER_TEMP/published-modules.txt"
           git diff --cached --quiet || git commit -m "chore: release ${NEW_VERSION}"
           release_commit=$(git rev-parse HEAD)
@@ -358,11 +379,11 @@ jobs:
           # intentionally name tags that do not exist until this release is
           # pushed, so rebuilding them would resolve unpublished versions from
           # the module proxy. Prove the taggable commit differs from the tested
-          # source only in go.mod files instead.
+          # source only in go.mod and go.sum files instead.
           release_base=$(cat "$RUNNER_TEMP/release-base.txt")
-          unexpected_release_change=$(git diff --name-only "$release_base" "$release_commit" | grep -vE '(^|/)go\.mod$' || true)
+          unexpected_release_change=$(git diff --name-only "$release_base" "$release_commit" | grep -vE '(^|/)go\.(mod|sum)$' || true)
           if [ -n "$unexpected_release_change" ]; then
-            echo "::error::Release commit changes validated source outside go.mod:"
+            echo "::error::Release commit changes validated source outside go.mod and go.sum:"
             printf '%s\n' "$unexpected_release_change"
             exit 1
           fi

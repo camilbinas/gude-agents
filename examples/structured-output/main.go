@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/logging/auto"
+	"github.com/camilbinas/gude-agents/agent/logging/debug"
 	"github.com/camilbinas/gude-agents/agent/prompt"
 	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 	"github.com/camilbinas/gude-agents/agent/structured"
@@ -44,7 +44,7 @@ func main() {
 	a, err := agent.New(
 		provider,
 		prompt.Text("You are a professional chef. Provide detailed, accurate recipes.").String(),
-		auto.WithLogging(),
+		debug.WithLogging(),
 	)
 	if err != nil {
 		log.Fatal(err)

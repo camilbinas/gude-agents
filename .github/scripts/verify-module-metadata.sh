@@ -8,6 +8,12 @@
 #                               repository root ("." is the root module)
 #   published-module-paths.txt  one module path per line for the same modules
 #
+# Environment:
+#   ROOT_MODULE       module path of the repository root module (required)
+#   MODULE_PROXY_DIR  optional local module proxy populated by
+#                     seal-module-sums.sh; it serves internal versions that are
+#                     not tagged yet
+#
 # It fails when, for any published module:
 #
 #   1. go.mod requires an internal module path that is not a published module
@@ -18,40 +24,35 @@
 #      (see "Verify workspace modules"); they only exempt the module's test
 #      dependencies from check 3. Packages are listed with local replacements,
 #      not the workspace, so unpublished release versions never resolve;
-#   3. the module cannot be loaded with a complete go.sum. This is checked in
-#      read-only mode with every internal module replaced by its local
-#      directory, so that unpublished release versions never need to resolve
-#      but every external dependency must already have its checksums. Package
-#      and test dependencies are both checked unless the tests need sibling
-#      modules that go.mod does not declare.
+#   3. the module cannot be built on its own. With GOWORK=off, no
+#      replacements and a read-only go.mod/go.sum, a consumer-style build
+#      (go vet ./...) must succeed. That needs every external and internal
+#      requirement to resolve and to have its checksums in go.sum.
 #
-# The check never edits a tracked file: the replacements live in a temporary
-# modfile.
+# The check never edits a tracked file: check 2 uses a temporary modfile.
 set -euo pipefail
-
 modules_file=${1:?usage: verify-module-metadata.sh <published-modules.txt> <published-module-paths.txt>}
 paths_file=${2:?usage: verify-module-metadata.sh <published-modules.txt> <published-module-paths.txt>}
 root_module=${ROOT_MODULE:?ROOT_MODULE must name the repository root module path}
 repo_root=$PWD
-
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-
 # module path -> absolute directory, for every published module.
 declare -A dir_of=()
 while read -r module_dir; do
   path=$(cd "$module_dir" && go mod edit -json | jq -r '.Module.Path')
   dir_of["$path"]="$repo_root/$module_dir"
 done < "$modules_file"
-
+# The local proxy, when present, serves release versions that are not tagged yet.
+proxy_env=()
+if [ -n "${MODULE_PROXY_DIR:-}" ]; then
+  proxy_env=("GOPROXY=file://$(cd "$MODULE_PROXY_DIR" && pwd),https://proxy.golang.org,direct" "GONOSUMDB=$root_module")
+fi
 errors=()
-
 while read -r module_dir; do
   module_json=$(cd "$module_dir" && go mod edit -json)
   self=$(jq -r '.Module.Path' <<< "$module_json")
-
   mapfile -t required < <(jq -r '.Require[]?.Path' <<< "$module_json")
-
   # 1. Stale internal references.
   for path in "${required[@]}"; do
     case "$path" in
@@ -62,19 +63,18 @@ while read -r module_dir; do
         ;;
     esac
   done
-
   # 2. Internal modules that are imported but not required. Packages are listed
   # with a temporary modfile that requires and locally replaces every internal
   # module, so release versions that are not tagged yet never need to resolve.
   # The workspace cannot be used here: after the release rewrite go.mod points
   # at unpublished versions that the go command would try to fetch.
   work="$tmp/$(printf '%s' "$module_dir" | tr '/.' '__')"
-  mkdir -p "$work/all"
-  cp "$module_dir/go.mod" "$work/all/go.mod"
+  mkdir -p "$work"
+  cp "$module_dir/go.mod" "$work/go.mod"
   if [ -f "$module_dir/go.sum" ]; then
-    cp "$module_dir/go.sum" "$work/all/go.sum"
+    cp "$module_dir/go.sum" "$work/go.sum"
   else
-    : > "$work/all/go.sum"
+    : > "$work/go.sum"
   fi
   all_args=()
   for path in "${!dir_of[@]}"; do
@@ -85,11 +85,11 @@ while read -r module_dir; do
     fi
   done
   if [ "${#all_args[@]}" -gt 0 ]; then
-    go mod edit -modfile="$work/all/go.mod" "${all_args[@]}"
+    go mod edit -modfile="$work/go.mod" "${all_args[@]}"
   fi
   list_modules() {
     (cd "$module_dir" && GOWORK=off GOFLAGS=-mod=mod GOTOOLCHAIN=local \
-      go list -modfile="$work/all/go.mod" -deps "$@" \
+      go list -modfile="$work/go.mod" -deps "$@" \
       -f '{{if .Module}}{{.Module.Path}}{{end}}' ./... 2>"$tmp/list.err") | sort -u
   }
   if ! used=$(list_modules); then
@@ -111,34 +111,21 @@ while read -r module_dir; do
       errors+=("$module_dir imports $path but go.mod does not require it")
     else
       check_test_closure=false
-      echo "notice: $module_dir tests import $path without requiring it; test dependency checksums are not checked"
+      echo "notice: $module_dir tests import $path without requiring it; its tests are not built on their own"
     fi
   done <<< "$used_with_tests"
-  # 3. Complete checksums, resolved with local replacements for every internal
-  # module so only external dependencies are looked up.
-  mkdir -p "$work"
-  cp "$module_dir/go.mod" "$work/go.mod"
-  if [ -f "$module_dir/go.sum" ]; then
-    cp "$module_dir/go.sum" "$work/go.sum"
-  else
-    : > "$work/go.sum"
-  fi
-  args=()
-  for path in "${!dir_of[@]}"; do
-    [ "$path" = "$self" ] && continue
-    args+=("-replace=${path}=${dir_of[$path]}")
-  done
-  if [ "${#args[@]}" -gt 0 ]; then
-    go mod edit -modfile="$work/go.mod" "${args[@]}"
-  fi
-  test_flag=()
-  if [ "$check_test_closure" = true ]; then test_flag=(-test); fi
-  if ! (cd "$module_dir" && GOWORK=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local \
-      go list -modfile="$work/go.mod" -deps "${test_flag[@]}" ./... >/dev/null 2>"$tmp/sum.err"); then
-    errors+=("$module_dir: go.mod/go.sum are incomplete: $(head -c 600 "$tmp/sum.err" | tr '\n' ' ')")
+  # 3. Consumer build. The module is loaded the way a developer outside the
+  # workspace loads it: no go.work, no replacements, read-only go.mod/go.sum.
+  # Every requirement, internal ones included, must resolve from go.mod and be
+  # covered by go.sum. Package and test code are both compiled unless the tests
+  # need sibling modules that go.mod does not declare.
+  build_cmd=(vet ./...)
+  if [ "$check_test_closure" != true ]; then build_cmd=(build ./...); fi
+  if ! (cd "$module_dir" && env GOWORK=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local \
+      ${proxy_env[@]+"${proxy_env[@]}"} go "${build_cmd[@]}" >/dev/null 2>"$tmp/sum.err"); then
+    errors+=("$module_dir: cannot be built on its own (GOWORK=off): $(head -c 600 "$tmp/sum.err" | tr '\n' ' ')")
   fi
 done < "$modules_file"
-
 if [ "${#errors[@]}" -gt 0 ]; then
   echo "::error::Module metadata verification failed:"
   printf '  %s\n' "${errors[@]}"

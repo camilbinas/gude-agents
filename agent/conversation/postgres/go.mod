@@ -5,7 +5,6 @@ go 1.25.0
 require (
 	github.com/camilbinas/gude-agents v1.8.3
 	github.com/jackc/pgx/v5 v5.7.5
-	pgregory.net/rapid v1.2.0
 )
 
 require (
