@@ -56,8 +56,8 @@ An interrupt is a projection of a paused `Execution`, not an independently persi
 conversations := conversation.NewInMemory()
 executions := execution.NewMemory()
 
-// Durable: adapt any checkpoint.Checkpointer (PostgreSQL, Redis, DynamoDB).
-executions = execution.New(checkpointer)
+// Durable: pgexec "…/agent/execution/postgres", or the redis / dynamodb packages.
+executions = pgexec.New(pool)
 
 a, err := agent.New(prov, instructions,
     agent.WithConversationStore(conversations),
@@ -67,7 +67,7 @@ interrupt, err := a.LoadInterrupt(ctx, executionID)
 result, err := a.Resume(agent.NewContext(ctx), interrupt, agent.Approve())
 ```
 
-Memory-backed stores lose the transcript and every paused execution when the process exits, are not shared between processes, and never evict. The agent never creates them on its own; pick them explicitly. A conversation store without an execution store is fine for ordinary runs that never pause.
+See [Execution stores](execution-stores.md) for the backends and their table or key layouts. Memory-backed stores lose the transcript and every paused execution when the process exits, are not shared between processes, and never evict. The agent never creates them on its own; pick them explicitly. A conversation store without an execution store is fine for ordinary runs that never pause.
 
 Stateful execution records contain only runtime metadata and a canonical conversation cursor:
 

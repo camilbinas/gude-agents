@@ -9,7 +9,7 @@
 // the in-process memory implementations: the transcript and every paused
 // execution are lost when the process exits and are not shared between
 // replicas. For pauses that survive a restart, use a durable ConversationStore
-// and execution.New with a durable checkpoint.Checkpointer.
+// and a durable execution store (agent/execution/postgres, redis, or dynamodb).
 package main
 
 import (

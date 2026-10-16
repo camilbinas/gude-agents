@@ -8,7 +8,7 @@ import (
 
 // toolBatchCoordinator is the shared durable completion boundary for a model
 // tool batch. It validates and prepares active calls, dispatches them, projects
-// only definitive results into canonical history, checkpoints those results,
+// only definitive results into canonical history, commits those results,
 // and reports a pause without ever projecting indeterminate or coordination
 // outcomes.
 type toolBatchCoordinator struct {
@@ -44,7 +44,7 @@ func (b toolBatchCoordinator) run() coordinatedToolBatch {
 	result := coordinatedToolBatch{outcomes: outcomes}
 
 	// A coordination loss means another worker owns the active boundary. Do
-	// not append or checkpoint even definitive siblings: only that worker (or
+	// not append or commit even definitive siblings: only that worker (or
 	// recovery) may establish the canonical completion set.
 	for _, outcome := range outcomes {
 		if outcome.kind == toolOutcomeCoordinationFailure {
@@ -66,8 +66,8 @@ func (b toolBatchCoordinator) run() coordinatedToolBatch {
 	}
 	if err := batchOutcomeError(outcomes); err != nil {
 		if definitive := appendDefinitive(); len(definitive) > 0 {
-			if checkpointErr := b.r.checkpointToolResults(b.messages.canonical, outcomes); checkpointErr != nil {
-				result.err = errors.Join(err, checkpointErr)
+			if commitErr := b.r.commitToolResults(b.messages.canonical, outcomes); commitErr != nil {
+				result.err = errors.Join(err, commitErr)
 				return result
 			}
 		}
@@ -83,7 +83,7 @@ func (b toolBatchCoordinator) run() coordinatedToolBatch {
 			return result
 		}
 		appendDefinitive()
-		if err := b.r.checkpointToolResults(b.messages.canonical, outcomes); err != nil {
+		if err := b.r.commitToolResults(b.messages.canonical, outcomes); err != nil {
 			result.err = err
 			return result
 		}
@@ -91,7 +91,7 @@ func (b toolBatchCoordinator) run() coordinatedToolBatch {
 		return result
 	}
 	appendDefinitive()
-	if err := b.r.checkpointToolResults(b.messages.canonical, outcomes); err != nil {
+	if err := b.r.commitToolResults(b.messages.canonical, outcomes); err != nil {
 		result.err = err
 	}
 	return result

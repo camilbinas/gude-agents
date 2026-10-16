@@ -908,10 +908,10 @@ func (r *run) beginToolExecution(callID, toolName string) (key string, recoveryR
 	return key, recoveryReplay, err
 }
 
-// checkpointToolResults appends completed results before acknowledging their
+// commitToolResults appends completed results before acknowledging their
 // durable intent records. ConversationStore.Append is committed when it
 // returns, so the acknowledgement may follow it directly.
-func (r *run) checkpointToolResults(messages []Message, outcomes []toolOutcome) error {
+func (r *run) commitToolResults(messages []Message, outcomes []toolOutcome) error {
 	if !r.executionDurable {
 		return nil
 	}
@@ -979,7 +979,7 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 		return Execution{}, fmt.Errorf("load execution for recovery: %w", err)
 	}
 	if execution.PendingPause != nil {
-		// A completed ToolResult checkpoint may have cleared ToolBatch before the
+		// A committed ToolResult append may have cleared ToolBatch before the
 		// final pause CAS was acknowledged. Project the pre-recorded pause rather
 		// than entering any provider or handler path.
 		execution.Status, execution.Phase = ExecutionPaused, ExecutionPhasePaused

@@ -8,9 +8,8 @@ import (
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
-	"github.com/camilbinas/gude-agents/agent/checkpoint"
-	"github.com/camilbinas/gude-agents/agent/conversation"
 	"github.com/camilbinas/gude-agents/agent/execution"
+	"github.com/camilbinas/gude-agents/agent/execution/internal/conformance"
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -76,7 +75,7 @@ func TestPauseAndResumeWithExplicitMemoryStores(t *testing.T) {
 	var ran int
 	a, err := agent.New(approvalProvider(), "sys",
 		agent.WithTools(approvalTool(&ran)),
-		agent.WithConversationStore(conversation.NewInMemory()),
+		agent.WithConversationStore(conformance.NewConversations()),
 		agent.WithExecutionStore(execution.NewMemory()),
 	)
 	if err != nil {
@@ -96,12 +95,13 @@ func TestPauseAndResumeWithExplicitMemoryStores(t *testing.T) {
 	}
 }
 
-// execution.New adapts any checkpoint.Checkpointer. Because the paused state
-// lives in the shared store, a different Agent instance (a restarted process in
-// production) can load and resume the pause.
-func TestPauseSurvivesAgentInstanceWithCheckpointBackedStore(t *testing.T) {
-	conversations := conversation.NewInMemory()
-	executions := execution.New(checkpoint.NewMemory())
+// Because the paused state lives in the store rather than in the Agent, a
+// different Agent instance sharing that store can load and resume the pause.
+// Memory is process-local, so this models a second Agent in the same process;
+// the durable backends prove the same across processes.
+func TestPauseIsResumableByAnotherAgentInstance(t *testing.T) {
+	conversations := conformance.NewConversations()
+	executions := execution.NewMemory()
 
 	var firstRan int
 	first, err := agent.New(approvalProvider(), "sys",

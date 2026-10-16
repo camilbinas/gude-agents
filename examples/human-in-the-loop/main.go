@@ -7,8 +7,8 @@
 // pausing needs both a ConversationStore and an ExecutionStore. This example
 // selects the in-process memory implementations explicitly: the transcript and
 // any paused execution are lost when the process exits. Use a durable
-// ConversationStore and execution.New(checkpointer) when a pause must survive a
-// restart.
+// ConversationStore and a durable execution store (agent/execution/postgres,
+// redis, or dynamodb) when a pause must survive a restart.
 package main
 
 import (

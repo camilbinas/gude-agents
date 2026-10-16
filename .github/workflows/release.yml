@@ -302,6 +302,22 @@ jobs:
             exit 1
           fi
 
+      # Runs after the version rewrite and before anything is committed or
+      # tagged. It fails the release when a published module requires an
+      # internal module that no longer exists, imports one it does not require,
+      # or has a go.sum that cannot load its external dependencies. Internal
+      # modules resolve to this checkout through a temporary modfile, so
+      # unpublished release versions are never fetched and no tracked file is
+      # modified.
+      - name: Verify module metadata
+        if: steps.version.outputs.skip == 'false'
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          bash .github/scripts/verify-module-metadata.sh \
+            "$RUNNER_TEMP/published-modules.txt" \
+            "$RUNNER_TEMP/published-module-paths.txt"
       # A manual dry run exercises the same discovery, verification, and
       # metadata-rewrite path as a publish, but deliberately leaves no commit,
       # tags, or GitHub Release behind.
