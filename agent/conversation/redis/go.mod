@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/camilbinas/gude-agents v1.8.4
+	github.com/camilbinas/gude-agents v1.8.5
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
