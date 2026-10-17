@@ -23,7 +23,6 @@ type OpenAIProvider struct {
 	model          string
 	maxTokens      int64
 	thinkingEffort pvdr.ThinkingEffort // mapped to OpenAI's reasoning_effort; empty = disabled
-	cachingEnabled bool
 	capabilities   agent.ModelCapabilities
 }
 
@@ -41,7 +40,6 @@ type options struct {
 	baseURL        string
 	maxTokens      int64
 	thinkingEffort pvdr.ThinkingEffort
-	cachingEnabled bool
 	capabilities   agent.ModelCapabilities
 }
 
@@ -132,12 +130,6 @@ func WithThinking(effort pvdr.ThinkingEffort) Option {
 	return func(o *options) { o.thinkingEffort = effort }
 }
 
-// WithSystemPromptCaching stores a flag for caching. OpenAI manages caching
-// automatically; this option enables surfacing of cached_tokens into CacheReadTokens.
-func WithSystemPromptCaching() Option {
-	return func(o *options) { o.cachingEnabled = true }
-}
-
 // Must is a helper that wraps a (*OpenAIProvider, error) call and panics on error.
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
@@ -172,7 +164,6 @@ func New(model string, opts ...Option) (*OpenAIProvider, error) {
 		model:          model,
 		maxTokens:      o.maxTokens,
 		thinkingEffort: o.thinkingEffort,
-		cachingEnabled: o.cachingEnabled,
 		capabilities:   o.capabilities,
 	}, nil
 }

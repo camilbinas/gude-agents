@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"iter"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -486,7 +485,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			})
 		}
 
-		toolSpecs, availableTools := a.filterTools(iterC)
+		toolSpecs, availableTools := a.visibleTools(iterC)
 		converseMessages, err := r.modelTurnMessages(iterC, messages, systemPrompt, toolSpecs)
 		if err != nil {
 			endIteration(0, false, err)
@@ -510,7 +509,6 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			System:          systemPrompt,
 			Tools:           toolSpecs,
 			InferenceConfig: inferenceConfig,
-			CachingEnabled:  a.cachingEnabled,
 		}
 		provC, provF := h.onModelStart(iterC, ModelCallRecord{
 			ModelID:         modelID,
@@ -522,7 +520,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 		modelStart := time.Now()
 		r.emitLifecycle(EventModelStart, LifecycleEvent{Iteration: iteration})
 
-		resp, err := a.callProviderWithRetry(provC, r.convID, modelReq, func(event ModelEvent) {
+		resp, err := a.callProvider(provC, modelReq, func(event ModelEvent) {
 			switch event.Type {
 			case ModelEventText:
 				c.emit(Event{Type: EventText, Text: &TextEvent{Content: event.Text}})
@@ -1061,7 +1059,7 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 		return cloneExecution(*r.execution), err
 	}
 	decisions := r.persistedApprovalDecisions(calls)
-	_, available := a.filterTools(base)
+	_, available := a.visibleTools(base)
 	batchMessages := turnMessages{canonical: messages}
 	batch := r.coordinateToolBatch(base, calls, available, decisions, &batchMessages)
 	if batch.err != nil {
@@ -1665,7 +1663,7 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		if decisions == nil {
 			decisions = fallbackDecisions
 		}
-		_, available := a.filterTools(c)
+		_, available := a.visibleTools(c)
 		batch := r.coordinateToolBatch(c, calls, available, decisions, &messages)
 		if batch.err != nil {
 			return Result{}, batch.err
@@ -1793,78 +1791,52 @@ func (r *run) saveConversation(messages []Message, cumulative TokenUsage) error 
 	return nil
 }
 
-// callProviderWithRetry calls Provider.Stream with optional timeout and retry.
-func (a *Agent) callProviderWithRetry(ctx context.Context, convID string, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
-	maxAttempts := 1 + a.retryMax
-	var lastErr error
-
-	for attempt := range maxAttempts {
-		var lease RateLimitLease
-		if a.rateLimiter != nil {
-			var err error
-			lease, err = a.rateLimiter.Reserve(ctx, RateLimitRequest{Key: convID, Request: req})
-			if err != nil {
-				return nil, err
-			}
+// callProvider makes exactly one physical provider attempt. There is no
+// framework retry: a failed attempt is final, and retry policy belongs to the
+// provider SDK or the application.
+//
+// When a rate limiter is configured the attempt reserves capacity under the
+// bucket key chosen by WithRateLimitKey (empty when no selector is set) and
+// settles the reservation with the provider's confirmed usage, or
+// conservatively when the outcome is uncertain.
+func (a *Agent) callProvider(c *Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
+	var lease RateLimitLease
+	if a.rateLimiter != nil {
+		var key string
+		if a.rateLimitKey != nil {
+			key = a.rateLimitKey(c)
 		}
-
-		callCtx := ctx
-		var cancel context.CancelFunc
-		if a.providerTimeout > 0 {
-			callCtx, cancel = context.WithTimeout(ctx, a.providerTimeout)
-		}
-
-		// Retrying after an attempt emitted visible output would expose a
-		// duplicated or divergent prefix. Retry only silent attempts.
-		var emitted atomic.Bool
-		attemptEmit := func(event ModelEvent) {
-			emitted.Store(true)
-			if emit != nil {
-				emit(event)
-			}
-		}
-
-		resp, err := a.provider.Stream(callCtx, req, attemptEmit)
-		if cancel != nil {
-			cancel()
-		}
-		if err == nil {
-			if lease != nil {
-				if commitErr := a.rateLimiter.Commit(ctx, lease, resp.Usage); commitErr != nil {
-					return nil, commitErr
-				}
-			}
-			return resp, nil
-		}
-
-		if lease != nil {
-			// A provider error may follow an accepted dispatch, including a
-			// cancellation during streaming. Conservatively settle the estimate.
-			if releaseErr := a.rateLimiter.Release(ctx, lease); releaseErr != nil {
-				return nil, errors.Join(err, releaseErr)
-			}
-		}
-
-		lastErr = err
-		if ctx.Err() != nil {
-			return nil, lastErr
-		}
-		if emitted.Load() {
-			return nil, lastErr
-		}
-		if attempt >= maxAttempts-1 {
-			break
-		}
-
-		delay := a.retryBaseDelay << uint(attempt)
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		var err error
+		lease, err = a.rateLimiter.Reserve(c, RateLimitRequest{Key: key, Request: req})
+		if err != nil {
+			return nil, err
 		}
 	}
-
-	return nil, lastErr
+	callCtx := context.Context(c)
+	var cancel context.CancelFunc
+	if a.providerTimeout > 0 {
+		callCtx, cancel = context.WithTimeout(c, a.providerTimeout)
+	}
+	resp, err := a.provider.Stream(callCtx, req, emit)
+	if cancel != nil {
+		cancel()
+	}
+	if err == nil {
+		if lease != nil {
+			if commitErr := a.rateLimiter.Commit(c, lease, resp.Usage); commitErr != nil {
+				return nil, commitErr
+			}
+		}
+		return resp, nil
+	}
+	if lease != nil {
+		// A provider error may follow an accepted dispatch, including a
+		// cancellation during streaming. Conservatively settle the estimate.
+		if releaseErr := a.rateLimiter.Release(c, lease); releaseErr != nil {
+			return nil, errors.Join(err, releaseErr)
+		}
+	}
+	return nil, err
 }
 
 // hooks returns the unified observer dispatcher for this invocation.

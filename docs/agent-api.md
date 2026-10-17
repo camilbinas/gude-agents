@@ -25,7 +25,43 @@ When a ConversationStore is configured, every invocation requires a non-empty Co
 
 `agent.RAGAgent(prov, instructions, retriever, opts...)` is the one convenience constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
 
-Common options include `WithToolRegistry`, `WithMaxIterations`, `WithSequentialTools`, `WithProviderTimeout`, `WithProviderRetry`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithMiddleware`, guardrails, `WithToolFilter`, `WithCaching`, and `WithObserver`. The iteration default is 10; tool calls in a batch run in parallel by default — use `WithSequentialTools` to run them one at a time in provider order.
+Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecution`, `WithMaxConcurrentTools`, `WithProviderTimeout`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithRateLimitKey`, `WithMiddleware`, guardrails, `WithToolVisibility`, and `WithObserver`. The iteration default is 10.
+
+## Inspecting an Agent
+
+An Agent exposes three read-only inspection methods, used by first-party extension packages such as A2A card derivation and telemetry:
+
+```go
+func (a *Agent) Name() string
+func (a *Agent) Instructions() string
+func (a *Agent) ToolSpecs() []tool.Spec
+```
+
+Everything else about an Agent's configuration is private. There is no configuration snapshot API; keep your own copy of the values you passed to `agent.New` if your application needs them.
+
+## Tool execution
+
+The tool calls of one model response run in parallel by default and their results always reach the model in the provider's original call order. Two options control scheduling:
+
+```go
+a, err := agent.New(prov, instructions,
+    agent.WithTools(tools...),
+    agent.WithMaxConcurrentTools(4), // at most 4 handlers at once
+)
+
+a, err = agent.New(prov, instructions,
+    agent.WithTools(tools...),
+    agent.WithToolExecution(agent.ToolExecutionSequential), // one at a time, in provider order
+)
+```
+
+| Option | Meaning |
+|---|---|
+| `WithToolExecution(ToolExecutionParallel)` | Default. Handlers of a batch run concurrently. |
+| `WithToolExecution(ToolExecutionSequential)` | Handlers run one at a time, strictly in provider order. Use it when handlers are not safe to run together or must observe each other's side effects. |
+| `WithMaxConcurrentTools(n)` | Parallel mode runs at most `n` handlers at once (`n >= 1`; `1` is strictly in-order). |
+
+An unknown mode or `n < 1` fails `agent.New`. `ToolExecutionSequential` combined with `WithMaxConcurrentTools(n)` for `n > 1` also fails `agent.New`, since silently ignoring one option would hide a mistake. The policy applies to every path that runs tools: normal calls, durable execution, approval resume and recovery. A batch that needs approval still persists its pause before any sibling handler runs.
 
 ## Invocation
 

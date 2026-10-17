@@ -83,7 +83,6 @@ type ModelRequest struct {
 	Tools           []tool.Spec
 	ToolChoice      *tool.Choice     // nil = provider default (auto)
 	InferenceConfig *InferenceConfig // nil = use provider defaults
-	CachingEnabled  bool             // when true, providers attach cache breakpoints automatically
 }
 
 // ModelResponse is the result of a model call.

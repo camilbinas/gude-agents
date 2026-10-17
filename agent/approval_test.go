@@ -338,7 +338,7 @@ func TestResume_DecideBatchOrderedSequentialAndParallel(t *testing.T) {
 			denied := tool.NewRaw("denied", "denied", nil, record("denied", "denied result"), tool.RequiresApproval())
 			opts := []Option{withPauseStores(), WithTools(allowed, free, denied)}
 			if !parallel {
-				opts = append(opts, WithSequentialTools())
+				opts = append(opts, WithToolExecution(ToolExecutionSequential))
 			}
 			a, err := New(provider, "helpful", opts...)
 			if err != nil {
@@ -433,7 +433,7 @@ func TestResume_DenyAppliesToEveryCallInBatch(t *testing.T) {
 			}}
 			opts := []Option{withPauseStores(), WithTools(mk("one"), mk("two"))}
 			if !parallel {
-				opts = append(opts, WithSequentialTools())
+				opts = append(opts, WithToolExecution(ToolExecutionSequential))
 			}
 			a, err := New(provider, "helpful", opts...)
 			if err != nil {

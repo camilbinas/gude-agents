@@ -40,7 +40,7 @@ func WithEnv(env ...string) Option {
 	}
 }
 
-// WithHTTPClient sets a custom HTTP client for SSE and Streamable HTTP connections.
+// WithHTTPClient sets a custom HTTP client for Streamable HTTP connections.
 // Use this to configure timeouts, TLS, authentication headers, or proxies.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *clientConfig) {
@@ -71,32 +71,6 @@ func NewStdioClient(ctx context.Context, command string, args []string, opts ...
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcp connect: %w", err)
-	}
-
-	return &Client{session: session}, nil
-}
-
-// NewSSEClient connects to a remote MCP server using the legacy SSE transport
-// (HTTP GET for server-sent events). Use this for servers that implement the
-// pre-2025-03-26 MCP spec. For newer servers, prefer NewStreamableClient.
-func NewSSEClient(ctx context.Context, endpoint string, opts ...Option) (*Client, error) {
-	cfg := &clientConfig{}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	client := sdkmcp.NewClient(
-		&sdkmcp.Implementation{Name: "gude-agents", Version: "v1.0.0"},
-		nil,
-	)
-	transport := &sdkmcp.SSEClientTransport{
-		Endpoint:   endpoint,
-		HTTPClient: cfg.httpClient,
-	}
-
-	session, err := client.Connect(ctx, transport, nil)
-	if err != nil {
-		return nil, fmt.Errorf("mcp sse connect: %w", err)
 	}
 
 	return &Client{session: session}, nil

@@ -48,10 +48,9 @@ func drawModelRequest(t *rapid.T) agent.ModelRequest {
 	}
 
 	return agent.ModelRequest{
-		Messages:       messages,
-		System:         system,
-		Tools:          tools,
-		CachingEnabled: rapid.Bool().Draw(t, "cachingEnabled"),
+		Messages: messages,
+		System:   system,
+		Tools:    tools,
 	}
 }
 

@@ -48,8 +48,8 @@ type IterationRecord struct {
 	Duration  time.Duration
 }
 
-// ModelCallRecord describes one logical provider call. Provider retries are
-// represented by the same model observation.
+// ModelCallRecord describes one provider call. The agent loop never retries, so
+// each model call is one physical attempt.
 type ModelCallRecord struct {
 	Phase           Phase
 	ModelID         string

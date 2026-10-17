@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"time"
@@ -10,8 +9,11 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// Agent is long-lived, immutable invocation configuration. A configured
-// tool.Registry is the sole intentionally dynamic component.
+// Agent is long-lived, immutable invocation configuration. Its public
+// inspection surface is deliberately small: Name, Instructions and ToolSpecs.
+// Everything else is configuration owned by the engine.
+//
+// A configured tool.Registry is the sole intentionally dynamic component.
 type Agent struct {
 	name         string
 	provider     Provider
@@ -20,8 +22,13 @@ type Agent struct {
 
 	inferenceConfig *InferenceConfig
 	maxIterations   int
-	parallelTools   bool
 	tokenBudget     int
+
+	// toolExecution and maxConcurrentTools form the tool batch execution
+	// policy; see WithToolExecution and WithMaxConcurrentTools. Zero
+	// maxConcurrentTools means no limit on parallel handlers.
+	toolExecution      ToolExecutionMode
+	maxConcurrentTools int
 
 	conversation   ConversationStore
 	contextManager ContextManager
@@ -35,15 +42,12 @@ type Agent struct {
 	middlewares      []Middleware
 	inputGuardrails  []InputGuardrail
 	outputGuardrails []OutputGuardrail
-	toolFilters      []ToolFilter
+	toolVisibility   []ToolVisibility
 
-	rateLimiter RateLimiter
+	rateLimiter  RateLimiter
+	rateLimitKey RateLimitKeyFunc
 
 	providerTimeout time.Duration
-	retryMax        int
-	retryBaseDelay  time.Duration
-
-	cachingEnabled bool
 
 	observers []Observer
 
@@ -65,7 +69,6 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 		instructions:  instructions,
 		toolRegistry:  &tool.Registry{},
 		maxIterations: 10,
-		parallelTools: true,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -85,6 +88,12 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 	}
 	if a.executionStore != nil && a.conversation == nil {
 		return nil, fmt.Errorf("ExecutionStore requires ConversationStore")
+	}
+	if a.toolExecution == ToolExecutionSequential && a.maxConcurrentTools > 1 {
+		return nil, fmt.Errorf("WithToolExecution(ToolExecutionSequential) conflicts with WithMaxConcurrentTools(%d): sequential execution runs one tool at a time", a.maxConcurrentTools)
+	}
+	if a.rateLimitKey != nil && a.rateLimiter == nil {
+		return nil, fmt.Errorf("WithRateLimitKey requires WithRateLimiter")
 	}
 	return a, nil
 }
@@ -110,14 +119,6 @@ func RAGAgent(provider Provider, instructions string, retriever rag.Retriever, o
 // Name returns the configured agent name.
 func (a *Agent) Name() string { return a.name }
 
-// Provider returns the configured model provider.
-func (a *Agent) Provider() Provider { return a.provider }
-
-// CallProvider calls the provider with the Agent's timeout and retry policy.
-func (a *Agent) CallProvider(ctx context.Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
-	return a.callProviderWithRetry(ctx, "", req, emit)
-}
-
 // Instructions returns the configured system instructions.
 func (a *Agent) Instructions() string { return a.instructions }
 
@@ -138,28 +139,4 @@ func (a *Agent) ToolSpecs() []tool.Spec {
 		specs[i] = tools[i].Spec
 	}
 	return specs
-}
-
-// HasTool reports whether the current registry contains name.
-func (a *Agent) HasTool(name string) bool {
-	_, ok := a.toolRegistry.Lookup(name)
-	return ok
-}
-
-// LookupTool returns a tool from the current registry snapshot.
-func (a *Agent) LookupTool(name string) (tool.Tool, bool) { return a.toolRegistry.Lookup(name) }
-
-// HasConversation reports whether a conversation store is configured.
-func (a *Agent) HasConversation() bool { return a.conversation != nil }
-
-func (a *Agent) InferenceConfig() *InferenceConfig { return a.inferenceConfig }
-func (a *Agent) MaxIterations() int                { return a.maxIterations }
-func (a *Agent) ParallelTools() bool               { return a.parallelTools }
-func (a *Agent) TokenBudget() int                  { return a.tokenBudget }
-func (a *Agent) Middlewares() []Middleware         { return append([]Middleware(nil), a.middlewares...) }
-func (a *Agent) InputGuardrails() []InputGuardrail {
-	return append([]InputGuardrail(nil), a.inputGuardrails...)
-}
-func (a *Agent) OutputGuardrails() []OutputGuardrail {
-	return append([]OutputGuardrail(nil), a.outputGuardrails...)
 }

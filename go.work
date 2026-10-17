@@ -15,7 +15,6 @@ use (
 	./agent/mcp
 	./agent/memory/postgres
 	./agent/memory/redis
-	./agent/metrics/cloudwatch
 	./agent/metrics/otel
 	./agent/metrics/prometheus
 	./agent/provider/anthropic

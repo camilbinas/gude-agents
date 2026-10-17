@@ -135,29 +135,35 @@ func TestMemoryPendingExpirySettlesAndRetainsBucket(t *testing.T) {
 	}
 }
 
-type retryProvider struct{ calls atomic.Int32 }
+type failingProvider struct{ calls atomic.Int32 }
 
-func (*retryProvider) Name() string { return "retry" }
-func (p *retryProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
-	if p.calls.Add(1) == 1 {
-		return nil, errors.New("uncertain")
-	}
-	return &ModelResponse{Text: "ok", Usage: TokenUsage{InputTokens: 10}}, nil
+func (*failingProvider) Name() string { return "failing" }
+func (p *failingProvider) Stream(_ context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+	p.calls.Add(1)
+	return nil, errors.New("uncertain")
 }
-func TestRetryUsesOneLeasePerAttempt(t *testing.T) {
-	p := &retryProvider{}
+
+// A failed attempt settles its lease conservatively and the agent loop never
+// retries it, so exactly one physical attempt is reserved.
+func TestFailedAttemptIsNotRetriedAndKeepsItsEstimate(t *testing.T) {
+	p := &failingProvider{}
 	r := limiterForTest(t, TPM(40), WithTokenEstimator(fixedEstimator{n: 20}))
-	a, err := agent.New(p, "sys", agent.WithRateLimiter(r), agent.WithProviderRetry(1, time.Millisecond))
+	a, err := agent.New(p, "sys", agent.WithRateLimiter(r))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Invoke(agent.Background(), "hi"); err != nil {
-		t.Fatal(err)
+	if _, err := a.Invoke(agent.Background(), "hi"); err == nil {
+		t.Fatal("expected the provider error")
 	}
-	if p.calls.Load() != 2 {
-		t.Fatalf("calls=%d", p.calls.Load())
+	if p.calls.Load() != 1 {
+		t.Fatalf("calls=%d, want 1: the agent must not retry", p.calls.Load())
+	}
+	// The failed attempt keeps its 20-token estimate: one more estimate fits in
+	// the 40-token budget and a second does not.
+	if _, err := r.Reserve(context.Background(), agent.RateLimitRequest{}); err != nil {
+		t.Fatalf("remaining capacity should admit one more estimate: %v", err)
 	}
 	if _, err := r.Reserve(context.Background(), agent.RateLimitRequest{}); !errors.Is(err, agent.ErrRateLimitExceeded) {
-		t.Fatalf("retry estimate not conservatively retained: %v", err)
+		t.Fatalf("failed attempt estimate not conservatively retained: %v", err)
 	}
 }

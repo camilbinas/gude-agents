@@ -91,7 +91,6 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 		Tools:           []tool.Spec{structuredSpec},
 		ToolChoice:      toolChoice,
 		InferenceConfig: cfg,
-		CachingEnabled:  a.cachingEnabled,
 	}
 
 	provC, provF := h.onModelStart(c, ModelCallRecord{
@@ -101,7 +100,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 		MessageCount:    len(modelReq.Messages),
 		InferenceConfig: modelReq.InferenceConfig,
 	})
-	resp, err := a.callProviderWithRetry(provC, r.convID, modelReq, nil)
+	resp, err := a.callProvider(provC, modelReq, nil)
 	if err != nil {
 		provF.finish(err, TokenUsage{}, 0, "")
 		return Result{}, &ProviderError{Cause: err}

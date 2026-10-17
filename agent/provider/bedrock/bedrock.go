@@ -267,9 +267,11 @@ func withThinkingStyle(s thinkingStyle) Option {
 	return func(o *options) { o.thinkingStyle = s }
 }
 
-// WithSystemPromptCaching enables prompt caching for Claude models on Bedrock.
-// Non-Claude models silently ignore this option.
-func WithSystemPromptCaching() Option {
+// WithPromptCaching enables prompt caching for Claude models on Bedrock. A cache
+// point follows the system prompt and every DocumentBlock in user messages.
+// Non-Claude models silently ignore this option. Cache read/write token counts
+// are reported in TokenUsage whether or not this option is set.
+func WithPromptCaching() Option {
 	return func(o *options) { o.cachingEnabled = true }
 }
 
@@ -373,7 +375,7 @@ func (p *BedrockProvider) Name() string { return "bedrock" }
 // deltas are emitted as typed events while the complete response is accumulated.
 func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	infCfg := p.buildInferenceConfiguration(req.InferenceConfig)
-	cachingEnabled := req.CachingEnabled || p.cachingEnabled
+	cachingEnabled := p.cachingEnabled
 	msgs, err := toBedrockMessagesWithFetcher(ctx, p.fetchClient, p.urlFetchPolicy, req.Messages, p.model, cachingEnabled)
 	if err != nil {
 		return nil, &agent.ProviderError{Cause: err}

@@ -24,20 +24,34 @@ Observers run in registration order at lifecycle start and reverse order at end.
 
 ## Built-in logging
 
-- `logging/debug.WithLogging()` writes colored development logs.
+- `logging/debug.WithLogging(opts...)` writes a readable lifecycle trace for local development. It prints to stdout with ANSI colors by default; `debug.WithWriter(w)` redirects it (a nil writer fails `agent.New`) and `debug.WithColor(false)` removes every escape sequence, dividers and errors included. Writes are serialized, so concurrent events never interleave. It is a development trace, not a structured log; `logging/slog` does not imitate it.
 - `logging/slog.WithLogging(...)` uses `log/slog`; configure `WithHandler` and `WithMinLevel`.
 
 ```go
-import agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
+import (
+    agentdebug "github.com/camilbinas/gude-agents/agent/logging/debug"
+    agentslog "github.com/camilbinas/gude-agents/agent/logging/slog"
+)
 
-a, err := agent.New(prov, instructions, agentslog.WithLogging())
+// Local development: colored trace on stdout.
+a, err := agent.New(prov, instructions, agentdebug.WithLogging())
+
+// Capture a plain trace, for example in a test.
+var trace bytes.Buffer
+a, err = agent.New(prov, instructions,
+    agentdebug.WithLogging(agentdebug.WithWriter(&trace), agentdebug.WithColor(false)),
+)
+
+// Production: structured logs.
+a, err = agent.New(prov, instructions, agentslog.WithLogging())
 ```
+
+Choosing between them by environment is application code; the framework ships no environment switch.
 
 ## Metrics
 
 - `metrics/prometheus.WithMetrics`, with optional namespace/registerer; the package can also return an HTTP handler.
 - `metrics/otel.WithMetrics`, with a meter provider and optional namespace.
-- `metrics/cloudwatch.WithMetrics`, with namespace, client, interval, and dimensions. It also returns a shutdown function; call it to flush buffered metrics.
 
 ## Tracing
 
@@ -61,10 +75,10 @@ The runnable examples intentionally do not duplicate a chatbot for every exporte
 
 ```go
 a, err := agent.New(prov, instructions,
-    autoslog.WithLogging(),
+    agentslog.WithLogging(),
     tracing.WithTracing(tracerProvider),
     metricsotel.WithMetrics(meterProvider),
 )
 ```
 
-Use the adapter package documentation for Prometheus handlers, CloudWatch flushing, Sentry, OTLP exporters, and content-capture/security trade-offs.
+Use the adapter package documentation for Prometheus handlers, Sentry, OTLP exporters, and content-capture/security trade-offs.

@@ -49,7 +49,7 @@ func (rp *recordingProvider) Stream(_ context.Context, params ModelRequest, cb f
 	return resp, nil
 }
 
-func TestWithToolFilter_FiltersToolSpecs(t *testing.T) {
+func TestWithToolVisibility_HidesToolSpecs(t *testing.T) {
 	p := &recordingProvider{responses: []*ModelResponse{
 		{Text: "done"},
 	}}
@@ -77,7 +77,7 @@ func TestWithToolFilter_FiltersToolSpecs(t *testing.T) {
 
 	// Filter out admin tools.
 	a, err := New(p, "test", WithTools(adminTool, publicTool),
-		WithToolFilter(func(_ *Context, t tool.Tool) bool {
+		WithToolVisibility(func(_ *Context, t tool.Tool) bool {
 			return t.Spec.Name != "admin_delete"
 		}),
 	)
@@ -103,7 +103,7 @@ func TestWithToolFilter_FiltersToolSpecs(t *testing.T) {
 	}
 }
 
-func TestWithToolFilter_DynamicViaContext(t *testing.T) {
+func TestWithToolVisibility_DynamicViaContext(t *testing.T) {
 	// Simulate: first call triggers a tool that sets a flag on the Context,
 	// second loop iteration should see the new tool.
 	callCount := 0
@@ -149,7 +149,7 @@ func TestWithToolFilter_DynamicViaContext(t *testing.T) {
 	}
 
 	a, err := New(p, "test", WithTools(unlockTool, secretTool),
-		WithToolFilter(func(c *Context, t tool.Tool) bool {
+		WithToolVisibility(func(c *Context, t tool.Tool) bool {
 			if t.Spec.Name == "secret" {
 				v, ok := c.Get("unlocked")
 				return ok && v.(bool)
@@ -170,7 +170,7 @@ func TestWithToolFilter_DynamicViaContext(t *testing.T) {
 	}
 }
 
-func TestWithToolFilter_Nil_AllToolsAvailable(t *testing.T) {
+func TestWithToolVisibility_Nil_AllToolsAvailable(t *testing.T) {
 	p := &recordingProvider{responses: []*ModelResponse{
 		{Text: "done"},
 	}}
@@ -200,8 +200,8 @@ func TestWithToolFilter_Nil_AllToolsAvailable(t *testing.T) {
 	}
 }
 
-func TestWithToolFilter_FilteredToolReturnsError(t *testing.T) {
-	// If LLM somehow calls a filtered tool, it should get "unknown tool" error.
+func TestWithToolVisibility_HiddenToolReturnsError(t *testing.T) {
+	// If LLM somehow calls a hidden tool, it should get "unknown tool" error.
 	p := &recordingProvider{responses: []*ModelResponse{
 		{ToolCalls: []tool.Call{{ToolUseID: "1", Name: "blocked", Input: json.RawMessage(`{}`)}}},
 		{Text: "ok"},
@@ -213,7 +213,7 @@ func TestWithToolFilter_FilteredToolReturnsError(t *testing.T) {
 	}
 
 	a, err := New(p, "test", WithTools(blockedTool),
-		WithToolFilter(func(_ *Context, _ tool.Tool) bool { return false }),
+		WithToolVisibility(func(_ *Context, _ tool.Tool) bool { return false }),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestWithToolFilter_FilteredToolReturnsError(t *testing.T) {
 		t.Errorf("expected 'ok', got %q", result.Text)
 	}
 }
-func TestWithToolFilter_MultipleFilters_ANDSemantics(t *testing.T) {
+func TestWithToolVisibility_MultipleFilters_ANDSemantics(t *testing.T) {
 	p := &recordingProvider{responses: []*ModelResponse{
 		{Text: "done"},
 	}}
@@ -242,21 +242,21 @@ func TestWithToolFilter_MultipleFilters_ANDSemantics(t *testing.T) {
 		Handler: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
 	}
 	t3 := tool.Tool{
-		Spec:    tool.Spec{Name: "fails_first", Description: "fails first filter", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+		Spec:    tool.Spec{Name: "fails_first", Description: "fails first rule", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
 		Handler: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
 	}
 
 	// Filter 1: excludes "fails_first"
-	filter1 := func(_ *Context, t tool.Tool) bool {
+	rule1 := func(_ *Context, t tool.Tool) bool {
 		return t.Spec.Name != "fails_first"
 	}
 	// Filter 2: excludes "fails_second"
-	filter2 := func(_ *Context, t tool.Tool) bool {
+	rule2 := func(_ *Context, t tool.Tool) bool {
 		return t.Spec.Name != "fails_second"
 	}
 
 	a, err := New(p, "test", WithTools(t1, t2, t3),
-		WithToolFilter(filter1, filter2),
+		WithToolVisibility(rule1, rule2),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +267,7 @@ func TestWithToolFilter_MultipleFilters_ANDSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Only "both_pass" should survive both filters.
+	// Only "both_pass" should pass both rules.
 	specs := p.calls[0].Tools
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 tool spec (AND semantics), got %d: %v", len(specs), specs)
@@ -277,7 +277,7 @@ func TestWithToolFilter_MultipleFilters_ANDSemantics(t *testing.T) {
 	}
 }
 
-func TestWithToolFilter_AccumulatesAcrossMultipleCalls(t *testing.T) {
+func TestWithToolVisibility_AccumulatesAcrossMultipleCalls(t *testing.T) {
 	p := &recordingProvider{responses: []*ModelResponse{
 		{Text: "done"},
 	}}
@@ -291,12 +291,12 @@ func TestWithToolFilter_AccumulatesAcrossMultipleCalls(t *testing.T) {
 		Handler: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
 	}
 
-	// Two separate WithToolFilter calls should accumulate.
+	// Two separate WithToolVisibility calls should accumulate.
 	a, err := New(p, "test", WithTools(t1, t2),
-		WithToolFilter(func(_ *Context, t tool.Tool) bool {
+		WithToolVisibility(func(_ *Context, t tool.Tool) bool {
 			return t.Spec.Name != "a"
 		}),
-		WithToolFilter(func(_ *Context, t tool.Tool) bool {
+		WithToolVisibility(func(_ *Context, t tool.Tool) bool {
 			return t.Spec.Name != "b"
 		}),
 	)
@@ -309,10 +309,10 @@ func TestWithToolFilter_AccumulatesAcrossMultipleCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both filters exclude their respective tool — nothing should remain.
+	// Both rules hide their respective tool — nothing should remain.
 	specs := p.calls[0].Tools
 	if len(specs) != 0 {
-		t.Fatalf("expected 0 tool specs (both filtered out), got %d", len(specs))
+		t.Fatalf("expected 0 tool specs (both hidden), got %d", len(specs))
 	}
 }
 

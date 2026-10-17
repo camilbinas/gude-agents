@@ -242,7 +242,7 @@ func TestStream_ToolStartEndShareCallID(t *testing.T) {
 	)
 	// Sequential execution so start/widget/end ordering across the two calls
 	// is deterministic.
-	a, err := New(p, "sys", WithTools(widgetTool), WithSequentialTools())
+	a, err := New(p, "sys", WithTools(widgetTool), WithToolExecution(ToolExecutionSequential))
 	if err != nil {
 		t.Fatal(err)
 	}

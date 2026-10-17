@@ -103,8 +103,8 @@ func TestNewAgent_ValidConstruction(t *testing.T) {
 	if a.maxIterations != 10 {
 		t.Errorf("expected default maxIterations=10, got %d", a.maxIterations)
 	}
-	if !a.parallelTools {
-		t.Error("expected parallelTools=true by default")
+	if a.toolExecution != ToolExecutionParallel || a.maxConcurrentTools != 0 {
+		t.Errorf("expected unbounded parallel tool execution by default, got mode=%v limit=%d", a.toolExecution, a.maxConcurrentTools)
 	}
 }
 
@@ -113,7 +113,7 @@ func TestNewAgent_WithOptions(t *testing.T) {
 
 	a, err := New(mockProvider{}, "sys", WithTools(tools...),
 		WithMaxIterations(5),
-		WithSequentialTools(),
+		WithToolExecution(ToolExecutionSequential),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -121,8 +121,8 @@ func TestNewAgent_WithOptions(t *testing.T) {
 	if a.maxIterations != 5 {
 		t.Errorf("expected maxIterations=5, got %d", a.maxIterations)
 	}
-	if a.parallelTools {
-		t.Error("expected parallelTools=false after WithSequentialTools")
+	if a.toolExecution != ToolExecutionSequential {
+		t.Error("expected sequential execution after WithToolExecution(ToolExecutionSequential)")
 	}
 }
 
@@ -265,9 +265,9 @@ func TestInvoke_SequentialToolExecutionOrder(t *testing.T) {
 		)
 	}
 
-	// WithSequentialTools opts out of the default concurrent execution so
+	// ToolExecutionSequential opts out of the default concurrent execution so
 	// order is preserved.
-	a, err := New(sp, "sys", WithTools(makeTool("first"), makeTool("second")), WithSequentialTools())
+	a, err := New(sp, "sys", WithTools(makeTool("first"), makeTool("second")), WithToolExecution(ToolExecutionSequential))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -902,6 +902,27 @@ func TestAgentHasNoProcessLocalLifecycleState(t *testing.T) {
 	for _, field := range []string{"syncConversation", "localPauses"} {
 		if _, ok := agentType.Elem().FieldByName(field); ok {
 			t.Errorf("Agent must not have a %s field", field)
+		}
+	}
+}
+
+// The public inspection surface is Name, Instructions and ToolSpecs only. The
+// removed getters must not come back as part of a configuration snapshot.
+func TestAgentPublicInspectionSurface(t *testing.T) {
+	typ := reflect.TypeOf(&Agent{})
+	for _, name := range []string{"Name", "Instructions", "ToolSpecs"} {
+		if _, ok := typ.MethodByName(name); !ok {
+			t.Errorf("Agent.%s must stay public", name)
+		}
+	}
+	for _, name := range []string{
+		"Provider", "CallProvider", "HasTool", "LookupTool", "HasConversation",
+		"InferenceConfig", "MaxIterations", "ParallelTools", "TokenBudget",
+		"Middlewares", "InputGuardrails", "OutputGuardrails",
+		"ToolExecution", "MaxConcurrentTools", "ToolVisibility", "RateLimitKey", "Config",
+	} {
+		if _, ok := typ.MethodByName(name); ok {
+			t.Errorf("Agent.%s must not be public", name)
 		}
 	}
 }

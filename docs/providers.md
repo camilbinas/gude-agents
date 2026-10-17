@@ -13,7 +13,7 @@ type Provider interface {
 }
 ```
 
-`emit` may be nil. Providers emit `ModelEventText` and `ModelEventThinking`; the returned `ModelResponse` contains final text, tool calls, usage, and provider metadata. `ModelRequest` contains messages, system instructions, tool specs/choice, inference configuration, and caching preference.
+`emit` may be nil. Providers emit `ModelEventText` and `ModelEventThinking`; the returned `ModelResponse` contains final text, tool calls, usage, and provider metadata. `ModelRequest` contains messages, system instructions, tool specs/choice, and inference configuration.
 
 Applications normally construct a provider and pass it to `agent.New`:
 
@@ -23,7 +23,7 @@ a, err := agent.New(prov, "You are helpful.", agent.WithTools(tools...))
 result, err := a.Invoke(agent.NewContext(ctx), "Hello")
 ```
 
-Agent-level inference options provide portable temperature, top-p/top-k, stop sequences, and output-token limits. Provider options configure credentials, endpoints, provider-specific thinking, caching, or guardrails. `ModelIdentifier` and token-estimator interfaces are optional capabilities.
+Agent-level inference options provide portable temperature, top-p/top-k, stop sequences, and output-token limits. Provider options configure credentials, endpoints, provider-specific thinking, prompt caching, or guardrails. `ModelIdentifier` and token-estimator interfaces are optional capabilities.
 
 ## Capability metadata
 

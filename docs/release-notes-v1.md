@@ -101,3 +101,125 @@ Import the Postgres, Redis, and DynamoDB packages with an alias when you also us
 ### Every published module builds on its own
 
 Release commits now carry complete `go.sum` files. Before this change the release rewrote internal requirements to the new version but left `go.sum` without checksums for them, so `GOWORK=off go test ./...` failed inside a nested module before compiling anything. The release workflow now publishes every module into a local file proxy in dependency order, runs `go mod tidy` against it, and verifies a consumer-style build (`GOWORK=off`, read-only `go.mod`/`go.sum`) of every module before it commits or tags. The root module no longer requires `agent/logging/debug` or `agent/logging/slog`, and the root tests no longer import sibling modules, so the internal requirement graph is acyclic.
+
+## API consolidation: agent options, observability, MCP, and rate-limit keys
+
+These are deliberate breaking changes made before the production v1 release. No compatibility alias, deprecated shim, or forwarding wrapper exists for any removed symbol. `agent.RAGAgent` and `Agent.TextStream` are unchanged.
+
+### Removed public symbols
+
+Root package `agent`:
+
+| Removed | Replacement |
+|---|---|
+| `Agent.Provider()`, `Agent.HasTool`, `Agent.LookupTool`, `Agent.HasConversation`, `Agent.InferenceConfig`, `Agent.MaxIterations`, `Agent.ParallelTools`, `Agent.TokenBudget`, `Agent.Middlewares`, `Agent.InputGuardrails`, `Agent.OutputGuardrails` | None. `Name`, `Instructions` and `ToolSpecs` remain the only inspection methods; there is no configuration snapshot. |
+| `Agent.CallProvider` | None. Call your `Provider` directly. |
+| `WithSequentialTools()` | `WithToolExecution(ToolExecutionSequential)` |
+| `ToolFilter`, `WithToolFilter` | `ToolVisibility`, `WithToolVisibility` |
+| `RoleFilter()`, `RequirePrincipal()` | `RoleVisibility()`, `RequirePrincipalVisibility()` (`WithRoleEnforcement` and `WithRequirePrincipal` are unchanged) |
+| `PolicyFunc`, `WithPolicy` | `WithToolVisibility` for model-facing visibility; tool guards or middleware for authorization |
+| `WithCaching()`, `ModelRequest.CachingEnabled` | Provider-native `WithPromptCaching()` (Anthropic, Claude on Bedrock) |
+| `WithProviderRetry(...)` and the retry/backoff machinery | None. The agent loop makes one attempt per model call; retry in your application |
+
+Providers:
+
+| Removed | Replacement |
+|---|---|
+| `anthropic.WithSystemPromptCaching()` | `anthropic.WithPromptCaching()` (system prompt and document blocks) |
+| `bedrock.WithSystemPromptCaching()` | `bedrock.WithPromptCaching()` (Claude models; other models ignore it) |
+| `openai.WithSystemPromptCaching()` | None. OpenAI caches automatically; cached tokens are still reported as `TokenUsage.CacheReadTokens` |
+
+Packages and modules:
+
+| Removed | Replacement |
+|---|---|
+| `agent/logging/auto` | Choose `logging/debug` or `logging/slog` in application code |
+| `agent/metrics/cloudwatch` | `metrics/otel` or `metrics/prometheus` |
+| `mcp.NewSSEClient` | `mcp.NewStreamableClient` (remote) or `mcp.NewStdioClient` (subprocess) |
+
+Cache read and write token counts keep flowing into `TokenUsage` and observability records. `logging/debug`, `logging/slog`, `metrics/otel`, `metrics/prometheus`, `tracing.WithTracing`, and the MCP pool (`NewPool`, `WithPoolEnv`, `WithPoolSize`) are unchanged in purpose.
+
+### Tool execution policy
+
+```go
+type ToolExecutionMode uint8
+
+const (
+    ToolExecutionParallel ToolExecutionMode = iota // default
+    ToolExecutionSequential
+)
+
+func WithToolExecution(mode ToolExecutionMode) Option
+func WithMaxConcurrentTools(n int) Option
+```
+
+```go
+// Before
+agent.New(prov, instructions, agent.WithSequentialTools())
+
+// After
+agent.New(prov, instructions, agent.WithToolExecution(agent.ToolExecutionSequential))
+agent.New(prov, instructions, agent.WithMaxConcurrentTools(4)) // parallel, at most 4 handlers at once
+```
+
+Results keep the provider's call order in every mode. An unknown mode or `n < 1` is a construction error, and so is `ToolExecutionSequential` combined with `WithMaxConcurrentTools(n)` for `n > 1`. The policy applies to normal calls, durable execution, approval resume and recovery, and a batch that needs approval is still persisted before any sibling handler runs.
+
+### Tool visibility
+
+```go
+type ToolVisibility func(*Context, tool.Tool) bool
+
+func WithToolVisibility(...ToolVisibility) Option
+func RoleVisibility() ToolVisibility
+func RequirePrincipalVisibility() ToolVisibility
+```
+
+```go
+// Before
+agent.WithToolFilter(func(c *agent.Context, t tool.Tool) bool { return ok(c, t) })
+agent.WithPolicy(opaAllows)
+
+// After: visibility only decides what the model is offered.
+agent.WithToolVisibility(func(c *agent.Context, t tool.Tool) bool { return ok(c, t) })
+// Authorization belongs in tool guards, role/attribute policies, approval or middleware.
+```
+
+Rules are still evaluated before every provider call with AND semantics. A hidden tool is omitted from the provider's tool list and from that loop's execution map. Visibility is not authorization: execution-time role and attribute enforcement remains the security boundary. See [RBAC](rbac.md).
+
+### Debug logger options
+
+```go
+type Option func(*config) error
+
+func WithWriter(w io.Writer) Option
+func WithColor(enabled bool) Option
+func WithLogging(opts ...Option) agent.Option
+```
+
+```go
+agentdebug.WithLogging()                                     // stdout, ANSI colors (unchanged default)
+agentdebug.WithLogging(agentdebug.WithWriter(&buf), agentdebug.WithColor(false)) // plain capture
+```
+
+`WithWriter(nil)` fails `agent.New`. `WithColor(false)` emits no ANSI escape sequence anywhere, dividers and errors included. Writes remain serialized.
+
+### Rate-limit bucket keys
+
+```go
+type RateLimitKeyFunc func(*Context) string
+
+func WithRateLimitKey(fn RateLimitKeyFunc) Option
+```
+
+`RateLimitRequest.Key` is now documented as an application-defined bucket key. The engine used to pass the conversation ID, which docs described as a customer budget; it no longer derives a key from anything. Without a selector every attempt uses the empty key and shares one per-key bucket. Opt in to tenant, customer, API-key or user budgets explicitly:
+
+```go
+agent.WithRateLimiter(limiter),
+agent.WithRateLimitKey(func(c *agent.Context) string { return c.Identity() }),
+```
+
+The selector runs once per physical provider attempt. `WithRateLimitKey(nil)` and `WithRateLimitKey` without `WithRateLimiter` fail `agent.New`. Global limits keep applying across all keys. Applications that relied on the old per-conversation buckets must add a selector returning `c.ConversationID()`. See [rate limiting](rate-limiting.md).
+
+### MCP pool behavior
+
+The pool is unchanged in purpose, with one hardening: a session whose call failed in transport, or was cancelled or timed out, is now closed instead of returned to the idle set, and the freed slot lets a later call start a replacement below the configured size. A server's JSON-RPC error or a tool result with `IsError` keeps the session. See [MCP](mcp.md).

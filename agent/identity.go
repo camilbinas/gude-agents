@@ -77,7 +77,7 @@ func clonePrincipal(p Principal) Principal {
 }
 
 // WithPrincipal attaches a Principal to the invocation. Tool role policies,
-// ToolFilters, and middleware can retrieve it via PrincipalFrom. The
+// tool visibility rules, and middleware can retrieve it via PrincipalFrom. The
 // Principal is deep-copied on the way in: later mutation of p's Roles,
 // Attrs, or Credentials by the caller does not affect the invocation's
 // stored principal.
@@ -110,64 +110,53 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 
 // --- Agent-level RBAC helpers ---
 
-// RoleFilter returns a ToolFilter that enforces declared tool role and
-// attribute policies against the Principal on the context. Tools without a
-// policy are always allowed. Any declared role or attribute policy requires a
-// Principal, including deny-only policies, so filtering matches execution.
+// RoleVisibility returns a ToolVisibility rule that shows a tool only when the
+// Principal on the context satisfies its declared role and attribute policy.
+// Tools without a policy are always visible. Any declared role or attribute
+// policy requires a Principal, including deny-only policies, so what the model
+// sees matches what execution would allow.
 //
-// Attach it at construction time alongside WithToolFilter, or use
+// This only controls what the model is offered. The same policy is enforced
+// again when a tool call executes, and that check is the security boundary.
+//
+// Attach it at construction time alongside WithToolVisibility, or use
 // WithRoleEnforcement which installs it automatically.
 //
-//	agent.New(provider, instructions, tools, agent.WithToolFilter(agent.RoleFilter()))
-func RoleFilter() ToolFilter {
+//	agent.New(provider, instructions, agent.WithToolVisibility(agent.RoleVisibility()))
+func RoleVisibility() ToolVisibility {
 	return func(c *Context, t tool.Tool) bool {
 		p, ok := c.Principal()
 		return t.AllowedForPrincipal(ok, p.Roles, p.Attrs)
 	}
 }
 
-// WithRoleEnforcement adds RoleFilter to the agent. Tools declare their required
-// roles via tool.AllowRoles / tool.DenyRoles; this option enforces those
-// declarations at call time using the Principal on the invocation context.
+// WithRoleEnforcement adds RoleVisibility to the agent. Tools declare their
+// required roles via tool.AllowRoles / tool.DenyRoles; the model only sees the
+// tools the Principal on the invocation context may use, and the engine checks
+// the same declarations again when a call executes.
 //
 //	agent.New(provider, instructions, tools, agent.WithRoleEnforcement())
 //	// then per-invocation:
 //	a.Invoke(ctx.WithPrincipal(agent.Principal{ID: "u1", Roles: []string{"admin"}}), msg)
 func WithRoleEnforcement() Option {
-	return WithToolFilter(RoleFilter())
+	return WithToolVisibility(RoleVisibility())
 }
 
-// RequirePrincipal returns a ToolFilter that denies all tool calls when no
-// Principal is set on the context. Use it when every invocation must be
-// authenticated before tools can run.
-func RequirePrincipal() ToolFilter {
+// RequirePrincipalVisibility returns a ToolVisibility rule that hides every tool
+// when no Principal is set on the context. Use it when every invocation must be
+// authenticated before the model is offered any tool.
+func RequirePrincipalVisibility() ToolVisibility {
 	return func(c *Context, _ tool.Tool) bool {
 		_, ok := c.Principal()
 		return ok
 	}
 }
 
-// WithRequirePrincipal installs RequirePrincipal as a ToolFilter.
-// Any invocation that omits WithPrincipal on the context will receive
-// "unknown tool" errors for every tool call.
+// WithRequirePrincipal installs RequirePrincipalVisibility. An invocation that
+// omits WithPrincipal on the context is offered no tools, and any tool call the
+// model makes anyway fails as an unknown tool.
 func WithRequirePrincipal() Option {
-	return WithToolFilter(RequirePrincipal())
-}
-
-// PolicyFunc is the signature for a custom authorization policy.
-// Return true to allow the tool call, false to deny.
-type PolicyFunc func(c *Context, t tool.Tool) bool
-
-// WithPolicy installs a custom authorization policy as a ToolFilter.
-// Use this for complex rules (external authz services, OPA, Casbin, etc.)
-// that go beyond simple role checks.
-//
-//	agent.New(provider, instructions, tools, agent.WithPolicy(func(c *agent.Context, t tool.Tool) bool {
-//	    p, _ := agent.PrincipalFrom(c)
-//	    return myOPA.Allow(p.ID, t.Spec.Name)
-//	}))
-func WithPolicy(fn PolicyFunc) Option {
-	return WithToolFilter(ToolFilter(fn))
+	return WithToolVisibility(RequirePrincipalVisibility())
 }
 
 // WithNarrowedRoles returns a new *Context (see Clone) whose principal's roles

@@ -9,7 +9,7 @@ prov, err := openai.New("gpt-4o-mini",
 a, err := agent.New(prov, "Answer clearly.")
 ```
 
-Credentials default to `OPENAI_API_KEY`; `WithAPIKey` overrides it. `WithBaseURL` targets compatible APIs. Other options configure maximum tokens, portable thinking effort for supported models, and system-prompt caching usage reporting.
+Credentials default to `OPENAI_API_KEY`; `WithAPIKey` overrides it. `WithBaseURL` targets compatible APIs. Other options configure maximum tokens and portable thinking effort for supported models. OpenAI caches prompts automatically, so there is no caching option; cached input tokens are reported as `CacheReadTokens` in `TokenUsage`.
 
 Compatible endpoints differ in tool calling, streaming event shape, usage reporting, images, and sampling parameters. Verify those capabilities before relying on them. Prefer the dedicated [Ollama](ollama.md) or [vLLM](vllm.md) provider when its local-server behavior is required.
 

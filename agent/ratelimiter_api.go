@@ -2,8 +2,11 @@ package agent
 
 import "context"
 
-// RateLimitRequest describes one physical provider attempt. Key scopes the
-// per-customer budget; Request is the exact provider request being dispatched.
+// RateLimitRequest describes one physical provider attempt. Key is the
+// application-defined bucket key returned by the RateLimitKeyFunc configured
+// with WithRateLimitKey; it is empty when no selector is configured, which
+// places every attempt in one shared bucket. Request is the exact provider
+// request being dispatched.
 type RateLimitRequest struct {
 	Key     string
 	Request ModelRequest

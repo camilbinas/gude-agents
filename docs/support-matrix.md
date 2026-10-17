@@ -4,7 +4,7 @@ This matrix is the release-qualification contract for the framework. It describe
 
 | Area | Status | Release qualification and boundary |
 |---|---|---|
-| In-process agent loop, tool schema validation, filters, policy enforcement, approvals, resume, and stream ordering | Supported | Covered by deterministic local Go tests. Tool policy is enforced at both advertisement and execution; a declared role/attribute policy requires a `Principal`. |
+| In-process agent loop, tool schema validation, tool visibility, policy enforcement, approvals, resume, and stream ordering | Supported | Covered by deterministic local Go tests. Role/attribute policy is applied when tools are offered (tool visibility) and again at execution, which is the security boundary; a declared role/attribute policy requires a `Principal`. |
 | `ConversationStore` / `ExecutionStore` interfaces | Supported | The interfaces and the in-memory implementation are exercised by deterministic local conformance tests. Deployments must validate their selected store's credentials, network, migrations, durability, and CAS behavior. |
 | Conversation backends | Supported according to the qualification shown here | In-memory and SQLite run the shared append/range/CAS conformance suite locally. Redis append and CAS behavior is exercised against miniredis. PostgreSQL has no automated local conformance and is an optional integration that you must qualify in your own environment. Source-level/local tests do not substitute for a provisioned service, IAM/auth, TLS, migration, retention, and failure-mode validation. |
 | `Provider` interface | Supported | Adapters for Anthropic, Amazon Bedrock, OpenAI-compatible endpoints, Ollama, and vLLM are optional integrations. Unit tests cover adapter behavior without paid calls; no adapter is release-qualified against a live service. Model availability, API behavior, credentials, quotas, regions, and network reachability are environment-dependent. |
@@ -24,8 +24,8 @@ This matrix is the release-qualification contract for the framework. It describe
 | HTTP/network | Verify egress, DNS, proxy, TLS roots, request-size limits, cancellation propagation, and retry behavior against the target provider. |
 | Durable backend | Provision and test credentials/IAM, encryption/TLS, schema or table setup, retention, concurrency/CAS conflicts, backups, and outage recovery. |
 
-## Retry classification status
+## Retries
 
-The current provider contract returns ordinary Go errors and has no shared typed API error carrying HTTP status, provider code, or retry-after. The engine preserves the no-visible-stream retry invariant, but its existing silent-error retry behavior cannot distinguish a transient provider failure from authentication, schema, filter, or another permanent error. A safe transient-only classifier would require adapters to return a provider-neutral typed error. That broader public/API redesign is proposed rather than implemented in this release; the proposed classifier must not retry generic authentication, schema, filter, or arbitrary provider errors.
+The agent loop never retries a provider call. Each model call is exactly one physical provider attempt; a failed attempt is reported to the caller, and the rate limiter, when configured, settles it conservatively. Provider SDKs keep their own retry behavior and applications own their retry policy, for example by wrapping `Invoke` and honoring the failure details their provider returns. The provider contract returns ordinary Go errors and has no shared typed API error carrying HTTP status, provider code, or retry-after, so the framework could not classify failures safely.
 
 Deterministic scenarios used for release qualification are versioned in [evaluation-cases-v1.md](evaluation-cases-v1.md).

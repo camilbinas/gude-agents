@@ -15,7 +15,7 @@ type Result[T any] struct {
 }
 
 // Invoke requests structured output for T while reusing the Agent's normal
-// lifecycle, locking, RAG, guardrail, retry, and observability behavior.
+// lifecycle, locking, RAG, guardrail, rate-limit, and observability behavior.
 // It uses a named forced schema tool where supported; models that explicitly
 // support only automatic tool choice receive the sole schema tool without an
 // explicit selection, so callers must also handle StructuredOutputError with

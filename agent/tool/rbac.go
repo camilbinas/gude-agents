@@ -144,8 +144,8 @@ func (t Tool) AllowedWithAttrs(roles []string, attrs map[string]string) bool {
 
 // AllowedForPrincipal reports whether a caller may use this tool. Any declared
 // role or attribute policy requires an explicit Principal; unrestricted tools
-// remain available without one. Agent filtering and the execution pipeline use
-// this same check so a filtered-call bypass cannot weaken the policy.
+// remain available without one. Tool visibility (RoleVisibility) and the execution pipeline
+// use this same check, and the execution check is the security boundary.
 func (t Tool) AllowedForPrincipal(hasPrincipal bool, roles []string, attrs map[string]string) bool {
 	if t.rolePolicy == nil {
 		return true

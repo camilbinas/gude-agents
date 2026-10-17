@@ -22,7 +22,7 @@ import (
 //     methods mutate the receiver and return the same pointer for chaining.
 //   - a user key/value store (Set / Get / GetTyped). It is invocation-scoped,
 //     safe for concurrent use and shared by the invocation and all of its tool
-//     calls, so a tool can Set a value that a later ToolFilter or tool reads.
+//     calls, so a tool can Set a value that a later ToolVisibility rule or tool reads.
 //   - framework runtime state (usage, event emitter, per-tool-call scratch
 //     state). It is internal and never stored in the user key/value store.
 //

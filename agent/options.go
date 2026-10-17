@@ -63,13 +63,64 @@ func WithToolRegistry(registry *tool.Registry) Option {
 	}
 }
 
-// WithSequentialTools disables concurrent tool execution, running each call
-// in a batch one at a time in provider order. Tool calls run in parallel by
-// default; use this option when tool handlers are not safe to run
-// concurrently or must observe each other's side effects in order.
-func WithSequentialTools() Option {
+// ToolExecutionMode selects how the tool calls of one model response run.
+type ToolExecutionMode uint8
+
+const (
+	// ToolExecutionParallel runs the calls of a batch concurrently. It is the
+	// default. WithMaxConcurrentTools bounds how many handlers run at once.
+	ToolExecutionParallel ToolExecutionMode = iota
+	// ToolExecutionSequential runs the calls of a batch one at a time, strictly
+	// in the order the provider returned them. Use it when handlers are not
+	// safe to run concurrently or must observe each other's side effects.
+	ToolExecutionSequential
+)
+
+// String returns the mode name.
+func (m ToolExecutionMode) String() string {
+	switch m {
+	case ToolExecutionParallel:
+		return "parallel"
+	case ToolExecutionSequential:
+		return "sequential"
+	default:
+		return fmt.Sprintf("ToolExecutionMode(%d)", uint8(m))
+	}
+}
+
+// WithToolExecution selects how the tool calls of one model response run. The
+// default is ToolExecutionParallel. An unknown mode is a construction error.
+//
+// The mode applies to every execution path: normal calls, durable execution,
+// approval resume and recovery. Whatever the mode, tool results are returned
+// to the model in the provider's original tool-call order, and a batch that
+// needs approval persists its pause before any sibling handler starts.
+//
+// ToolExecutionSequential cannot be combined with WithMaxConcurrentTools(n)
+// for n > 1; New rejects that combination instead of ignoring one option.
+func WithToolExecution(mode ToolExecutionMode) Option {
 	return func(a *Agent) error {
-		a.parallelTools = false
+		switch mode {
+		case ToolExecutionParallel, ToolExecutionSequential:
+			a.toolExecution = mode
+			return nil
+		default:
+			return fmt.Errorf("WithToolExecution: unknown mode %d", uint8(mode))
+		}
+	}
+}
+
+// WithMaxConcurrentTools caps how many tool handlers of one batch run at the
+// same time under ToolExecutionParallel. n must be at least 1; n == 1 runs the
+// batch strictly in provider order. Without this option parallel execution is
+// unbounded. Combining n > 1 with ToolExecutionSequential is a construction
+// error.
+func WithMaxConcurrentTools(n int) Option {
+	return func(a *Agent) error {
+		if n < 1 {
+			return fmt.Errorf("WithMaxConcurrentTools: n must be >= 1, got %d", n)
+		}
+		a.maxConcurrentTools = n
 		return nil
 	}
 }
@@ -140,11 +191,22 @@ func WithOutputGuardrail(g ...OutputGuardrail) Option {
 	}
 }
 
-// WithToolFilter adds tool filter(s) evaluated before each provider call (AND semantics).
-// A tool must pass all filters to be included. Accumulates across multiple calls.
-func WithToolFilter(filters ...ToolFilter) Option {
+// WithToolVisibility adds rules that decide which tools the model may see. The
+// rules are evaluated before every provider call (AND semantics): a tool must
+// pass all of them to be offered. A hidden tool is left out of the provider's
+// tool list and out of that loop's execution map. Accumulates across calls.
+//
+// Visibility is not authorization. It shapes the model's choices; role and
+// attribute policies, tool guards, approval and middleware decide whether a
+// call that does reach execution is allowed.
+func WithToolVisibility(rules ...ToolVisibility) Option {
 	return func(a *Agent) error {
-		a.toolFilters = append(a.toolFilters, filters...)
+		for _, rule := range rules {
+			if rule == nil {
+				return fmt.Errorf("WithToolVisibility: rule must not be nil")
+			}
+		}
+		a.toolVisibility = append(a.toolVisibility, rules...)
 		return nil
 	}
 }
@@ -164,9 +226,38 @@ func WithTokenBudget(maxTokens int) Option {
 
 // WithRateLimiter attaches provider-call rate limiting. Concrete limiters are
 // available from the agent/ratelimit package.
+//
+// Every physical provider attempt reserves capacity under an
+// application-defined bucket key chosen by WithRateLimitKey. Without a key
+// selector all attempts share the single empty-key bucket.
 func WithRateLimiter(rl RateLimiter) Option {
 	return func(a *Agent) error {
 		a.rateLimiter = rl
+		return nil
+	}
+}
+
+// RateLimitKeyFunc returns the application-defined bucket key for one provider
+// attempt. See WithRateLimitKey.
+type RateLimitKeyFunc func(*Context) string
+
+// WithRateLimitKey chooses the bucket key of every rate-limited provider
+// attempt. fn runs once per physical attempt, with the attempt's invocation
+// Context, and its result becomes RateLimitRequest.Key. nil is a construction
+// error, and so is using it without WithRateLimiter.
+//
+// Without this option the key is empty: every attempt shares one bucket, and
+// only global limits plus that single per-key bucket apply. The engine never
+// derives a key from the conversation ID or the identity. Applications that
+// want tenant, customer, API-key or user budgets select the key explicitly:
+//
+//	agent.WithRateLimitKey(func(c *agent.Context) string { return c.Identity() })
+func WithRateLimitKey(fn RateLimitKeyFunc) Option {
+	return func(a *Agent) error {
+		if fn == nil {
+			return fmt.Errorf("WithRateLimitKey: fn must not be nil")
+		}
+		a.rateLimitKey = fn
 		return nil
 	}
 }
@@ -215,21 +306,6 @@ func WithProviderTimeout(d time.Duration) Option {
 			return fmt.Errorf("timeout must be non-negative, got %s", d)
 		}
 		a.providerTimeout = d
-		return nil
-	}
-}
-
-// WithProviderRetry configures provider retry with exponential backoff.
-func WithProviderRetry(maxRetries int, baseDelay time.Duration) Option {
-	return func(a *Agent) error {
-		if maxRetries < 0 {
-			return fmt.Errorf("maxRetries must be non-negative, got %d", maxRetries)
-		}
-		if baseDelay < 0 {
-			return fmt.Errorf("baseDelay must be non-negative, got %s", baseDelay)
-		}
-		a.retryMax = maxRetries
-		a.retryBaseDelay = baseDelay
 		return nil
 	}
 }
@@ -301,17 +377,6 @@ func WithMaxOutputTokens(n int) Option {
 			a.inferenceConfig = &InferenceConfig{}
 		}
 		a.inferenceConfig.MaxTokens = &n
-		return nil
-	}
-}
-
-// WithCaching enables all supported prompt caching. It sets CachingEnabled on
-// each provider call (causing providers to automatically inject cache markers
-// on DocumentBlocks and system prompts) and enables summary caching on any
-// summary conversation strategy attached to the agent.
-func WithCaching() Option {
-	return func(a *Agent) error {
-		a.cachingEnabled = true
 		return nil
 	}
 }

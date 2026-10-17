@@ -137,10 +137,12 @@ func WithThinkingBudget(tokens int64) Option {
 	return func(o *options) { o.thinkingBudget = tokens }
 }
 
-// WithSystemPromptCaching enables prompt caching. When set and ModelRequest.System is
-// non-empty, cache_control is attached to the last system TextBlockParam.
-// DocumentBlocks in messages also get cache_control attached automatically.
-func WithSystemPromptCaching() Option {
+// WithPromptCaching enables Anthropic prompt caching. When set and
+// ModelRequest.System is non-empty, cache_control is attached to the last system
+// TextBlockParam, and every DocumentBlock in messages also gets cache_control.
+// Cache read/write token counts are reported in TokenUsage whether or not this
+// option is set.
+func WithPromptCaching() Option {
 	return func(o *options) { o.cachingEnabled = true }
 }
 
@@ -321,7 +323,7 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 		usesCapabilityDefault = false
 	}
 
-	cachingEnabled := req.CachingEnabled || p.cachingEnabled
+	cachingEnabled := p.cachingEnabled
 	msgs := toAnthropicMessages(req.Messages, cachingEnabled)
 	input := anthropicsdk.MessageNewParams{
 		Model:     p.model,

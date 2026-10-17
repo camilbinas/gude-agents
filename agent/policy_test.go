@@ -144,7 +144,7 @@ func TestTool_DenyRoles_Blocks(t *testing.T) {
 	}
 }
 
-// --- RoleFilter + WithRoleEnforcement ---
+// --- RoleVisibility + WithRoleEnforcement ---
 
 func TestWithRoleEnforcement_AdminSeesAdminTool(t *testing.T) {
 	// Admin calls a tool that requires "admin" role — should succeed.
@@ -169,7 +169,7 @@ func TestWithRoleEnforcement_AdminSeesAdminTool(t *testing.T) {
 }
 
 func TestWithRoleEnforcement_GuestCannotSeeAdminTool(t *testing.T) {
-	// Guest invokes agent — admin_op should be filtered out of the tool spec
+	// Guest invokes agent — admin_op should be hidden from the tool spec
 	// sent to the provider, so the LLM never sees it.
 	prov := newCapturingProvider(&ModelResponse{Text: "ok"})
 	a, err := New(prov, "test", WithTools(adminTool(), publicTool()),
@@ -192,7 +192,7 @@ func TestWithRoleEnforcement_GuestCannotSeeAdminTool(t *testing.T) {
 }
 
 func TestWithRequirePrincipal_NoPrincipal_ToolsHidden(t *testing.T) {
-	// No principal set — all tools should be filtered out.
+	// No principal set — all tools should be hidden.
 	prov := newCapturingProvider(&ModelResponse{Text: "ok"})
 	a, err := New(prov, "test", WithTools(publicTool()),
 		WithRequirePrincipal())
@@ -208,12 +208,12 @@ func TestWithRequirePrincipal_NoPrincipal_ToolsHidden(t *testing.T) {
 	}
 }
 
-func TestWithPolicy_CustomFunc(t *testing.T) {
-	// Custom policy: only allow tools whose name starts with "pub".
+func TestWithToolVisibility_CustomRule(t *testing.T) {
+	// Custom visibility rule: only show tools whose name starts with "pub".
 	prov := newCapturingProvider(&ModelResponse{Text: "ok"})
 	a, err := New(prov, "test",
 		WithTools(adminTool(), publicTool()),
-		WithPolicy(func(c *Context, t tool.Tool) bool {
+		WithToolVisibility(func(c *Context, t tool.Tool) bool {
 			return len(t.Spec.Name) >= 3 && t.Spec.Name[:3] == "pub"
 		}),
 	)
@@ -234,7 +234,7 @@ func TestWithPolicy_CustomFunc(t *testing.T) {
 }
 
 // TestRoleEnforcement_ExecutionTime verifies that even when a tool bypasses
-// filterTools and ends up in availableTools, the execution-time role check
+// visibleTools and ends up in availableTools, the execution-time role check
 // still blocks the handler with a denial result.
 func TestRoleEnforcement_ExecutionTime(t *testing.T) {
 	handlerCalled := false
@@ -247,7 +247,7 @@ func TestRoleEnforcement_ExecutionTime(t *testing.T) {
 		tool.AllowRoles("admin"),
 	)
 
-	// No WithRoleEnforcement — filterTools passes everything.
+	// No WithRoleEnforcement — visibleTools passes everything.
 	// The execution-time check inside executeToolsWithMiddleware is what we're testing.
 	prov := newScriptedProvider(
 		&ModelResponse{
@@ -493,8 +493,8 @@ func principalPolicyTool(name string, calls *atomic.Int32, opts ...tool.Option) 
 	}, opts...)
 }
 
-func TestRoleFilterRequiresPrincipalForDeclaredPolicy(t *testing.T) {
-	filter := RoleFilter()
+func TestRoleVisibilityRequiresPrincipalForDeclaredPolicy(t *testing.T) {
+	visible := RoleVisibility()
 	var calls atomic.Int32
 	unrestricted := principalPolicyTool("open", &calls)
 	cases := []struct {
@@ -508,12 +508,12 @@ func TestRoleFilterRequiresPrincipalForDeclaredPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if filter(Background(), tc.tool) {
+			if visible(Background(), tc.tool) {
 				t.Fatal("declared policy must not be visible without a principal")
 			}
 		})
 	}
-	if !filter(Background(), unrestricted) {
+	if !visible(Background(), unrestricted) {
 		t.Fatal("unrestricted tool must remain visible without a principal")
 	}
 }

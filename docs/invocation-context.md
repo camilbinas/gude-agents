@@ -60,6 +60,6 @@ ctx.Set(selectedRegionKey{}, "eu-west-1")
 region, ok := agent.GetTyped[string](ctx, selectedRegionKey{})
 ```
 
-This KV is for application coordination, including a tool writing data that a later tool filter reads. It is **not framework scratch space**: framework interrupt state, usage, call IDs, widget accumulation, and guard state are isolated internally. Parallel tool calls receive child contexts with shared user KV but separate per-call runtime state.
+This KV is for application coordination, including a tool writing data that a later tool visibility rule reads. It is **not framework scratch space**: framework interrupt state, usage, call IDs, widget accumulation, and guard state are isolated internally. Parallel tool calls receive child contexts with shared user KV but separate per-call runtime state.
 
 Usage belongs to `Result.Usage`.

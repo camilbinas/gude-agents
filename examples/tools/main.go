@@ -2,7 +2,11 @@
 //
 // A customer-support agent with typed tools. Independent tool calls run in
 // parallel by default, so the model can look up an order and local time at
-// once when both help answer a request.
+// once when both help answer a request. Results always reach the model in the
+// order it asked for the calls.
+//
+// WithMaxConcurrentTools bounds how many handlers run at once, and
+// WithToolExecution(agent.ToolExecutionSequential) runs them one at a time.
 package main
 
 import (
@@ -40,6 +44,7 @@ func main() {
 		bedrock.Must(bedrock.Standard()),
 		"You are a customer-support assistant. Use tools when their data helps answer the customer.",
 		agent.WithTools(lookupOrder, localTime),
+		agent.WithMaxConcurrentTools(4),
 	)
 	if err != nil {
 		log.Fatal(err)

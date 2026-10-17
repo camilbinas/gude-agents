@@ -10,7 +10,7 @@ prov, err := bedrock.New("anthropic.claude-3-5-sonnet-20241022-v2:0",
 a, err := agent.New(prov, "Answer clearly.")
 ```
 
-The provider uses the AWS default credential chain. `WithAPIKey` supports Bedrock API keys; options also cover region, maximum tokens, thinking effort/budget, Bedrock Guardrails, system-prompt caching for supported models, and safe URL-fetch timeout/private-network policy for remote attachments.
+The provider uses the AWS default credential chain. `WithAPIKey` supports Bedrock API keys; options also cover region, maximum tokens, thinking effort/budget, Bedrock Guardrails, `WithPromptCaching()` (cache points after the system prompt and document blocks, Claude models only; other models ignore it), and safe URL-fetch timeout/private-network policy for remote attachments.
 
 Use model IDs or inference-profile IDs available in the configured region. Permissions commonly include model invocation and streaming invocation, plus guardrail permissions when enabled. Keep the provider's content guardrail distinct from application [guardrails](../guardrails.md).
 

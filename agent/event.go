@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -320,12 +321,27 @@ func (s *eventSink) drain() {
 }
 
 // runParallel runs fn(0..n-1) on worker goroutines and, until all of them
-// return, drains their queued events on the calling goroutine. A nil sink
-// simply waits. It always waits for every worker, so no goroutine outlives it.
-func runParallel(s *eventSink, n int, fn func(i int)) {
+// return, drains their queued events on the calling goroutine. At most limit
+// calls of fn run at once (limit <= 0 means all n), and they start in index
+// order. A nil sink simply waits. It always waits for every worker, so no
+// goroutine outlives it.
+func runParallel(s *eventSink, n, limit int, fn func(i int)) {
+	workers := n
+	if limit > 0 && limit < n {
+		workers = limit
+	}
+	var next atomic.Int64
 	var wg sync.WaitGroup
-	for i := range n {
-		wg.Go(func() { fn(i) })
+	for range workers {
+		wg.Go(func() {
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		})
 	}
 	if s == nil {
 		wg.Wait()

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -20,19 +21,33 @@ var errPoolClosed = errors.New("mcp pool: closed")
 // a single subprocess.
 //
 // The pool lazily creates connections up to maxSize. When all connections
-// are busy, callers block until one is returned or the pool closes.
+// are busy, callers block until one is returned, their context ends, or the
+// pool closes. A session is leased to exactly one call at a time. A session
+// whose call failed in transport (or was cancelled) is closed instead of being
+// returned to the idle set, and the freed slot lets a later call start a
+// replacement subprocess.
 type Pool struct {
 	command string
 	args    []string
 	env     []string
+
+	// connect starts one session. It is startSession in production; tests
+	// substitute fakes.
+	connect func(context.Context) (poolSession, error)
 
 	mu       sync.Mutex
 	cond     *sync.Cond
 	size     int
 	maxSize  int
 	closed   bool
-	sessions chan *sdkmcp.ClientSession // buffered channel acts as the idle pool
-	toolDefs []*sdkmcp.Tool             // cached tool definitions from first connection
+	sessions chan poolSession // buffered channel acts as the idle pool
+	toolDefs []*sdkmcp.Tool   // cached tool definitions from first connection
+}
+
+// poolSession is the part of an MCP client session the pool leases out.
+type poolSession interface {
+	CallTool(context.Context, *sdkmcp.CallToolParams) (*sdkmcp.CallToolResult, error)
+	Close() error
 }
 
 // PoolOption configures the connection pool.
@@ -82,8 +97,9 @@ func NewPool(ctx context.Context, command string, args []string, opts ...PoolOpt
 		args:     args,
 		env:      cfg.env,
 		maxSize:  cfg.maxSize,
-		sessions: make(chan *sdkmcp.ClientSession, cfg.maxSize),
+		sessions: make(chan poolSession, cfg.maxSize),
 	}
+	p.connect = func(ctx context.Context) (poolSession, error) { return p.startSession(ctx) }
 	p.cond = sync.NewCond(&p.mu)
 
 	// Start one connection to discover tools and validate the server.
@@ -135,7 +151,7 @@ func (p *Pool) startSession(ctx context.Context) (*sdkmcp.ClientSession, error) 
 // if the pool hasn't reached maxSize yet. If all connections are busy and
 // the pool is at capacity, the caller blocks until one is returned or the
 // pool is closed.
-func (p *Pool) acquire(ctx context.Context) (*sdkmcp.ClientSession, error) {
+func (p *Pool) acquire(ctx context.Context) (poolSession, error) {
 	p.mu.Lock()
 	for {
 		if p.closed {
@@ -154,7 +170,7 @@ func (p *Pool) acquire(ctx context.Context) (*sdkmcp.ClientSession, error) {
 			p.size++ // Reserve capacity while the connection is created.
 			p.mu.Unlock()
 
-			session, err := p.startSession(ctx)
+			session, err := p.connect(ctx)
 			if err != nil {
 				p.mu.Lock()
 				p.size--
@@ -199,7 +215,7 @@ func (p *Pool) acquire(ctx context.Context) (*sdkmcp.ClientSession, error) {
 
 // release returns a connection to the idle pool. After Close, it closes only
 // the returned lease; sessions actively in use are never closed by Close.
-func (p *Pool) release(session *sdkmcp.ClientSession) {
+func (p *Pool) release(session poolSession) {
 	p.mu.Lock()
 	if p.closed {
 		p.size--
@@ -213,6 +229,31 @@ func (p *Pool) release(session *sdkmcp.ClientSession) {
 	p.sessions <- session
 	p.cond.Signal()
 	p.mu.Unlock()
+}
+
+// discard gives up a leased session that must not be reused: it frees the
+// pool slot, wakes waiting callers (one of which may start a replacement) and
+// closes the session.
+func (p *Pool) discard(session poolSession) {
+	p.mu.Lock()
+	p.size--
+	p.cond.Broadcast()
+	p.mu.Unlock()
+	if session != nil {
+		_ = session.Close()
+	}
+}
+
+// reusable reports whether a session can serve another call after CallTool
+// returned err. A JSON-RPC error answered by the server proves the session is
+// alive; anything else (a closed transport, a cancelled or timed-out call whose
+// request may still be running) is not safe to reuse.
+func reusable(err error) bool {
+	if err == nil {
+		return true
+	}
+	var rpcErr *jsonrpc.Error
+	return errors.As(err, &rpcErr)
 }
 
 // Tools returns tool.Tool values that use the pool for every call.
@@ -261,12 +302,15 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 			if err != nil {
 				return "", fmt.Errorf("mcp tool %s: acquire connection: %w", name, err)
 			}
-			defer p.release(session)
-
 			res, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
 				Name:      name,
 				Arguments: args,
 			})
+			if reusable(err) {
+				p.release(session)
+			} else {
+				p.discard(session)
+			}
 			if err != nil {
 				return "", fmt.Errorf("mcp tool %s: %w", name, err)
 			}
@@ -292,7 +336,7 @@ func (p *Pool) Close() error {
 	}
 	p.closed = true
 
-	idle := make([]*sdkmcp.ClientSession, 0, len(p.sessions))
+	idle := make([]poolSession, 0, len(p.sessions))
 	for {
 		select {
 		case session := <-p.sessions:

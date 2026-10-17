@@ -30,10 +30,22 @@ type toolOutcome struct {
 	err        error           // terminal recovery/coordinator error; never model-visible
 }
 
-// executeBatch runs a batch of tool calls through the canonical pipeline, in
-// parallel unless disabled via WithSequentialTools. decisions, when non-nil,
-// carries the human approval decision for each call of a resumed approval
-// interrupt.
+// concurrentLimit reports how many tool handlers of one batch may run at the
+// same time: 1 for strictly sequential execution, 0 for no limit.
+func (a *Agent) concurrentLimit() int {
+	if a.toolExecution == ToolExecutionSequential {
+		return 1
+	}
+	return a.maxConcurrentTools
+}
+
+// executeBatch runs a batch of tool calls through the canonical pipeline under
+// the Agent's tool execution policy (WithToolExecution and
+// WithMaxConcurrentTools). Every path that executes tools goes through here:
+// normal calls, durable execution, approval resume and recovery. Outcomes are
+// indexed by call, so results keep the provider's order however handlers are
+// scheduled. decisions, when non-nil, carries the human approval decision for
+// each call of a resumed approval interrupt.
 func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]tool.Tool, decisions []*tool.Decision) []toolOutcome {
 	outcomes := make([]toolOutcome, len(calls))
 	exec := func(i int, async bool) {
@@ -45,12 +57,13 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 		outcomes[i] = r.executeCall(c, calls[i], t, ok, d, async)
 	}
 	run := func(indices []int) {
-		if r.a.parallelTools && len(indices) > 1 {
+		limit := r.a.concurrentLimit()
+		if limit != 1 && len(indices) > 1 {
 			var sink *eventSink
 			if c.rt != nil {
 				sink = c.rt.sink
 			}
-			runParallel(sink, len(indices), func(i int) { exec(indices[i], true) })
+			runParallel(sink, len(indices), limit, func(i int) { exec(indices[i], true) })
 			return
 		}
 		for _, i := range indices {
@@ -160,7 +173,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 		return fail(denialResultJSON(tc.Name, reason), ErrorCodeToolDenied, time.Since(begin))
 	}
 
-	// 2. RBAC / ABAC — defense in depth against calls that bypassed filterTools.
+	// 2. RBAC / ABAC — defense in depth against calls that bypassed tool visibility.
 	// Any declared policy requires a Principal; unrestricted tools remain open.
 	if !t.AllowedForPrincipal(hasPrincipal, principal.Roles, principal.Attrs) {
 		denialReason := DenialReasonAttrCondition

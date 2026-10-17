@@ -188,7 +188,7 @@ func TestToolsConfig_IncludeEmpty(t *testing.T) {
 }
 
 func newLifecycleTestPool(size, maxSize int) *Pool {
-	p := &Pool{maxSize: maxSize, size: size, sessions: make(chan *sdkmcp.ClientSession, maxSize)}
+	p := &Pool{maxSize: maxSize, size: size, sessions: make(chan poolSession, maxSize)}
 	p.cond = sync.NewCond(&p.mu)
 	return p
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-func TestIntegration_ToolFilter_HidesTool(t *testing.T) {
+func TestIntegration_ToolVisibility_HidesTool(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
 
@@ -28,7 +28,7 @@ func TestIntegration_ToolFilter_HidesTool(t *testing.T) {
 		p,
 		"You are a helpful assistant. Use available tools to answer questions. Be very brief.",
 		agent.WithTools(searchTool, calcTool),
-		agent.WithToolFilter(func(_ *agent.Context, tool tool.Tool) bool {
+		agent.WithToolVisibility(func(_ *agent.Context, tool tool.Tool) bool {
 			return tool.Spec.Name != "web_search"
 		}),
 	)
@@ -49,7 +49,7 @@ func TestIntegration_ToolFilter_HidesTool(t *testing.T) {
 	t.Logf("Response: %s", result.Text)
 }
 
-func TestIntegration_ToolFilter_ContextDriven(t *testing.T) {
+func TestIntegration_ToolVisibility_ContextDriven(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
 
@@ -67,7 +67,7 @@ func TestIntegration_ToolFilter_ContextDriven(t *testing.T) {
 		p,
 		"You are a helpful assistant. Use available tools. Be very brief. If no suitable tool is available, say so.",
 		agent.WithTools(adminTool, infoTool),
-		agent.WithToolFilter(func(c *agent.Context, tool tool.Tool) bool {
+		agent.WithToolVisibility(func(c *agent.Context, tool tool.Tool) bool {
 			if tool.Spec.Name == "delete_account" {
 				value, ok := c.Get("is_admin")
 				isAdmin, valid := value.(bool)

@@ -35,7 +35,6 @@ func TestEstimator_DelegatesModelRequest(t *testing.T) {
 			Description: "Search the web",
 			InputSchema: map[string]any{"type": "object"},
 		}},
-		CachingEnabled: true,
 	}
 
 	got, err := est.EstimateTokens(context.Background(), req)
