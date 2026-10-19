@@ -2,6 +2,7 @@
 # Release mechanics for the lockstep multi-module release. The workflow only
 # orders these commands; each one does a single stage.
 #
+#   release.sh choose-version [--version 1.9.0]
 #   release.sh validate --version 1.9.0 [--mode release]
 #   release.sh test
 #   release.sh prepare  --version 1.9.0
@@ -50,6 +51,55 @@ assert_only_module_files_changed() {
 }
 
 # ---------------------------------------------------------------------------
+
+# Decides which version a run releases and writes version= and skip= to
+# $GITHUB_OUTPUT. A manual run names its version. A push to master derives it
+# from the conventional commits since the latest final tag: feat bumps minor;
+# fix, refactor and perf bump patch. Breaking changes are never released
+# automatically (a major version is a manual decision), and neither are
+# commits that only touch chores, docs or tests.
+cmd_choose_version() {
+  local version="" skip=false reason="" latest range subject message bump=none
+  if [ -n "$VERSION" ]; then
+    version=$VERSION
+  elif [[ "$(git log -1 --format=%s)" == "chore: release "* ]]; then
+    skip=true reason="HEAD is a release commit"
+  else
+    latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+    [ -n "$latest" ] || fail "no final v<major>.<minor>.<patch> tag to bump from; run the workflow manually"
+    range="$latest..HEAD"
+    while IFS= read -r -d '' message; do
+      subject=${message%%$'\n'*}
+      [ -n "${subject//[[:space:]]/}" ] || continue
+      if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subject" || grep -qE '^BREAKING[ -]CHANGE:' <<< "$message"; then
+        bump=breaking
+        break
+      elif grep -qE '^feat(\([^)]*\))?:' <<< "$subject"; then
+        bump=minor
+      elif [ "$bump" = none ] && grep -qE '^(fix|refactor|perf)(\([^)]*\))?:' <<< "$subject"; then
+        bump=patch
+      fi
+    done < <(git log -z --format=%B "$range"; printf '\0')
+    local major minor patch
+    IFS=. read -r major minor patch <<< "${latest#v}"
+    case "$bump" in
+      minor) version="$major.$((minor + 1)).0" ;;
+      patch) version="$major.$minor.$((patch + 1))" ;;
+      breaking) skip=true reason="a breaking change since $latest needs a manual release (run this workflow with the version you want)" ;;
+      none) skip=true reason="no feat, fix, refactor or perf commits since $latest" ;;
+    esac
+  fi
+  if [ "$skip" = true ]; then
+    echo "::notice::No automatic release: $reason."
+  else
+    echo "Releasing v$version."
+  fi
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    { echo "version=$version"; echo "skip=$skip"; } >> "$GITHUB_OUTPUT"
+  else
+    echo "version=$version skip=$skip"
+  fi
+}
 
 cmd_validate() {
   require_version
@@ -270,11 +320,12 @@ cmd_push() {
 
 # ---------------------------------------------------------------------------
 
-[ $# -ge 1 ] || fail "usage: release.sh <validate|test|prepare|seal|verify|plan|commit|tags|push> [--version X] [--mode M]"
+[ $# -ge 1 ] || fail "usage: release.sh <choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push> [--version X] [--mode M]"
 command=$1
 shift
 parse_args "$@"
 case "$command" in
+  choose-version) cmd_choose_version ;;
   validate | test | prepare | seal | verify | plan | commit | tags | push) "cmd_$command" ;;
   *) fail "unknown command '$command'" ;;
 esac
