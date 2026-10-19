@@ -62,8 +62,8 @@ cmd_choose_version() {
   local version="" skip=false reason="" latest range subject message bump=none
   if [ -n "$VERSION" ]; then
     version=$VERSION
-  elif [[ "$(git log -1 --format=%s)" == "chore: release "* ]]; then
-    skip=true reason="HEAD is a release commit"
+  elif [[ "$(git log -1 --format=%s)" == "chore: release v"[0-9]* ]]; then
+    skip=true reason="HEAD is a release commit, which never starts another release"
   else
     latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
     [ -n "$latest" ] || fail "no final v<major>.<minor>.<patch> tag to bump from; run the workflow manually"
