@@ -14,8 +14,8 @@ This versioned, local-only suite describes release qualification scenarios. It i
 | LIMIT-004 | Application-defined bucket key | Two conversations share an identity selected with `WithRateLimitKey`; other identities; no selector; a global limit | Same selected key shares a budget, different keys are independent, no selector means one shared empty-key bucket, and global limits apply across all keys. |
 | LIMIT-002 | Lease terminal integrity | Memory and miniredis backends exercise duplicate, conflicting, unknown, and expired terminals | Operations return typed lifecycle errors and no invalid lease mutates counters. |
 | LIMIT-003 | Output reservation | Request includes `InferenceConfig.MaxTokens` | Admission reserves estimator plus output bound before dispatch. |
-| REL-001 | Release ref race | Review `.github/workflows/release.yml` deterministically | The workflow refuses to rebase a release commit; if `origin/master` changed after the recorded base, it fails so a new run recomputes version and revalidates. |
-| REL-002 | Tag provenance | Review workflow after an atomic push | Each local and remote release tag must resolve to the exact release commit. |
+| REL-001 | Release ref race | Review `.github/scripts/release.sh push` deterministically | The release commit and every tag are pushed in one `--atomic` operation; if `master` advanced after the run started, the push is rejected and nothing is published. |
+| REL-002 | Tag provenance | Review `release.sh tags` and `push` | Every root and nested-module tag is annotated and must resolve, locally and on the remote, to the one release commit. |
 
 Run the local checks with the root workspace active:
 

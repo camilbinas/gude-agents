@@ -100,7 +100,7 @@ Import the Postgres, Redis, and DynamoDB packages with an alias when you also us
 
 ### Every published module builds on its own
 
-Release commits now carry complete `go.sum` files. Before this change the release rewrote internal requirements to the new version but left `go.sum` without checksums for them, so `GOWORK=off go test ./...` failed inside a nested module before compiling anything. The release workflow now publishes every module into a local file proxy in dependency order, runs `go mod tidy` against it, and verifies a consumer-style build (`GOWORK=off`, read-only `go.mod`/`go.sum`) of every module before it commits or tags. The root module no longer requires `agent/logging/debug` or `agent/logging/slog`, and the root tests no longer import sibling modules, so the internal requirement graph is acyclic.
+Release commits now carry complete `go.sum` files, so `GOWORK=off go test ./...` works inside any published module at a release tag. The root module no longer requires `agent/logging/debug` or `agent/logging/slog`, and the root tests no longer import sibling modules.
 
 ## API consolidation: agent options, observability, MCP, and rate-limit keys
 

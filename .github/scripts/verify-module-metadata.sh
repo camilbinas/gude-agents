@@ -1,134 +1,54 @@
 #!/usr/bin/env bash
-# Verifies the dependency metadata of every published module before a release
-# is committed or tagged.
+# Usage: verify-module-metadata.sh <version> <proxy-dir>
 #
-# Usage: verify-module-metadata.sh <published-modules.txt> <published-module-paths.txt>
-#
-#   published-modules.txt       one module directory per line, relative to the
-#                               repository root ("." is the root module)
-#   published-module-paths.txt  one module path per line for the same modules
-#
-# Environment:
-#   ROOT_MODULE       module path of the repository root module (required)
-#   MODULE_PROXY_DIR  optional local module proxy populated by
-#                     seal-module-sums.sh; it serves internal versions that are
-#                     not tagged yet
-#
-# It fails when, for any published module:
-#
-#   1. go.mod requires an internal module path that is not a published module
-#      of this repository (a stale reference to a removed or renamed module);
-#   2. a package of the module imports another published module that go.mod
-#      does not require (a missing internal reference). Test-only imports of
-#      sibling modules are tolerated, because those tests run through go.work
-#      (see "Verify workspace modules"); they only exempt the module's test
-#      dependencies from check 3. Packages are listed with local replacements,
-#      not the workspace, so unpublished release versions never resolve;
-#   3. the module cannot be built on its own. With GOWORK=off, no
-#      replacements and a read-only go.mod/go.sum, a consumer-style build
-#      (go vet ./...) must succeed. That needs every external and internal
-#      requirement to resolve and to have its checksums in go.sum.
-#
-# The check never edits a tracked file: check 2 uses a temporary modfile.
+# Checks the prepared release checkout exactly as a consumer outside the
+# workspace would load each published module: GOWORK=off, no replacements, and
+# a read-only go.mod/go.sum. Internal requirements must be exactly v<version>
+# and resolve through the local proxy that seal-module-sums.sh filled, because
+# those tags do not exist yet. No modfile or other shortcut is used, so an
+# incomplete go.mod or go.sum fails here instead of after publication.
 set -euo pipefail
-modules_file=${1:?usage: verify-module-metadata.sh <published-modules.txt> <published-module-paths.txt>}
-paths_file=${2:?usage: verify-module-metadata.sh <published-modules.txt> <published-module-paths.txt>}
-root_module=${ROOT_MODULE:?ROOT_MODULE must name the repository root module path}
-repo_root=$PWD
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-# module path -> absolute directory, for every published module.
-declare -A dir_of=()
-while read -r module_dir; do
-  path=$(cd "$module_dir" && go mod edit -json | jq -r '.Module.Path')
-  dir_of["$path"]="$repo_root/$module_dir"
-done < "$modules_file"
-# The local proxy, when present, serves release versions that are not tagged yet.
-proxy_env=()
-if [ -n "${MODULE_PROXY_DIR:-}" ]; then
-  proxy_env=("GOPROXY=file://$(cd "$MODULE_PROXY_DIR" && pwd),https://proxy.golang.org,direct" "GONOSUMDB=$root_module")
-fi
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+version=${1:?usage: verify-module-metadata.sh <version> <proxy-dir>}
+proxy_dir=$(cd "${2:?usage: verify-module-metadata.sh <version> <proxy-dir>}" && pwd)
+
 errors=()
-while read -r module_dir; do
-  module_json=$(cd "$module_dir" && go mod edit -json)
-  self=$(jq -r '.Module.Path' <<< "$module_json")
-  mapfile -t required < <(jq -r '.Require[]?.Path' <<< "$module_json")
-  # 1. Stale internal references.
-  for path in "${required[@]}"; do
+for dir in "${PUBLISHED_DIRS[@]}"; do
+  json=$(cd "$REPO_ROOT/$dir" && go mod edit -json)
+  while read -r path required_version; do
+    [ -n "$path" ] || continue
     case "$path" in
-      "$root_module" | "$root_module"/*)
-        if [ -z "${dir_of[$path]:-}" ]; then
-          errors+=("$module_dir requires $path, which is not a published module of this repository")
+      "$ROOT_MODULE" | "$ROOT_MODULE"/*)
+        if [ -z "${DIR_OF[$path]:-}" ]; then
+          errors+=("$dir requires $path, which is not a published module in the manifest")
+        elif [ "$required_version" != "v$version" ]; then
+          errors+=("$dir requires $path@$required_version, expected v$version")
         fi
         ;;
     esac
-  done
-  # 2. Internal modules that are imported but not required. Packages are listed
-  # with a temporary modfile that requires and locally replaces every internal
-  # module, so release versions that are not tagged yet never need to resolve.
-  # The workspace cannot be used here: after the release rewrite go.mod points
-  # at unpublished versions that the go command would try to fetch.
-  work="$tmp/$(printf '%s' "$module_dir" | tr '/.' '__')"
-  mkdir -p "$work"
-  cp "$module_dir/go.mod" "$work/go.mod"
-  if [ -f "$module_dir/go.sum" ]; then
-    cp "$module_dir/go.sum" "$work/go.sum"
-  else
-    : > "$work/go.sum"
+  done < <(jq -r '.Require[]? | "\(.Path) \(.Version)"' <<< "$json")
+  retained=$(jq -r --arg root "$ROOT_MODULE" '.Replace[]?.Old.Path | select(. == $root or startswith($root + "/"))' <<< "$json")
+  if [ -n "$retained" ]; then
+    errors+=("$dir keeps internal replace directives, which consumers ignore: $retained")
   fi
-  all_args=()
-  for path in "${!dir_of[@]}"; do
-    [ "$path" = "$self" ] && continue
-    all_args+=("-replace=${path}=${dir_of[$path]}")
-    if ! printf '%s\n' "${required[@]}" | grep -qxF "$path"; then
-      all_args+=("-require=${path}@v0.0.0-00010101000000-000000000000")
-    fi
-  done
-  if [ "${#all_args[@]}" -gt 0 ]; then
-    go mod edit -modfile="$work/go.mod" "${all_args[@]}"
-  fi
-  list_modules() {
-    (cd "$module_dir" && GOWORK=off GOFLAGS=-mod=mod GOTOOLCHAIN=local \
-      go list -modfile="$work/go.mod" -deps "$@" \
-      -f '{{if .Module}}{{.Module.Path}}{{end}}' ./... 2>"$tmp/list.err") | sort -u
-  }
-  if ! used=$(list_modules); then
-    errors+=("$module_dir: cannot list imports: $(head -c 600 "$tmp/list.err" | tr '\n' ' ')")
-    continue
-  fi
-  if ! used_with_tests=$(list_modules -test); then
-    errors+=("$module_dir: cannot list test imports: $(head -c 600 "$tmp/list.err" | tr '\n' ' ')")
-    continue
-  fi
-  check_test_closure=true
-  while read -r path; do
-    [ -n "$path" ] && [ "$path" != "$self" ] || continue
-    [ -n "${dir_of[$path]:-}" ] || continue
-    if printf '%s\n' "${required[@]}" | grep -qxF "$path"; then
-      continue
-    fi
-    if printf '%s\n' "$used" | grep -qxF "$path"; then
-      errors+=("$module_dir imports $path but go.mod does not require it")
-    else
-      check_test_closure=false
-      echo "notice: $module_dir tests import $path without requiring it; its tests are not built on their own"
-    fi
-  done <<< "$used_with_tests"
-  # 3. Consumer build. The module is loaded the way a developer outside the
-  # workspace loads it: no go.work, no replacements, read-only go.mod/go.sum.
-  # Every requirement, internal ones included, must resolve from go.mod and be
-  # covered by go.sum. Package and test code are both compiled unless the tests
-  # need sibling modules that go.mod does not declare.
-  build_cmd=(vet ./...)
-  if [ "$check_test_closure" != true ]; then build_cmd=(build ./...); fi
-  if ! (cd "$module_dir" && env GOWORK=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local \
-      ${proxy_env[@]+"${proxy_env[@]}"} go "${build_cmd[@]}" >/dev/null 2>"$tmp/sum.err"); then
-    errors+=("$module_dir: cannot be built on its own (GOWORK=off): $(head -c 600 "$tmp/sum.err" | tr '\n' ' ')")
-  fi
-done < "$modules_file"
+done
 if [ "${#errors[@]}" -gt 0 ]; then
-  echo "::error::Module metadata verification failed:"
-  printf '  %s\n' "${errors[@]}"
+  echo "::error::Prepared module requirements are wrong:" >&2
+  printf '  %s\n' "${errors[@]}" >&2
   exit 1
 fi
-echo "Module metadata verified for $(wc -l < "$modules_file" | tr -d ' ') published modules."
+
+export GOWORK=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local
+export GOPROXY="file://$proxy_dir,https://proxy.golang.org,direct"
+export GONOSUMDB="$ROOT_MODULE"
+failed=()
+for dir in "${PUBLISHED_DIRS[@]}"; do
+  echo "::group::standalone $dir"
+  go_checks "$dir" || failed+=("$dir")
+  echo "::endgroup::"
+done
+if [ "${#failed[@]}" -gt 0 ]; then
+  echo "::error::Modules that cannot be built and tested on their own (GOWORK=off): ${failed[*]}" >&2
+  exit 1
+fi
+echo "Verified ${#PUBLISHED_DIRS[@]} published modules at v$version."
