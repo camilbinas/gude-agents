@@ -45,7 +45,7 @@ func New(model string, opts ...Option) (*Provider, error) {
 		baseURL = "http://localhost:8000/v1"
 	}
 	base := []Option{openai.WithBaseURL(baseURL)}
-	return openai.New(model, append(base, opts...)...)
+	return openai.NewCompatible(model, append(base, opts...)...)
 }
 
 // Must is a helper that wraps a call to New and panics on error.

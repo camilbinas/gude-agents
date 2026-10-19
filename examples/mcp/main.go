@@ -34,7 +34,8 @@ func main() {
 	}
 	fmt.Printf("Discovered %d MCP tool(s)\n", len(tools))
 
-	a, err := agent.New(bedrock.Must(bedrock.Standard()), "Use available tools when useful.", agent.WithTools(tools...))
+	// Choose a model that is available in your AWS region and account.
+	a, err := agent.New(bedrock.Must(bedrock.GlobalClaudeSonnet5_5()), "Use available tools when useful.", agent.WithTools(tools...))
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -2,7 +2,6 @@ go 1.25.0
 
 use (
 	.
-	./agent/a2a
 	./agent/conversation/postgres
 	./agent/conversation/redis
 	./agent/conversation/sqlite
@@ -22,7 +21,6 @@ use (
 	./agent/provider/fallback
 	./agent/provider/ollama
 	./agent/provider/openai
-	./agent/provider/registry
 	./agent/provider/vllm
 	./agent/rag/bedrock
 	./agent/rag/document/pdf

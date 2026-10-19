@@ -223,3 +223,53 @@ The selector runs once per physical provider attempt. `WithRateLimitKey(nil)` an
 ### MCP pool behavior
 
 The pool is unchanged in purpose, with one hardening: a session whose call failed in transport, or was cancelled or timed out, is now closed instead of returned to the idle set, and the freed slot lets a later call start a replacement below the configured size. A server's JSON-RPC error or a tool result with `IsError` keeps the session. See [MCP](mcp.md).
+
+## Explicit providers: A2A, the provider registry and tier aliases removed
+
+These are deliberate breaking changes made before the production v1 release. No aliases, deprecated shims, or forwarding wrappers are provided. A Gude application now chooses its provider and its model explicitly:
+
+```go
+provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
+// or
+provider, err := openai.New("gpt-5.6")
+```
+
+There is no framework-wide default provider, no global provider registry, no `MODEL_TIER`, and no `Cheapest`, `Standard` or `Smartest` model.
+
+### Removed
+
+| Removed | Replacement |
+|---|---|
+| The `agent/a2a` module (`a2a.NewServer`, `a2a.NewClient`, card and executor APIs), `examples/a2a`, `docs/a2a.md` | None. `agent.AgentAsTool` still composes agents in process; expose a remote agent behind your own service API and wrap it as a tool, or use MCP for external tool servers |
+| The `agent/provider/registry` module: `Register`, `RegisterBuiltins`, `New`, `FromEnv`, `Names`, `Tier`, `Cheapest`, `Standard`, `Smartest` | Construct the provider you want directly. Selecting a provider from `MODEL_PROVIDER` is application code, not framework code |
+| `openai.Cheapest/Standard/Smartest`, `anthropic.Cheapest/Standard/Smartest`, `bedrock.Cheapest/Standard/Smartest`, `ollama.Cheapest/Standard/Smartest` | A named constructor such as `openai.GPT5_6`, `anthropic.ClaudeSonnet5_5`, `bedrock.GlobalClaudeSonnet5_5` or `ollama.Qwen35`, or `New("model-id")` |
+| The `MODEL_TIER` environment variable and the implicit Bedrock default | `MODEL_PROVIDER` and `MODEL_ID`, required together by the integration tests only |
+
+Migration for the old aliases:
+
+| Old | Previously resolved to | Now |
+|---|---|---|
+| `bedrock.Standard()` | `GlobalClaudeSonnet5_5` | `bedrock.GlobalClaudeSonnet5_5()` |
+| `bedrock.Cheapest()` | `GlobalClaudeHaiku4_5` | `bedrock.GlobalClaudeHaiku4_5()` |
+| `bedrock.Smartest()` | `GlobalClaudeOpus5_5` | `bedrock.GlobalClaudeOpus5_5()` |
+| `anthropic.Standard()` / `Cheapest()` / `Smartest()` | `ClaudeSonnet5_5` / `ClaudeHaiku4_5` / `ClaudeOpus5_5` | the matching named constructor |
+| `openai.Standard()` / `Cheapest()` / `Smartest()` | `gpt-6.1-sol` / `gpt-6-luna` / `gpt-6-astra` | `openai.GPT6_1Sol()` / `GPT6Luna()` / `GPT6Astra()`, or another model you choose |
+| `ollama.Standard()` / `Cheapest()` / `Smartest()` | `qwen3.5:9b` / `qwen3.5:2b` / `qwen3.6:27b` | `ollama.New("qwen3.5:9b")` and so on |
+
+Check the target model before copying a row: an alias may have pointed at a model that is wrong for you, which is why they were removed. In particular `openai.GPT6_1Sol` is recorded as not supporting tool calls through Chat Completions.
+
+### Model catalogues drive capability metadata
+
+Each provider package keeps a private catalogue keyed by model ID. `New(modelID, opts...)` consults it before applying your options, so a known model gets the same best-known metadata through its named constructor or through `New("known-id")`. Named constructors are now one-line wrappers around `New`; they no longer carry their own capability blocks.
+
+- Caller options (`WithCapabilities`, `WithToolUse`, `WithToolChoice*`, `WithContextWindowTokens`, `WithMaxOutputTokens`, ...) apply after the catalogue and win, and the fine-grained options can reset a catalogued field to `agent.Unknown`.
+- Unknown or custom model IDs stay valid and report only the adapter baseline.
+- Bedrock's catalogue also supplies the reasoning request shape (Claude, Nova 2, Grok), and applies to every inference-profile prefix of a model. `bedrock.New("us.anthropic.claude-opus-5-5")` now enables Claude-style thinking without a named constructor.
+- Values were added only where the provider documents them: Anthropic limits for all named Claude models, OpenAI limits and function calling for the GPT-4o, GPT-4.1, GPT-5, GPT-5.4, GPT-5.5, GPT-5.6, GPT-6 Astra and o-series models, Bedrock limits for the named Claude, Nova, gpt-oss, GPT-6 and Grok 4.6 models. Everything else is deliberately `Unknown`. See [Providers](providers.md).
+- The implicit Anthropic `max_tokens` fallback follows the catalogued output ceiling, so `anthropic.New("claude-haiku-4-5")` now defaults to 64,000 like its constructor instead of 128,000, and the 200K/64K models no longer default above their ceiling.
+- `openai.NewCompatible` is added for OpenAI-compatible servers. Ollama and vLLM use it, so a server model name that matches an OpenAI model ID never inherits OpenAI metadata.
+- Catalogue limits are advisory metadata, not limits Gude enforces.
+
+### Integration tests
+
+The live-provider helper builds the adapter named by `MODEL_PROVIDER` (`openai`, `anthropic`, `bedrock`, `ollama`, `vllm`) with `MODEL_ID` through a small `switch`. Live tests are skipped unless a live run is requested (`GUDE_LIVE_TESTS=1`, `MODEL_PROVIDER` or `MODEL_ID`), and then both variables are required: a missing value fails with a configuration error. Plain `go test ./...` no longer calls a paid API. See `integration/README.md`.

@@ -5,9 +5,12 @@ go 1.25.0
 require (
 	github.com/camilbinas/gude-agents v0.81.0
 	github.com/camilbinas/gude-agents/agent/metrics/prometheus v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.81.0
 	github.com/camilbinas/gude-agents/agent/provider/bedrock v0.81.0
 	github.com/camilbinas/gude-agents/agent/provider/fallback v0.81.0
-	github.com/camilbinas/gude-agents/agent/provider/registry v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/ollama v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/openai v0.81.0
+	github.com/camilbinas/gude-agents/agent/provider/vllm v0.81.0
 	github.com/camilbinas/gude-agents/agent/rag/bedrock v0.81.0
 	github.com/camilbinas/gude-agents/agent/rag/openai v0.81.0
 	github.com/prometheus/client_golang v1.23.2
@@ -39,9 +42,6 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/anthropic v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/ollama v0.81.0 // indirect
-	github.com/camilbinas/gude-agents/agent/provider/openai v0.81.0 // indirect
 	github.com/camilbinas/gude-agents/agent/tokencount/tiktoken v0.81.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect

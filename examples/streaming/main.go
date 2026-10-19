@@ -20,7 +20,8 @@ func main() {
 	clock := tool.NewSimple("current_time", "Return the current UTC time", func(context.Context) (string, error) {
 		return time.Now().UTC().Format(time.RFC3339), nil
 	})
-	a, err := agent.New(bedrock.Must(bedrock.Standard()), "You are concise. Use current_time when relevant.", agent.WithTools(clock))
+	// Choose a model that is available in your AWS region and account.
+	a, err := agent.New(bedrock.Must(bedrock.GlobalClaudeSonnet5_5()), "You are concise. Use current_time when relevant.", agent.WithTools(clock))
 	if err != nil {
 		log.Fatal(err)
 	}

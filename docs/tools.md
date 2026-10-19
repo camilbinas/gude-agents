@@ -108,7 +108,7 @@ See [Middleware](middleware.md), [RBAC](rbac.md), and [Interrupts](interrupts.md
 
 Constructor choice is independent from policy: `WithToolVisibility` controls which tools the model is offered, RBAC/ABAC controls who may execute them, `WithGuard` enforces runtime business rules, `RequiresApproval` pauses for human authorization, and input/output guardrails control content. Observers and audit record what happened. See [RBAC](rbac.md), [Interrupts](interrupts.md), [Guardrails](guardrails.md), and [Observability](observability.md).
 
-The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, A2A, web-search, rich-image, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.
+The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, web-search, rich-image, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.
 
 
 ## Durable tool recovery
@@ -172,7 +172,7 @@ Use `ToolResolutionFailed` to append an error ToolResult or `ToolResolutionRetry
 
 A ToolResult append is the durability boundary: the agent marks calls completed, clears the active batch, or clears a manual-resolution claim only after `ConversationStore.Append` has returned successfully, because a successful `Append` is committed when it returns. If an append committed but its acknowledgement is lost (for example a crash before the execution record is updated), recovery recognizes the canonical result, completes the acknowledgement without replaying the handler or duplicating the result, and only then clears recovery state. The conversation and execution stores commit independently, so this is an ordering protocol with repair, not a distributed transaction.
 
-This mechanism intentionally does not add provider-response replay, A2A migration, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
+This mechanism intentionally does not add provider-response replay, AgentAsTool child continuation, workflow scheduling, or a second persistence abstraction.
 
 ### Operational limits
 

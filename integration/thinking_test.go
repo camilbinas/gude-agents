@@ -2,14 +2,12 @@ package integration_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
-	"github.com/camilbinas/gude-agents/agent/provider/bedrock"
 )
 
 // Extended thinking integration tests.
@@ -17,21 +15,13 @@ import (
 // Run with:
 //   go test -v -timeout=120s -run TestIntegration_Thinking ./...
 //
-// These tests require a provider that supports thinking (Claude 4-series on Bedrock).
-// They are skipped when MODEL_PROVIDER is set to a provider without thinking support.
+// These tests need MODEL_PROVIDER=bedrock or anthropic and a MODEL_ID that
+// supports thinking. They are skipped for other providers, and when no live run
+// is requested (see helpers_test.go).
 
 func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 	t.Parallel()
-	providerName := os.Getenv("MODEL_PROVIDER")
-	if providerName != "" && providerName != "bedrock" {
-		t.Skipf("skipping thinking test for provider %q (not supported)", providerName)
-	}
-
-	p, err := bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tp := &trackingProvider{inner: p}
+	tp := newThinkingProvider(t, pvdr.ThinkingLow)
 
 	a, err := agent.New(tp, "You are a helpful assistant. Be brief.")
 	if err != nil {
@@ -74,16 +64,7 @@ func TestIntegration_Thinking_CallbackFires(t *testing.T) {
 
 func TestIntegration_Thinking_StreamingWithThinking(t *testing.T) {
 	t.Parallel()
-	providerName := os.Getenv("MODEL_PROVIDER")
-	if providerName != "" && providerName != "bedrock" {
-		t.Skipf("skipping thinking test for provider %q (not supported)", providerName)
-	}
-
-	p, err := bedrock.GlobalClaudeSonnet4_6(bedrock.WithThinking(pvdr.ThinkingLow))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tp := &trackingProvider{inner: p}
+	tp := newThinkingProvider(t, pvdr.ThinkingLow)
 
 	a, err := agent.New(tp, "You are a helpful assistant. Be brief.")
 	if err != nil {

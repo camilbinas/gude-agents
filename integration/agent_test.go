@@ -16,13 +16,18 @@ import (
 
 // Integration tests that call real LLM APIs.
 //
-// Run with:
-//   go test -v -timeout=120s ./...
+// They are skipped unless a live run is requested. Choose the provider and the
+// model explicitly; there is no default for either:
+//
+//   MODEL_PROVIDER=bedrock MODEL_ID=global.anthropic.claude-sonnet-5-5 \
+//     go test -v -timeout=120s ./...
 //
 // Environment variables:
-//   MODEL_PROVIDER  - Provider name (default: bedrock)
-//   MODEL_TIER      - Provider tier (default: standard)
-//   AWS_REGION      - AWS region (default: eu-central-1)
+//   MODEL_PROVIDER  - openai | anthropic | bedrock | ollama | vllm
+//   MODEL_ID        - explicit model identifier for that provider
+//   GUDE_LIVE_TESTS - set to 1 to request a live run (setting either variable
+//                     above also requests one, and then both are required)
+//   AWS_REGION      - AWS region for Bedrock
 
 func TestIntegration_SimpleTextResponse(t *testing.T) {
 	t.Parallel()

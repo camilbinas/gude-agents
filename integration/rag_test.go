@@ -21,7 +21,6 @@ import (
 //
 // Environment variables:
 //   EMBEDDER         - "bedrock" (default) or "openai"
-//   BEDROCK_MODEL    - Bedrock LLM model (default: eu.anthropic.claude-sonnet-4-20250514-v1:0)
 //   BEDROCK_EMBED    - Bedrock embedding model (default: amazon.titan-embed-text-v2:0)
 //   AWS_REGION       - AWS region (default: eu-central-1)
 //   OPENAI_API_KEY   - Required when EMBEDDER=openai

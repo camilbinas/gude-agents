@@ -20,7 +20,8 @@ type destinationInput struct {
 }
 
 func main() {
-	provider := bedrock.Must(bedrock.Standard())
+	// Choose a model that is available in your AWS region and account.
+	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
 	researcher, err := agent.New(provider, "You research a destination using the supplied facts.", agent.WithTools(
 		tool.New("destination_facts", "Return destination facts", func(_ context.Context, in destinationInput) (string, error) {
 			return fmt.Sprintf(`{"city":%q,"highlights":["historic temples","walkable neighborhoods"]}`, in.City), nil

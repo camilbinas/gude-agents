@@ -31,7 +31,7 @@ Use tool options for schema, guard, role policy, and approval. Use middleware fo
 
 ## Composition
 
-Use `agent.AgentAsTool` for in-process parent/child delegation, MCP for external tool servers, and A2A for independently deployed agents. See [Multi-agent](multi-agent.md), [MCP](mcp.md), and [A2A](a2a.md).
+Use `agent.AgentAsTool` for in-process parent/child delegation and MCP for external tool servers. See [Multi-agent](multi-agent.md) and [MCP](mcp.md).
 
 ## Providers and operations
 

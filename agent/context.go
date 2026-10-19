@@ -219,7 +219,7 @@ func (c *Context) WithConversationID(id string) *Context {
 func (c *Context) ExecutionID() string { return c.cfg.executionID }
 
 // WithExecutionID supplies a caller-owned execution identity, for example an
-// external A2A task ID. Empty IDs are rejected before invocation starts and a
+// external job or task ID. Empty IDs are rejected before invocation starts and a
 // durable ExecutionStore rejects collisions.
 func (c *Context) WithExecutionID(id string) *Context {
 	c.cfg.executionID = id

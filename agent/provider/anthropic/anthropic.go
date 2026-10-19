@@ -150,7 +150,7 @@ func WithPromptCaching() Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	provider := anthropic.Must(anthropic.Standard())
+//	provider := anthropic.Must(anthropic.ClaudeSonnet5_5())
 //	a, err := agent.New(provider, instructions)
 func Must(p *AnthropicProvider, err error) *AnthropicProvider {
 	if err != nil {
@@ -159,9 +159,24 @@ func Must(p *AnthropicProvider, err error) *AnthropicProvider {
 	return p
 }
 
-// New creates a new AnthropicProvider.
+// baselineCapabilities is what the adapter reports for any model it knows
+// nothing about: native structured output is not implemented here, everything
+// else is Unknown.
+func baselineCapabilities() agent.ModelCapabilities {
+	return agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}
+}
+
+// New creates a new AnthropicProvider for an explicit model ID. Known model IDs
+// (see the named constructors) receive Gude's best-known capability metadata;
+// any other ID is accepted and reports only the adapter baseline. Options are
+// applied after the catalog defaults and override them.
 func New(model string, opts ...Option) (*AnthropicProvider, error) {
-	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
+	o := &options{capabilities: baselineCapabilities()}
+	// Known models start from the catalog. Caller options run afterwards, so
+	// WithCapabilities and the fine-grained options always win.
+	if profile, ok := catalog[model]; ok {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, profile.capabilities)
+	}
 	for _, fn := range opts {
 		fn(o)
 	}

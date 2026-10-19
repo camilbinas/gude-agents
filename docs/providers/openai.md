@@ -3,9 +3,12 @@
 ```go
 import "github.com/camilbinas/gude-agents/agent/provider/openai"
 
-prov, err := openai.New("gpt-4o-mini",
+// Choose the model explicitly; Gude has no default model.
+prov, err := openai.New("gpt-5.6",
     openai.WithMaxTokens(4096),
 )
+// Or a named constructor with the same model ID and metadata.
+prov, err = openai.GPT5_6()
 a, err := agent.New(prov, "Answer clearly.")
 ```
 

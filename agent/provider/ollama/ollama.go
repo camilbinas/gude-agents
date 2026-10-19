@@ -40,13 +40,19 @@ var (
 
 // New creates a provider targeting a local Ollama server.
 // The model parameter is the Ollama model name (e.g. "llama3.2", "qwen2.5", "mistral").
+// Known names receive Gude's best-known capability metadata; any other name is
+// accepted and reports only the adapter baseline. Options override both.
 func New(model string, opts ...Option) (*Provider, error) {
 	host := os.Getenv("OLLAMA_HOST")
 	if host == "" {
 		host = "http://localhost:11434"
 	}
 	base := []Option{openai.WithBaseURL(host + "/v1")}
-	return openai.New(model, append(base, opts...)...)
+	// Known models start from the catalog; caller options follow and win.
+	if profile, ok := catalog[model]; ok {
+		base = append(base, openai.WithCapabilities(profile.capabilities))
+	}
+	return openai.NewCompatible(model, append(base, opts...)...)
 }
 
 // Must is a helper that wraps a call to New and panics on error.

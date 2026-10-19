@@ -14,7 +14,7 @@ import (
 )
 
 // TestIntegration_WidgetBlock exercises the full WidgetBlock pipeline with a
-// real LLM. The provider is selected via MODEL_PROVIDER / MODEL_TIER env vars.
+// real LLM. The provider and model are selected explicitly via MODEL_PROVIDER / MODEL_ID.
 func TestIntegration_WidgetBlock(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)

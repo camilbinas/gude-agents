@@ -262,11 +262,6 @@ func WithGuardrail(id, version string) Option {
 	}
 }
 
-// withThinkingStyle sets the thinking API shape for the model. Used by model constructors only.
-func withThinkingStyle(s thinkingStyle) Option {
-	return func(o *options) { o.thinkingStyle = s }
-}
-
 // WithPromptCaching enables prompt caching for Claude models on Bedrock. A cache
 // point follows the system prompt and every DocumentBlock in user messages.
 // Non-Claude models silently ignore this option. Cache read/write token counts
@@ -279,7 +274,7 @@ func WithPromptCaching() Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	provider := bedrock.Must(bedrock.Standard())
+//	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
 //	a, err := agent.New(provider, instructions)
 func Must(p *BedrockProvider, err error) *BedrockProvider {
 	if err != nil {
@@ -288,10 +283,27 @@ func Must(p *BedrockProvider, err error) *BedrockProvider {
 	return p
 }
 
-// New creates a new BedrockProvider. It loads AWS config from the default
-// credential chain and accepts optional configuration.
+// baselineCapabilities is what the adapter reports for any model it knows
+// nothing about: native structured output is not implemented here, everything
+// else is Unknown.
+func baselineCapabilities() agent.ModelCapabilities {
+	return agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}
+}
+
+// New creates a new BedrockProvider for an explicit model ID or inference
+// profile ID. Known models (see the named constructors) receive Gude's
+// best-known capability metadata and, where Bedrock needs one, the matching
+// reasoning request shape; any other ID is accepted and reports only the
+// adapter baseline. Options are applied after the catalog defaults and
+// override them. It loads AWS config from the default credential chain.
 func New(model string, opts ...Option) (*BedrockProvider, error) {
-	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
+	o := &options{capabilities: baselineCapabilities()}
+	// Known models start from the catalog. Caller options run afterwards, so
+	// WithCapabilities and the fine-grained options always win.
+	if profile, ok := lookupProfile(model); ok {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, profile.capabilities)
+		o.thinkingStyle = profile.thinkingStyle
+	}
 	for _, fn := range opts {
 		fn(o)
 	}

@@ -29,7 +29,7 @@ Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecuti
 
 ## Inspecting an Agent
 
-An Agent exposes three read-only inspection methods, used by first-party extension packages such as A2A card derivation and telemetry:
+An Agent exposes three read-only inspection methods, used by first-party extension packages such as telemetry:
 
 ```go
 func (a *Agent) Name() string

@@ -550,19 +550,21 @@ func TestClaudeHaiku45MaxTokensDefault(t *testing.T) {
 			want:    64_000,
 		},
 		{
-			name:    "Cheapest constructor",
-			factory: Cheapest,
-			want:    64_000,
-		},
-		{
-			name: "generic constructor retains generic default",
+			name: "New with the known ID matches the constructor",
 			factory: func(opts ...Option) (*AnthropicProvider, error) {
 				return New("claude-haiku-4-5", opts...)
+			},
+			want: 64_000,
+		},
+		{
+			name: "unknown model retains generic default",
+			factory: func(opts ...Option) (*AnthropicProvider, error) {
+				return New("claude-unlisted-model", opts...)
 			},
 			want: 128000,
 		},
 		{
-			name:    "other model constructor retains generic default",
+			name:    "model with a 128K ceiling uses it",
 			factory: ClaudeSonnet5,
 			want:    128000,
 		},

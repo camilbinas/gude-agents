@@ -24,4 +24,4 @@ Child interrupts do not propagate through `AgentAsTool`. A child follows the sam
 
 Tool calls run in parallel by default, so independent specialist calls execute simultaneously. Use `agent.WithToolExecution(agent.ToolExecutionSequential)` when child operations are not independent and must run one at a time, or `agent.WithMaxConcurrentTools(n)` to bound how many children run at once.
 
-For process boundaries, use [A2A](a2a.md). For external tool ecosystems rather than autonomous agents, use [MCP](mcp.md).
+For external tool ecosystems rather than in-process agents, use [MCP](mcp.md). Gude does not ship a cross-process agent protocol; expose a remote agent behind your own service API and wrap it as a tool.

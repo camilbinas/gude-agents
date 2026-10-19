@@ -962,7 +962,7 @@ func (r *run) removeToolCalls(completed map[string]struct{}) error {
 }
 
 // RecoverExecution reconciles the single durable incomplete tool boundary
-// without replaying the model or any background/A2A protocol. It returns the
+// without replaying the model. It returns the
 // updated execution. An unsafe call found InFlight without a canonical result
 // returns ToolExecutionUncertainError before any handler runs.
 func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, error) {

@@ -43,7 +43,8 @@ func main() {
 	conversations := conversation.NewInMemory()
 	executions := execution.NewMemory()
 	a, err := agent.New(
-		bedrock.Must(bedrock.Standard()),
+		// Choose a model that is available in your AWS region and account.
+		bedrock.Must(bedrock.GlobalClaudeSonnet5_5()),
 		"You are a support agent. Use request_human_input when an essential detail is missing.",
 		agent.WithConversationStore(conversations),
 		agent.WithExecutionStore(executions),

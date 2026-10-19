@@ -33,11 +33,11 @@ result, err := a.Invoke(ctx, "What changed?")
 ## Integrate and operate
 
 - [Providers](providers.md): [Anthropic](providers/anthropic.md), [Amazon Bedrock](providers/bedrock.md), [OpenAI](providers/openai.md), [Ollama](providers/ollama.md), and [vLLM](providers/vllm.md)
-- [HTTP services](http.md), [MCP](mcp.md), and [A2A](a2a.md)
+- [HTTP services](http.md) and [MCP](mcp.md)
 - [Observability and audit](observability.md)
 - [Release support matrix](support-matrix.md) and [deterministic evaluation cases](evaluation-cases-v1.md)
 - [Execution stores](execution-stores.md)
 
 ## Runnable examples
 
-The focused learning path lives in [`../examples/README.md`](../examples/README.md): getting started, tools, streaming, conversation, human control, structured output, RAG, memory, multi-agent composition, MCP, HTTP, A2A, and multimodal input. Backend, provider, exporter, and transport configuration belongs in the topic documentation below rather than in separate chatbot programs.
+The focused learning path lives in [`../examples/README.md`](../examples/README.md): getting started, tools, streaming, conversation, human control, structured output, RAG, memory, multi-agent composition, MCP, HTTP, and multimodal input. Backend, provider, exporter, and transport configuration belongs in the topic documentation below rather than in separate chatbot programs.

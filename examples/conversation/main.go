@@ -19,7 +19,8 @@ import (
 const conversationID = "travel-planning"
 
 func main() {
-	provider := bedrock.Must(bedrock.Standard())
+	// Choose a model that is available in your AWS region and account.
+	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
 	store := conversation.NewInMemory()
 	manager, err := contextmanager.NewRollingSummary(
 		store,

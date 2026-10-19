@@ -33,7 +33,8 @@ func main() {
         return "18 C in " + in.City, nil
     })
 
-    prov, err := openai.New("gpt-4o-mini")
+    // Choose the model explicitly. Gude never picks one for you.
+    prov, err := openai.New("gpt-5.6")
     if err != nil {
         log.Fatal(err)
     }

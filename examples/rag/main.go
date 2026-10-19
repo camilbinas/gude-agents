@@ -27,7 +27,8 @@ func main() {
 	}
 
 	retriever := rag.NewRetriever(embedder, store, rag.WithMaxResults(2))
-	a, err := agent.RAGAgent(bedrock.Must(bedrock.Standard()), "Answer only from retrieved context.", retriever)
+	// Choose a model that is available in your AWS region and account.
+	a, err := agent.RAGAgent(bedrock.Must(bedrock.GlobalClaudeSonnet5_5()), "Answer only from retrieved context.", retriever)
 	if err != nil {
 		log.Fatal(err)
 	}

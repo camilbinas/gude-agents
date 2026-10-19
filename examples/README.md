@@ -21,7 +21,6 @@ The top-level examples are a learning path, not an adapter matrix. Each director
 ## Deploy and interoperate
 
 11. [`http-server`](http-server/) — expose one long-lived Agent over `net/http` with SSE and interrupt resume.
-12. [`a2a`](a2a/) — run an A2A server and a remote-client orchestrator.
-13. [`multimodal`](multimodal/) — attach local or URL-backed images and documents.
+12. [`multimodal`](multimodal/) — attach local or URL-backed images and documents.
 
 Most examples use Bedrock and therefore require ordinary AWS credentials. The canonical workflow examples use in-memory state or local in-process servers where possible. See [`../docs/README.md`](../docs/README.md) for provider, backend, observability, security, and adapter-specific configuration.

@@ -12,8 +12,6 @@ github.com/JohannesKaufmann/dom v0.2.0 h1:1bragmEb19K8lHAqgFgqCpiPCFEZMTXzOIEjux
 github.com/JohannesKaufmann/dom v0.2.0/go.mod h1:57iSUl5RKric4bUkgos4zu6Xt5LMHUnw3TF1l5CbGZo=
 github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.1 h1:aCUWTMxMrxNr7IWnHiZK6Cn9/ebEAmEp5RfsLiGAFOM=
 github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.1/go.mod h1:GELm/VaOL/CGXFPH32mw//nXiMNiEQgtMnLNr4QK/Y8=
-github.com/a2aproject/a2a-go/v2 v2.3.1 h1:QWMdOX2UsJ8BJmjs952eo1FRyGsOVl0gFCKeM76AgGE=
-github.com/a2aproject/a2a-go/v2 v2.3.1/go.mod h1:mkZr8y2bUgAVQsjs/5fHK7xrRlAHDybMEyxWh2tKRC8=
 github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
 github.com/andybalholm/brotli v1.2.1/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/anthropics/anthropic-sdk-go v1.33.0 h1:YlRqiI+PjULBA8NoeeJmkXtFzTmjZZA7oFvpZ4FU7eU=
@@ -72,8 +70,6 @@ github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
 github.com/bsm/gomega v1.27.10/go.mod h1:JyEr/xRbxbtgWNi8tIEVPUYZ5Dzef52k01W3YH0H+O0=
 github.com/camilbinas/gude-agents v0.81.0 h1:COzIrx2Kc7WoZZNDgcG6ZOXsSM278R/nL9u4SuR2/xg=
 github.com/camilbinas/gude-agents v0.81.0/go.mod h1:St6U/kWcZyknJu8n+c6XoX+3yN+vjgogPusZVH2UU8c=
-github.com/camilbinas/gude-agents/agent/a2a v0.81.0 h1:1jvZ4kGN9XlanPDWrv5BlISOAL/ZheFCTIzWTxQM4Ak=
-github.com/camilbinas/gude-agents/agent/a2a v0.81.0/go.mod h1:miNPxL90rp6MSR6nyqZJIKqwAhqaKJRC1jMO74WjClg=
 github.com/camilbinas/gude-agents/agent/conversation/postgres v0.81.0 h1:oaaJX/ZfsiaYIlb2L04kaCuy3auJolwHyj1CZQk+3LQ=
 github.com/camilbinas/gude-agents/agent/conversation/postgres v0.81.0/go.mod h1:z7Y8+3kNQOM4oKXM5bAC/NNVX5MDLOvbTof1HiPb9ZM=
 github.com/camilbinas/gude-agents/agent/conversation/redis v0.81.0 h1:GNRCLrwGtF4rs/qLDSMNgOXyOKnN0ntFrHPs/WnrAV0=

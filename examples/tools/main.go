@@ -41,7 +41,8 @@ func main() {
 	})
 
 	a, err := agent.New(
-		bedrock.Must(bedrock.Standard()),
+		// Choose a model that is available in your AWS region and account.
+		bedrock.Must(bedrock.GlobalClaudeSonnet5_5()),
 		"You are a customer-support assistant. Use tools when their data helps answer the customer.",
 		agent.WithTools(lookupOrder, localTime),
 		agent.WithMaxConcurrentTools(4),

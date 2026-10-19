@@ -62,7 +62,8 @@ func main() {
 	default:
 		log.Fatal("provide -image, -image-url, -document, or -document-url")
 	}
-	a, err := agent.New(bedrock.Must(bedrock.Standard()), "Analyze the supplied image or document and answer concisely.")
+	// Choose a model that is available in your AWS region and account.
+	a, err := agent.New(bedrock.Must(bedrock.GlobalClaudeSonnet5_5()), "Analyze the supplied image or document and answer concisely.")
 	if err != nil {
 		log.Fatal(err)
 	}

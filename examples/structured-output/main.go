@@ -35,11 +35,12 @@ type Recipe struct {
 func main() {
 	ctx := agent.Background()
 
-	// Standard() uses Claude Sonnet 5.5. It supports automatic tool selection
-	// but not named forced choices, so structured.Invoke supplies the sole
-	// schema tool without an explicit choice. Handle no_tool_call in production
-	// when a model elects to return plain text instead.
-	provider := bedrock.Must(bedrock.Standard())
+	// Choose a model that is available in your AWS region and account. Claude
+	// Sonnet 5.5 supports automatic tool selection but not named forced
+	// choices, and Gude's catalogue knows that, so structured.Invoke supplies
+	// the sole schema tool without an explicit choice. Handle no_tool_call in
+	// production when a model elects to return plain text instead.
+	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
 
 	a, err := agent.New(
 		provider,

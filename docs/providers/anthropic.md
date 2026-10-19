@@ -3,9 +3,12 @@
 ```go
 import "github.com/camilbinas/gude-agents/agent/provider/anthropic"
 
-prov, err := anthropic.New("claude-sonnet-4-20250514",
+// Choose the model explicitly; Gude has no default model.
+prov, err := anthropic.ClaudeSonnet5_5(
     anthropic.WithMaxTokens(4096),
 )
+// The same model by ID; known IDs get the same capability metadata.
+prov, err = anthropic.New("claude-sonnet-5-5")
 a, err := agent.New(prov, "Answer clearly.")
 ```
 

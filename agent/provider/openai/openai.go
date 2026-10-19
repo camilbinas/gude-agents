@@ -134,7 +134,7 @@ func WithThinking(effort pvdr.ThinkingEffort) Option {
 // Use it to collapse provider creation and agent creation into a single error check
 // in examples, scripts, and CLI tools where a provider failure is fatal.
 //
-//	provider := openai.Must(openai.Standard())
+//	provider := openai.Must(openai.GPT5_6())
 //	a, err := agent.New(provider, instructions)
 func Must(p *OpenAIProvider, err error) *OpenAIProvider {
 	if err != nil {
@@ -143,9 +143,39 @@ func Must(p *OpenAIProvider, err error) *OpenAIProvider {
 	return p
 }
 
-// New creates a new OpenAIProvider.
+// baselineCapabilities is what the adapter reports for any model it knows
+// nothing about: native structured output is not implemented here, everything
+// else is Unknown.
+func baselineCapabilities() agent.ModelCapabilities {
+	return agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}
+}
+
+// New creates a new OpenAIProvider for an explicit OpenAI model ID. Known model
+// IDs (see the named constructors) receive Gude's best-known capability
+// metadata; any other ID is accepted and reports only the adapter baseline.
+// Options are applied after the catalog defaults and override them.
 func New(model string, opts ...Option) (*OpenAIProvider, error) {
-	o := &options{capabilities: agent.ModelCapabilities{NativeStructuredOutput: agent.Unsupported}}
+	return newProvider(model, true, opts)
+}
+
+// NewCompatible creates a provider for an OpenAI-compatible server whose model
+// names are chosen by the server, such as Ollama, vLLM or a gateway. Model names
+// on such servers do not identify OpenAI models even when they look alike (a
+// vLLM server may serve any model under the name "gpt-4o"), so the OpenAI model
+// catalog is not consulted: the provider reports the adapter baseline plus the
+// capabilities supplied through options. Use WithBaseURL to point it at the
+// server.
+func NewCompatible(model string, opts ...Option) (*OpenAIProvider, error) {
+	return newProvider(model, false, opts)
+}
+
+func newProvider(model string, useCatalog bool, opts []Option) (*OpenAIProvider, error) {
+	o := &options{capabilities: baselineCapabilities()}
+	// Known models start from the catalog. Caller options run afterwards, so
+	// WithCapabilities and the fine-grained options always win.
+	if profile, ok := catalog[model]; ok && useCatalog {
+		o.capabilities = agent.MergeModelCapabilities(o.capabilities, profile.capabilities)
+	}
 	for _, fn := range opts {
 		fn(o)
 	}
