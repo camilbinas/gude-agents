@@ -12,6 +12,7 @@
 #   release.sh commit   --version 1.9.0
 #   release.sh tags     --version 1.9.0
 #   release.sh push     --version 1.9.0
+#   release.sh github-release --version 1.9.0
 #
 # The module list comes from .github/modules.txt (see lib.sh); nothing else
 # discovers modules.
@@ -318,14 +319,35 @@ cmd_push() {
   echo "Pushed $branch and ${#refs[@]} tags at $(git rev-parse --short "$commit")."
 }
 
+# The tags are already public when this runs, so a transient GitHub API error
+# is retried instead of failing a release that otherwise succeeded.
+cmd_github_release() {
+  require_version
+  local attempt
+  for attempt in 1 2 3 4; do
+    if gh release create "v$VERSION" --verify-tag --title "v$VERSION" --generate-notes; then
+      return 0
+    fi
+    # The request may have created the release before the error was returned.
+    if gh release view "v$VERSION" >/dev/null 2>&1; then
+      echo "Release v$VERSION exists."
+      return 0
+    fi
+    echo "GitHub release attempt $attempt failed; retrying." >&2
+    sleep $((attempt * 10))
+  done
+  fail "could not create the GitHub release for v$VERSION; the tags are published, so create it by hand with: gh release create v$VERSION --verify-tag --generate-notes"
+}
+
 # ---------------------------------------------------------------------------
 
-[ $# -ge 1 ] || fail "usage: release.sh <choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push> [--version X] [--mode M]"
+[ $# -ge 1 ] || fail "usage: release.sh <choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
 command=$1
 shift
 parse_args "$@"
 case "$command" in
   choose-version) cmd_choose_version ;;
+  github-release) cmd_github_release ;;
   validate | test | prepare | seal | verify | plan | commit | tags | push) "cmd_$command" ;;
   *) fail "unknown command '$command'" ;;
 esac
