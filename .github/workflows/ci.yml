@@ -12,12 +12,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # A new go.mod must be listed in .github/modules.txt, or the release would
+      # only notice after the merge.
+      - name: Check module manifest
+        run: bash .github/scripts/release.sh manifest
+      - name: Test release scripts
+        run: bash .github/scripts/release-test.sh
       - name: Test modules
-        env:
-          GOTOOLCHAIN: local
         run: bash .github/scripts/release.sh test

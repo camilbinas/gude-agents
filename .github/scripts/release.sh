@@ -2,7 +2,8 @@
 # Release mechanics for the lockstep multi-module release. The workflow only
 # orders these commands; each one does a single stage.
 #
-#   release.sh choose-version [--version 1.9.0]
+#   release.sh manifest
+#   release.sh choose-version [--version 1.9.0 --mode dry-run|release]
 #   release.sh validate --version 1.9.0 [--mode release]
 #   release.sh test
 #   release.sh prepare  --version 1.9.0
@@ -17,6 +18,8 @@
 # The module list comes from .github/modules.txt (see lib.sh); nothing else
 # discovers modules.
 set -euo pipefail
+# Version and tag comparisons must not depend on the caller's locale.
+export LC_ALL=C
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cd "$REPO_ROOT"
 
@@ -53,18 +56,20 @@ assert_only_module_files_changed() {
 
 # ---------------------------------------------------------------------------
 
-# Decides which version a run releases and writes version= and skip= to
-# $GITHUB_OUTPUT. A manual run names its version. A push to master derives it
+# Decides what a run does and writes RELEASE_VERSION and RELEASE_MODE (dry-run,
+# release or skip) to $GITHUB_ENV, so every later stage runs against the one
+# checkout this was decided on. A manual run names its version and mode. A push to master derives it
 # from the conventional commits since the latest final tag: feat bumps minor;
 # fix, refactor and perf bump patch. Breaking changes are never released
 # automatically (a major version is a manual decision), and neither are
 # commits that only touch chores, docs or tests.
 cmd_choose_version() {
-  local version="" skip=false reason="" latest range subject message bump=none
+  local version="" mode=release reason="" latest range subject message bump=none
   if [ -n "$VERSION" ]; then
-    version=$VERSION
+    [ "$MODE" = dry-run ] || [ "$MODE" = release ] || fail "mode must be dry-run or release, got '$MODE'"
+    version=$VERSION mode=$MODE
   elif [[ "$(git log -1 --format=%s)" == "chore: release v"[0-9]* ]]; then
-    skip=true reason="HEAD is a release commit, which never starts another release"
+    mode=skip reason="HEAD is a release commit, which never starts another release"
   else
     latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
     [ -n "$latest" ] || fail "no final v<major>.<minor>.<patch> tag to bump from; run the workflow manually"
@@ -86,20 +91,84 @@ cmd_choose_version() {
     case "$bump" in
       minor) version="$major.$((minor + 1)).0" ;;
       patch) version="$major.$minor.$((patch + 1))" ;;
-      breaking) skip=true reason="a breaking change since $latest needs a manual release (run this workflow with the version you want)" ;;
-      none) skip=true reason="no feat, fix, refactor or perf commits since $latest" ;;
+      breaking) mode=skip reason="a breaking change since $latest needs a manual release (run this workflow with the version you want)" ;;
+      none) mode=skip reason="no feat, fix, refactor or perf commits since $latest" ;;
     esac
   fi
-  if [ "$skip" = true ]; then
+  if [ "$mode" = skip ]; then
     echo "::notice::No automatic release: $reason."
   else
-    echo "Releasing v$version."
+    echo "Chose v$version ($mode) at $(git rev-parse --short HEAD)."
   fi
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    { echo "version=$version"; echo "skip=$skip"; } >> "$GITHUB_OUTPUT"
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    { echo "RELEASE_VERSION=$version"; echo "RELEASE_MODE=$mode"; } >> "$GITHUB_ENV"
   else
-    echo "version=$version skip=$skip"
+    echo "RELEASE_VERSION=$version RELEASE_MODE=$mode"
   fi
+}
+
+# semver_cmp A B prints -1, 0 or 1 using SemVer 2.0.0 precedence (no build
+# metadata): numeric core first, a prerelease sorts below its final version,
+# and prerelease identifiers compare numerically or lexically left to right.
+semver_cmp() {
+  local a=$1 b=$2 pa="" pb="" i n x y
+  local -a core_a core_b pre_a pre_b
+  [[ $a == *-* ]] && pa=${a#*-}
+  [[ $b == *-* ]] && pb=${b#*-}
+  IFS=. read -r -a core_a <<< "${a%%-*}"
+  IFS=. read -r -a core_b <<< "${b%%-*}"
+  for i in 0 1 2; do
+    (( core_a[i] > core_b[i] )) && { echo 1; return; }
+    (( core_a[i] < core_b[i] )) && { echo -1; return; }
+  done
+  [ -n "$pa" ] || [ -n "$pb" ] || { echo 0; return; }
+  [ -n "$pa" ] || { echo 1; return; }
+  [ -n "$pb" ] || { echo -1; return; }
+  IFS=. read -r -a pre_a <<< "$pa"
+  IFS=. read -r -a pre_b <<< "$pb"
+  n=${#pre_a[@]}
+  (( ${#pre_b[@]} > n )) && n=${#pre_b[@]}
+  for ((i = 0; i < n; i++)); do
+    x=${pre_a[i]-} y=${pre_b[i]-}
+    [ -n "$x" ] || { echo -1; return; }
+    [ -n "$y" ] || { echo 1; return; }
+    if [[ $x =~ ^[0-9]+$ && $y =~ ^[0-9]+$ ]]; then
+      (( 10#$x > 10#$y )) && { echo 1; return; }
+      (( 10#$x < 10#$y )) && { echo -1; return; }
+    elif [[ $x =~ ^[0-9]+$ ]]; then
+      echo -1; return
+    elif [[ $y =~ ^[0-9]+$ ]]; then
+      echo 1; return
+    else
+      [[ $x > $y ]] && { echo 1; return; }
+      [[ $x < $y ]] && { echo -1; return; }
+    fi
+  done
+  echo 0
+}
+
+# A manual version must move forward: newer than the latest final root release,
+# and, for a prerelease, newer than the prereleases already cut for that version.
+check_version_newer() {
+  local latest core tag
+  latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+  if [ -n "$latest" ] && [ "$(semver_cmp "$VERSION" "${latest#v}")" -le 0 ]; then
+    fail "version $VERSION is not newer than the latest release $latest"
+  fi
+  if [[ $VERSION == *-* ]]; then
+    core=${VERSION%%-*}
+    while read -r tag; do
+      [ -n "$tag" ] || continue
+      if [ "$(semver_cmp "$VERSION" "${tag#v}")" -le 0 ]; then
+        fail "prerelease $VERSION is not newer than the existing prerelease $tag"
+      fi
+    done < <(git tag --list "v$core-*")
+  fi
+}
+
+cmd_manifest() {
+  check_manifest
+  echo "Module manifest lists every tracked go.mod (${#PUBLISHED_DIRS[@]} published, ${#PRIVATE_DIRS[@]} private)."
 }
 
 cmd_validate() {
@@ -115,6 +184,7 @@ cmd_validate() {
 
   check_manifest
   check_tags_unused
+  check_version_newer
   if [ "$MODE" = release ]; then
     [ "$(git branch --show-current)" = "$RELEASE_BRANCH" ] || fail "releases are cut from $RELEASE_BRANCH, not '$(git branch --show-current)'"
   fi
@@ -341,11 +411,12 @@ cmd_github_release() {
 
 # ---------------------------------------------------------------------------
 
-[ $# -ge 1 ] || fail "usage: release.sh <choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
+[ $# -ge 1 ] || fail "usage: release.sh <manifest|choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
 command=$1
 shift
 parse_args "$@"
 case "$command" in
+  manifest) cmd_manifest ;;
   choose-version) cmd_choose_version ;;
   github-release) cmd_github_release ;;
   validate | test | prepare | seal | verify | plan | commit | tags | push) "cmd_$command" ;;

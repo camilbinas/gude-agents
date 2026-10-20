@@ -4,7 +4,7 @@
 # A push to master releases automatically when it holds a feat (minor) or a
 # fix, refactor or perf (patch) commit since the last release. Breaking changes
 # and everything else wait for a manual run, which names the version and may be
-# a dry run.
+# a dry run from any branch. Real releases only come from master.
 name: Release
 
 on:
@@ -34,14 +34,13 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
-  choose-version:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.choose.outputs.version }}
-      skip: ${{ steps.choose.outputs.skip }}
     steps:
-      # Always the tip of master for pushes: an earlier run may have released
-      # since this one was queued.
+      # One checkout for the whole run: the version is chosen from it and every
+      # stage below works on this same commit. A push to master checks out its
+      # tip (an earlier queued run may have released since it was triggered). If
+      # master moves after this point, the atomic push in stage 9 is rejected.
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'push' && 'master' || github.ref }}
@@ -49,60 +48,53 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - id: choose
+
+      # Sets RELEASE_VERSION and RELEASE_MODE (dry-run, release, or skip when a
+      # push has nothing to release) for the stages below.
+      - name: Choose release version
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
-        run: bash .github/scripts/release.sh choose-version --version "$REQUESTED_VERSION"
-
-  release:
-    needs: choose-version
-    if: needs.choose-version.outputs.skip != 'true'
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.choose-version.outputs.version }}
-      MODE: ${{ inputs.mode || 'release' }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event_name == 'push' && 'master' || github.ref }}
-          fetch-depth: 0
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
+          REQUESTED_MODE: ${{ inputs.mode }}
+        run: bash .github/scripts/release.sh choose-version --version "$REQUESTED_VERSION" --mode "$REQUESTED_MODE"
 
       - name: 1. Validate release request
-        run: bash .github/scripts/release.sh validate --version "$VERSION" --mode "$MODE"
+        if: env.RELEASE_MODE != 'skip'
+        run: bash .github/scripts/release.sh validate --version "$RELEASE_VERSION" --mode "$RELEASE_MODE"
 
       - name: 2. Test source modules
+        if: env.RELEASE_MODE != 'skip'
         run: bash .github/scripts/release.sh test
 
       - name: 3. Prepare module versions
-        run: bash .github/scripts/release.sh prepare --version "$VERSION"
+        if: env.RELEASE_MODE != 'skip'
+        run: bash .github/scripts/release.sh prepare --version "$RELEASE_VERSION"
 
       - name: 4. Seal module checksums
-        run: bash .github/scripts/release.sh seal --version "$VERSION"
+        if: env.RELEASE_MODE != 'skip'
+        run: bash .github/scripts/release.sh seal --version "$RELEASE_VERSION"
 
       - name: 5. Verify prepared release
-        run: bash .github/scripts/release.sh verify --version "$VERSION"
+        if: env.RELEASE_MODE != 'skip'
+        run: bash .github/scripts/release.sh verify --version "$RELEASE_VERSION"
 
       - name: 6. Show dry-run plan
-        if: env.MODE == 'dry-run'
-        run: bash .github/scripts/release.sh plan --version "$VERSION"
+        if: env.RELEASE_MODE == 'dry-run'
+        run: bash .github/scripts/release.sh plan --version "$RELEASE_VERSION"
 
       - name: 7. Commit release metadata
-        if: env.MODE == 'release'
-        run: bash .github/scripts/release.sh commit --version "$VERSION"
+        if: env.RELEASE_MODE == 'release'
+        run: bash .github/scripts/release.sh commit --version "$RELEASE_VERSION"
 
       - name: 8. Create module tags
-        if: env.MODE == 'release'
-        run: bash .github/scripts/release.sh tags --version "$VERSION"
+        if: env.RELEASE_MODE == 'release'
+        run: bash .github/scripts/release.sh tags --version "$RELEASE_VERSION"
 
       - name: 9. Push release atomically
-        if: env.MODE == 'release'
-        run: bash .github/scripts/release.sh push --version "$VERSION"
+        if: env.RELEASE_MODE == 'release'
+        run: bash .github/scripts/release.sh push --version "$RELEASE_VERSION"
 
       - name: 10. Create GitHub release
-        if: env.MODE == 'release'
+        if: env.RELEASE_MODE == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/release.sh github-release --version "$VERSION"
+        run: bash .github/scripts/release.sh github-release --version "$RELEASE_VERSION"
