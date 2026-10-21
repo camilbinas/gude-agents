@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks release.sh against throwaway repositories: version ordering, the module
-# manifest, automatic version choice, and the atomic push when master moves
+# module discovery, automatic version choice, and the atomic push when master moves
 # after the version was chosen. No network and no module downloads.
 set -uo pipefail
 export LC_ALL=C
@@ -12,15 +12,14 @@ failures=0
 g() { git -c user.email=t@example.com -c user.name=test "$@"; }
 release() { bash .github/scripts/release.sh "$@"; }
 
-# fixture <name>: a repo with a root module and one nested module, published
-# from the manifest, with an "origin" it has pushed master to.
+# fixture <name>: a repo with a root module and one nested module and an
+# "origin" it has pushed master to. Modules are discovered from git.
 fixture() {
   local dir="$work/$1"
   rm -rf "$dir" "$dir-origin.git"
   mkdir -p "$dir/.github" "$dir/sub"
   cp -r "$SCRIPTS" "$dir/.github/scripts"
   rm -f "$dir/.github/scripts/release-test.sh"
-  printf 'published .\npublished sub\n' > "$dir/.github/modules.txt"
   printf 'module example.com/x\n\ngo 1.25.0\n' > "$dir/go.mod"
   printf 'module example.com/x/sub\n\ngo 1.25.0\n\nrequire example.com/x v0.0.1\n' > "$dir/sub/go.mod"
   git init -q -b master "$dir" && cd "$dir" || exit 1
@@ -57,15 +56,19 @@ expect_message "a v prefix is rejected"                     "must not start with
 expect_message "an existing nested-module tag is rejected"  "already exist" bash -c 'git tag sub/v2.0.0-x >/dev/null; git tag sub/v1.8.9; bash .github/scripts/release.sh validate --version 1.8.9'
 git tag -d sub/v1.8.9 sub/v2.0.0-x >/dev/null
 
-# --- The module manifest is complete ----------------------------------------
-fixture manifest
-expect_ok "a complete manifest passes" release manifest
+# --- Modules are discovered, not listed -------------------------------------
+fixture modules
+published() { release modules 2>/dev/null | sed -n 's/^published //p' | tr '\n' ' '; }
+[ "$(published)" = ". sub " ] && pass "every tracked go.mod is published" || fail "every tracked go.mod is published ($(published))"
 mkdir other && printf 'module example.com/x/other\n\ngo 1.25.0\n' > other/go.mod && g add -A && g commit -qm "feat: add other module"
-expect_message "a go.mod missing from the manifest is reported" "missing from .github/modules.txt.*other" release manifest
-printf 'published other\n' >> .github/modules.txt
-expect_ok "listing it fixes the manifest" release manifest
-printf 'module example.com/elsewhere\n\ngo 1.25.0\n' > other/go.mod
-expect_message "a module path that does not match its directory is reported" "other/v<version> requires" release manifest
+[ "$(published)" = ". other sub " ] && pass "a new go.mod is picked up with no list to edit" || fail "a new go.mod is picked up ($(published))"
+expect_ok "the new module gets a nested tag in the plan" bash -c 'bash .github/scripts/release.sh plan --version 1.0.0 | grep -qx "  other/v1.0.0"'
+mkdir -p examples integration sub/testdata/fixture
+for d in examples integration sub/testdata/fixture; do printf 'module example.com/x/%s\n\ngo 1.25.0\n' "$d" > "$d/go.mod"; done
+g add -A && g commit -qm "test: private modules"
+[ "$(published)" = ". other sub " ] && pass "examples, integration and testdata modules are never published" || fail "private modules were published ($(published))"
+printf 'module example.com/elsewhere\n\ngo 1.25.0\n' > other/go.mod && g add -A && g commit -qm "feat: wrong path"
+expect_message "a module path that does not match its directory is reported" "other/v<version> requires" release modules
 
 # --- Automatic version choice -----------------------------------------------
 fixture choose

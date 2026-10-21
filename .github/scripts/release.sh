@@ -2,7 +2,7 @@
 # Release mechanics for the lockstep multi-module release. The workflow only
 # orders these commands; each one does a single stage.
 #
-#   release.sh manifest
+#   release.sh modules
 #   release.sh choose-version [--version 1.9.0 --mode dry-run|release]
 #   release.sh validate --version 1.9.0 [--mode release]
 #   release.sh test
@@ -15,8 +15,7 @@
 #   release.sh push     --version 1.9.0
 #   release.sh github-release --version 1.9.0
 #
-# The module list comes from .github/modules.txt (see lib.sh); nothing else
-# discovers modules.
+# Modules are discovered from git by lib.sh; nothing else discovers modules.
 set -euo pipefail
 # Version and tag comparisons must not depend on the caller's locale.
 export LC_ALL=C
@@ -166,9 +165,10 @@ check_version_newer() {
   fi
 }
 
-cmd_manifest() {
-  check_manifest
-  echo "Module manifest lists every tracked go.mod (${#PUBLISHED_DIRS[@]} published, ${#PRIVATE_DIRS[@]} private)."
+cmd_modules() {
+  check_modules
+  printf 'published %s\n' "${PUBLISHED_DIRS[@]}"
+  printf 'private   %s\n' "${PRIVATE_DIRS[@]}"
 }
 
 cmd_validate() {
@@ -182,7 +182,7 @@ cmd_validate() {
   [ "${VERSION%%.*}" -le 1 ] || fail "major version ${VERSION%%.*} needs /v${VERSION%%.*} module paths; only v0 and v1 are supported"
   [ "$MODE" = dry-run ] || [ "$MODE" = release ] || fail "mode must be dry-run or release, got '$MODE'"
 
-  check_manifest
+  check_modules
   check_tags_unused
   check_version_newer
   if [ "$MODE" = release ]; then
@@ -192,29 +192,17 @@ cmd_validate() {
   echo "Release request v$VERSION ($MODE) is valid for ${#PUBLISHED_DIRS[@]} published modules."
 }
 
-check_manifest() {
-  local dir path tracked listed duplicated missing unlisted
-  for dir in "${PUBLISHED_DIRS[@]}" "${PRIVATE_DIRS[@]}"; do
-    [ -f "$dir/go.mod" ] || fail "manifest lists '$dir', which has no go.mod"
-  done
-  duplicated=$(printf '%s\n' "${PUBLISHED_DIRS[@]}" "${PRIVATE_DIRS[@]}" | sort | uniq -d)
-  [ -z "$duplicated" ] || fail "manifest lists a module twice: $duplicated"
-  [ -n "$ROOT_MODULE" ] || fail "manifest must publish the root module '.'"
-  # The tag of a nested module is its directory; it only works when the module
-  # path ends with that directory.
+# Every published module must be taggable: the tag of a nested module is its
+# directory, which Go only honours when the module path ends with that directory.
+check_modules() {
+  local dir path
+  [ -n "$ROOT_MODULE" ] || fail "the repository root has no go.mod to publish"
   for dir in "${PUBLISHED_DIRS[@]}"; do
+    [ "$dir" = . ] && continue
     path=${PATH_OF[$dir]}
-    if [ "$dir" = . ]; then
-      continue
-    fi
     [ "$path" = "$ROOT_MODULE/$dir" ] || fail "module $dir declares path $path; its tag $dir/v<version> requires $ROOT_MODULE/$dir"
   done
-  tracked=$(git ls-files -- go.mod '**/go.mod' | xargs -n1 dirname | sort)
-  listed=$(printf '%s\n' "${PUBLISHED_DIRS[@]}" "${PRIVATE_DIRS[@]}" | sort)
-  unlisted=$(comm -23 <(echo "$tracked") <(echo "$listed"))
-  [ -z "$unlisted" ] || fail "tracked modules missing from .github/modules.txt (add them as published or private): $unlisted"
-  missing=$(comm -13 <(echo "$tracked") <(echo "$listed"))
-  [ -z "$missing" ] || fail "manifest lists modules that are not tracked in git: $missing"
+  echo "Discovered ${#PUBLISHED_DIRS[@]} published and ${#PRIVATE_DIRS[@]} private modules." >&2
 }
 
 # A version is immutable: any occupied tag, local or remote, blocks the run.
@@ -411,12 +399,12 @@ cmd_github_release() {
 
 # ---------------------------------------------------------------------------
 
-[ $# -ge 1 ] || fail "usage: release.sh <manifest|choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
+[ $# -ge 1 ] || fail "usage: release.sh <modules|choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
 command=$1
 shift
 parse_args "$@"
 case "$command" in
-  manifest) cmd_manifest ;;
+  modules) cmd_modules ;;
   choose-version) cmd_choose_version ;;
   github-release) cmd_github_release ;;
   validate | test | prepare | seal | verify | plan | commit | tags | push) "cmd_$command" ;;

@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
-# Shared by the release scripts: the module manifest and the per-module checks.
+# Shared by the release scripts: module discovery and the per-module checks.
 # Source it; it changes no directory and runs nothing.
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
-MANIFEST="$REPO_ROOT/.github/modules.txt"
 
-# Published modules are released together; private ones are only built in CI.
+# Modules are discovered from git, so a new go.mod is released (or tested) with
+# no list to update. Every tracked go.mod is published and tagged, except the
+# private ones: examples and integration are built by CI but never imported by
+# users, and go.mod files under testdata belong to test fixtures.
+PRIVATE_MODULE_PATTERN='^(examples|integration)$'
 PUBLISHED_DIRS=()
 PRIVATE_DIRS=()
-while read -r kind dir _; do
-  case "$kind" in
-    published) PUBLISHED_DIRS+=("$dir") ;;
-    private) PRIVATE_DIRS+=("$dir") ;;
-    '' | '#'*) ;;
-    *) echo "::error::$MANIFEST: unknown entry '$kind $dir'" >&2; exit 1 ;;
+while read -r dir; do
+  case "$dir" in
+    testdata | */testdata | */testdata/*) ;;
+    *)
+      if [[ $dir =~ $PRIVATE_MODULE_PATTERN ]]; then
+        PRIVATE_DIRS+=("$dir")
+      else
+        PUBLISHED_DIRS+=("$dir")
+      fi
+      ;;
   esac
-done < "$MANIFEST"
+done < <(git -C "$REPO_ROOT" ls-files -- go.mod '**/go.mod' | xargs -n1 dirname | sort)
 
 # module directory -> module path, and the reverse, for published modules.
 declare -A PATH_OF=() DIR_OF=()
 for dir in "${PUBLISHED_DIRS[@]}"; do
-  [ -f "$REPO_ROOT/$dir/go.mod" ] || continue
   path=$(cd "$REPO_ROOT/$dir" && go mod edit -json | jq -r '.Module.Path')
   PATH_OF["$dir"]=$path
   DIR_OF["$path"]=$dir

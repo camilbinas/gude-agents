@@ -20,7 +20,7 @@ for dir in "${PUBLISHED_DIRS[@]}"; do
     case "$path" in
       "$ROOT_MODULE" | "$ROOT_MODULE"/*)
         if [ -z "${DIR_OF[$path]:-}" ]; then
-          errors+=("$dir requires $path, which is not a published module in the manifest")
+          errors+=("$dir requires $path, which is not a published module of this repository")
         elif [ "$required_version" != "v$version" ]; then
           errors+=("$dir requires $path@$required_version, expected v$version")
         fi

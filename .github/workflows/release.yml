@@ -1,5 +1,5 @@
 # Releases every published Gude module together at one version. All mechanics
-# live in .github/scripts/release.sh; the module list is .github/modules.txt.
+# live in .github/scripts/release.sh; modules are discovered from git (.github/scripts/lib.sh).
 #
 # A push to master releases automatically when it holds a feat (minor) or a
 # fix, refactor or perf (patch) commit since the last release. Breaking changes
