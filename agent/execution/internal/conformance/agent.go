@@ -197,7 +197,7 @@ func (p *scriptedProvider) Stream(context.Context, agent.ModelRequest, func(agen
 }
 
 type pausingAgent struct {
-	agent *agent.Agent
+	agent *agent.Runtime
 	ran   *atomic.Int32
 }
 
@@ -220,7 +220,7 @@ func newGatedAgent(t *testing.T, store agent.ExecutionStore, conversations agent
 	return &pausingAgent{agent: newAgentWith(t, store, conversations, &scriptedProvider{responses: responses}, gated), ran: ran}
 }
 
-func newAgentWith(t *testing.T, store agent.ExecutionStore, conversations agent.ConversationStore, provider agent.Provider, tools ...tool.Tool) *agent.Agent {
+func newAgentWith(t *testing.T, store agent.ExecutionStore, conversations agent.ConversationStore, provider agent.Provider, tools ...tool.Tool) *agent.Runtime {
 	t.Helper()
 	a, err := agent.New(provider, "sys",
 		agent.WithTools(tools...),

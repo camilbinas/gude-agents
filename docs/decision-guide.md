@@ -4,10 +4,10 @@
 
 | Need | Use |
 |---|---|
-| One final answer and usage | `Agent.Invoke` → `Result` |
-| UI/SSE events, tools, widgets, interrupts | `Agent.Stream` → `iter.Seq2[Event, error]` |
-| Live answer text only | `Agent.TextStream` → `iter.Seq2[string, error]` |
-| Continue a pause | `Agent.Resume` or `Agent.ResumeStream` |
+| One final answer and usage | `Runtime.Invoke` → `Result` |
+| UI/SSE events, tools, widgets, interrupts | `Runtime.Stream` → `iter.Seq2[Event, error]` |
+| Live answer text only | `Runtime.TextStream` → `iter.Seq2[string, error]` |
+| Continue a pause | `Runtime.Resume` or `Runtime.ResumeStream` |
 | Typed JSON | `structured.Invoke[T]` |
 
 Consume streams through `EventEnd` when the completed turn must persist. Breaking iteration cancels the run.

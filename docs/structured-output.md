@@ -17,7 +17,7 @@ type Classification struct {
     Confidence float64 `json:"confidence"`
 }
 
-func classify(ctx *agent.Context, a *agent.Agent, text string) (Classification, error) {
+func classify(ctx *agent.Context, a *agent.Runtime, text string) (Classification, error) {
     result, err := structured.Invoke[Classification](ctx, a, "Classify: "+text)
     if err != nil {
         return Classification{}, err

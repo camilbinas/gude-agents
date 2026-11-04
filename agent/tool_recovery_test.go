@@ -920,7 +920,7 @@ func TestReadyClaimRaceDoesNotCreateFalseToolResult(t *testing.T) {
 	}
 }
 
-// blockFirstToolClaimStore lets a second Agent win a Ready claim while the
+// blockFirstToolClaimStore lets a second Runtime win a Ready claim while the
 // first worker has already produced a definitive denied sibling outcome.
 type blockFirstToolClaimStore struct {
 	*testExecutionStore

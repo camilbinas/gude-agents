@@ -137,7 +137,7 @@ const (
 type Tool struct {
 	Spec Spec
 
-	// Handler and RichHandler remain readable for low-level adapters while Agent
+	// Handler and RichHandler remain readable for low-level adapters while the Runtime
 	// always executes them through its canonical authorization and middleware pipeline.
 	Handler     func(context.Context, json.RawMessage) (string, error)
 	RichHandler func(context.Context, json.RawMessage) (*Output, error)

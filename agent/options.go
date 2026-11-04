@@ -16,14 +16,14 @@ type Logger interface {
 	Printf(format string, v ...any)
 }
 
-// Option configures the Agent.
-type Option func(*Agent) error
+// Option configures the Runtime.
+type Option func(*Runtime) error
 
 // WithName sets an optional name for the agent. The name is used as a
 // dimension/attribute in metrics and tracing hooks, making it possible to
 // distinguish telemetry from different agents in the same process.
 func WithName(name string) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.name = name
 		return nil
 	}
@@ -31,7 +31,7 @@ func WithName(name string) Option {
 
 // WithMaxIterations sets the maximum number of call-execute-respond iterations.
 func WithMaxIterations(n int) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if n < 1 {
 			return fmt.Errorf("maxIterations must be >= 1, got %d", n)
 		}
@@ -40,9 +40,9 @@ func WithMaxIterations(n int) Option {
 	}
 }
 
-// WithTools registers a fixed set of tools on the Agent's registry.
+// WithTools registers a fixed set of tools on the Runtime's registry.
 func WithTools(tools ...tool.Tool) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		for _, t := range tools {
 			if err := a.toolRegistry.Register(t); err != nil {
 				return err
@@ -54,7 +54,7 @@ func WithTools(tools ...tool.Tool) Option {
 
 // WithToolRegistry uses a shared concurrency-safe dynamic tool registry.
 func WithToolRegistry(registry *tool.Registry) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if registry == nil {
 			return fmt.Errorf("tool registry must not be nil")
 		}
@@ -99,7 +99,7 @@ func (m ToolExecutionMode) String() string {
 // ToolExecutionSequential cannot be combined with WithMaxConcurrentTools(n)
 // for n > 1; New rejects that combination instead of ignoring one option.
 func WithToolExecution(mode ToolExecutionMode) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		switch mode {
 		case ToolExecutionParallel, ToolExecutionSequential:
 			a.toolExecution = mode
@@ -116,7 +116,7 @@ func WithToolExecution(mode ToolExecutionMode) Option {
 // unbounded. Combining n > 1 with ToolExecutionSequential is a construction
 // error.
 func WithMaxConcurrentTools(n int) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if n < 1 {
 			return fmt.Errorf("WithMaxConcurrentTools: n must be >= 1, got %d", n)
 		}
@@ -131,7 +131,7 @@ func WithMaxConcurrentTools(n int) Option {
 // ID fails with ErrConversationIDRequired before any invocation work runs.
 // Stateless Agents should be constructed without a ConversationStore.
 func WithConversationStore(c ConversationStore) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.conversation = c
 		return nil
 	}
@@ -141,7 +141,7 @@ func WithConversationStore(c ConversationStore) Option {
 // It requires a ConversationStore because executions reference canonical
 // history by cursor rather than storing transcript copies.
 func WithExecutionStore(store ExecutionStore) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if store == nil {
 			return fmt.Errorf("WithExecutionStore: store must not be nil")
 		}
@@ -155,7 +155,7 @@ func WithExecutionStore(store ExecutionStore) Option {
 // append-only conversation log. A ContextManager can use durable
 // ContextStateStore state to select a LoadAfter boundary.
 func WithContextManager(manager ContextManager) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if manager == nil {
 			return fmt.Errorf("context manager must not be nil")
 		}
@@ -166,7 +166,7 @@ func WithContextManager(manager ContextManager) Option {
 
 // WithMiddleware adds middleware(s) that wrap tool execution.
 func WithMiddleware(mws ...Middleware) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.middlewares = append(a.middlewares, mws...)
 		return nil
 	}
@@ -174,7 +174,7 @@ func WithMiddleware(mws ...Middleware) Option {
 
 // WithInputGuardrail adds input guardrail(s) applied before sending to the Provider.
 func WithInputGuardrail(g ...InputGuardrail) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.inputGuardrails = append(a.inputGuardrails, g...)
 		return nil
 	}
@@ -185,7 +185,7 @@ func WithInputGuardrail(g ...InputGuardrail) Option {
 // the full response is assembled; a GuardrailError ends the stream if
 // validation fails. Result.Text is always the guardrail-processed answer.
 func WithOutputGuardrail(g ...OutputGuardrail) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.outputGuardrails = append(a.outputGuardrails, g...)
 		return nil
 	}
@@ -200,7 +200,7 @@ func WithOutputGuardrail(g ...OutputGuardrail) Option {
 // attribute policies, tool guards, approval and middleware decide whether a
 // call that does reach execution is allowed.
 func WithToolVisibility(rules ...ToolVisibility) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		for _, rule := range rules {
 			if rule == nil {
 				return fmt.Errorf("WithToolVisibility: rule must not be nil")
@@ -215,7 +215,7 @@ func WithToolVisibility(rules ...ToolVisibility) Option {
 // If cumulative token usage exceeds maxTokens, the invocation is aborted
 // with ErrTokenBudgetExceeded. A value of 0 means no budget (default).
 func WithTokenBudget(maxTokens int) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if maxTokens < 0 {
 			return fmt.Errorf("token budget must be >= 0, got %d", maxTokens)
 		}
@@ -231,7 +231,7 @@ func WithTokenBudget(maxTokens int) Option {
 // application-defined bucket key chosen by WithRateLimitKey. Without a key
 // selector all attempts share the single empty-key bucket.
 func WithRateLimiter(rl RateLimiter) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.rateLimiter = rl
 		return nil
 	}
@@ -253,7 +253,7 @@ type RateLimitKeyFunc func(*Context) string
 //
 //	agent.WithRateLimitKey(func(c *agent.Context) string { return c.Identity() })
 func WithRateLimitKey(fn RateLimitKeyFunc) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if fn == nil {
 			return fmt.Errorf("WithRateLimitKey: fn must not be nil")
 		}
@@ -264,7 +264,7 @@ func WithRateLimitKey(fn RateLimitKeyFunc) Option {
 
 // WithRetriever attaches a rag.Retriever to the agent.
 func WithRetriever(r rag.Retriever) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.retriever = r
 		return nil
 	}
@@ -273,7 +273,7 @@ func WithRetriever(r rag.Retriever) Option {
 // WithContextFormatter sets a custom rag.ContextFormatter for RAG.
 // It defaults to rag.DefaultContextFormatter when not set.
 func WithContextFormatter(f rag.ContextFormatter) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.contextFormatter = f
 		return nil
 	}
@@ -281,7 +281,7 @@ func WithContextFormatter(f rag.ContextFormatter) Option {
 
 // WithNormalization sets the message normalization strategy.
 func WithNormalization(s NormStrategy) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if s < NormMerge || s > NormRemove {
 			return fmt.Errorf("invalid normalization strategy: %d", s)
 		}
@@ -293,7 +293,7 @@ func WithNormalization(s NormStrategy) Option {
 
 // WithoutNormalization disables message normalization entirely.
 func WithoutNormalization() Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		a.normDisabled = true
 		return nil
 	}
@@ -301,7 +301,7 @@ func WithoutNormalization() Option {
 
 // WithProviderTimeout sets a timeout for each provider call.
 func WithProviderTimeout(d time.Duration) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if d < 0 {
 			return fmt.Errorf("timeout must be non-negative, got %s", d)
 		}
@@ -313,7 +313,7 @@ func WithProviderTimeout(d time.Duration) Option {
 // WithTemperature sets the temperature inference parameter on the agent.
 // Temperature controls randomness of LLM output. Valid range: [0.0, 1.0].
 func WithTemperature(v float64) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if v < 0.0 || v > 1.0 {
 			return fmt.Errorf("temperature must be between 0.0 and 1.0, got %f", v)
 		}
@@ -328,7 +328,7 @@ func WithTemperature(v float64) Option {
 // WithTopP sets the top_p inference parameter on the agent.
 // TopP controls nucleus sampling probability cutoff. Valid range: [0.0, 1.0].
 func WithTopP(v float64) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if v < 0.0 || v > 1.0 {
 			return fmt.Errorf("top_p must be between 0.0 and 1.0, got %f", v)
 		}
@@ -343,7 +343,7 @@ func WithTopP(v float64) Option {
 // WithTopK sets the top_k inference parameter on the agent.
 // TopK limits the number of highest-probability tokens considered. Must be >= 1.
 func WithTopK(v int) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if v < 1 {
 			return fmt.Errorf("top_k must be >= 1, got %d", v)
 		}
@@ -358,7 +358,7 @@ func WithTopK(v int) Option {
 // WithStopSequences sets the stop sequences inference parameter on the agent.
 // Stop sequences cause the LLM to stop producing further tokens when generated.
 func WithStopSequences(s []string) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if a.inferenceConfig == nil {
 			a.inferenceConfig = &InferenceConfig{}
 		}
@@ -369,7 +369,7 @@ func WithStopSequences(s []string) Option {
 
 // WithMaxOutputTokens sets the maximum provider output tokens.
 func WithMaxOutputTokens(n int) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if n < 1 {
 			return fmt.Errorf("max_tokens must be >= 1, got %d", n)
 		}
@@ -395,7 +395,7 @@ var observerCapabilityNames = []string{
 // and observers are called in registration order at lifecycle start and
 // reverse order at end.
 func WithObserver(observer Observer) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if !supportsObserver(observer) {
 			return fmt.Errorf("WithObserver: %s implements none of %s",
 				describeObserverType(observer), strings.Join(observerCapabilityNames, ", "))

@@ -8,20 +8,20 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// Result contains the decoded value and the complete Agent run outcome.
+// Result contains the decoded value and the complete agent run outcome.
 type Result[T any] struct {
 	Value T
 	Run   agent.Result
 }
 
-// Invoke requests structured output for T while reusing the Agent's normal
+// Invoke requests structured output for T while reusing the Runtime's normal
 // lifecycle, locking, RAG, guardrail, rate-limit, and observability behavior.
 // It uses a named forced schema tool where supported; models that explicitly
 // support only automatic tool choice receive the sole schema tool without an
 // explicit selection, so callers must also handle StructuredOutputError with
 // Reason "no_tool_call". Successful output still satisfies the schema subset
 // and decodes into T.
-func Invoke[T any](ctx *agent.Context, a *agent.Agent, input string) (Result[T], error) {
+func Invoke[T any](ctx *agent.Context, a *agent.Runtime, input string) (Result[T], error) {
 	var out Result[T]
 	if a == nil {
 		return out, &agent.StructuredOutputError{Reason: "nil_agent"}

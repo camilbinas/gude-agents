@@ -212,7 +212,7 @@ func (h *prometheusHook) ObserveAttachment(ctx context.Context, record agent.Att
 
 // WithMetrics returns an agent.Option that enables Prometheus metrics.
 func WithMetrics(opts ...Option) agent.Option {
-	return func(a *agent.Agent) error {
+	return func(a *agent.Runtime) error {
 		h := &prometheusHook{}
 		for _, opt := range opts {
 			opt(h)

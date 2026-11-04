@@ -319,7 +319,7 @@ func TestWithToolVisibility_AccumulatesAcrossMultipleCalls(t *testing.T) {
 // TestNewSimple_RunsThroughCanonicalPipeline verifies NewSimple tools use the
 // normal pipeline: role policy, approval interrupts, and handler execution.
 func TestNewSimple_RunsThroughCanonicalPipeline(t *testing.T) {
-	newAgent := func(t *testing.T, calls *atomic.Int32, opts ...tool.Option) *Agent {
+	newAgent := func(t *testing.T, calls *atomic.Int32, opts ...tool.Option) *Runtime {
 		t.Helper()
 		health := tool.NewSimple("health", "Check service health", func(context.Context) (string, error) {
 			calls.Add(1)

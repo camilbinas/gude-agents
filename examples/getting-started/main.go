@@ -1,6 +1,6 @@
 // Run: go run ./getting-started
 //
-// The smallest useful Gude program: choose a provider, create an Agent,
+// The smallest useful Gude program: choose a provider, create an agent,
 // invoke it, and read the Result.
 package main
 
@@ -15,7 +15,9 @@ import (
 func main() {
 	// Choose a model that is available in your AWS region and account.
 	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
-	a, err := agent.New(provider, "You are a helpful assistant.")
+	// agent.Agent(...) returns a *agent.Runtime. agent.New(...) is the same
+	// constructor under its original name and remains available.
+	a, err := agent.Agent(provider, "You are a helpful assistant.")
 	if err != nil {
 		log.Fatal(err)
 	}

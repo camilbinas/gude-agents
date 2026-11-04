@@ -1,9 +1,9 @@
 # gude-agents documentation
 
-gude-agents uses three core concepts: an `Agent` is long-lived configuration, a `Context` configures one invocation, and a `Result` is its outcome.
+gude-agents uses three core concepts: a `Runtime` (built with `agent.Agent` or `agent.New`) is the long-lived configured agent, a `Context` configures one invocation, and a `Result` is its outcome.
 
 ```go
-a, err := agent.New(prov, "You are concise.",
+a, err := agent.Agent(prov, "You are concise.",
     agent.WithTools(searchTool),
     agent.WithConversationStore(store),
 )
@@ -16,7 +16,7 @@ result, err := a.Invoke(ctx, "What changed?")
 ## Start here
 
 - [Getting started](getting-started.md) — construct, invoke, stream, and shut down an agent.
-- [Agent API](agent-api.md) — `Agent`, `Result`, `Event`, invocation, streaming, and errors.
+- [Agent API](agent-api.md) — `Runtime`, `Result`, `Event`, invocation, streaming, and errors.
 - [Invocation context](invocation-context.md) — cancellation, identity, principal, strict scopes, conversation IDs, attachments, and invocation KV.
 - [Decision guide](decision-guide.md) — choose state, retrieval, streaming, and composition components.
 

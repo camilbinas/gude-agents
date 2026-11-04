@@ -7,7 +7,7 @@ const (
 	// StopEndTurn means the model produced a final answer.
 	StopEndTurn StopReason = "end_turn"
 	// StopInterrupt means the invocation paused and Result.Interrupt describes
-	// what is needed to continue via Agent.Resume.
+	// what is needed to continue via Runtime.Resume.
 	StopInterrupt StopReason = "interrupt"
 )
 

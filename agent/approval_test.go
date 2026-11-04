@@ -37,7 +37,7 @@ func deleteOrderTool() tool.Tool {
 }
 
 // mustInterrupt invokes the agent and asserts it paused with an interrupt.
-func mustInterrupt(t *testing.T, a *Agent, c *Context, msg string) *Interrupt {
+func mustInterrupt(t *testing.T, a *Runtime, c *Context, msg string) *Interrupt {
 	t.Helper()
 	if c.ConversationID() == "" {
 		c.WithConversationID("pause-" + t.Name())
@@ -582,7 +582,7 @@ func TestResume_InvalidResponseDoesNotConsumeInterrupt(t *testing.T) {
 }
 
 func TestResume_StatelessApprovalReplayHasOneWinner(t *testing.T) {
-	newAgent := func(t *testing.T) (*Agent, *Interrupt, *atomic.Int32, *scriptedProvider) {
+	newAgent := func(t *testing.T) (*Runtime, *Interrupt, *atomic.Int32, *scriptedProvider) {
 		t.Helper()
 		var handlerCalls atomic.Int32
 		approved := tool.NewRaw(

@@ -38,7 +38,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    a, err := agent.New(prov, "Answer clearly and use tools when useful.",
+    a, err := agent.Agent(prov, "Answer clearly and use tools when useful.",
         agent.WithTools(weather),
         agent.WithConversationStore(conversation.NewInMemory()), // process-local: history is lost when the program exits
     )
@@ -59,9 +59,9 @@ func main() {
 }
 ```
 
-`Agent` configuration is fixed after `New`, except a supplied dynamic `tool.Registry`. Configure each call by chaining mutable `Context.With…` methods before invocation.
+`agent.Agent(...)` returns a `*agent.Runtime`; `agent.New(...)` is the same constructor under its original name and remains available. Runtime configuration is fixed after construction, except a supplied dynamic `tool.Registry`. Configure each call by chaining mutable `Context.With…` methods before invocation.
 
-Because this Agent has a conversation store, every call needs `WithConversationID`; omitting it returns `agent.ErrConversationIDRequired` before the model runs. For one-off stateless calls, construct the Agent without `WithConversationStore`.
+Because this agent has a conversation store, every call needs `WithConversationID`; omitting it returns `agent.ErrConversationIDRequired` before the model runs. For one-off stateless calls, construct the agent without `WithConversationStore`.
 
 ## Stream application events
 

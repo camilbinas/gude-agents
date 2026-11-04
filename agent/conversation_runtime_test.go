@@ -491,7 +491,7 @@ func (m *inMemoryStore) Save(_ context.Context, id string, msgs []Message, expec
 func (m *inMemoryStore) List(_ context.Context) ([]string, error) { return nil, nil }
 func (m *inMemoryStore) Delete(_ context.Context, _ string) error { return nil }
 
-// TestConcurrentInvocations_DifferentConversations verifies that a single Agent
+// TestConcurrentInvocations_DifferentConversations verifies that a single Runtime
 // instance can serve multiple concurrent conversations without cross-contamination.
 // This is the core HTTP multi-tenancy requirement.
 func TestConcurrentInvocations_DifferentConversations(t *testing.T) {

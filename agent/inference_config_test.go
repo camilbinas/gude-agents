@@ -276,7 +276,7 @@ func TestWithTemperature_Valid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithTemperature(tt.val)
 			if err := opt(a); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -305,7 +305,7 @@ func TestWithTemperature_Invalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithTemperature(tt.val)
 			if err := opt(a); err == nil {
 				t.Errorf("expected error for temperature=%f, got nil", tt.val)
@@ -329,7 +329,7 @@ func TestWithTopP_Valid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithTopP(tt.val)
 			if err := opt(a); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -357,7 +357,7 @@ func TestWithTopP_Invalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithTopP(tt.val)
 			if err := opt(a); err == nil {
 				t.Errorf("expected error for topP=%f, got nil", tt.val)
@@ -381,7 +381,7 @@ func TestWithTopK_Valid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithTopK(tt.val)
 			if err := opt(a); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -410,7 +410,7 @@ func TestWithTopK_Invalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithTopK(tt.val)
 			if err := opt(a); err == nil {
 				t.Errorf("expected error for topK=%d, got nil", tt.val)
@@ -424,7 +424,7 @@ func TestWithTopK_Invalid(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWithStopSequences_Valid(t *testing.T) {
-	a := &Agent{}
+	a := &Runtime{}
 	seqs := []string{"stop1", "stop2"}
 	opt := WithStopSequences(seqs)
 	if err := opt(a); err != nil {
@@ -442,7 +442,7 @@ func TestWithStopSequences_Valid(t *testing.T) {
 }
 
 func TestWithStopSequences_EmptySlice(t *testing.T) {
-	a := &Agent{}
+	a := &Runtime{}
 	opt := WithStopSequences([]string{})
 	if err := opt(a); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -459,7 +459,7 @@ func TestWithStopSequences_EmptySlice(t *testing.T) {
 }
 
 func TestWithStopSequences_NilSlice(t *testing.T) {
-	a := &Agent{}
+	a := &Runtime{}
 	opt := WithStopSequences(nil)
 	if err := opt(a); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -474,7 +474,7 @@ func TestWithStopSequences_NilSlice(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInferenceOptions_LazyInit(t *testing.T) {
-	a := &Agent{}
+	a := &Runtime{}
 	if a.inferenceConfig != nil {
 		t.Fatal("expected inferenceConfig to be nil before any option is applied")
 	}
@@ -493,7 +493,7 @@ func TestInferenceOptions_LazyInit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInferenceOptions_Compose(t *testing.T) {
-	a := &Agent{}
+	a := &Runtime{}
 	opts := []Option{
 		WithTemperature(0.8),
 		WithTopP(0.9),
@@ -539,7 +539,7 @@ func TestWithMaxOutputTokens_Valid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithMaxOutputTokens(tt.val)
 			if err := opt(a); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -568,7 +568,7 @@ func TestWithMaxOutputTokens_Invalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &Agent{}
+			a := &Runtime{}
 			opt := WithMaxOutputTokens(tt.val)
 			if err := opt(a); err == nil {
 				t.Errorf("expected error for maxTokens=%d, got nil", tt.val)
@@ -862,7 +862,7 @@ func TestProperty_FloatParameterValidation(t *testing.T) {
 
 		// Test WithTemperature
 		tempOpt := WithTemperature(v)
-		tempErr := tempOpt(&Agent{})
+		tempErr := tempOpt(&Runtime{})
 		if inRange && tempErr != nil {
 			rt.Fatalf("WithTemperature(%f): expected no error for in-range value, got %v", v, tempErr)
 		}
@@ -872,7 +872,7 @@ func TestProperty_FloatParameterValidation(t *testing.T) {
 
 		// Test WithTopP
 		topPOpt := WithTopP(v)
-		topPErr := topPOpt(&Agent{})
+		topPErr := topPOpt(&Runtime{})
 		if inRange && topPErr != nil {
 			rt.Fatalf("WithTopP(%f): expected no error for in-range value, got %v", v, topPErr)
 		}
@@ -897,7 +897,7 @@ func TestProperty_IntegerParameterValidation(t *testing.T) {
 
 		// Test WithTopK
 		topKOpt := WithTopK(v)
-		topKErr := topKOpt(&Agent{})
+		topKErr := topKOpt(&Runtime{})
 		if valid && topKErr != nil {
 			rt.Fatalf("WithTopK(%d): expected no error for valid value, got %v", v, topKErr)
 		}

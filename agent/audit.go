@@ -29,7 +29,7 @@ func WithAuditContent() AuditOption {
 // WithAudit registers an internal invoke/tool/interrupt observer that writes
 // stable records to sink.
 func WithAudit(sink AuditSink, options ...AuditOption) Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if sink == nil || (reflect.ValueOf(sink).Kind() == reflect.Ptr && reflect.ValueOf(sink).IsNil()) {
 			return fmt.Errorf("WithAudit: sink must not be nil")
 		}

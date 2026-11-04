@@ -37,12 +37,12 @@ func TestConformance(t *testing.T) { conformance.Run(t, newStoreForConformance) 
 
 func TestAgentProtocol(t *testing.T) { conformance.RunAgent(t, newStoreForConformance) }
 
-// The paused state lives in Redis, not in the Agent or its client: a second
-// Agent with a brand-new client (a restarted process) resumes it.
+// The paused state lives in Redis, not in the Runtime or its client: a second
+// Runtime with a brand-new client (a restarted process) resumes it.
 func TestPauseSurvivesANewClient(t *testing.T) {
 	server, firstClient := newMiniredis(t)
 	conversations := conformance.NewConversations()
-	pause := func(client *goredis.Client, responses ...*agent.ModelResponse) *agent.Agent {
+	pause := func(client *goredis.Client, responses ...*agent.ModelResponse) *agent.Runtime {
 		a, err := agent.New(&staticProvider{responses: responses}, "sys",
 			agent.WithTools(gatedTool()),
 			agent.WithConversationStore(conversations),

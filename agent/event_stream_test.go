@@ -143,7 +143,7 @@ func TestInvokeAndStream_EquivalentResult(t *testing.T) {
 			&ModelResponse{Text: "final answer", Usage: TokenUsage{InputTokens: 12, OutputTokens: 4}, Metadata: map[string]any{"k": "v"}},
 		)
 	}
-	newAgent := func() *Agent {
+	newAgent := func() *Runtime {
 		a, err := New(script(), "sys", WithTools(dummyTool("echo", "echo")))
 		if err != nil {
 			t.Fatal(err)
@@ -172,7 +172,7 @@ func TestInvokeAndStream_EquivalentResult(t *testing.T) {
 }
 
 func TestTextStream_ConcatenationEqualsResultTextWithoutThinking(t *testing.T) {
-	newAgent := func() *Agent {
+	newAgent := func() *Runtime {
 		p := &thinkingProvider{chunks: []string{"let me think", "..."}, response: &ModelResponse{Text: "the final answer"}}
 		a, err := New(p, "sys")
 		if err != nil {
@@ -367,7 +367,7 @@ func TestStream_NilContext(t *testing.T) {
 }
 
 func TestStream_DetailedEventsOnlyWhenEnabled(t *testing.T) {
-	newAgent := func() *Agent {
+	newAgent := func() *Runtime {
 		p := newScriptedProvider(
 			&ModelResponse{ToolCalls: []tool.Call{toolCall("t1", "echo")}},
 			&ModelResponse{Text: "done"},

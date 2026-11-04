@@ -298,7 +298,7 @@ func WithLogging(opts ...Option) agent.Option {
 			continue
 		}
 		if err := opt(&cfg); err != nil {
-			return func(*agent.Agent) error { return err }
+			return func(*agent.Runtime) error { return err }
 		}
 	}
 	return agent.WithObserver(newDebugHook(cfg.out, cfg.color))

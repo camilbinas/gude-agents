@@ -257,7 +257,7 @@ type contextObserverKey struct{}
 func TestContextWithObservers_ReplacesAgentObservers(t *testing.T) {
 	agentObserver := &contextTestInvokeObserver{name: "agent"}
 	invocationObserver := &contextTestInvokeObserver{name: "invocation"}
-	a := &Agent{observers: []any{agentObserver}}
+	a := &Runtime{observers: []any{agentObserver}}
 	c := Background().WithObservers(invocationObserver)
 
 	h := a.hooks(c)
@@ -267,7 +267,7 @@ func TestContextWithObservers_ReplacesAgentObservers(t *testing.T) {
 }
 
 func TestContextWithObservers_EmptyDisablesAgentObservers(t *testing.T) {
-	a := &Agent{observers: []any{&contextTestInvokeObserver{name: "agent"}}}
+	a := &Runtime{observers: []any{&contextTestInvokeObserver{name: "agent"}}}
 	h := a.hooks(Background().WithObservers())
 	if len(h.observers) != 0 {
 		t.Fatalf("expected no observers, got %d", len(h.observers))

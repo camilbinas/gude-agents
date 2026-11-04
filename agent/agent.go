@@ -9,12 +9,15 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// Agent is long-lived, immutable invocation configuration. Its public
-// inspection surface is deliberately small: Name, Instructions and ToolSpecs.
-// Everything else is configuration owned by the engine.
+// Runtime is the long-lived, configured agent object. It is built once by New
+// (or its convenience forwarder Agent) and then runs work through Invoke,
+// Stream, TextStream, Resume, ResumeStream and the execution recovery methods.
+// Its configuration is immutable after construction. Its public inspection
+// surface is deliberately small: Name, Instructions and ToolSpecs. Everything
+// else is configuration owned by the engine.
 //
 // A configured tool.Registry is the sole intentionally dynamic component.
-type Agent struct {
+type Runtime struct {
 	name         string
 	provider     Provider
 	instructions string
@@ -55,16 +58,16 @@ type Agent struct {
 	// crypto/rand.Reader; tests substitute failing readers.
 	random io.Reader
 
-	// conversationLocks serializes same-conversation work within this Agent.
+	// conversationLocks serializes same-conversation work within this Runtime.
 	conversationLocks conversationLocks
 }
 
-// New creates an Agent with immutable instructions and construction options.
-func New(provider Provider, instructions string, opts ...Option) (*Agent, error) {
+// New creates a Runtime with immutable instructions and construction options.
+func New(provider Provider, instructions string, opts ...Option) (*Runtime, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("provider is required")
 	}
-	a := &Agent{
+	a := &Runtime{
 		provider:      provider,
 		instructions:  instructions,
 		toolRegistry:  &tool.Registry{},
@@ -98,7 +101,14 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 	return a, nil
 }
 
-// RAGAgent creates an Agent whose defining behavior is automatic retrieval.
+// Agent creates a Runtime. It is equivalent to New, accepts the same arguments
+// and options, and returns the same *Runtime and errors; it exists as the
+// convenient constructor spelling agent.Agent(provider, instructions, opts...).
+func Agent(provider Provider, instructions string, opts ...Option) (*Runtime, error) {
+	return New(provider, instructions, opts...)
+}
+
+// RAGAgent creates a Runtime whose defining behavior is automatic retrieval.
 // It requires a non-nil retriever (ErrRetrieverRequired otherwise) and is
 // otherwise exactly equivalent to:
 //
@@ -106,7 +116,7 @@ func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
 //
 // No other defaults are applied. Use New with WithRetriever when retrieval is
 // one optional feature among many.
-func RAGAgent(provider Provider, instructions string, retriever rag.Retriever, opts ...Option) (*Agent, error) {
+func RAGAgent(provider Provider, instructions string, retriever rag.Retriever, opts ...Option) (*Runtime, error) {
 	if retriever == nil {
 		return nil, ErrRetrieverRequired
 	}
@@ -117,12 +127,12 @@ func RAGAgent(provider Provider, instructions string, retriever rag.Retriever, o
 }
 
 // Name returns the configured agent name.
-func (a *Agent) Name() string { return a.name }
+func (a *Runtime) Name() string { return a.name }
 
 // Instructions returns the configured system instructions.
-func (a *Agent) Instructions() string { return a.instructions }
+func (a *Runtime) Instructions() string { return a.instructions }
 
-func (a *Agent) instructionsFor(c *Context) string {
+func (a *Runtime) instructionsFor(c *Context) string {
 	if c != nil {
 		if override := c.Instructions(); override != "" {
 			return override
@@ -132,7 +142,7 @@ func (a *Agent) instructionsFor(c *Context) string {
 }
 
 // ToolSpecs returns a current snapshot of provider-facing tool specifications.
-func (a *Agent) ToolSpecs() []tool.Spec {
+func (a *Runtime) ToolSpecs() []tool.Spec {
 	tools := a.toolRegistry.List()
 	specs := make([]tool.Spec, len(tools))
 	for i := range tools {

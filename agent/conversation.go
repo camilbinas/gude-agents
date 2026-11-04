@@ -97,7 +97,7 @@ var ErrContextStateConflict = errors.New("context state revision conflict")
 
 // ForkConversation copies canonical history to a new conversation. Derived
 // context state is intentionally not copied: it is a disposable projection and
-// may encode a strategy unavailable to the destination Agent.
+// may encode a strategy unavailable to the destination Runtime.
 func ForkConversation(ctx context.Context, store ConversationStore, sourceID, newID string) error {
 	snapshot, err := store.Load(ctx, sourceID)
 	if err != nil {

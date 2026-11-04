@@ -36,7 +36,7 @@ func (s *scripted) Stream(context.Context, agent.ModelRequest, func(agent.ModelE
 	return r, nil
 }
 
-func newAgent(t *testing.T, p agent.Provider, opts ...Option) *agent.Agent {
+func newAgent(t *testing.T, p agent.Provider, opts ...Option) *agent.Runtime {
 	t.Helper()
 	echo := tool.NewRaw("echo", "echo", nil, func(context.Context, json.RawMessage) (string, error) { return "ok", nil })
 	a, err := agent.New(p, "sys", agent.WithTools(echo), WithLogging(opts...))

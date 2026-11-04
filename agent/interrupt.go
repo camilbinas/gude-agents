@@ -84,7 +84,7 @@ var ErrInterruptNotFound = errors.New("interrupt not found")
 
 // LoadInterrupt projects a paused durable Execution. It is a convenience API;
 // applications never manipulate persisted execution records directly.
-func (a *Agent) LoadInterrupt(ctx context.Context, executionID string) (*Interrupt, error) {
+func (a *Runtime) LoadInterrupt(ctx context.Context, executionID string) (*Interrupt, error) {
 	if a.executionStore == nil {
 		return nil, ErrNoExecutionStore
 	}

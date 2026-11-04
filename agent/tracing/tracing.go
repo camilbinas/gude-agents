@@ -99,7 +99,7 @@ var (
 // WithTracing returns an agent.Option that enables OpenTelemetry tracing.
 // If tp is nil, the global TracerProvider is used.
 func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
-	return func(a *agent.Agent) error {
+	return func(a *agent.Runtime) error {
 		if tp == nil {
 			tp = otel.GetTracerProvider()
 		}

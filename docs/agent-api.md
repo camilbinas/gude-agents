@@ -2,18 +2,21 @@
 
 ## Mental model
 
-- **Agent**: long-lived, immutable configuration.
+- **Runtime**: the long-lived, configured agent object returned by `agent.Agent` and `agent.New`; its configuration is immutable after construction.
 - **Context**: one invocation's cancellation and mutable pre-run configuration.
 - **Result**: the completed or interrupted outcome.
 
 ```go
-func New(provider Provider, instructions string, opts ...Option) (*Agent, error)
+func New(provider Provider, instructions string, opts ...Option) (*Runtime, error)
+func Agent(provider Provider, instructions string, opts ...Option) (*Runtime, error)
 ```
+
+`agent.Agent` is the convenient spelling and is a one-line forwarder to `agent.New`: same arguments, same options, same behavior, same `*agent.Runtime` result. `agent.New` remains the canonical implementation and stays available. Both return an active `*agent.Runtime`, the object with `Invoke`, `Stream`, `Resume`, and recovery methods.
 
 A typical construction combines tools and conversation persistence:
 
 ```go
-a, err := agent.New(prov, "You are a support assistant.",
+a, err := agent.Agent(prov, "You are a support assistant.",
     agent.WithName("support"),
     agent.WithTools(lookup, refund),
     agent.WithConversationStore(conversations),
@@ -21,23 +24,23 @@ a, err := agent.New(prov, "You are a support assistant.",
 )
 ```
 
-When a ConversationStore is configured, every invocation requires a non-empty ConversationID; forgetting it returns an error matching `agent.ErrConversationIDRequired` before any model or tool work. Stateless Agents should be constructed without a ConversationStore.
+When a ConversationStore is configured, every invocation requires a non-empty ConversationID; forgetting it returns an error matching `agent.ErrConversationIDRequired` before any model or tool work. Stateless agents should be constructed without a ConversationStore.
 
-`agent.RAGAgent(prov, instructions, retriever, opts...)` is the one convenience constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
+`agent.RAGAgent(prov, instructions, retriever, opts...)` is the retrieval-specific constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
 
 Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecution`, `WithMaxConcurrentTools`, `WithProviderTimeout`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithRateLimitKey`, `WithMiddleware`, guardrails, `WithToolVisibility`, and `WithObserver`. The iteration default is 10.
 
-## Inspecting an Agent
+## Inspecting a Runtime
 
-An Agent exposes three read-only inspection methods, used by first-party extension packages such as telemetry:
+A Runtime exposes three read-only inspection methods, used by first-party extension packages such as telemetry:
 
 ```go
-func (a *Agent) Name() string
-func (a *Agent) Instructions() string
-func (a *Agent) ToolSpecs() []tool.Spec
+func (a *Runtime) Name() string
+func (a *Runtime) Instructions() string
+func (a *Runtime) ToolSpecs() []tool.Spec
 ```
 
-Everything else about an Agent's configuration is private. There is no configuration snapshot API; keep your own copy of the values you passed to `agent.New` if your application needs them.
+Everything else about a Runtime's configuration is private. There is no configuration snapshot API; keep your own copy of the values you passed to `agent.Agent` or `agent.New` if your application needs them.
 
 ## Tool execution
 
@@ -66,11 +69,11 @@ An unknown mode or `n < 1` fails `agent.New`. `ToolExecutionSequential` combined
 ## Invocation
 
 ```go
-func (a *Agent) Invoke(ctx *agent.Context, input string) (agent.Result, error)
-func (a *Agent) Stream(ctx *agent.Context, input string) iter.Seq2[agent.Event, error]
-func (a *Agent) TextStream(ctx *agent.Context, input string) iter.Seq2[string, error]
-func (a *Agent) Resume(ctx *agent.Context, in *agent.Interrupt, response agent.ResumeResponse) (agent.Result, error)
-func (a *Agent) ResumeStream(ctx *agent.Context, in *agent.Interrupt, response agent.ResumeResponse) iter.Seq2[agent.Event, error]
+func (a *Runtime) Invoke(ctx *agent.Context, input string) (agent.Result, error)
+func (a *Runtime) Stream(ctx *agent.Context, input string) iter.Seq2[agent.Event, error]
+func (a *Runtime) TextStream(ctx *agent.Context, input string) iter.Seq2[string, error]
+func (a *Runtime) Resume(ctx *agent.Context, in *agent.Interrupt, response agent.ResumeResponse) (agent.Result, error)
+func (a *Runtime) ResumeStream(ctx *agent.Context, in *agent.Interrupt, response agent.ResumeResponse) iter.Seq2[agent.Event, error]
 ```
 
 All methods share one execution lifecycle. `Invoke` drains `Stream`; `TextStream` projects only live text events. `Resume` and `ResumeStream` continue a paused execution loaded from the `ExecutionStore`; pausing and resuming need both a `ConversationStore` and an `ExecutionStore`.
@@ -118,10 +121,10 @@ Conversation messages contain `TextBlock`, `ToolUseBlock`, or `ToolResultBlock` 
 Configure images and documents on `Context` before invocation. Tools can call `agent.EmitWidget(ctx, block)` and `agent.EmitEvent(ctx, name, payload)` using the standard `context.Context` they receive. Emissions appear in `Stream`; widgets are also associated with their tool call for persistence.
 
 ## Stopping
-An Agent owns no goroutines or write buffers and has no `Close` or `Shutdown` method. To stop serving, stop admitting new invocations (for example `http.Server.Shutdown`), let in-flight invocations finish or cancel their contexts, then close the resources you own: provider clients, stores, and metric or trace exporters.
+A Runtime owns no goroutines or write buffers and has no `Close` or `Shutdown` method. To stop serving, stop admitting new invocations (for example `http.Server.Shutdown`), let in-flight invocations finish or cancel their contexts, then close the resources you own: provider clients, stores, and metric or trace exporters.
 
-`ConversationStore.Append` is committed when it returns, so there is nothing for the Agent to flush at shutdown. Memory-backed stores satisfy that within the running process only.
+`ConversationStore.Append` is committed when it returns, so there is nothing for the Runtime to flush at shutdown. Memory-backed stores satisfy that within the running process only.
 
 ### Thinking events
 
-`Agent.Stream` can yield `EventThinking` when the configured provider/model has reasoning enabled. Handle it alongside `EventText`; enabling reasoning is provider-specific configuration (for Anthropic, see [Extended thinking](providers/anthropic.md#extended-thinking-and-streaming)).
+`Runtime.Stream` can yield `EventThinking` when the configured provider/model has reasoning enabled. Handle it alongside `EventText`; enabling reasoning is provider-specific configuration (for Anthropic, see [Extended thinking](providers/anthropic.md#extended-thinking-and-streaming)).

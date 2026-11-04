@@ -273,3 +273,19 @@ Each provider package keeps a private catalogue keyed by model ID. `New(modelID,
 ### Integration tests
 
 The live-provider helper builds the adapter named by `MODEL_PROVIDER` (`openai`, `anthropic`, `bedrock`, `ollama`, `vllm`) with `MODEL_ID` through a small `switch`. Live tests are skipped unless a live run is requested (`GUDE_LIVE_TESTS=1`, `MODEL_PROVIDER` or `MODEL_ID`), and then both variables are required: a missing value fails with a configuration error. Plain `go test ./...` no longer calls a paid API. See `integration/README.md`.
+
+## `agent.Agent` type renamed to `agent.Runtime`
+
+The exported struct `agent.Agent` is now `agent.Runtime`. It is the active object with `Invoke`, `Stream`, `Resume`, and the recovery methods, so it is not named `Configuration`. `agent.Option` is now `func(*agent.Runtime) error`, and `agent.AgentAsTool` takes a `*agent.Runtime`. Runtime behavior and option semantics are unchanged.
+
+`agent.Agent(provider, instructions, opts...)` is now a convenience constructor: a one-line forwarder to `agent.New` that returns `(*agent.Runtime, error)`. `agent.New` stays the canonical implementation with the same arguments, and both remain available. Go cannot declare a type and a function with the same package-level name, so there is no `agent.Agent` type alias.
+
+Migration: replace explicit `*agent.Agent` types (fields, parameters, return types, and custom `agent.Option` closures) with `*agent.Runtime`. Code that infers the type, such as `a, err := agent.New(...)`, needs no change.
+
+```go
+// Before
+func handle(a *agent.Agent) http.HandlerFunc { /* ... */ }
+
+// After
+func handle(a *agent.Runtime) http.HandlerFunc { /* ... */ }
+```

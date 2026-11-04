@@ -157,7 +157,7 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 // Options:
 //   - Pass tracing.WithContentCapture() to include prompts/responses in spans.
 func WithSentry(opts ...tracing.TracingOption) agent.Option {
-	return func(a *agent.Agent) error {
+	return func(a *agent.Runtime) error {
 		return tracing.WithTracing(nil, opts...)(a)
 	}
 }

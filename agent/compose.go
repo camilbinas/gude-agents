@@ -12,8 +12,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// AgentAsTool wraps a child Agent as a tool.Tool that a parent Agent can invoke.
-func AgentAsTool(name, description string, child *Agent) tool.Tool {
+// AgentAsTool wraps a child Runtime as a tool.Tool that a parent Runtime can invoke.
+func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 	return tool.NewRaw(
 		name,
 		description,
@@ -80,7 +80,7 @@ func childConversationID(parentConversationID, toolCallID, toolName, childName s
 	return "agent-as-tool/v1/" + hex.EncodeToString(h.Sum(nil))
 }
 
-func consumeChildExecution(ctx context.Context, child *Agent, interrupt *Interrupt) error {
+func consumeChildExecution(ctx context.Context, child *Runtime, interrupt *Interrupt) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if child.executionStore != nil {

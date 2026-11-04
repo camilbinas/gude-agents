@@ -26,7 +26,7 @@ var ErrTokenBudgetExceeded = errors.New("token budget exceeded")
 // without producing a final text response.
 var ErrMaxIterationsExceeded = errors.New("max iterations exceeded")
 
-// ErrConversationIDRequired is returned when an Agent configured with a
+// ErrConversationIDRequired is returned when a Runtime configured with a
 // ConversationStore is invoked (or resumed) without a non-empty conversation
 // ID. The check runs before guardrails, conversation load, retrieval,
 // provider calls, and tool execution. Stateless Agents should be constructed
@@ -142,9 +142,9 @@ func (e *StructuredOutputError) Is(target error) bool {
 }
 
 // ErrPauseStorageRequired is returned when a run needs to pause (tool approval
-// or human input) or resume, but the Agent is not configured with both a
+// or human input) or resume, but the Runtime is not configured with both a
 // ConversationStore and an ExecutionStore. A paused run is persisted execution
 // state that references the canonical transcript, so pausing needs both. The
-// Agent never creates in-memory stores on its own; select them explicitly, for
+// Runtime never creates in-memory stores on its own; select them explicitly, for
 // example conversation.NewInMemory() and execution.NewMemory().
 var ErrPauseStorageRequired = errors.New("agent: pausing and resuming require both a ConversationStore and an ExecutionStore; configure them with WithConversationStore and WithExecutionStore")

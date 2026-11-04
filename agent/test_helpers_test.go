@@ -77,7 +77,7 @@ func pauseStores() (*testMemoryStore, *testExecutionStore, []Option) {
 // withPauseStores configures fresh explicit memory-backed conversation and
 // execution stores. Use it for agents that must be able to pause.
 func withPauseStores() Option {
-	return func(a *Agent) error {
+	return func(a *Runtime) error {
 		if err := WithConversationStore(newTestMemoryStore())(a); err != nil {
 			return err
 		}

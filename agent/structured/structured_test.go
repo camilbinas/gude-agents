@@ -91,7 +91,7 @@ func TestInvokeErrors(t *testing.T) {
 	providerFailure := errors.New("provider failed")
 	tests := []struct {
 		name     string
-		agent    *agent.Agent
+		agent    *agent.Runtime
 		ctx      *agent.Context
 		reason   string
 		provider *testProvider

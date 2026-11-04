@@ -311,7 +311,7 @@ func TestRAGAgent_NilRetrieverErrors(t *testing.T) {
 		t.Fatalf("err = %v, want ErrRetrieverRequired", err)
 	}
 	if a != nil {
-		t.Fatal("RAGAgent must not return an Agent for a nil retriever")
+		t.Fatal("RAGAgent must not return a Runtime for a nil retriever")
 	}
 }
 

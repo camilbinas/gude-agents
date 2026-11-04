@@ -95,9 +95,9 @@ func TestPauseAndResumeWithExplicitMemoryStores(t *testing.T) {
 	}
 }
 
-// Because the paused state lives in the store rather than in the Agent, a
-// different Agent instance sharing that store can load and resume the pause.
-// Memory is process-local, so this models a second Agent in the same process;
+// Because the paused state lives in the store rather than in the Runtime, a
+// different Runtime instance sharing that store can load and resume the pause.
+// Memory is process-local, so this models a second Runtime in the same process;
 // the durable backends prove the same across processes.
 func TestPauseIsResumableByAnotherAgentInstance(t *testing.T) {
 	conversations := conformance.NewConversations()

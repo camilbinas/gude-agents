@@ -120,10 +120,10 @@ type ModelIdentifier interface {
 }
 
 // Invoker abstracts anything that can handle a user message and return a
-// Result. *Agent satisfies this interface and tests can provide fakes.
+// Result. *Runtime satisfies this interface and tests can provide fakes.
 type Invoker interface {
 	Invoke(c *Context, input string) (Result, error)
 }
 
-// compile-time check: *Agent implements Invoker.
-var _ Invoker = (*Agent)(nil)
+// compile-time check: *Runtime implements Invoker.
+var _ Invoker = (*Runtime)(nil)

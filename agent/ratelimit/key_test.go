@@ -41,7 +41,7 @@ func (r *keyRecorder) recorded() []string {
 	return append([]string(nil), r.keys...)
 }
 
-func keyedAgent(t *testing.T, p agent.Provider, limiter agent.RateLimiter, opts ...agent.Option) *agent.Agent {
+func keyedAgent(t *testing.T, p agent.Provider, limiter agent.RateLimiter, opts ...agent.Option) *agent.Runtime {
 	t.Helper()
 	opts = append([]agent.Option{agent.WithRateLimiter(limiter)}, opts...)
 	a, err := agent.New(p, "sys", opts...)
@@ -59,7 +59,7 @@ func ctxFor(conversation, identity string) *agent.Context {
 	return c
 }
 
-func invoke(a *agent.Agent, c *agent.Context) error {
+func invoke(a *agent.Runtime, c *agent.Context) error {
 	_, err := a.Invoke(c, "hi")
 	return err
 }

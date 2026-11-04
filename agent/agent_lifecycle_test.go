@@ -70,7 +70,7 @@ func dummyTool(name, desc string) tool.Tool {
 }
 
 // textStreamCB drains TextStream, forwarding each chunk to cb (if non-nil).
-func textStreamCB(a *Agent, c *Context, msg string, cb func(string)) error {
+func textStreamCB(a *Runtime, c *Context, msg string, cb func(string)) error {
 	for chunk, err := range a.TextStream(c, msg) {
 		if err != nil {
 			return err
@@ -858,7 +858,7 @@ func TestToolRegistrySupportsDynamicTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The tool is registered after the Agent was constructed.
+	// The tool is registered after the Runtime was constructed.
 	var ran bool
 	dynamic := tool.NewRaw("dynamic", "Registered after New", nil,
 		func(context.Context, json.RawMessage) (string, error) {
@@ -891,17 +891,17 @@ func contains(s, substr string) bool {
 }
 
 // TestAgentHasNoProcessLocalLifecycleState pins the single-persistence model:
-// the Agent owns no generic shutdown/flush hook, no synchronous-conversation
+// the Runtime owns no generic shutdown/flush hook, no synchronous-conversation
 // switch, and no process-local pause registry. Pauses live in the configured
 // ExecutionStore, and Append is committed when it returns.
 func TestAgentHasNoProcessLocalLifecycleState(t *testing.T) {
-	agentType := reflect.TypeOf(&Agent{})
+	agentType := reflect.TypeOf(&Runtime{})
 	if _, ok := agentType.MethodByName("Shutdown"); ok {
-		t.Error("Agent must not expose Shutdown")
+		t.Error("Runtime must not expose Shutdown")
 	}
 	for _, field := range []string{"syncConversation", "localPauses"} {
 		if _, ok := agentType.Elem().FieldByName(field); ok {
-			t.Errorf("Agent must not have a %s field", field)
+			t.Errorf("Runtime must not have a %s field", field)
 		}
 	}
 }
@@ -909,10 +909,10 @@ func TestAgentHasNoProcessLocalLifecycleState(t *testing.T) {
 // The public inspection surface is Name, Instructions and ToolSpecs only. The
 // removed getters must not come back as part of a configuration snapshot.
 func TestAgentPublicInspectionSurface(t *testing.T) {
-	typ := reflect.TypeOf(&Agent{})
+	typ := reflect.TypeOf(&Runtime{})
 	for _, name := range []string{"Name", "Instructions", "ToolSpecs"} {
 		if _, ok := typ.MethodByName(name); !ok {
-			t.Errorf("Agent.%s must stay public", name)
+			t.Errorf("Runtime.%s must stay public", name)
 		}
 	}
 	for _, name := range []string{
@@ -922,7 +922,7 @@ func TestAgentPublicInspectionSurface(t *testing.T) {
 		"ToolExecution", "MaxConcurrentTools", "ToolVisibility", "RateLimitKey", "Config",
 	} {
 		if _, ok := typ.MethodByName(name); ok {
-			t.Errorf("Agent.%s must not be public", name)
+			t.Errorf("Runtime.%s must not be public", name)
 		}
 	}
 }

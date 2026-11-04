@@ -32,7 +32,7 @@ type toolOutcome struct {
 
 // concurrentLimit reports how many tool handlers of one batch may run at the
 // same time: 1 for strictly sequential execution, 0 for no limit.
-func (a *Agent) concurrentLimit() int {
+func (a *Runtime) concurrentLimit() int {
 	if a.toolExecution == ToolExecutionSequential {
 		return 1
 	}
@@ -40,7 +40,7 @@ func (a *Agent) concurrentLimit() int {
 }
 
 // executeBatch runs a batch of tool calls through the canonical pipeline under
-// the Agent's tool execution policy (WithToolExecution and
+// the Runtime's tool execution policy (WithToolExecution and
 // WithMaxConcurrentTools). Every path that executes tools goes through here:
 // normal calls, durable execution, approval resume and recovery. Outcomes are
 // indexed by call, so results keep the provider's order however handlers are

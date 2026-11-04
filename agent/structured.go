@@ -40,7 +40,7 @@ func structuredOutputToolChoice(caps ModelCapabilities) (*tool.Choice, error) {
 // output that fails either check is never saved. Other JSON Schema keywords
 // are sent to the model but not enforced.
 // Most callers should use structured.Invoke[T] from package agent/structured.
-func (a *Agent) InvokeSchema(c *Context, userMessage string, schema map[string]any, decode func(json.RawMessage) error) (Result, error) {
+func (a *Runtime) InvokeSchema(c *Context, userMessage string, schema map[string]any, decode func(json.RawMessage) error) (Result, error) {
 	if c == nil {
 		return Result{}, ErrNilContext
 	}

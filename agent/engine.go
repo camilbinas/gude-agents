@@ -25,7 +25,7 @@ const ragPreamble = "Reference documents retrieved for the upcoming question (us
 // input), Invoke returns StopInterrupt with the Interrupt set. The error is
 // normally nil; post-commit pause persistence failures return the usable
 // interrupt Result together with the error. Continue it with Resume.
-func (a *Agent) Invoke(ctx *Context, input string) (Result, error) {
+func (a *Runtime) Invoke(ctx *Context, input string) (Result, error) {
 	return collectResult(a.Stream(ctx, input))
 }
 
@@ -40,7 +40,7 @@ func (a *Agent) Invoke(ctx *Context, input string) (Result, error) {
 //
 // Detailed lifecycle events are only emitted when ctx was configured with
 // WithDetailedEvents.
-func (a *Agent) Stream(ctx *Context, input string) iter.Seq2[Event, error] {
+func (a *Runtime) Stream(ctx *Context, input string) iter.Seq2[Event, error] {
 	return a.stream(ctx, invocationSpec{input: input})
 }
 
@@ -52,20 +52,20 @@ func (a *Agent) Stream(ctx *Context, input string) iter.Seq2[Event, error] {
 // The concatenation of the chunks equals Result.Text when the model emits no
 // text alongside tool calls and no output guardrail rewrites the answer. Use
 // Stream or Invoke when the invocation can be interrupted.
-func (a *Agent) TextStream(ctx *Context, input string) iter.Seq2[string, error] {
+func (a *Runtime) TextStream(ctx *Context, input string) iter.Seq2[string, error] {
 	return textProjection(a.Stream(ctx, input))
 }
 
 // Resume continues an interrupted invocation with the given response and
 // returns its Result. With an ExecutionStore, Resume atomically transitions
 // the observed paused execution to running before any tool or provider work.
-func (a *Agent) Resume(ctx *Context, in *Interrupt, r ResumeResponse) (Result, error) {
+func (a *Runtime) Resume(ctx *Context, in *Interrupt, r ResumeResponse) (Result, error) {
 	return collectResult(a.ResumeStream(ctx, in, r))
 }
 
 // ResumeStream is the streaming form of Resume. It yields the same event
 // sequence as Stream.
-func (a *Agent) ResumeStream(ctx *Context, in *Interrupt, r ResumeResponse) iter.Seq2[Event, error] {
+func (a *Runtime) ResumeStream(ctx *Context, in *Interrupt, r ResumeResponse) iter.Seq2[Event, error] {
 	return a.stream(ctx, invocationSpec{resume: in, response: r})
 }
 
@@ -110,7 +110,7 @@ type invocationSpec struct {
 // stream is the single execution engine behind Invoke, Stream, TextStream,
 // Resume and ResumeStream. The engine runs synchronously on the consumer's
 // goroutine; events are yielded as they are produced.
-func (a *Agent) stream(ctx *Context, spec invocationSpec) iter.Seq2[Event, error] {
+func (a *Runtime) stream(ctx *Context, spec invocationSpec) iter.Seq2[Event, error] {
 	return func(yield func(Event, error) bool) {
 		if ctx == nil {
 			yield(Event{Type: EventEnd, Time: time.Now(), Result: &Result{}, Error: errorInfo(ErrNilContext)}, ErrNilContext)
@@ -136,7 +136,7 @@ func (a *Agent) stream(ctx *Context, spec invocationSpec) iter.Seq2[Event, error
 
 // run is the per-invocation engine state.
 type run struct {
-	a                *Agent
+	a                *Runtime
 	c                *Context // invocation context (carries tracing span of the invoke)
 	h                hooks
 	execution        *Execution
@@ -156,15 +156,15 @@ func (r *run) detailed() bool { return r.c.cfg.detailedEvents }
 // hasConversation reports whether this invocation is stateful. When a
 // ConversationStore is configured, lifecycle guarantees a non-empty
 // conversation ID (see requireConversationID), so every invocation of such an
-// Agent is stateful.
+// Runtime is stateful.
 func (r *run) hasConversation() bool {
 	return r.a.conversation != nil && r.convID != ""
 }
 
-// requireConversationID enforces that an Agent with a ConversationStore is
+// requireConversationID enforces that a Runtime with a ConversationStore is
 // never invoked without a conversation ID. Stateless Agents must be
 // constructed without a ConversationStore; there is no per-invocation opt-out.
-func (a *Agent) requireConversationID(convID string) error {
+func (a *Runtime) requireConversationID(convID string) error {
 	if a.conversation != nil && convID == "" {
 		return ErrConversationIDRequired
 	}
@@ -180,7 +180,7 @@ func (r *run) emitLifecycle(t EventType, lc LifecycleEvent) {
 
 // execute runs an invocation with the shared lifecycle (observability,
 // audit, conversation lock) around the turn body.
-func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
+func (a *Runtime) execute(c *Context, spec invocationSpec) (Result, error) {
 	if spec.resume != nil {
 		if spec.resume.ExecutionID == "" {
 			return Result{}, fmt.Errorf("resume: execution ID is required")
@@ -237,7 +237,7 @@ func (a *Agent) execute(c *Context, spec invocationSpec) (Result, error) {
 
 // lifecycle wraps an invocation body with the unified observer dispatcher. It
 // is shared by every entry point, including structured output.
-func (a *Agent) lifecycle(c *Context, convID, userMessage string, body func(r *run) (Result, error)) (Result, error) {
+func (a *Runtime) lifecycle(c *Context, convID, userMessage string, body func(r *run) (Result, error)) (Result, error) {
 	h := a.hooks(c)
 	c, invoke := h.onInvokeStart(c, a.invokeRecord(convID, userMessage, c))
 
@@ -965,7 +965,7 @@ func (r *run) removeToolCalls(completed map[string]struct{}) error {
 // without replaying the model. It returns the
 // updated execution. An unsafe call found InFlight without a canonical result
 // returns ToolExecutionUncertainError before any handler runs.
-func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, error) {
+func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution, error) {
 	if ctx == nil {
 		return Execution{}, ErrNilContext
 	}
@@ -1000,7 +1000,7 @@ func (a *Agent) RecoverExecution(ctx *Context, executionID string) (Execution, e
 	if execution.ConversationID == "" {
 		return execution, ErrExecutionRecoveryUnsupported
 	}
-	// A single Agent serializes recovery with its normal per-conversation work.
+	// A single Runtime serializes recovery with its normal per-conversation work.
 	// The store CAS still protects durable state when different processes race;
 	// replay-safe handlers must honor their idempotency key across processes.
 	m := a.conversationLocks.lockFor(execution.ConversationID)
@@ -1376,7 +1376,7 @@ func (r *run) pauseRecoveredExecution(in *Interrupt) error {
 // version make the reconciliation CAS-safe. Succeeded and Failed append one
 // canonical ToolResult; Retry makes the same idempotency key eligible for
 // RecoverExecution.
-func (a *Agent) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (Execution, error) {
+func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (Execution, error) {
 	if a.executionStore == nil || a.conversation == nil {
 		return Execution{}, ErrNoExecutionStore
 	}
@@ -1799,7 +1799,7 @@ func (r *run) saveConversation(messages []Message, cumulative TokenUsage) error 
 // bucket key chosen by WithRateLimitKey (empty when no selector is set) and
 // settles the reservation with the provider's confirmed usage, or
 // conservatively when the outcome is uncertain.
-func (a *Agent) callProvider(c *Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
+func (a *Runtime) callProvider(c *Context, req ModelRequest, emit func(ModelEvent)) (*ModelResponse, error) {
 	var lease RateLimitLease
 	if a.rateLimiter != nil {
 		var key string
@@ -1840,7 +1840,7 @@ func (a *Agent) callProvider(c *Context, req ModelRequest, emit func(ModelEvent)
 }
 
 // hooks returns the unified observer dispatcher for this invocation.
-func (a *Agent) hooks(c *Context) hooks {
+func (a *Runtime) hooks(c *Context) hooks {
 	observers := a.observers
 	if c != nil && c.cfg.observersSet {
 		observers = c.cfg.observers
@@ -1849,7 +1849,7 @@ func (a *Agent) hooks(c *Context) hooks {
 }
 
 // modelID returns the provider's model ID, or empty string.
-func (a *Agent) modelID() string {
+func (a *Runtime) modelID() string {
 	if mi, ok := a.provider.(ModelIdentifier); ok {
 		return mi.ModelID()
 	}
@@ -1857,7 +1857,7 @@ func (a *Agent) modelID() string {
 }
 
 // invokeRecord builds the normalized invocation start record.
-func (a *Agent) invokeRecord(convID, userMessage string, c *Context) InvokeRecord {
+func (a *Runtime) invokeRecord(convID, userMessage string, c *Context) InvokeRecord {
 	principal, _ := c.Principal()
 	return InvokeRecord{
 		MaxIterations:   a.maxIterations,

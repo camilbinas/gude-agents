@@ -1,6 +1,6 @@
 // Run: go run ./http-server
 //
-// A standard-library HTTP service with one long-lived Agent, one invocation
+// A standard-library HTTP service with one long-lived Runtime, one invocation
 // Context per request, SSE streaming, resumable execution pauses, and graceful
 // shutdown.
 //
@@ -71,7 +71,7 @@ func main() {
 	}
 }
 
-func chat(a *agent.Agent) http.HandlerFunc {
+func chat(a *agent.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var request chatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -102,7 +102,7 @@ func chat(a *agent.Agent) http.HandlerFunc {
 	}
 }
 
-func resume(a *agent.Agent) http.HandlerFunc {
+func resume(a *agent.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var request resumeRequest

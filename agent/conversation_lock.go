@@ -3,7 +3,7 @@ package agent
 import "sync"
 
 // conversationLocks serializes invocations and execution recovery that target
-// the same conversation within one Agent. It is an in-process guard only: the
+// the same conversation within one Runtime. It is an in-process guard only: the
 // ConversationStore revision check and the ExecutionStore compare-and-swap
 // remain the cross-process correctness mechanisms.
 type conversationLocks struct {
@@ -13,7 +13,7 @@ type conversationLocks struct {
 
 // lockFor returns the mutex for conversationID, allocating it on first use.
 // Entries are never deleted; memory growth is bounded by the number of
-// distinct conversation IDs the Agent serves over its lifetime.
+// distinct conversation IDs the Runtime serves over its lifetime.
 func (l *conversationLocks) lockFor(conversationID string) *sync.Mutex {
 	l.mu.Lock()
 	defer l.mu.Unlock()

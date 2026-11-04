@@ -206,7 +206,7 @@ func GetTyped[T any](c *Context, key any) (T, bool) {
 // ConversationID returns the conversation ID for the invocation.
 func (c *Context) ConversationID() string { return c.cfg.conversationID }
 
-// WithConversationID sets the conversation ID. When the Agent has a
+// WithConversationID sets the conversation ID. When the Runtime has a
 // ConversationStore, every invocation requires a non-empty ID (see
 // ErrConversationIDRequired). Without a store the ID has no persistence effect.
 func (c *Context) WithConversationID(id string) *Context {
@@ -297,7 +297,7 @@ func (c *Context) WithDetailedEvents() *Context {
 	return c
 }
 
-// WithObservers replaces the Agent's observers for this invocation. Passing no
+// WithObservers replaces the Runtime's observers for this invocation. Passing no
 // observers disables observation for the invocation.
 func (c *Context) WithObservers(observers ...Observer) *Context {
 	c.cfg.observers = append([]Observer(nil), observers...)

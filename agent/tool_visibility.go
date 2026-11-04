@@ -20,7 +20,7 @@ type ToolVisibility func(c *Context, t tool.Tool) bool
 // visibleTools applies the agent's visibility rules to produce the tools the
 // model may see for the current provider call. A tool must pass every rule
 // (AND semantics). Every registered tool is visible when no rule is set.
-func (a *Agent) visibleTools(c *Context) ([]tool.Spec, map[string]tool.Tool) {
+func (a *Runtime) visibleTools(c *Context) ([]tool.Spec, map[string]tool.Tool) {
 	registered := a.toolRegistry.List()
 	var specs []tool.Spec
 	tools := make(map[string]tool.Tool, len(registered))
@@ -35,7 +35,7 @@ func (a *Agent) visibleTools(c *Context) ([]tool.Spec, map[string]tool.Tool) {
 }
 
 // isVisible reports whether the tool passes every visibility rule.
-func (a *Agent) isVisible(c *Context, t tool.Tool) bool {
+func (a *Runtime) isVisible(c *Context, t tool.Tool) bool {
 	for _, rule := range a.toolVisibility {
 		if !rule(c, t) {
 			return false

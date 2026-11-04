@@ -119,3 +119,79 @@ func TestNoRemovedModuleReferencesInModuleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// agent.Agent is now only the convenient constructor; the type is agent.Runtime.
+// Go cannot declare a type and a function with the same name, so no alias can
+// hide an old reference. This fails if any file uses agent.Agent as a type, or
+// if package agent declares or refers to a type named Agent.
+func TestAgentIsOnlyAConstructorNotAType(t *testing.T) {
+	const agentImport = "github.com/camilbinas/gude-agents/agent"
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	for _, path := range repoGoFiles(t) {
+		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+
+		// Inside package agent itself, no type named Agent may exist or be used.
+		if rel, err := filepath.Rel(root, path); err == nil && filepath.Dir(rel) == "agent" {
+			ast.Inspect(file, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.TypeSpec:
+					if n.Name.Name == "Agent" {
+						t.Errorf("%s: package agent declares type Agent; the type is Runtime", fset.Position(n.Pos()))
+					}
+				case *ast.StarExpr:
+					if id, ok := n.X.(*ast.Ident); ok && id.Name == "Agent" {
+						t.Errorf("%s: *Agent used as a type; use *Runtime", fset.Position(n.Pos()))
+					}
+				case *ast.CompositeLit:
+					if id, ok := n.Type.(*ast.Ident); ok && id.Name == "Agent" {
+						t.Errorf("%s: Agent{} literal; use Runtime{}", fset.Position(n.Pos()))
+					}
+				}
+				return true
+			})
+			continue
+		}
+
+		// Everywhere else, agent.Agent may only be called, never used as a type.
+		names := map[string]bool{}
+		for _, imp := range file.Imports {
+			if strings.Trim(imp.Path.Value, `"`) != agentImport {
+				continue
+			}
+			if imp.Name != nil {
+				names[imp.Name.Name] = true
+			} else {
+				names["agent"] = true
+			}
+		}
+		if len(names) == 0 {
+			continue
+		}
+		called := map[*ast.SelectorExpr]bool{}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					called[sel] = true
+				}
+			}
+			return true
+		})
+		ast.Inspect(file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Agent" || called[sel] {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && names[id.Name] {
+				t.Errorf("%s: agent.Agent used as a type; use agent.Runtime", fset.Position(sel.Pos()))
+			}
+			return true
+		})
+	}
+}

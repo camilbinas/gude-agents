@@ -3,7 +3,7 @@
 Construct agents and stores once, then create a new `agent.Context` for every request. Derive all caller-controlled IDs from authenticated server state.
 
 ```go
-func handle(a *agent.Agent) http.HandlerFunc {
+func handle(a *agent.Runtime) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         ctx := agent.NewContext(r.Context()).
             WithConversationID(authenticatedThreadID(r)).
@@ -37,7 +37,7 @@ For text-only endpoints, range over `TextStream`. Output guardrails run after li
 
 ## Resume endpoints
 
-Persist execution state with `WithExecutionStore` plus a `ConversationStore`. A frontend must submit both the execution ID and the **ExecutionVersion it displayed** with every approval or human-input answer. The server loads the current pause, compares that version, and returns `409 Conflict` when it differs; `Agent.Resume` performs a second CAS so a race after the comparison remains safe. Authorize that the caller owns the execution's conversation before resuming.
+Persist execution state with `WithExecutionStore` plus a `ConversationStore`. A frontend must submit both the execution ID and the **ExecutionVersion it displayed** with every approval or human-input answer. The server loads the current pause, compares that version, and returns `409 Conflict` when it differs; `Runtime.Resume` performs a second CAS so a race after the comparison remains safe. Authorize that the caller owns the execution's conversation before resuming.
 
 On graceful shutdown, stop the HTTP server first so in-flight requests finish, then close provider-specific clients, stores, and exporters where required. The Agent itself has nothing to shut down.
 

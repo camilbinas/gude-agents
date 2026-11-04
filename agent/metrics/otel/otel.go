@@ -227,7 +227,7 @@ func WithNamespace(ns string) Option {
 // WithMetrics returns an agent.Option that enables OTEL metrics.
 // If mp is nil, the global MeterProvider is used.
 func WithMetrics(mp metric.MeterProvider, opts ...Option) agent.Option {
-	return func(a *agent.Agent) error {
+	return func(a *agent.Runtime) error {
 		if mp == nil {
 			mp = otelglobal.GetMeterProvider()
 		}
