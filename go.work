@@ -33,5 +33,4 @@ use (
 	./agent/tracing
 	./agent/tracing/sentry
 	./examples
-	./integration
 )

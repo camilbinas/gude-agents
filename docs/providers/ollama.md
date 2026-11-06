@@ -12,3 +12,10 @@ The provider connects to `OLLAMA_HOST` when set, otherwise the local default. En
 Gude never picks a model for you: pass the name of a model you have pulled. Ollama's catalogue records tool support only for models whose library page lists it, and leaves context windows unknown because the effective window is your server's `num_ctx`. Pass `ollama.WithCapabilities(...)` for anything you have verified. Local model capability varies substantially. Confirm chat formatting, tool calling, context size, structured JSON, and resource requirements for the selected model. Keep request cancellation/deadlines on `agent.Context` so disconnected clients stop local generation.
 
 Use [vLLM](vllm.md) for a vLLM server or [OpenAI](openai.md) for another compatible endpoint. See [Providers](../providers.md) for the common contract.
+
+## Live smoke test
+Opt in with `TEST_LIVE_INFERENCE=1` and a model you choose in `TEST_MODEL_ID` (a model you have pulled; the server must be running); there is no default model, and `TEST_MODEL_ID` or credentials alone never enable live calls. Run from `agent/provider/ollama`:
+```sh
+TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
+```
+See [Providers](../providers.md#live-smoke-tests).

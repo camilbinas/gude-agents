@@ -6,9 +6,9 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Modules are discovered from git, so a new go.mod is released (or tested) with
 # no list to update. Every tracked go.mod is published and tagged, except the
-# private ones: examples and integration are built by CI but never imported by
-# users, and go.mod files under testdata belong to test fixtures.
-PRIVATE_MODULE_PATTERN='^(examples|integration)$'
+# private ones: examples is built by CI but never imported by users, and go.mod
+# files under testdata belong to test fixtures.
+PRIVATE_MODULE_PATTERN='^examples$'
 PUBLISHED_DIRS=()
 PRIVATE_DIRS=()
 while read -r dir; do
@@ -42,7 +42,7 @@ tag_for() { # tag_for <dir> <version>
 # Commands that must not see credentials or live endpoints, so tests behave the
 # same on a laptop and on a runner.
 HERMETIC=(env -u POSTGRES_URL -u REDIS_URL -u ANTHROPIC_API_KEY -u OPENAI_API_KEY
-  -u AWS_BEARER_TOKEN_BEDROCK -u SENTRY_DSN -u MODEL_PROVIDER -u MODEL_ID -u GUDE_LIVE_TESTS)
+  -u AWS_BEARER_TOKEN_BEDROCK -u SENTRY_DSN -u TEST_LIVE_INFERENCE -u TEST_MODEL_ID -u TEST_EMBEDDING_MODEL_ID)
 
 # go_checks <dir>: build, vet and test one module with the caller's Go
 # environment (GOWORK, GOFLAGS, GOPROXY). The commands are chained with && so a

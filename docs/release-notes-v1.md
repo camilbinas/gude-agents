@@ -241,9 +241,9 @@ There is no framework-wide default provider, no global provider registry, no `MO
 | Removed | Replacement |
 |---|---|
 | The `agent/a2a` module (`a2a.NewServer`, `a2a.NewClient`, card and executor APIs), `examples/a2a`, `docs/a2a.md` | None. `agent.AgentAsTool` still composes agents in process; expose a remote agent behind your own service API and wrap it as a tool, or use MCP for external tool servers |
-| The `agent/provider/registry` module: `Register`, `RegisterBuiltins`, `New`, `FromEnv`, `Names`, `Tier`, `Cheapest`, `Standard`, `Smartest` | Construct the provider you want directly. Selecting a provider from `MODEL_PROVIDER` is application code, not framework code |
+| The `agent/provider/registry` module: `Register`, `RegisterBuiltins`, `New`, `FromEnv`, `Names`, `Tier`, `Cheapest`, `Standard`, `Smartest` | Construct the provider you want directly. Choosing a provider from configuration is application code, not framework code |
 | `openai.Cheapest/Standard/Smartest`, `anthropic.Cheapest/Standard/Smartest`, `bedrock.Cheapest/Standard/Smartest`, `ollama.Cheapest/Standard/Smartest` | A named constructor such as `openai.GPT5_6`, `anthropic.ClaudeSonnet5_5`, `bedrock.GlobalClaudeSonnet5_5` or `ollama.Qwen35`, or `New("model-id")` |
-| The `MODEL_TIER` environment variable and the implicit Bedrock default | `MODEL_PROVIDER` and `MODEL_ID`, required together by the integration tests only |
+| The `MODEL_TIER` environment variable and the implicit Bedrock default | Construct the provider and model explicitly; no environment variable selects a provider or model in the framework |
 
 Migration for the old aliases:
 
@@ -270,9 +270,8 @@ Each provider package keeps a private catalogue keyed by model ID. `New(modelID,
 - `openai.NewCompatible` is added for OpenAI-compatible servers. Ollama and vLLM use it, so a server model name that matches an OpenAI model ID never inherits OpenAI metadata.
 - Catalogue limits are advisory metadata, not limits Gude enforces.
 
-### Integration tests
-
-The live-provider helper builds the adapter named by `MODEL_PROVIDER` (`openai`, `anthropic`, `bedrock`, `ollama`, `vllm`) with `MODEL_ID` through a small `switch`. Live tests are skipped unless a live run is requested (`GUDE_LIVE_TESTS=1`, `MODEL_PROVIDER` or `MODEL_ID`), and then both variables are required: a missing value fails with a configuration error. Plain `go test ./...` no longer calls a paid API. See `integration/README.md`.
+### Live provider tests
+The separate repository-wide integration test module and its environment-variable provider selection are removed. Each provider adapter (`anthropic`, `bedrock`, `openai`, `ollama`, `vllm`) and the Bedrock and OpenAI embedders now carry a small opt-in `live_test.go`. A live test skips unless `TEST_LIVE_INFERENCE` is exactly `1`, then requires `TEST_MODEL_ID` (`TEST_EMBEDDING_MODEL_ID` for embedders, and `AWS_REGION` for Bedrock) with no default model; credentials or a model ID alone never enable a call. Run `TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...` from the module directory. Plain `go test ./...` and the release checks never call a paid API, and framework behavior is covered by deterministic scripted-provider tests. See [Providers](providers.md#live-smoke-tests).
 
 ## `agent.Agent` type renamed to `agent.Runtime`
 

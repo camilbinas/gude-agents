@@ -2,11 +2,14 @@ package fallback_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/provider/fallback"
+	"github.com/camilbinas/gude-agents/agent/structured"
+	"github.com/camilbinas/gude-agents/agent/tool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -268,4 +271,41 @@ func TestCapabilitiesKnownUnsupportedWinsOverSupported(t *testing.T) {
 	assert.Equal(t, agent.Supported, got.ToolUse)
 	assert.Equal(t, agent.Supported, got.ToolChoice.Auto)
 	assert.Equal(t, agent.Unsupported, got.ToolChoice.Specific)
+}
+
+type structuredProfile struct {
+	Name  string `json:"name" description:"A name" required:"true"`
+	Count int    `json:"count" description:"A count"`
+}
+
+func structuredStub(raw string, specific agent.Capability) *capabilityStubProvider {
+	return &capabilityStubProvider{
+		stubProvider: &stubProvider{resp: &agent.ModelResponse{ToolCalls: []tool.Call{{
+			ToolUseID: "structured-call",
+			Name:      "structured_output",
+			Input:     json.RawMessage(raw),
+		}}}},
+		caps: agent.ModelCapabilities{
+			ToolUse:    agent.Supported,
+			ToolChoice: agent.ToolChoiceCapabilities{Auto: agent.Supported, Specific: specific},
+		},
+	}
+}
+
+// A chain whose backup cannot force a specific tool must make structured output
+// fall back to automatic tool choice, even when the primary could force one.
+func TestStructuredInvokeUsesAutomaticChoiceWhenBackupCannotForceTool(t *testing.T) {
+	primary := structuredStub(`{"name":"Ada","count":3}`, agent.Supported)
+	backup := structuredStub(`{"name":"Grace","count":4}`, agent.Unsupported)
+	a, err := agent.New(fallback.New(primary, backup), "sys")
+	require.NoError(t, err)
+
+	got, err := structured.Invoke[structuredProfile](agent.Background(), a, "input")
+
+	require.NoError(t, err)
+	assert.Equal(t, "Ada", got.Value.Name)
+	assert.Equal(t, 1, primary.calls)
+	assert.Zero(t, backup.calls)
+	require.Len(t, primary.requests, 1)
+	assert.Nil(t, primary.requests[0].ToolChoice, "want provider-default automatic choice")
 }

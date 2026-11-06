@@ -250,15 +250,6 @@ cmd_test() {
   echo "::group::examples"
   (build_examples vet) || failed+=(examples)
   echo "::endgroup::"
-  echo "::group::integration"
-  # Live-provider tests skip without MODEL_PROVIDER/MODEL_ID; the rest of the
-  # module is compile-checked and its deterministic guards are run.
-  (
-    cd integration \
-      && GOWORK="$REPO_ROOT/go.work" "${HERMETIC[@]}" go vet ./... \
-      && GOWORK="$REPO_ROOT/go.work" "${HERMETIC[@]}" go test -count=1 -run '^(TestNo|TestStructured)' ./...
-  ) || failed+=(integration)
-  echo "::endgroup::"
   [ "${#failed[@]}" -eq 0 ] || fail "failing modules: ${failed[*]}"
 }
 

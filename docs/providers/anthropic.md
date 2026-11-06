@@ -45,3 +45,10 @@ for event, err := range a.Stream(agent.Background(), "Solve the problem") {
 ```
 
 Claude thinking budget is added to `max_tokens`; choose values that stay under the selected model's output ceiling. Treat thinking output as sensitive diagnostic material and do not expose or persist it unless that is an explicit product decision.
+
+## Live smoke test
+Opt in with `TEST_LIVE_INFERENCE=1` and a model you choose in `TEST_MODEL_ID` (plus `ANTHROPIC_API_KEY`); there is no default model, and `TEST_MODEL_ID` or credentials alone never enable live calls. Run from `agent/provider/anthropic`:
+```sh
+TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
+```
+See [Providers](../providers.md#live-smoke-tests).

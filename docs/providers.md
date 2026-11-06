@@ -114,6 +114,12 @@ The native structured-output column describes what can be used through the confi
 
 The fallback provider accepts a primary plus ordered fallbacks; it changes provider only if failure occurs before any event is emitted, avoiding mixed streams.
 
+## Live smoke tests
+Each provider adapter has an opt-in `live_test.go` that makes a few small real calls (basic response, streaming, tool use where the model supports it, and image/PDF input where the adapter supports it). They are skipped unless `TEST_LIVE_INFERENCE` is exactly `1`; the skip happens before any client is built, so credentials and `TEST_MODEL_ID` alone never trigger a call. When enabled, `TEST_MODEL_ID` is required (there is no default model) and a missing value fails the test with a configuration error. The Bedrock tests also require `AWS_REGION`. Run them from the provider's module directory:
+```sh
+TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
+```
+Anthropic, Bedrock and OpenAI also run image and PDF checks, so pick a model that accepts them or narrow the run, for example `-run 'Live_(Converse|Stream|ToolUse)'`. The tool-use check is skipped when the model is catalogued as not supporting tools. Ollama and vLLM run text, streaming and tool checks only, because image support depends on the served model. The tests assert structure and ordering, not exact model wording. They call a paid API and are not run by CI or by the release process.
 ## Implementing a provider
 
 Map every provider request to `ModelRequest`, emit live text/thinking when available, and return authoritative aggregate text, tool calls, and `TokenUsage`. Respect context cancellation. Wrap backend failures with enough context for diagnosis but never log credentials or raw content by default. Keep provider streaming callbacks synchronous unless the implementation documents ordering and safe shutdown.

@@ -63,10 +63,10 @@ published() { release modules 2>/dev/null | sed -n 's/^published //p' | tr '\n' 
 mkdir other && printf 'module example.com/x/other\n\ngo 1.25.0\n' > other/go.mod && g add -A && g commit -qm "feat: add other module"
 [ "$(published)" = ". other sub " ] && pass "a new go.mod is picked up with no list to edit" || fail "a new go.mod is picked up ($(published))"
 expect_ok "the new module gets a nested tag in the plan" bash -c 'bash .github/scripts/release.sh plan --version 1.0.0 | grep -qx "  other/v1.0.0"'
-mkdir -p examples integration sub/testdata/fixture
-for d in examples integration sub/testdata/fixture; do printf 'module example.com/x/%s\n\ngo 1.25.0\n' "$d" > "$d/go.mod"; done
+mkdir -p examples sub/testdata/fixture
+for d in examples sub/testdata/fixture; do printf 'module example.com/x/%s\n\ngo 1.25.0\n' "$d" > "$d/go.mod"; done
 g add -A && g commit -qm "test: private modules"
-[ "$(published)" = ". other sub " ] && pass "examples, integration and testdata modules are never published" || fail "private modules were published ($(published))"
+[ "$(published)" = ". other sub " ] && pass "examples and testdata modules are never published" || fail "private modules were published ($(published))"
 printf 'module example.com/elsewhere\n\ngo 1.25.0\n' > other/go.mod && g add -A && g commit -qm "feat: wrong path"
 expect_message "a module path that does not match its directory is reported" "other/v<version> requires" release modules
 

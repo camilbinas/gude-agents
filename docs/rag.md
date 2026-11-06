@@ -84,3 +84,10 @@ retriever := rag.NewRetriever(embedder, store)
 ```
 
 Managed retrievers such as Bedrock Knowledge Bases and OpenAI vector stores implement `rag.Retriever` directly. The Agent setup remains `agent.RAGAgent(provider, instructions, retriever)`.
+
+## Live embedder smoke tests
+The Bedrock and OpenAI embedders each have an opt-in `live_test.go`. It is skipped unless `TEST_LIVE_INFERENCE` is exactly `1`, before any client is built. When enabled, `TEST_EMBEDDING_MODEL_ID` is required (there is no default embedder), and the Bedrock test also requires `AWS_REGION`. `TEST_EMBEDDING_MODEL_ID` or credentials alone never enable live calls. Run from `agent/rag/bedrock` or `agent/rag/openai`:
+```sh
+TEST_LIVE_INFERENCE=1 TEST_EMBEDDING_MODEL_ID=<embedding-model> go test -run Live -v ./...
+```
+The tests check that vectors are non-empty, consistent in length across calls, and returned in batch order. Reranking and Knowledge Base retrieval have no live test because they need provisioned resources (a Knowledge Base ID or a rerank model) that this opt-in scheme does not configure. They call a paid API and are not run by CI or the release process.

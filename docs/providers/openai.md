@@ -17,3 +17,10 @@ Credentials default to `OPENAI_API_KEY`; `WithAPIKey` overrides it. `WithBaseURL
 Compatible endpoints differ in tool calling, streaming event shape, usage reporting, images, and sampling parameters. Verify those capabilities before relying on them. Prefer the dedicated [Ollama](ollama.md) or [vLLM](vllm.md) provider when its local-server behavior is required.
 
 OpenAI embedding/vector integrations are available under `agent/rag/openai`. See [Providers](../providers.md).
+
+## Live smoke test
+Opt in with `TEST_LIVE_INFERENCE=1` and a model you choose in `TEST_MODEL_ID` (plus `OPENAI_API_KEY`); there is no default model, and `TEST_MODEL_ID` or credentials alone never enable live calls. Run from `agent/provider/openai`:
+```sh
+TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
+```
+See [Providers](../providers.md#live-smoke-tests).

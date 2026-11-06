@@ -18,3 +18,10 @@ The provider uses the AWS default credential chain. `WithAPIKey` supports Bedroc
 Use model IDs or inference-profile IDs available in the configured region. Gude does not pick a model for you. Known models (including every inference-profile prefix of them) get their catalogued limits, tool-choice facts and the reasoning request shape Bedrock needs; other IDs, such as application inference profile ARNs, work and report only the adapter baseline until you add `WithCapabilities`. See [Providers](../providers.md). Permissions commonly include model invocation and streaming invocation, plus guardrail permissions when enabled. Keep the provider's content guardrail distinct from application [guardrails](../guardrails.md).
 
 Bedrock integrations also include RAG embedders, Knowledge Base retrieval, and reranking; see [RAG](../rag.md).
+
+## Live smoke test
+Opt in with `TEST_LIVE_INFERENCE=1` and a model you choose in `TEST_MODEL_ID`, with `AWS_REGION` set (both required); there is no default model, and `TEST_MODEL_ID` or credentials alone never enable live calls. Run from `agent/provider/bedrock`:
+```sh
+AWS_REGION=<region> TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
+```
+See [Providers](../providers.md#live-smoke-tests).

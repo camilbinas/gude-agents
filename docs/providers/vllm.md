@@ -12,3 +12,10 @@ The provider targets `VLLM_BASE_URL` when configured. vLLM has no model catalogu
 Validate the server's chat template, tool parser, context length, tensor parallelism, and structured-output support. Model/server combinations may accept the transport while differing in tool-call and usage semantics.
 
 Use [Ollama](ollama.md) for an Ollama daemon or [OpenAI](openai.md) for other compatible endpoints. See [Providers](../providers.md) for the common contract.
+
+## Live smoke test
+Opt in with `TEST_LIVE_INFERENCE=1` and a model you choose in `TEST_MODEL_ID` (the model name your vLLM server serves); there is no default model, and `TEST_MODEL_ID` or credentials alone never enable live calls. Run from `agent/provider/vllm`:
+```sh
+TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
+```
+See [Providers](../providers.md#live-smoke-tests).
