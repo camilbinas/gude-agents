@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -238,7 +238,10 @@ func normalizeStopReason(reason anthropicsdk.StopReason) agent.ModelStopReason {
 
 // Stream sends a request to Anthropic and emits incremental text and thinking events.
 func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
-	input := p.buildParams(req)
+	input, err := p.buildParams(req)
+	if err != nil {
+		return nil, &agent.ProviderError{Cause: err}
+	}
 	stream := p.client.Messages.NewStreaming(ctx, input)
 
 	resp := &agent.ModelResponse{}
@@ -321,10 +324,29 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 	}
 
 	if err := stream.Err(); err != nil {
-		return nil, &agent.ProviderError{Cause: err}
+		return nil, classifyError(err)
 	}
 
 	return resp, nil
+}
+
+// classifyError wraps an Anthropic SDK/transport error in an *agent.ProviderError
+// with retryability, HTTP status, and a Retry-After hint populated. A typed
+// *anthropicsdk.Error carries the HTTP status (429/5xx and overloaded_error are
+// retryable; 4xx client errors are not); any other error is treated as a
+// transport failure and classified via provider.RetryableNetworkError.
+func classifyError(err error) *agent.ProviderError {
+	pe := &agent.ProviderError{Cause: err}
+	var apiErr *anthropicsdk.Error
+	if errors.As(err, &apiErr) {
+		pe.StatusCode = apiErr.StatusCode
+		pe.Retryable = pvdr.RetryableStatus(apiErr.StatusCode) ||
+			apiErr.Type() == "overloaded_error"
+		pe.RetryAfter = pvdr.RetryAfterFromResponse(apiErr.Response)
+		return pe
+	}
+	pe.Retryable = pvdr.RetryableNetworkError(err)
+	return pe
 }
 
 // ---------------------------------------------------------------------------
@@ -345,14 +367,24 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 	return 0
 }
 
-func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.MessageNewParams {
-	// Anthropic requires max_tokens. A known lower model ceiling can inform the
-	// implicit fallback, but it never overrides an explicit provider or
-	// invocation setting: metadata is advisory and the live provider remains
-	// authoritative for validation.
-	var maxTokens int64 = 128_000
+// defaultMaxTokens is the conservative output-token ceiling the adapter
+// requests when neither an explicit max_tokens nor a known model ceiling is
+// available. It is low enough to be accepted by every current Claude model,
+// including the smaller ones whose real ceiling is far below the largest
+// models'. Callers that need more should set it explicitly (WithMaxTokens or
+// InferenceConfig.MaxTokens) or construct the provider with a known model ID so
+// its catalog ceiling applies.
+const defaultMaxTokens int64 = 8192
+
+func (p *AnthropicProvider) buildParams(req agent.ModelRequest) (anthropicsdk.MessageNewParams, error) {
+	// Anthropic requires max_tokens. A known model ceiling informs the implicit
+	// default; when the ceiling is unknown we fall back to a conservative value
+	// that every model accepts rather than a large number a smaller model would
+	// reject. An explicit provider or invocation setting always wins: metadata
+	// is advisory and the live provider remains authoritative for validation.
 	ceiling := int64(p.capabilities.MaxOutputTokens)
-	usesCapabilityDefault := p.maxTokens == nil && ceiling > 0 && ceiling <= maxTokens
+	maxTokens := defaultMaxTokens
+	usesCapabilityDefault := p.maxTokens == nil && ceiling > 0
 	if usesCapabilityDefault {
 		maxTokens = ceiling
 	}
@@ -365,7 +397,10 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 	}
 
 	cachingEnabled := p.cachingEnabled
-	msgs := toAnthropicMessages(req.Messages, cachingEnabled)
+	msgs, err := toAnthropicMessages(req.Messages, cachingEnabled)
+	if err != nil {
+		return anthropicsdk.MessageNewParams{}, err
+	}
 	input := anthropicsdk.MessageNewParams{
 		Model:     p.model,
 		MaxTokens: maxTokens,
@@ -411,7 +446,7 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) anthropicsdk.Mes
 			input.StopSequences = cfg.StopSequences
 		}
 	}
-	return input
+	return input, nil
 }
 
 func toAnthropicToolChoice(tc *tool.Choice) anthropicsdk.ToolChoiceUnionParam {
@@ -427,15 +462,19 @@ func toAnthropicToolChoice(tc *tool.Choice) anthropicsdk.ToolChoiceUnionParam {
 	}
 }
 
-func toAnthropicMessages(msgs []agent.Message, cachingEnabled bool) []anthropicsdk.MessageParam {
+func toAnthropicMessages(msgs []agent.Message, cachingEnabled bool) ([]anthropicsdk.MessageParam, error) {
 	out := make([]anthropicsdk.MessageParam, len(msgs))
 	for i, m := range msgs {
+		blocks, err := toAnthropicContentBlocks(m.Content, m.Role, cachingEnabled)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = anthropicsdk.MessageParam{
 			Role:    toAnthropicRole(m.Role),
-			Content: toAnthropicContentBlocks(m.Content, m.Role, cachingEnabled),
+			Content: blocks,
 		}
 	}
-	return out
+	return out, nil
 }
 
 func toAnthropicRole(r agent.Role) anthropicsdk.MessageParamRole {
@@ -512,15 +551,16 @@ func buildAnthropicToolResultParam(v agent.ToolResultBlock) anthropicsdk.ToolRes
 }
 
 // buildAnthropicImageParam constructs an ImageBlockParam from an ImageBlock.
-// Returns (param, true) on success or (zero, false) if the image bytes cannot
-// be decoded. The caller may set CacheControl on the returned struct.
-func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam, bool) {
+// It returns an error if the image bytes cannot be decoded, so a malformed
+// attachment surfaces to the caller instead of being silently dropped. The
+// caller may set CacheControl on the returned struct.
+func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam, error) {
 	if v.Source.URL != "" {
 		return anthropicsdk.ImageBlockParam{
 			Source: anthropicsdk.ImageBlockParamSourceUnion{
 				OfURL: &anthropicsdk.URLImageSourceParam{URL: v.Source.URL},
 			},
-		}, true
+		}, nil
 	}
 	var encoded string
 	if v.Source.Base64 != "" {
@@ -528,8 +568,7 @@ func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam,
 	} else {
 		bytes, err := imageBytes(v.Source)
 		if err != nil {
-			log.Printf("anthropic: failed to get image bytes: %v (skipping block)", err)
-			return anthropicsdk.ImageBlockParam{}, false
+			return anthropicsdk.ImageBlockParam{}, fmt.Errorf("ImageBlock: %w", err)
 		}
 		encoded = base64.StdEncoding.EncodeToString(bytes)
 	}
@@ -540,26 +579,27 @@ func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam,
 				Data:      encoded,
 			},
 		},
-	}, true
+	}, nil
 }
 
 // buildAnthropicDocParam constructs a DocumentBlockParam from a DocumentBlock.
-// Returns (param, true) on success or (zero, false) if the document bytes
-// cannot be decoded. The caller may set CacheControl on the returned struct.
-func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockParam, bool) {
+// It returns an error if the document bytes cannot be decoded, so a malformed
+// attachment surfaces to the caller instead of being silently dropped. The
+// caller may set CacheControl on the returned struct.
+func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockParam, error) {
 	if v.Source.FileID != "" {
 		return anthropicsdk.DocumentBlockParam{
 			Source: anthropicsdk.DocumentBlockParamSourceUnion{
 				OfFile: &anthropicsdk.FileDocumentSourceParam{FileID: v.Source.FileID},
 			},
-		}, true
+		}, nil
 	}
 	if v.Source.URL != "" {
 		return anthropicsdk.DocumentBlockParam{
 			Source: anthropicsdk.DocumentBlockParamSourceUnion{
 				OfURL: &anthropicsdk.URLPDFSourceParam{URL: v.Source.URL},
 			},
-		}, true
+		}, nil
 	}
 	var encoded string
 	if v.Source.Base64 != "" {
@@ -567,8 +607,7 @@ func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockPa
 	} else {
 		bytes, err := imageBytes(agent.ImageSource{Data: v.Source.Data})
 		if err != nil {
-			log.Printf("anthropic: failed to get document bytes: %v (skipping block)", err)
-			return anthropicsdk.DocumentBlockParam{}, false
+			return anthropicsdk.DocumentBlockParam{}, fmt.Errorf("DocumentBlock: %w", err)
 		}
 		encoded = base64.StdEncoding.EncodeToString(bytes)
 	}
@@ -576,12 +615,16 @@ func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockPa
 		Source: anthropicsdk.DocumentBlockParamSourceUnion{
 			OfBase64: &anthropicsdk.Base64PDFSourceParam{Data: encoded},
 		},
-	}, true
+	}, nil
 }
 
 // toAnthropicContentBlocks translates a slice of ContentBlocks to Anthropic SDK params.
 // When cachingEnabled, cache_control is attached to every DocumentBlock.
-func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cachingEnabled bool) []anthropicsdk.ContentBlockParamUnion {
+// toAnthropicContentBlocks translates a slice of ContentBlocks to Anthropic SDK
+// params. Image and document blocks whose bytes cannot be decoded produce an
+// error rather than being silently dropped. Image/document blocks on an
+// assistant-role message are not supported by the API and are skipped.
+func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cachingEnabled bool) ([]anthropicsdk.ContentBlockParamUnion, error) {
 	out := make([]anthropicsdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -600,22 +643,22 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cach
 			out = append(out, anthropicsdk.ContentBlockParamUnion{OfToolResult: &trb})
 		case agent.ImageBlock:
 			if role == agent.RoleAssistant {
-				log.Printf("anthropic: ImageBlock in assistant-role message is not supported and will be skipped")
+				// ImageBlock on an assistant-role message is not supported by the API.
 				continue
 			}
-			img, ok := buildAnthropicImageParam(v)
-			if !ok {
-				continue
+			img, err := buildAnthropicImageParam(v)
+			if err != nil {
+				return nil, err
 			}
 			out = append(out, anthropicsdk.ContentBlockParamUnion{OfImage: &img})
 		case agent.DocumentBlock:
 			if role == agent.RoleAssistant {
-				log.Printf("anthropic: DocumentBlock in assistant-role message is not supported and will be skipped")
+				// DocumentBlock on an assistant-role message is not supported by the API.
 				continue
 			}
-			doc, ok := buildAnthropicDocParam(v)
-			if !ok {
-				continue
+			doc, err := buildAnthropicDocParam(v)
+			if err != nil {
+				return nil, err
 			}
 			// When caching is enabled, attach cache_control to every DocumentBlock.
 			if cachingEnabled {
@@ -624,13 +667,13 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cach
 			out = append(out, anthropicsdk.ContentBlockParamUnion{OfDocument: &doc})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func toAnthropicTools(specs []tool.Spec) []anthropicsdk.ToolUnionParam {
 	tools := make([]anthropicsdk.ToolUnionParam, len(specs))
 	for i, s := range specs {
-		props, _ := s.InputSchema["properties"]
+		props := s.InputSchema["properties"]
 		required, _ := s.InputSchema["required"].([]string)
 		// Handle []any from JSON unmarshaling
 		if required == nil {

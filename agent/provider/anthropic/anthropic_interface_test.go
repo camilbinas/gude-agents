@@ -26,7 +26,10 @@ func TestToAnthropicContentBlock_AllKnownTypes_DoesNotPanic(t *testing.T) {
 					t.Errorf("toAnthropicContentBlocks panicked: %v", r)
 				}
 			}()
-			result := toAnthropicContentBlocks([]agent.ContentBlock{b}, agent.RoleUser, false)
+			result, err := toAnthropicContentBlocks([]agent.ContentBlock{b}, agent.RoleUser, false)
+			if err != nil {
+				t.Errorf("toAnthropicContentBlocks returned error: %v", err)
+			}
 			_ = result
 		})
 	}
@@ -50,7 +53,10 @@ func TestToAnthropicContentBlocks_MixedTypes_DoesNotPanic(t *testing.T) {
 	}
 
 	// Test without caching.
-	result := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+	result, err := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+	if err != nil {
+		t.Fatalf("toAnthropicContentBlocks returned error: %v", err)
+	}
 	if len(result) == 0 {
 		t.Error("expected non-empty translated result")
 	}
@@ -72,7 +78,10 @@ func TestToAnthropicContentBlocks_DocumentBlock_CacheControl(t *testing.T) {
 	blocks := []agent.ContentBlock{doc}
 
 	t.Run("caching disabled - no cache_control", func(t *testing.T) {
-		result := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+		result, err := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+		if err != nil {
+			t.Fatalf("toAnthropicContentBlocks returned error: %v", err)
+		}
 		if len(result) == 0 {
 			t.Fatal("expected non-empty result")
 		}
@@ -86,7 +95,10 @@ func TestToAnthropicContentBlocks_DocumentBlock_CacheControl(t *testing.T) {
 	})
 
 	t.Run("caching enabled - cache_control set", func(t *testing.T) {
-		result := toAnthropicContentBlocks(blocks, agent.RoleUser, true)
+		result, err := toAnthropicContentBlocks(blocks, agent.RoleUser, true)
+		if err != nil {
+			t.Fatalf("toAnthropicContentBlocks returned error: %v", err)
+		}
 		if len(result) == 0 {
 			t.Fatal("expected non-empty result")
 		}
