@@ -91,6 +91,46 @@ type ModelResponse struct {
 	ToolCalls []tool.Call
 	Usage     TokenUsage
 	Metadata  map[string]any // optional provider-specific extras (e.g. "thinking")
+
+	// StopReason is the provider's reason for ending the response, normalized
+	// to a ModelStop* value. Empty when the provider did not report one.
+	StopReason ModelStopReason
+	// RawStopReason is the provider's stop reason exactly as reported (for
+	// example "length" from OpenAI or "guardrail_intervened" from Bedrock).
+	RawStopReason string
+}
+
+// ModelStopReason is a provider-reported stop reason normalized across
+// providers. Providers map their own vocabulary onto these values and keep
+// the original in ModelResponse.RawStopReason.
+type ModelStopReason string
+
+const (
+	// ModelStopUnknown means the provider did not report a stop reason.
+	ModelStopUnknown ModelStopReason = ""
+	// ModelStopEndTurn means the model finished its answer naturally.
+	ModelStopEndTurn ModelStopReason = "end_turn"
+	// ModelStopToolUse means the model stopped to call tools.
+	ModelStopToolUse ModelStopReason = "tool_use"
+	// ModelStopMaxTokens means output was cut off at the output token limit.
+	ModelStopMaxTokens ModelStopReason = "max_tokens"
+	// ModelStopSequence means a configured stop sequence was generated.
+	ModelStopSequence ModelStopReason = "stop_sequence"
+	// ModelStopContentFilter means a provider safety filter, guardrail or
+	// model refusal ended the response.
+	ModelStopContentFilter ModelStopReason = "content_filter"
+	// ModelStopContextWindow means the conversation exceeded the model's
+	// context window during generation.
+	ModelStopContextWindow ModelStopReason = "context_window_exceeded"
+	// ModelStopOther is a reported reason with no normalized equivalent; see
+	// ModelResponse.RawStopReason.
+	ModelStopOther ModelStopReason = "other"
+)
+
+// Truncated reports whether the response was cut off before the model
+// finished, either at the output token limit or at the context window.
+func (r ModelStopReason) Truncated() bool {
+	return r == ModelStopMaxTokens || r == ModelStopContextWindow
 }
 
 // ModelEventType identifies an incremental model output event.

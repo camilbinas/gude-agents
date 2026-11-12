@@ -105,7 +105,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 		provF.finish(err, TokenUsage{}, 0, "")
 		return Result{}, &ProviderError{Cause: err}
 	}
-	provF.finish(nil, resp.Usage, len(resp.ToolCalls), "")
+	provF.finishResponse(resp, "")
 	cumulative := c.rt.addUsage(resp.Usage)
 	if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
 		return Result{}, ErrTokenBudgetExceeded

@@ -91,7 +91,7 @@ type Result struct {
 }
 ```
 
-`StopEndTurn` means a final answer is available. `StopInterrupt` means execution paused successfully and `Interrupt` is populated. Provider, guardrail, budget, iteration-limit, cancellation, and persistence failures are errors; a result returned with an error can still contain usage accumulated before failure.
+`StopEndTurn` means a final answer is available. `StopInterrupt` means execution paused successfully and `Interrupt` is populated. `StopMaxTokens` means the final answer was cut off at the output token limit or context window: `Text` holds the partial answer, so check for it before treating the text as complete. `StopContentFilter` means a provider safety filter, guardrail or refusal ended the answer. Providers report the normalized reason in `ModelResponse.StopReason` and the original in `ModelResponse.RawStopReason`. Provider, guardrail, budget, iteration-limit, cancellation, and persistence failures are errors; a result returned with an error can still contain usage accumulated before failure.
 
 ## Events
 

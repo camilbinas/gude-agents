@@ -214,6 +214,28 @@ func (p *AnthropicProvider) Capabilities() agent.ModelCapabilities { return p.ca
 // not exposed through the agent.Provider interface.
 func (p *AnthropicProvider) Client() *anthropicsdk.Client { return &p.client }
 
+// normalizeStopReason maps an Anthropic stop reason onto agent.ModelStopReason.
+func normalizeStopReason(reason anthropicsdk.StopReason) agent.ModelStopReason {
+	switch reason {
+	case "":
+		return agent.ModelStopUnknown
+	case anthropicsdk.StopReasonEndTurn:
+		return agent.ModelStopEndTurn
+	case anthropicsdk.StopReasonToolUse:
+		return agent.ModelStopToolUse
+	case anthropicsdk.StopReasonMaxTokens:
+		return agent.ModelStopMaxTokens
+	case anthropicsdk.StopReasonStopSequence:
+		return agent.ModelStopSequence
+	case anthropicsdk.StopReasonRefusal:
+		return agent.ModelStopContentFilter
+	case anthropicsdk.StopReasonModelContextWindowExceeded:
+		return agent.ModelStopContextWindow
+	default: // e.g. pause_turn
+		return agent.ModelStopOther
+	}
+}
+
 // Stream sends a request to Anthropic and emits incremental text and thinking events.
 func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	input := p.buildParams(req)
@@ -291,6 +313,10 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 		case "message_delta":
 			ev := event.AsMessageDelta()
 			resp.Usage.OutputTokens = int(ev.Usage.OutputTokens)
+			if raw := string(ev.Delta.StopReason); raw != "" {
+				resp.RawStopReason = raw
+				resp.StopReason = normalizeStopReason(ev.Delta.StopReason)
+			}
 		}
 	}
 

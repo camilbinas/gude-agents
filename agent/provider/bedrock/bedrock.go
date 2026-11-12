@@ -503,8 +503,37 @@ func applyStreamEvent(resp *agent.ModelResponse, state *streamState, event types
 			state.reasoning = ""
 		}
 
+	case *types.ConverseStreamOutputMemberMessageStop:
+		if raw := string(ev.Value.StopReason); raw != "" {
+			resp.RawStopReason = raw
+			resp.StopReason = normalizeStopReason(ev.Value.StopReason)
+		}
+
 	case *types.ConverseStreamOutputMemberMetadata:
 		applyTokenUsage(resp, ev.Value.Usage)
+	}
+}
+
+// normalizeStopReason maps a Bedrock Converse stop reason onto
+// agent.ModelStopReason.
+func normalizeStopReason(reason types.StopReason) agent.ModelStopReason {
+	switch reason {
+	case "":
+		return agent.ModelStopUnknown
+	case types.StopReasonEndTurn:
+		return agent.ModelStopEndTurn
+	case types.StopReasonToolUse:
+		return agent.ModelStopToolUse
+	case types.StopReasonMaxTokens:
+		return agent.ModelStopMaxTokens
+	case types.StopReasonStopSequence:
+		return agent.ModelStopSequence
+	case types.StopReasonGuardrailIntervened, types.StopReasonContentFiltered:
+		return agent.ModelStopContentFilter
+	case types.StopReasonModelContextWindowExceeded:
+		return agent.ModelStopContextWindow
+	default: // e.g. malformed_model_output, malformed_tool_use
+		return agent.ModelStopOther
 	}
 }
 

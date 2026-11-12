@@ -131,7 +131,8 @@ type LifecycleEvent struct {
 	ToolCount int `json:"tool_count,omitempty"`
 	// IsFinal is true when the iteration produced the final answer (iteration_end).
 	IsFinal bool `json:"is_final,omitempty"`
-	// StopReason is "end_turn", "tool_use" or "error" (model_end).
+	// StopReason is "end_turn", "tool_use" or "error", or the provider's
+	// normalized ModelStopReason (e.g. "max_tokens") when reported (model_end).
 	StopReason string `json:"stop_reason,omitempty"`
 	// Limit is the iteration limit (max_iterations).
 	Limit int `json:"limit,omitempty"`

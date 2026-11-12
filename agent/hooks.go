@@ -94,11 +94,21 @@ type modelFinisher struct {
 }
 
 func (f *modelFinisher) finish(err error, usage TokenUsage, toolCallCount int, responseText string) context.Context {
+	return f.finishWith(err, usage, toolCallCount, responseText, deriveStopReason(toolCallCount, err))
+}
+
+// finishResponse records a successful model call, preferring the provider's
+// reported stop reason over the derived one.
+func (f *modelFinisher) finishResponse(resp *ModelResponse, responseText string) context.Context {
+	return f.finishWith(nil, resp.Usage, len(resp.ToolCalls), responseText, modelStopReason(resp, nil))
+}
+
+func (f *modelFinisher) finishWith(err error, usage TokenUsage, toolCallCount int, responseText, stopReason string) context.Context {
 	now := time.Now()
 	r := f.record
 	r.Phase, r.Err, r.Usage = End, err, usage
 	r.ToolCallCount, r.ResponseText = toolCallCount, responseText
-	r.StopReason = deriveStopReason(toolCallCount, err)
+	r.StopReason = stopReason
 	r.Timestamp, r.Duration = now, now.Sub(f.record.Timestamp)
 	ctx := f.ctx
 	for i := len(f.observers) - 1; i >= 0; i-- {
@@ -316,12 +326,27 @@ func (h *hooks) hasToolLogObserver() bool {
 	return false
 }
 
-// Model stop reasons reported in EventModelEnd lifecycle events.
+// Model stop reasons reported in EventModelEnd lifecycle events and
+// ModelCallRecord.StopReason. When the provider reports a stop reason, its
+// normalized ModelStopReason value (for example "max_tokens") is used instead.
 const (
 	StopReasonEndTurn = "end_turn"
 	StopReasonToolUse = "tool_use"
 	StopReasonError   = "error"
 )
+
+// modelStopReason returns the provider-reported stop reason when present and
+// otherwise derives one from the tool call count and error.
+func modelStopReason(resp *ModelResponse, err error) string {
+	if err == nil && resp != nil && resp.StopReason != ModelStopUnknown {
+		return string(resp.StopReason)
+	}
+	toolCalls := 0
+	if resp != nil {
+		toolCalls = len(resp.ToolCalls)
+	}
+	return deriveStopReason(toolCalls, err)
+}
 
 func deriveStopReason(toolCallCount int, err error) string {
 	if err != nil {

@@ -246,6 +246,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 
 		for _, choice := range chunk.Choices {
 			delta := choice.Delta
+			if choice.FinishReason != "" {
+				resp.RawStopReason = choice.FinishReason
+				resp.StopReason = normalizeFinishReason(choice.FinishReason)
+			}
 
 			// Text content delta.
 			if delta.Content != "" {
@@ -341,6 +345,26 @@ func (p *OpenAIProvider) buildParams(req agent.ModelRequest) openaisdk.ChatCompl
 	return input
 }
 
+// normalizeFinishReason maps an OpenAI-compatible finish_reason onto
+// agent.ModelStopReason. OpenAI reports both natural endings and stop
+// sequences as "stop".
+func normalizeFinishReason(reason string) agent.ModelStopReason {
+	switch reason {
+	case "":
+		return agent.ModelStopUnknown
+	case "stop":
+		return agent.ModelStopEndTurn
+	case "tool_calls", "function_call":
+		return agent.ModelStopToolUse
+	case "length":
+		return agent.ModelStopMaxTokens
+	case "content_filter":
+		return agent.ModelStopContentFilter
+	default:
+		return agent.ModelStopOther
+	}
+}
+
 func parseCompletion(completion *openaisdk.ChatCompletion) *agent.ModelResponse {
 	resp := &agent.ModelResponse{}
 	if len(completion.Choices) == 0 {
@@ -348,6 +372,10 @@ func parseCompletion(completion *openaisdk.ChatCompletion) *agent.ModelResponse 
 	}
 	msg := completion.Choices[0].Message
 	resp.Text = msg.Content
+	if reason := completion.Choices[0].FinishReason; reason != "" {
+		resp.RawStopReason = reason
+		resp.StopReason = normalizeFinishReason(reason)
+	}
 	for _, tc := range msg.ToolCalls {
 		if tc.Type == "function" {
 			fn := tc.AsFunction()

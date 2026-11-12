@@ -542,9 +542,9 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			}
 			return Result{}, &ProviderError{Cause: err}
 		}
-		provF.finish(nil, resp.Usage, len(resp.ToolCalls), resp.Text)
+		provF.finishResponse(resp, resp.Text)
 		r.emitLifecycle(EventModelEnd, LifecycleEvent{
-			Iteration: iteration, StopReason: deriveStopReason(len(resp.ToolCalls), nil), Duration: time.Since(modelStart),
+			Iteration: iteration, StopReason: modelStopReason(resp, nil), Duration: time.Since(modelStart),
 		})
 
 		cumulative := c.rt.addUsage(resp.Usage)
@@ -641,7 +641,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 		if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 			return Result{}, err
 		}
-		return Result{Text: finalText, StopReason: StopEndTurn, Metadata: resp.Metadata}, nil
+		return Result{Text: finalText, StopReason: stopReasonFor(resp), Metadata: resp.Metadata}, nil
 	}
 
 	limitErr := &MaxIterationsError{Limit: a.maxIterations}
