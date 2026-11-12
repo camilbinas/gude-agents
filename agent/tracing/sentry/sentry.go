@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	gosentry "github.com/getsentry/sentry-go"
 	sentryotel "github.com/getsentry/sentry-go/otel"
@@ -163,6 +164,62 @@ func WithSentry(opts ...tracing.TracingOption) agent.Option {
 }
 
 // ---------------------------------------------------------------------------
+// Middleware options
+// ---------------------------------------------------------------------------
+
+// MiddlewareOption configures the Sentry middleware behavior.
+type MiddlewareOption func(*middlewareConfig)
+
+type middlewareConfig struct {
+	captureContent bool
+}
+
+func newMiddlewareConfig(opts ...MiddlewareOption) middlewareConfig {
+	var cfg middlewareConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
+// WithBreadcrumbContent enables recording tool input and result text in Sentry
+// breadcrumbs. It is off by default because tool I/O can contain sensitive data
+// (PII, secrets, proprietary content), mirroring tracing.WithContentCapture and
+// slog.WithContentLogging.
+//
+// When disabled (the default), breadcrumbs still record the tool name, duration,
+// and error status, but omit the input and result payloads. Enable this only in
+// environments where the breadcrumb sink may hold user data and that is acceptable.
+func WithBreadcrumbContent() MiddlewareOption {
+	return func(c *middlewareConfig) { c.captureContent = true }
+}
+
+// maxBreadcrumbTextRunes bounds how much tool input/result text is recorded in a
+// breadcrumb when content capture is enabled.
+const maxBreadcrumbTextRunes = 200
+
+// truncateRunes returns s truncated to at most maxRunes runes, appending an
+// ellipsis when truncation occurs. Unlike slicing a string by byte offset, it
+// never splits a multi-byte UTF-8 rune, so the result is always valid UTF-8.
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes < 0 {
+		maxRunes = 0
+	}
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	// Walk maxRunes runes to find the byte boundary to cut at.
+	count := 0
+	for i := range s {
+		if count == maxRunes {
+			return s[:i] + "..."
+		}
+		count++
+	}
+	return s + "..."
+}
+
+// ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
 
@@ -190,7 +247,15 @@ func ErrorCaptureMiddleware() agent.Middleware {
 
 // BreadcrumbMiddleware returns an agent.Middleware that adds a Sentry
 // breadcrumb for every tool call.
-func BreadcrumbMiddleware() agent.Middleware {
+//
+// By default the breadcrumb records only the tool name, duration, and (on
+// failure) the error message. Tool input and result text are omitted because
+// they can contain sensitive data; pass WithBreadcrumbContent() to include
+// them (consistent with tracing.WithContentCapture and slog.WithContentLogging).
+// When content is included it is truncated on a rune boundary, so the recorded
+// text is always valid UTF-8.
+func BreadcrumbMiddleware(opts ...MiddlewareOption) agent.Middleware {
+	cfg := newMiddlewareConfig(opts...)
 	return func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {
 		return func(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 			start := time.Now()
@@ -202,22 +267,16 @@ func BreadcrumbMiddleware() agent.Middleware {
 				"duration": elapsed.String(),
 			}
 
-			inputStr := string(call.Input)
-			if len(inputStr) > 200 {
-				inputStr = inputStr[:200] + "..."
+			if cfg.captureContent {
+				data["input"] = truncateRunes(string(call.Input), maxBreadcrumbTextRunes)
 			}
-			data["input"] = inputStr
 
 			level := gosentry.LevelInfo
 			if err != nil {
 				level = gosentry.LevelError
 				data["error"] = err.Error()
-			} else {
-				preview := result.Text
-				if len(preview) > 200 {
-					preview = preview[:200] + "..."
-				}
-				data["result"] = preview
+			} else if cfg.captureContent {
+				data["result"] = truncateRunes(result.Text, maxBreadcrumbTextRunes)
 			}
 
 			gosentry.AddBreadcrumb(&gosentry.Breadcrumb{
