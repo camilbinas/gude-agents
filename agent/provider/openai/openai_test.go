@@ -76,7 +76,10 @@ func TestProperty_OpenAIMessageMappingPreservesContent(t *testing.T) {
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: userText}}},
 		}
 
-		result := toOpenAIMessages(msgs, system)
+		result, err := toOpenAIMessages(msgs, system)
+		if err != nil {
+			t.Fatalf("toOpenAIMessages error: %v", err)
+		}
 
 		// If system is non-empty, first message should be system
 		idx := 0
@@ -116,7 +119,10 @@ func TestProperty_OpenAIMessageMappingAssistantWithToolCalls(t *testing.T) {
 			},
 		}
 
-		result := toOpenAIMessages(msgs, "")
+		result, err := toOpenAIMessages(msgs, "")
+		if err != nil {
+			t.Fatalf("toOpenAIMessages error: %v", err)
+		}
 
 		if len(result) != 1 {
 			t.Fatalf("expected 1 message, got %d", len(result))
@@ -161,7 +167,10 @@ func TestProperty_OpenAIMessageMappingToolResult(t *testing.T) {
 			},
 		}
 
-		result := toOpenAIMessages(msgs, "")
+		result, err := toOpenAIMessages(msgs, "")
+		if err != nil {
+			t.Fatalf("toOpenAIMessages error: %v", err)
+		}
 
 		if len(result) != 1 {
 			t.Fatalf("expected 1 message, got %d", len(result))
@@ -501,7 +510,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults_OpenAI(t *testin
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	// MaxCompletionTokens should use the constructor default
 	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 4096 {
@@ -528,7 +537,7 @@ func TestBuildParams_TemperatureMapping_OpenAI(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.Temperature.Valid() {
 		t.Fatal("expected Temperature to be set")
@@ -551,7 +560,7 @@ func TestBuildParams_TopPMapping_OpenAI(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{TopP: &topP},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.TopP.Valid() {
 		t.Fatal("expected TopP to be set")
@@ -570,7 +579,7 @@ func TestBuildParams_TopKIgnored_OpenAI(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{TopK: &topK},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	// TopK should be silently ignored — OpenAI doesn't support it.
 	// Verify no error and other fields remain at defaults.
@@ -595,7 +604,7 @@ func TestBuildParams_StopSequencesMapping_OpenAI(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{StopSequences: stops},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if len(result.Stop.OfStringArray) != 2 {
 		t.Fatalf("expected 2 stop sequences, got %d", len(result.Stop.OfStringArray))
@@ -614,7 +623,7 @@ func TestBuildParams_MaxTokensOverridesDefault_OpenAI(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{MaxTokens: &maxTok},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.MaxCompletionTokens.Valid() || result.MaxCompletionTokens.Value != 2048 {
 		t.Errorf("expected MaxCompletionTokens 2048, got %v", result.MaxCompletionTokens.Value)
@@ -640,7 +649,7 @@ func TestBuildParams_AllFieldsSet_OpenAI(t *testing.T) {
 		},
 		InferenceConfig: cfg,
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.Temperature.Valid() || result.Temperature.Value != 0.5 {
 		t.Errorf("expected Temperature 0.5, got %v", result.Temperature.Value)
@@ -665,7 +674,7 @@ func TestBuildParams_PartialInferenceConfig_OnlyTemperature_OpenAI(t *testing.T)
 		},
 		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	// Temperature should be set
 	if !result.Temperature.Valid() || result.Temperature.Value != 0.3 {
@@ -695,7 +704,7 @@ func TestToOpenAIUserMessages_ImageBlock_RawBytes(t *testing.T) {
 		},
 	}
 
-	msgs := toOpenAIUserMessages([]agent.ContentBlock{block})
+	msgs := mustUserMessages(t, []agent.ContentBlock{block})
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
@@ -733,7 +742,7 @@ func TestToOpenAIUserMessages_ImageBlock_PreEncodedBase64(t *testing.T) {
 		},
 	}
 
-	msgs := toOpenAIUserMessages([]agent.ContentBlock{block})
+	msgs := mustUserMessages(t, []agent.ContentBlock{block})
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
@@ -767,7 +776,7 @@ func TestToOpenAIUserMessages_ImageBlock_DetailAuto(t *testing.T) {
 		},
 	}
 
-	msgs := toOpenAIUserMessages([]agent.ContentBlock{block})
+	msgs := mustUserMessages(t, []agent.ContentBlock{block})
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
@@ -825,7 +834,7 @@ func TestToOpenAIAssistantMessage_ImageBlock_Skipped(t *testing.T) {
 }
 
 func TestToOpenAIUserMessages_DocumentFileID(t *testing.T) {
-	messages := toOpenAIUserMessages([]agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
+	messages := mustUserMessages(t, []agent.ContentBlock{agent.DocumentBlock{Source: agent.DocumentSource{
 		FileID: "file_abc123",
 		Name:   "report.pdf",
 	}}})
