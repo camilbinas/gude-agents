@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/memory/postgres
 go 1.25.0
 
 require (
-	github.com/camilbinas/gude-agents v1.8.9
+	github.com/camilbinas/gude-agents v1.9.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pgvector/pgvector-go v0.3.0
 )
