@@ -230,19 +230,57 @@ func (c *Context) WithExecutionID(id string) *Context {
 // Images returns the images attached to the invocation.
 func (c *Context) Images() []ImageBlock { return c.cfg.images }
 
-// WithImages attaches images to the user message of the invocation.
+// WithImages attaches images to the user message of the invocation. The slice
+// and each ImageBlock's Source.Data bytes are copied on the way in, matching
+// the isolation Clone provides: mutating imgs (or the backing byte slices)
+// after the call does not affect the invocation's stored attachments.
 func (c *Context) WithImages(imgs []ImageBlock) *Context {
-	c.cfg.images = imgs
+	c.cfg.images = copyImageBlocks(imgs)
 	return c
+}
+
+// copyImageBlocks returns a deep copy of imgs: a fresh slice whose every
+// ImageBlock has its Source.Data bytes copied into new backing storage. It
+// returns nil for a nil input to preserve round-trip equality with Images.
+func copyImageBlocks(imgs []ImageBlock) []ImageBlock {
+	if imgs == nil {
+		return nil
+	}
+	out := append([]ImageBlock(nil), imgs...)
+	for i := range out {
+		if out[i].Source.Data != nil {
+			out[i].Source.Data = append([]byte(nil), imgs[i].Source.Data...)
+		}
+	}
+	return out
 }
 
 // Documents returns the documents attached to the invocation.
 func (c *Context) Documents() []DocumentBlock { return c.cfg.documents }
 
-// WithDocuments attaches documents to the user message of the invocation.
+// WithDocuments attaches documents to the user message of the invocation. The
+// slice and each DocumentBlock's Source.Data bytes are copied on the way in,
+// matching the isolation Clone provides: mutating docs (or the backing byte
+// slices) after the call does not affect the invocation's stored attachments.
 func (c *Context) WithDocuments(docs []DocumentBlock) *Context {
-	c.cfg.documents = docs
+	c.cfg.documents = copyDocumentBlocks(docs)
 	return c
+}
+
+// copyDocumentBlocks returns a deep copy of docs: a fresh slice whose every
+// DocumentBlock has its Source.Data bytes copied into new backing storage. It
+// returns nil for a nil input to preserve round-trip equality with Documents.
+func copyDocumentBlocks(docs []DocumentBlock) []DocumentBlock {
+	if docs == nil {
+		return nil
+	}
+	out := append([]DocumentBlock(nil), docs...)
+	for i := range out {
+		if out[i].Source.Data != nil {
+			out[i].Source.Data = append([]byte(nil), docs[i].Source.Data...)
+		}
+	}
+	return out
 }
 
 // InferenceConfig returns the per-invocation inference config override.
@@ -327,18 +365,8 @@ func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
 	if cfg.scopes != nil {
 		clone.scopes = maps.Clone(cfg.scopes)
 	}
-	if cfg.images != nil {
-		clone.images = append([]ImageBlock(nil), cfg.images...)
-		for i := range clone.images {
-			clone.images[i].Source.Data = append([]byte(nil), cfg.images[i].Source.Data...)
-		}
-	}
-	if cfg.documents != nil {
-		clone.documents = append([]DocumentBlock(nil), cfg.documents...)
-		for i := range clone.documents {
-			clone.documents[i].Source.Data = append([]byte(nil), cfg.documents[i].Source.Data...)
-		}
-	}
+	clone.images = copyImageBlocks(cfg.images)
+	clone.documents = copyDocumentBlocks(cfg.documents)
 	if cfg.inferenceConfig != nil {
 		inference := *cfg.inferenceConfig
 		if inference.Temperature != nil {
