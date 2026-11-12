@@ -44,6 +44,8 @@ Handle malformed or non-conforming model output as `*agent.StructuredOutputError
 2. It must satisfy the schema within the supported subset. Otherwise `Reason` is `"schema_validation"`.
 3. It must decode into `T`. Otherwise `Reason` is `"deserialize"`.
 
+Match on the exported `agent.Reason*` constants rather than the bare strings. The full set is `ReasonNilAgent`, `ReasonUnsupportedCapability`, `ReasonNoToolCall`, `ReasonWrongTool`, `ReasonSchemaValidation` and `ReasonDeserialize`.
+
 Schema validation uses `agent.ValidateToolInput`, which enforces a subset of JSON Schema, not the full specification. Enforced keywords: `type` (including unions such as `["string", "null"]`), `enum`, `required`, `properties`, and `items`, applied recursively. Other keywords (for example `minimum`, `maxLength`, `pattern`, `additionalProperties`, `oneOf`) are sent to the model as guidance but are not enforced. For schemas generated from `T`, Go decoding still rejects values whose types don't fit `T`, such as map values of the wrong type. Check any other constraints yourself after `Invoke` returns.
 
 Use pointer/optional fields when omission is valid and JSON tags for stable names. Keep schemas reasonably small and descriptions unambiguous.

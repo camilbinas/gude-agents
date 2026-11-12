@@ -118,13 +118,36 @@ func (e *MaxIterationsError) Is(target error) bool {
 	return target == ErrMaxIterationsExceeded
 }
 
+// StructuredOutputError reason values. Match on these consts rather than the
+// bare strings; the set is exhaustive for StructuredOutputError.Reason.
+const (
+	// ReasonNilAgent: structured.Invoke was called with a nil *Runtime.
+	ReasonNilAgent = "nil_agent"
+	// ReasonUnsupportedCapability: the provider cannot satisfy structured
+	// output through either a named or automatic schema tool choice.
+	ReasonUnsupportedCapability = "unsupported_capability"
+	// ReasonNoToolCall: the model returned no tool call at all.
+	ReasonNoToolCall = "no_tool_call"
+	// ReasonWrongTool: the model called a tool other than the schema tool.
+	ReasonWrongTool = "wrong_tool"
+	// ReasonSchemaValidation: the returned JSON failed schema validation.
+	ReasonSchemaValidation = "schema_validation"
+	// ReasonDeserialize: the returned JSON was invalid or failed to decode
+	// into the target type.
+	ReasonDeserialize = "deserialize"
+)
+
 // StructuredOutputError is returned when structured output fails to produce
-// a valid typed response. Reason indicates what went wrong: "nil_agent",
-// "unsupported_capability", "no_tool_call", "wrong_tool",
-// "schema_validation", or "deserialize".
+// a valid typed response. Reason indicates what went wrong and is one of the
+// exported Reason* consts: ReasonNilAgent, ReasonUnsupportedCapability,
+// ReasonNoToolCall, ReasonWrongTool, ReasonSchemaValidation, or
+// ReasonDeserialize.
 type StructuredOutputError struct {
-	Reason string // "nil_agent", "no_tool_call", "wrong_tool", "schema_validation", "deserialize"
-	Cause  error  // underlying error (nil for no_tool_call/wrong_tool)
+	// Reason is one of the Reason* consts: ReasonNilAgent,
+	// ReasonUnsupportedCapability, ReasonNoToolCall, ReasonWrongTool,
+	// ReasonSchemaValidation, or ReasonDeserialize.
+	Reason string
+	Cause  error // underlying error (nil for no_tool_call/wrong_tool/nil_agent)
 }
 
 func (e *StructuredOutputError) Error() string {

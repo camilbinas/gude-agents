@@ -24,7 +24,7 @@ type Result[T any] struct {
 func Invoke[T any](ctx *agent.Context, a *agent.Runtime, input string) (Result[T], error) {
 	var out Result[T]
 	if a == nil {
-		return out, &agent.StructuredOutputError{Reason: "nil_agent"}
+		return out, &agent.StructuredOutputError{Reason: agent.ReasonNilAgent}
 	}
 	run, err := a.InvokeSchema(ctx, input, tool.GenerateSchema[T](), func(raw json.RawMessage) error {
 		return json.Unmarshal(raw, &out.Value)
