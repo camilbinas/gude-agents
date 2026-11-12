@@ -231,9 +231,51 @@ func TestWindowBoundaryIssuesBoundedLoadAfterCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Previous implementation: 1 (metadata) + up to 100 decrements. New
-	// implementation: metadata read + one tail read = 2.
-	if cs.loadAfter > 3 {
-		t.Fatalf("LoadAfter called %d times; expected a small constant (N+1 regression)", cs.loadAfter)
+	// implementation: metadata read + a range read that doubles its depth on
+	// each miss, so O(log n) reads.
+	if cs.loadAfter > 2+7 {
+		t.Fatalf("LoadAfter called %d times; expected O(log n) (N+1 regression)", cs.loadAfter)
+	}
+}
+
+// recordingStore records the after cursor of each LoadAfter call.
+type recordingStore struct {
+	countingStore
+	afters []uint64
+}
+
+func (r *recordingStore) LoadAfter(ctx context.Context, id string, after uint64) (agent.ConversationSnapshot, error) {
+	r.afters = append(r.afters, after)
+	return r.countingStore.LoadAfter(ctx, id, after)
+}
+
+// TestWindowBoundaryReadsOnlyTheWindowWhenSelfContained proves the common case
+// stays cheap: a self-contained window is resolved from one range read that
+// starts at the preferred boundary, never from the full history.
+func TestWindowBoundaryReadsOnlyTheWindowWhenSelfContained(t *testing.T) {
+	ctx := context.Background()
+	mem := conversation.NewInMemory()
+	var events []agent.Message
+	for i := 0; i < 1000; i++ {
+		events = append(events, message("m"))
+	}
+	if _, err := mem.Append(ctx, "c", events, 0); err != nil {
+		t.Fatal(err)
+	}
+	rs := &recordingStore{countingStore: countingStore{inner: mem}}
+	w, err := NewWindow(rs, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := w.HistoryBoundary(ctx, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boundary != 996 {
+		t.Fatalf("boundary = %d, want 996", boundary)
+	}
+	if len(rs.afters) != 2 || rs.afters[1] != 996 {
+		t.Fatalf("LoadAfter cursors = %v, want [metadata, 996]", rs.afters)
 	}
 }
 

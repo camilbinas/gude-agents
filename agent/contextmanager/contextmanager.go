@@ -52,30 +52,47 @@ func (w *Window) HistoryBoundary(ctx context.Context, id string) (uint64, error)
 		return 0, nil
 	}
 	start := meta.LastSequence - w.count
-	// Load the candidate tail once and scan it in memory to find the largest
-	// boundary (smallest window) whose suffix does not orphan a ToolResult.
-	// Earlier revisions re-read the store once per decrement, which is an N+1
-	// (and O(n^2) data transfer) against a network-backed store when the tail
-	// has a long run of orphaned results. Loading from sequence 0 lets the
-	// backward scan reach any earlier ToolUse the preferred window would have
-	// orphaned, with a single round-trip. The suffix actually returned by a
-	// later LoadAfter(boundary) is never larger than this candidate.
-	tail, err := w.store.LoadAfter(ctx, id, 0)
-	if err != nil {
-		return 0, err
+	// Find the largest boundary <= start (the smallest window) whose suffix
+	// does not orphan a ToolResult. Read a candidate range [lo, LastSequence]
+	// and scan boundaries inside it in memory. When every boundary in the range
+	// orphans a result, widen the range backwards, doubling its extra depth, so
+	// the common case is one read of about the window size and the worst case
+	// is O(log n) reads. Earlier revisions re-read the store once per decrement
+	// (O(n) round-trips, O(n^2) transfer); loading from 0 every turn would
+	// instead transfer the whole history to keep a small window.
+	depth := w.count
+	if depth == 0 {
+		depth = 1
 	}
-	// msgs[i] has canonical sequence i+1, so msgs[boundary:] is exactly the
-	// suffix LoadAfter(boundary) would return. Mirror the original search
-	// direction: begin at the preferred start and walk the boundary down toward
-	// 0, returning the first (largest, i.e. smallest window) boundary whose
-	// suffix does not orphan a ToolResult.
-	msgs := tail.Messages
-	for boundary := start; boundary > 0; boundary-- {
-		if !hasOrphanedToolResult(msgs[boundary:]) {
-			return boundary, nil
+	for lo := start; ; {
+		tail, err := w.store.LoadAfter(ctx, id, lo)
+		if err != nil {
+			return 0, err
 		}
+		// tail.Messages[i] has sequence lo+i+1, so tail.Messages[b-lo:] is the
+		// suffix LoadAfter(b) returns.
+		for boundary := start; boundary >= lo; boundary-- {
+			offset := boundary - lo
+			if offset > uint64(len(tail.Messages)) {
+				continue
+			}
+			if !hasOrphanedToolResult(tail.Messages[offset:]) {
+				return boundary, nil
+			}
+			if boundary == 0 {
+				break
+			}
+		}
+		if lo == 0 {
+			return 0, nil
+		}
+		if lo > depth {
+			lo -= depth
+		} else {
+			lo = 0
+		}
+		depth *= 2
 	}
-	return 0, nil
 }
 func (w *Window) Prepare(_ context.Context, in agent.ContextManagerInput) (agent.ContextManagerOutput, error) {
 	messages := append(append([]agent.Message(nil), in.Recent...), in.Transient...)
