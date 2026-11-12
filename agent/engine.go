@@ -59,6 +59,13 @@ func (a *Runtime) TextStream(ctx *Context, input string) iter.Seq2[string, error
 // Resume continues an interrupted invocation with the given response and
 // returns its Result. With an ExecutionStore, Resume atomically transitions
 // the observed paused execution to running before any tool or provider work.
+//
+// Resume shares the execution's iteration budget (see WithMaxIterations); it
+// does not reset it. A resumed invocation continues from the iteration that was
+// in progress when it paused. An execution that paused on its final allowed
+// iteration has no budget left, so Resume returns a MaxIterationsError before
+// any further provider call. Raise WithMaxIterations if an approval or
+// human-input pause is expected late in a long loop.
 func (a *Runtime) Resume(ctx *Context, in *Interrupt, r ResumeResponse) (Result, error) {
 	return collectResult(a.ResumeStream(ctx, in, r))
 }
@@ -257,9 +264,8 @@ func (a *Runtime) lifecycle(c *Context, convID, userMessage string, body func(r 
 			return Result{}, err
 		}
 		if a.conversation != nil && convID != "" {
-			m := a.conversationLocks.lockFor(convID)
-			m.Lock()
-			defer m.Unlock()
+			h := a.conversationLocks.acquire(convID)
+			defer h.release()
 		}
 		if a.executionStore != nil {
 			if c.cfg.executionResume {
@@ -315,10 +321,16 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	switch {
 	case runErr == nil:
 		execution.Status = ExecutionCompleted
-	case errors.Is(runErr, context.Canceled), errors.Is(runErr, context.DeadlineExceeded):
+	case r.invocationCanceled(runErr):
+		// Canceled is reserved for the invocation ctx itself being done
+		// (caller cancellation or a caller-set deadline). A provider-side
+		// WithProviderTimeout deadline leaves r.c live and surfaces as a
+		// ProviderError; it is a failure, not a cancellation.
 		execution.Status = ExecutionCanceled
+		setFailureReason(&execution, runErr)
 	default:
 		execution.Status = ExecutionFailed
+		setFailureReason(&execution, runErr)
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.c), 5*time.Second)
 	defer cancel()
@@ -328,6 +340,24 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	}
 	r.execution = &updated
 	return nil
+}
+
+// invocationCanceled reports whether runErr reflects the invocation context
+// itself being canceled or deadline-exceeded, rather than an inner deadline
+// such as WithProviderTimeout. It inspects the live invocation ctx: a
+// provider-side timeout leaves r.c undone, so its wrapped
+// context.DeadlineExceeded must not be read as a caller cancellation.
+func (r *run) invocationCanceled(runErr error) bool {
+	if cerr := r.c.Err(); cerr != nil && errors.Is(runErr, cerr) {
+		return true
+	}
+	// A ProviderError (including a provider-timeout) is a failure even when it
+	// wraps a context sentinel from an inner, already-canceled child ctx.
+	var pe *ProviderError
+	if errors.As(runErr, &pe) {
+		return false
+	}
+	return errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)
 }
 
 // prepareTurn applies input guardrails, loads canonical history, retrieves
@@ -695,7 +725,7 @@ func (r *run) persistExecution(change func(*Execution) error) error {
 	r.persistMu.Lock()
 	defer r.persistMu.Unlock()
 	if r.execution == nil {
-		return ErrExecutionRecoveryUnsupported
+		return recoveryUnsupported("no durable execution record to persist")
 	}
 	next := cloneExecution(*r.execution)
 	if err := change(&next); err != nil {
@@ -757,7 +787,7 @@ type priorToolUse struct {
 // idempotency key with an earlier tool boundary.
 func (r *run) priorToolUses() (map[string]priorToolUse, error) {
 	if !r.hasConversation() || r.execution == nil || !r.execution.StartCursorPersisted {
-		return nil, ErrExecutionRecoveryUnsupported
+		return nil, recoveryUnsupported("prior tool uses require a persisted start cursor and conversation")
 	}
 	snapshot, err := r.a.conversation.LoadAfter(r.c, r.convID, r.execution.StartLastSequence)
 	if err != nil {
@@ -785,7 +815,7 @@ func (r *run) planToolBatch(calls []tool.Call) error {
 		return nil
 	}
 	if r.execution == nil || r.execution.ToolBatch != nil {
-		return ErrExecutionRecoveryUnsupported
+		return recoveryUnsupported("cannot plan a tool batch while one is already active")
 	}
 	// Fresh executions persist their cursor before model work. This fallback
 	// keeps legacy in-memory records bounded from their first new plan.
@@ -798,7 +828,7 @@ func (r *run) planToolBatch(calls []tool.Call) error {
 	}
 	return r.persistExecution(func(execution *Execution) error {
 		if execution.ToolBatch != nil {
-			return ErrExecutionRecoveryUnsupported
+			return recoveryUnsupported("tool batch became active before plan could persist")
 		}
 		batch := &ToolBatchExecution{Iteration: r.iteration, Calls: make([]ToolExecution, len(calls))}
 		seen := make(map[string]struct{}, len(calls))
@@ -841,7 +871,7 @@ func (r *run) planToolBatch(calls []tool.Call) error {
 func (r *run) markToolBatchReady() error {
 	return r.persistExecution(func(execution *Execution) error {
 		if execution.ToolBatch == nil {
-			return ErrExecutionRecoveryUnsupported
+			return recoveryUnsupported("no active tool batch to mark ready")
 		}
 		execution.Revision, execution.LastSequence = r.revision, r.lastSequence
 		execution.ToolBatch.ToolUseRevision = r.revision
@@ -849,7 +879,7 @@ func (r *run) markToolBatchReady() error {
 		for i := range execution.ToolBatch.Calls {
 			call := &execution.ToolBatch.Calls[i]
 			if call.Status != ToolExecutionPlanned {
-				return ErrExecutionRecoveryUnsupported
+				return recoveryUnsupported("tool call not in planned state when marking batch ready")
 			}
 			call.Status, call.Input = ToolExecutionReady, nil
 		}
@@ -879,7 +909,7 @@ func (r *run) beginToolExecution(callID, toolName string) (key string, recoveryR
 	}
 	err = r.persistExecution(func(execution *Execution) error {
 		if execution.ToolBatch == nil {
-			return ErrExecutionRecoveryUnsupported
+			return recoveryUnsupported("no active tool batch to claim a handler boundary in")
 		}
 		for i := range execution.ToolBatch.Calls {
 			call := &execution.ToolBatch.Calls[i]
@@ -898,10 +928,10 @@ func (r *run) beginToolExecution(callID, toolName string) (key string, recoveryR
 				}
 				return &ToolExecutionUncertainError{ExecutionID: execution.ID, CallID: callID, ToolName: toolName, IdempotencyKey: call.IdempotencyKey}
 			default:
-				return ErrExecutionRecoveryUnsupported
+				return recoveryUnsupported(fmt.Sprintf("tool call %q in unexpected status %q when claiming boundary", callID, call.Status))
 			}
 		}
-		return ErrExecutionRecoveryUnsupported
+		return recoveryUnsupported(fmt.Sprintf("tool call %q not found in active batch", callID))
 	})
 	return key, recoveryReplay, err
 }
@@ -995,17 +1025,16 @@ func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution,
 		return execution, nil
 	}
 	if execution.Status != ExecutionRunning || execution.Phase != ExecutionPhaseTools || execution.ToolBatch == nil {
-		return execution, ErrExecutionRecoveryUnsupported
+		return execution, recoveryUnsupported(fmt.Sprintf("execution not in a recoverable tool phase (status=%q phase=%q hasBatch=%t)", execution.Status, execution.Phase, execution.ToolBatch != nil))
 	}
 	if execution.ConversationID == "" {
-		return execution, ErrExecutionRecoveryUnsupported
+		return execution, recoveryUnsupported("execution has no conversation ID to load its transcript from")
 	}
 	// A single Runtime serializes recovery with its normal per-conversation work.
 	// The store CAS still protects durable state when different processes race;
 	// replay-safe handlers must honor their idempotency key across processes.
-	m := a.conversationLocks.lockFor(execution.ConversationID)
-	m.Lock()
-	defer m.Unlock()
+	h := a.conversationLocks.acquire(execution.ConversationID)
+	defer h.release()
 	base := ctx.Clone()
 	base.WithConversationID(execution.ConversationID).WithExecutionID(execution.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
@@ -1079,7 +1108,7 @@ func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution,
 func (r *run) recoverToolUses(messages *[]Message) error {
 	batch := r.execution.ToolBatch
 	if batch == nil {
-		return ErrExecutionRecoveryUnsupported
+		return recoveryUnsupported("no active tool batch to recover tool uses for")
 	}
 	allPlanned := true
 	for _, call := range batch.Calls {
@@ -1092,7 +1121,7 @@ func (r *run) recoverToolUses(messages *[]Message) error {
 		content := make([]ContentBlock, 0, len(batch.Calls))
 		for _, call := range batch.Calls {
 			if call.Input == nil {
-				return ErrExecutionRecoveryUnsupported
+				return recoveryUnsupported(fmt.Sprintf("planned tool call %q has no retained input to rebuild its ToolUse", call.CallID))
 			}
 			content = append(content, ToolUseBlock{ToolUseID: call.CallID, Name: call.Name, Input: cloneRaw(call.Input)})
 		}
@@ -1112,25 +1141,25 @@ func (r *run) recoverToolUses(messages *[]Message) error {
 // result is a conflict rather than a source of recovery input.
 func activeToolBatch(messages []Message, batch *ToolBatchExecution) ([]tool.Call, map[string]struct{}, error) {
 	if batch == nil || len(messages) == 0 || messages[0].Role != RoleAssistant {
-		return nil, nil, ErrExecutionRecoveryUnsupported
+		return nil, nil, recoveryUnsupported("active cursor does not start at an assistant ToolUse turn")
 	}
 	if len(messages[0].Content) != len(batch.Calls) {
-		return nil, nil, ErrExecutionRecoveryUnsupported
+		return nil, nil, recoveryUnsupported("assistant turn block count does not match the recorded batch")
 	}
 	calls := make([]tool.Call, len(batch.Calls))
 	seen := make(map[string]struct{}, len(batch.Calls))
 	for i, block := range messages[0].Content {
 		use, ok := block.(ToolUseBlock)
 		if !ok || i >= len(batch.Calls) {
-			return nil, nil, ErrExecutionRecoveryUnsupported
+			return nil, nil, recoveryUnsupported("assistant turn block is not a ToolUse matching the batch")
 		}
 		call := batch.Calls[i]
 		hash, err := toolInputHash(use.Input)
 		if err != nil || use.ToolUseID != call.CallID || use.Name != call.Name || hash != call.InputHash {
-			return nil, nil, ErrExecutionRecoveryUnsupported
+			return nil, nil, recoveryUnsupported(fmt.Sprintf("ToolUse %q does not match recorded call (name/input/hash)", use.ToolUseID))
 		}
 		if _, duplicate := seen[use.ToolUseID]; duplicate {
-			return nil, nil, ErrExecutionRecoveryUnsupported
+			return nil, nil, recoveryUnsupported(fmt.Sprintf("duplicate ToolUse ID %q in the assistant turn", use.ToolUseID))
 		}
 		seen[use.ToolUseID] = struct{}{}
 		calls[i] = tool.Call{ToolUseID: use.ToolUseID, Name: use.Name, Input: cloneRaw(use.Input)}
@@ -1163,18 +1192,18 @@ func (r *run) prepareToolBatch(messages []Message, requested []tool.Call, decisi
 		return filterCompletedToolCalls(messages, requested, decisions)
 	}
 	if r.execution == nil || r.execution.ToolBatch == nil {
-		return nil, nil, ErrExecutionRecoveryUnsupported
+		return nil, nil, recoveryUnsupported("no active tool batch to prepare for dispatch")
 	}
 	calls, canonicalResults, err := activeToolBatchFromMessages(messages, r.execution.ToolBatch)
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(requested) > 0 && len(requested) != len(calls) {
-		return nil, nil, ErrExecutionRecoveryUnsupported
+		return nil, nil, recoveryUnsupported("requested tool call count does not match the active batch")
 	}
 	for i, call := range calls {
 		if len(requested) > 0 && (requested[i].ToolUseID != call.ToolUseID || requested[i].Name != call.Name) {
-			return nil, nil, ErrExecutionRecoveryUnsupported
+			return nil, nil, recoveryUnsupported(fmt.Sprintf("requested tool call %d does not match active call %q", i, call.ToolUseID))
 		}
 	}
 	if len(canonicalResults) > 0 {
@@ -1234,7 +1263,7 @@ func activeToolBatchFromMessages(messages []Message, batch *ToolBatchExecution) 
 			return activeToolBatch(messages[i:], batch)
 		}
 	}
-	return nil, nil, ErrExecutionRecoveryUnsupported
+	return nil, nil, recoveryUnsupported("no assistant ToolUse turn in the transcript matches the recorded batch")
 }
 
 // filterCompletedToolCalls gives local (non-ExecutionStore) approval resumes
@@ -1306,7 +1335,7 @@ func filterCompletedToolCalls(messages []Message, requested []tool.Call, decisio
 		}
 		return remaining, remainingDecisions, nil
 	}
-	return nil, nil, ErrExecutionRecoveryUnsupported
+	return nil, nil, recoveryUnsupported("no assistant ToolUse turn matches the requested approval resume batch")
 }
 
 func (r *run) persistedApprovalDecisions(calls []tool.Call) []*tool.Decision {
@@ -1336,11 +1365,11 @@ func (r *run) persistApprovalDecisions(approval *ApprovalInterrupt, resp ResumeR
 		return nil
 	}
 	if approval == nil {
-		return ErrExecutionRecoveryUnsupported
+		return recoveryUnsupported("cannot persist approval decisions without an approval interrupt")
 	}
 	return r.persistExecution(func(execution *Execution) error {
 		if execution.ToolBatch == nil {
-			return ErrExecutionRecoveryUnsupported
+			return recoveryUnsupported("no active tool batch to persist approval decisions in")
 		}
 		for _, requested := range approval.Calls {
 			found := false
@@ -1354,7 +1383,7 @@ func (r *run) persistApprovalDecisions(approval *ApprovalInterrupt, resp ResumeR
 				}
 			}
 			if !found {
-				return ErrExecutionRecoveryUnsupported
+				return recoveryUnsupported(fmt.Sprintf("approval call %q not found in the active tool batch", requested.CallID))
 			}
 		}
 		return nil
@@ -1376,6 +1405,12 @@ func (r *run) pauseRecoveredExecution(in *Interrupt) error {
 // version make the reconciliation CAS-safe. Succeeded and Failed append one
 // canonical ToolResult; Retry makes the same idempotency key eligible for
 // RecoverExecution.
+//
+// Experimental: this manual reconciliation path and the ToolResolution* API it
+// consumes are the most intricate part of the recovery surface. Their shape may
+// change in a minor release; prefer RecoverExecution for automatic recovery and
+// reach for ReconcileToolExecution only for a non-replay-safe call whose outcome
+// a human has confirmed against the external system.
 func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (Execution, error) {
 	if a.executionStore == nil || a.conversation == nil {
 		return Execution{}, ErrNoExecutionStore
@@ -1424,7 +1459,7 @@ func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, execu
 	base = base.forInvocation(base.Context, &invocationRuntime{})
 	r := &run{a: a, c: base, h: a.hooks(base), execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
 	if claimed.ToolBatch.ToolUseLastSequence == 0 {
-		return cloneExecution(claimed), ErrExecutionRecoveryUnsupported
+		return cloneExecution(claimed), recoveryUnsupported("reconcile has no persisted ToolUse cursor to load results after")
 	}
 	after := claimed.ToolBatch.ToolUseLastSequence - 1
 	snapshot, err := a.conversation.LoadAfter(base, claimed.ConversationID, after)
@@ -1444,7 +1479,7 @@ func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, execu
 // a different result is a stale transcript advance and is rejected.
 func (r *run) finishResolutionClaim(messages *[]Message) error {
 	if r.execution == nil || r.execution.ToolBatch == nil || r.execution.ToolBatch.Resolution == nil {
-		return ErrExecutionRecoveryUnsupported
+		return recoveryUnsupported("no claimed resolution to finish for the active tool batch")
 	}
 	claim := *r.execution.ToolBatch.Resolution
 	_, results, err := activeToolBatch(*messages, r.execution.ToolBatch)
@@ -1582,7 +1617,12 @@ func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	execution.Usage = c.rt.totalUsage()
 	execution.Pause = pauseFromInterrupt(in)
 	execution.PendingPause = nil
-	updated, err := a.executionStore.Save(c, execution, execution.Version)
+	// A pause is a committed outcome, not cancellable work: persist it under a
+	// detached, bounded context like finalizeExecution so a ctx cancelled at the
+	// moment of pausing cannot abort the CAS that records the pause.
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(c), 5*time.Second)
+	defer cancel()
+	updated, err := a.executionStore.Save(saveCtx, execution, execution.Version)
 	if err != nil {
 		persistErr = errors.Join(persistErr, fmt.Errorf("pause execution: %w", err))
 	} else {

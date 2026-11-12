@@ -67,7 +67,9 @@ func Full(id string) agent.Execution {
 				CallID: "call-1", Outcome: agent.ToolResolutionFailed, Output: "out", ErrorMessage: "boom",
 			},
 		},
-		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 3, CacheReadTokens: 2, CacheWriteTokens: 1},
+		Usage:          agent.TokenUsage{InputTokens: 10, OutputTokens: 3, CacheReadTokens: 2, CacheWriteTokens: 1},
+		FailureCode:    agent.FailureCodeProvider,
+		FailureMessage: "provider error: upstream 503",
 	}
 }
 

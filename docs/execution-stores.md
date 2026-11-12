@@ -67,6 +67,10 @@ A pause that must survive a restart needs both halves to be durable: a durable `
 
 The two stores commit independently. The engine appends messages first and then records the returned cursor in the execution, so a crash between them is repaired by `RecoverExecution` rather than rolled back. This is an ordering protocol, not a distributed transaction.
 
+A terminal non-success execution records why it ended. `Execution.FailureCode` is a bounded classification (`provider`, `guardrail`, `tool`, `max_iterations`, `token_budget`, `rate_limit`, `canceled`, `internal`) and `Execution.FailureMessage` is the truncated error text, so the durable record is inspectable after a crash without re-running anything. `canceled` is reserved for the invocation context itself being done (caller cancellation or a caller-set deadline); a provider-side `WithProviderTimeout` deadline is a `provider` failure, not a cancellation. Both fields are empty on a completed or still-running execution.
+
+These two fields are stored inside the same JSON payload as the rest of the execution, so every backend round-trips them with no schema change. The `payload` column (PostgreSQL), hash field (Redis) and attribute (DynamoDB) already hold the whole execution as JSON; an older row written before these fields existed simply decodes them as empty. No migration is required.
+
 ## Backend layouts
 
 ### PostgreSQL

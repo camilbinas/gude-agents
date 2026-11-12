@@ -63,7 +63,19 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 			if c.rt != nil {
 				sink = c.rt.sink
 			}
-			runParallel(sink, len(indices), limit, func(i int) { exec(indices[i], true) })
+			runParallel(sink, len(indices), limit, func(i int) {
+				idx := indices[i]
+				// Mirror the sequential branch: a batch cancelled before dispatch
+				// must not invoke a handler. Without this guard every parallel
+				// handler runs even when ctx is already done.
+				if err := c.Err(); err != nil {
+					outcomes[idx] = toolOutcome{result: ToolResultBlock{
+						ToolUseID: calls[idx].ToolUseID, Content: "not executed: " + err.Error(), IsError: true,
+					}}
+					return
+				}
+				exec(idx, true)
+			})
 			return
 		}
 		for _, i := range indices {

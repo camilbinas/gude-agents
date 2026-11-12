@@ -30,6 +30,14 @@ func WithName(name string) Option {
 }
 
 // WithMaxIterations sets the maximum number of call-execute-respond iterations.
+//
+// The limit is shared across the whole execution, including resumes. The
+// iteration counter is durable: a resumed invocation continues from the
+// iteration recorded when it paused, it does not restart at one. An execution
+// that pauses on its final allowed iteration therefore has no iteration budget
+// left, and Resume returns a MaxIterationsError without calling the provider
+// again. Size the limit for the full tool/provider loop you expect, pauses
+// included, not for a single Invoke call.
 func WithMaxIterations(n int) Option {
 	return func(a *Runtime) error {
 		if n < 1 {
