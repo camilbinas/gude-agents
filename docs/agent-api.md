@@ -78,6 +78,21 @@ func (a *Runtime) ResumeStream(ctx *agent.Context, in *agent.Interrupt, response
 
 All methods share one execution lifecycle. `Invoke` drains `Stream`; `TextStream` projects only live text events. `Resume` and `ResumeStream` continue a paused execution loaded from the `ExecutionStore`; pausing and resuming need both a `ConversationStore` and an `ExecutionStore`.
 
+The iteration limit (`WithMaxIterations`) is shared across the whole execution, including resumes. The counter is durable: `Resume` continues from the iteration that was in progress when the invocation paused, it does not restart at one. An execution that pauses on its final allowed iteration therefore has no budget left and `Resume` returns a `MaxIterationsError` before any further provider call. Size the limit for the full loop you expect, pauses included.
+
+### Recovery
+
+```go
+func (a *Runtime) RecoverExecution(ctx *agent.Context, executionID string) (agent.Execution, error)
+func (a *Runtime) ReconcileToolExecution(ctx *agent.Context, executionID string, executionVersion uint64, callID string, resolution agent.ToolResolution) (agent.Execution, error)
+```
+
+`RecoverExecution` reconciles the single durable incomplete tool boundary after a crash without replaying the model. It projects a recorded pending pause, acknowledges tool results already committed to the `ConversationStore`, and replays only replay-safe handlers; a non-replay-safe call found in-flight returns a `ToolExecutionUncertainError` before any handler runs. A record whose durable shape it cannot act on returns an error that wraps `ErrExecutionRecoveryUnsupported`; the wrapped text names the specific invariant that failed (missing batch, status/phase mismatch, duplicate or misaligned call ID, transcript that does not match the recorded batch), so `errors.Is(err, agent.ErrExecutionRecoveryUnsupported)` still matches while an operator can tell a benign race from real corruption.
+
+A terminal non-success `Execution` carries a bounded reason: `FailureCode` is a classification (`provider`, `guardrail`, `tool`, `max_iterations`, `token_budget`, `rate_limit`, `canceled`, `internal`) and `FailureMessage` is the truncated error text. `canceled` means the invocation context itself was done; a provider-side `WithProviderTimeout` deadline is classified `provider`, since the invocation was not cancelled by its caller.
+
+**Experimental:** `ReconcileToolExecution` and the `ToolResolution` / `ToolResolutionOutcome` types are the manual reconciliation path for a non-replay-safe call whose outcome a human has confirmed against the external system. They are the most intricate part of the recovery surface and may change in a minor release. Prefer `RecoverExecution` for automatic recovery.
+
 ## Result
 
 ```go
