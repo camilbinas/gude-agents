@@ -60,15 +60,21 @@ const (
 	RoleRetrieverQuery         AttrRole = AttrRole(AttrRetrieverQuery)
 	RoleRetrieverDocumentCount AttrRole = AttrRole(AttrRetrieverDocumentCount)
 
-	// Operation name — emitted per span to classify it for evaluation systems.
-	// Default is empty (disabled). Set via scheme to enable.
-	RoleOperationName AttrRole = ""
+	// Operation name — emitted per span by default to classify it for
+	// GenAI-aware backends and evaluation systems (gen_ai.operation.name).
+	// Map it to "" in a custom scheme to disable emission.
+	RoleOperationName AttrRole = AttrRole(AttrGenAIOperationName)
 
 	// Content capture (opt-in via WithContentCapture)
 	RoleGenAIPrompt           AttrRole = AttrRole(AttrGenAIPrompt)
 	RoleGenAISystemPrompt     AttrRole = AttrRole(AttrGenAISystemPrompt)
 	RoleGenAICompletion       AttrRole = AttrRole(AttrGenAICompletion)
 	RoleGenAIProviderResponse AttrRole = AttrRole(AttrGenAIProviderResponse)
+
+	// Structured content attributes per current GenAI semconv
+	// (opt-in via WithContentCapture).
+	RoleGenAIInputMessages  AttrRole = AttrRole(AttrGenAIInputMessages)
+	RoleGenAIOutputMessages AttrRole = AttrRole(AttrGenAIOutputMessages)
 
 	// Inference config
 	RoleGenAITemperature   AttrRole = AttrRole(AttrGenAITemperature)
