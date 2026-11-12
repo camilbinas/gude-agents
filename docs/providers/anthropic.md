@@ -14,6 +14,8 @@ a, err := agent.New(prov, "Answer clearly.")
 
 Credentials default to `ANTHROPIC_API_KEY`; `WithAPIKey` overrides it. Options include maximum tokens, portable thinking effort, explicit thinking budget, and `WithPromptCaching()`, which marks the system prompt and document blocks for Anthropic prompt caching. Cache read and write token counts are reported in `TokenUsage` whether or not caching is enabled. Thinking events flow through `Runtime.Stream`; final provider metadata remains in `Result.Metadata`.
 
+Anthropic requires `max_tokens` on every request. When you do not set it (neither `WithMaxTokens` nor `InferenceConfig.MaxTokens`), the adapter chooses a default: a known model ID uses that model's documented output ceiling, while an unknown model ID uses a conservative default (8192) that every current Claude model accepts. The previous behavior requested 128000 for unknown models, which the smaller models reject — set `max_tokens` explicitly, or construct the provider with a known model ID, when you need a higher ceiling.
+
 Choose a currently available model ID for your account and region. Tool support, image/document limits, thinking, caching, and token pricing differ by model; keep these as deployment configuration rather than hard-coding them into reusable agent logic.
 
 See [Providers](../providers.md) for the shared request/response contract.

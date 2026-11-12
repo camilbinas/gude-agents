@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // --- Sentinel errors ---
@@ -45,8 +47,26 @@ var ErrStructuredOutputUnsupported = errors.New("structured output is unsupporte
 // --- Typed errors ---
 
 // ProviderError wraps a failure from an LLM provider call.
+//
+// Provider adapters classify the underlying SDK/transport error and populate
+// the optional fields so callers can implement backoff and failover without
+// type-asserting SDK-internal error types:
+//
+//   - StatusCode is the HTTP status code when the failure came from an HTTP
+//     response (0 when unknown, e.g. a transport/network error).
+//   - Retryable reports whether retrying the same call, or failing over to
+//     another provider, can plausibly succeed. Rate limits (429), server
+//     errors (5xx), provider throttling/overload, and network errors are
+//     retryable; client errors such as 400/401/403/404 are not.
+//   - RetryAfter is the provider-advised minimum wait before a retry, parsed
+//     from a Retry-After header when present (0 when not advised).
+//
+// Use IsRetryable to test an error anywhere in a wrapped chain.
 type ProviderError struct {
-	Cause error
+	Cause      error
+	StatusCode int
+	Retryable  bool
+	RetryAfter time.Duration
 }
 
 func (e *ProviderError) Error() string { return "provider error: " + e.Cause.Error() }
@@ -54,6 +74,37 @@ func (e *ProviderError) Unwrap() error { return e.Cause }
 func (e *ProviderError) Is(target error) bool {
 	_, ok := target.(*ProviderError)
 	return ok
+}
+
+// IsRetryable reports whether err (or any error it wraps) is a ProviderError
+// that the adapter classified as retryable. It returns false for a nil error,
+// for an unclassified error, and for a ProviderError marked non-retryable.
+//
+// Context cancellation and deadline-exceeded errors are never retryable:
+// IsRetryable returns false for them even when wrapped in a ProviderError,
+// since no retry or failover can succeed under a done context.
+func IsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return pe.Retryable
+	}
+	return false
+}
+
+// RetryAfter returns the provider-advised minimum wait before retrying err, or
+// 0 when err is not a ProviderError or carries no advice.
+func RetryAfter(err error) time.Duration {
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return pe.RetryAfter
+	}
+	return 0
 }
 
 // ProviderCreationError wraps a failure from constructing an LLM provider.

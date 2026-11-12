@@ -95,10 +95,17 @@ var _ agent.Provider = (*Provider)(nil)
 var _ agent.CapabilityProvider = (*Provider)(nil)
 
 // Stream tries each provider in order, returning the first success. A failed
-// provider is retried only when it has not emitted an event to the caller and
-// ctx is still live: once ctx is cancelled or its deadline has passed, no
-// further provider is started and the error is returned immediately, since a
-// fallback cannot succeed under a done context.
+// provider is retried on the next one only when all of the following hold:
+//   - it has not emitted an event to the caller (a partial stream cannot be
+//     cleanly restarted on another provider);
+//   - ctx is still live — once ctx is cancelled or its deadline has passed, no
+//     further provider is started, since a fallback cannot succeed under a done
+//     context;
+//   - the error is not a classified non-retryable provider error. A
+//     ProviderError marked non-retryable (for example a 400 malformed request
+//     or a 401/403 auth failure) will fail the same way on every provider, so
+//     the chain stops and returns it immediately. Retryable errors (429/5xx/
+//     throttling/network) and unclassified errors still advance.
 func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	var lastErr error
 	for i, provider := range p.chain {
@@ -126,6 +133,34 @@ func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func
 		if emitted.Load() {
 			return nil, lastErr
 		}
+		// Stop immediately on a classified non-retryable error: another provider
+		// cannot fix a malformed request or an auth failure. Also stop if the
+		// context is done (cancellation is never retryable).
+		if isNonRetryable(err) {
+			return nil, lastErr
+		}
 	}
 	return nil, fmt.Errorf("all providers failed: %w", lastErr)
+}
+
+// isNonRetryable reports whether err is a classified non-retryable provider
+// error, or a context cancellation/deadline. An unclassified error (not a
+// ProviderError, or a ProviderError whose fields the adapter did not set)
+// returns false so the chain still advances — the conservative default for an
+// error whose retryability is unknown.
+func isNonRetryable(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var pe *agent.ProviderError
+	if errors.As(err, &pe) {
+		// A ProviderError is non-retryable only when it carries a classification
+		// (an HTTP status) and that classification says not retryable. A bare
+		// ProviderError with no StatusCode and Retryable=false is treated as
+		// unclassified and still advances.
+		if pe.StatusCode != 0 && !pe.Retryable {
+			return true
+		}
+	}
+	return false
 }
