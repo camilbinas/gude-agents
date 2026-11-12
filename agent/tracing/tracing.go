@@ -119,9 +119,11 @@ type spanContextKey struct {
 	capability string
 }
 
-// newOtelHook constructs an otelHook with the given tracer and options applied.
-// The scheme is left as a nil map by default; AttributeScheme.Key falls back
-// to each role's default key when the map is nil or missing an entry.
+// newOtelHook constructs an otelHook with the given options applied. The
+// tracer is left nil for the caller to set after it knows the final scope name
+// (see resolvedScopeName); pass a non-nil tracer only in tests that bypass a
+// TracerProvider. The scheme is left as a nil map by default; AttributeScheme.Key
+// falls back to each role's default key when the map is nil or missing an entry.
 func newOtelHook(tracer trace.Tracer, opts ...TracingOption) *otelHook {
 	h := &otelHook{tracer: tracer}
 	for _, opt := range opts {
@@ -148,15 +150,8 @@ func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 		if tp == nil {
 			tp = otel.GetTracerProvider()
 		}
-		h := &otelHook{}
-		for _, opt := range opts {
-			opt(h)
-		}
-		scopeName := instrumentationName
-		if h.scopeName != "" {
-			scopeName = h.scopeName
-		}
-		h.tracer = tp.Tracer(scopeName)
+		h := newOtelHook(nil, opts...)
+		h.tracer = tp.Tracer(h.resolvedScopeName())
 		return agent.WithObserver(h)(a)
 	}
 }
@@ -168,6 +163,15 @@ func (h *otelHook) startSpan(ctx context.Context, capability, name string, times
 	}
 	ctx, span := h.tracer.Start(ctx, name, opts...)
 	return context.WithValue(ctx, spanContextKey{owner: h, capability: capability}, span), span
+}
+
+// resolvedScopeName returns the instrumentation scope name for this hook,
+// falling back to the package default when unset.
+func (h *otelHook) resolvedScopeName() string {
+	if h.scopeName != "" {
+		return h.scopeName
+	}
+	return instrumentationName
 }
 
 func (h *otelHook) spanFromContext(ctx context.Context, capability string) trace.Span {
