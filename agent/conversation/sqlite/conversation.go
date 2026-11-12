@@ -50,11 +50,16 @@ func New(dsn string, opts ...Option) (*Conversation, error) {
 	// SQLite pragmas such as foreign_keys are connection-local. modernc's
 	// _pragma URI option applies them to every connection opened by database/sql,
 	// so Delete's ON DELETE CASCADE remains correct when the pool grows.
+	//
+	// _txlock=immediate makes every BeginTx take the write lock up front. Append
+	// and the other read-then-write transactions would otherwise start deferred
+	// and upgrade on their first write; under WAL a contended upgrade fails at
+	// once with SQLITE_BUSY instead of waiting for busy_timeout.
 	separator := "?"
 	if strings.Contains(dsn, "?") {
 		separator = "&"
 	}
-	dsn = fmt.Sprintf("%s%s_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)", dsn, separator, cfg.busyTimeout.Milliseconds())
+	dsn = fmt.Sprintf("%s%s_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)&_txlock=immediate", dsn, separator, cfg.busyTimeout.Milliseconds())
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite conversation: open: %w", err)
