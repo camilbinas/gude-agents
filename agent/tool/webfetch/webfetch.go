@@ -20,8 +20,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -50,6 +52,10 @@ type config struct {
 	maxChars     int
 	client       *http.Client
 	formatter    Formatter
+
+	// blocked reports whether a resolved address must not be dialed. Nil means
+	// isBlockedIP. Tests substitute it to reach httptest servers on loopback.
+	blocked func(net.IP) bool
 }
 
 // WithTimeout sets the HTTP request timeout. Default: 15s.
@@ -62,7 +68,7 @@ func WithMaxBytes(n int64) Option {
 	return func(c *config) { c.maxBytes = n }
 }
 
-// WithMaxRedirects sets the maximum number of redirects to follow. Default: 5.
+// WithMaxRedirects sets the maximum number of redirects to follow. Default: 3.
 func WithMaxRedirects(n int) Option {
 	return func(c *config) { c.maxRedirects = n }
 }
@@ -77,6 +83,12 @@ func WithMaxChars(n int) Option {
 // WithClient sets a custom HTTP client. When set, timeout and redirect
 // options are ignored — the caller is responsible for configuring them
 // on the provided client.
+//
+// A custom client also replaces the built-in SSRF protection, which lives in
+// the default client's dialer: the tool still rejects private and loopback IP
+// literals in the requested URL, but hostnames, DNS answers and redirects are
+// no longer checked. Use a custom client only when its transport enforces an
+// equivalent egress policy.
 func WithClient(client *http.Client) Option {
 	return func(c *config) { c.client = client }
 }
@@ -104,16 +116,7 @@ func New(opts ...Option) tool.Tool {
 
 	client := cfg.client
 	if client == nil {
-		maxRedirects := cfg.maxRedirects
-		client = &http.Client{
-			Timeout: cfg.timeout,
-			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-				if len(via) >= maxRedirects {
-					return fmt.Errorf("stopped after %d redirects", maxRedirects)
-				}
-				return nil
-			},
-		}
+		client = newGuardedClient(cfg)
 	}
 
 	maxBytes := cfg.maxBytes
@@ -240,27 +243,84 @@ func isTextContent(ct string) bool {
 	return false
 }
 
-// isPrivateURL does a best-effort check for private/loopback addresses.
+// errBlockedAddress is returned when a connection would reach a non-public
+// address.
+var errBlockedAddress = errors.New("destination resolves to a private, loopback or otherwise non-public address")
+
+// newGuardedClient builds the default HTTP client. SSRF protection is enforced
+// in the dialer's Control hook, which runs after DNS resolution for every
+// connection attempt, including each redirect hop, so neither a hostname that
+// resolves to an internal address nor a redirect to one can bypass it. The
+// proxy is disabled because a proxied request would dial the proxy instead of
+// the destination and skip the check.
+func newGuardedClient(cfg *config) *http.Client {
+	blocked := cfg.blocked
+	if blocked == nil {
+		blocked = isBlockedIP
+	}
+	dialer := &net.Dialer{
+		Timeout: cfg.timeout,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return fmt.Errorf("web_fetch: dial %q: %w", address, err)
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || blocked(ip) {
+				return fmt.Errorf("web_fetch: dial %s: %w", host, errBlockedAddress)
+			}
+			return nil
+		},
+	}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+	maxRedirects := cfg.maxRedirects
+	return &http.Client{
+		Timeout:   cfg.timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return fmt.Errorf("redirect to unsupported scheme %q", req.URL.Scheme)
+			}
+			return nil
+		},
+	}
+}
+
+// cgnat is the RFC 6598 shared address space, used for carrier-grade NAT and
+// by some cloud providers for internal services.
+var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// isBlockedIP reports whether ip is not a public unicast address.
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || cgnat.Contains(ip)
+}
+
+// isPrivateURL is a fast pre-flight rejection of private IP literals. It is
+// not the security boundary: the guarded client's dialer checks every
+// resolved address.
 func isPrivateURL(rawURL string) bool {
-	// Extract host from URL.
-	host := rawURL
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false // http.NewRequest reports the parse error
 	}
-	if i := strings.Index(host, "/"); i >= 0 {
-		host = host[:i]
-	}
-	if i := strings.Index(host, ":"); i >= 0 {
-		host = host[:i]
-	}
-
-	ip := net.ParseIP(host)
+	ip := net.ParseIP(u.Hostname())
 	if ip == nil {
-		// Not an IP literal — allow hostname-based URLs.
-		return false
+		return false // hostname: checked by the dialer after resolution
 	}
-
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	return isBlockedIP(ip)
 }
 
 var reHTMLTag = regexp.MustCompile(`<[^>]*>`)
