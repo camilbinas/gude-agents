@@ -20,7 +20,7 @@ import (
 
     "github.com/camilbinas/gude-agents/agent"
     "github.com/camilbinas/gude-agents/agent/conversation"
-    "github.com/camilbinas/gude-agents/agent/provider/openai"
+    "github.com/camilbinas/gude-agents/agent/provider/bedrock"
     "github.com/camilbinas/gude-agents/agent/tool"
 )
 
@@ -33,11 +33,9 @@ func main() {
         return "18 C in " + in.City, nil
     })
 
-    // Choose the model explicitly. Gude never picks one for you.
-    prov, err := openai.New("gpt-5.6")
-    if err != nil {
-        log.Fatal(err)
-    }
+    // Choose the model explicitly. Gude never picks one for you. This model
+    // must be available in your AWS region and account.
+    prov := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
     a, err := agent.Agent(prov, "Answer clearly and use tools when useful.",
         agent.WithTools(weather),
         agent.WithConversationStore(conversation.NewInMemory()), // process-local: history is lost when the program exits
@@ -58,6 +56,8 @@ func main() {
     fmt.Println("tokens:", result.Usage.Total())
 }
 ```
+
+The matching runnable program is [`examples/getting-started`](../examples/getting-started/main.go); it uses the same `bedrock` provider and `agent.NewContext` so the first thing you read and the first thing you run agree.
 
 `agent.Agent(...)` returns a `*agent.Runtime`; `agent.New(...)` is the same constructor under its original name and remains available. Runtime configuration is fixed after construction, except a supplied dynamic `tool.Registry`. Configure each call by chaining mutable `Context.With…` methods before invocation.
 

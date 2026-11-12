@@ -23,7 +23,7 @@ result, err := a.Invoke(ctx, "What changed?")
 ## Build agents
 
 - [Tools](tools.md) and [middleware](middleware.md)
-- [Interrupts and resume](interrupts.md)
+- [Interrupts and resume](interrupts.md) and [request interception](interception.md)
 - [Conversation persistence](conversation.md)
 - [RAG](rag.md) and [long-term memory](memory.md)
 - [Guardrails](guardrails.md) and [RBAC](rbac.md)
