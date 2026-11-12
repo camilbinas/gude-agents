@@ -1,0 +1,92 @@
+# golangci-lint configuration (schema v2). Build golangci-lint with the same Go
+# toolchain that compiles the code, or it panics on newer std-library ASTs; CI
+# installs it from source for exactly this reason (see .github/workflows/ci.yml).
+#
+# The set is deliberately small and high-signal: the vet-class checks plus the
+# ones that catch real bugs or dead code in a public SDK. gofmt is enforced as a
+# formatter. revive's exported-doc rule is intentionally left off: the tree is
+# large and the doc-comment noise outweighs the value at this stage.
+#
+# Tuned to pass on master. Every dialed-back check is for a concrete reason, not
+# to hide bugs:
+#   - errcheck ignores deferred/one-shot Close() and Tx.Rollback(), matching the
+#     idiom already used across the stores, providers and HTTP tool clients, and
+#     the test tree, where helper errors are asserted elsewhere.
+#   - staticcheck keeps the SA correctness checks; the ST (stylecheck) naming and
+#     package-comment rules and the QF quickfix suggestions are off. Model
+#     constructors deliberately use names like US_ClaudeOpus5, so ST1003 would be
+#     wrong here, and ST1000/ST1020/ST1021 are documentation style, not defects.
+#   - govet's go1.27 "inline" hint is off: a style suggestion on correct code.
+#   - misspell is off: the code uses British spellings (cancelled, serialises)
+#     consistently; enforcing US spelling would mean rewriting library source,
+#     which is a separate decision, not a lint gate.
+version: "2"
+
+run:
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - govet        # go vet's analyzers.
+    - staticcheck  # correctness (SA*); ST/QF style classes disabled below.
+    - errcheck     # unchecked errors.
+    - ineffassign  # assignments never read.
+    - unused       # unused code.
+  settings:
+    govet:
+      disable:
+        - inline
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - "(*os.File).Close"
+    staticcheck:
+      checks:
+        - all
+        - -ST1000  # package comment
+        - -ST1003  # underscores / ALL_CAPS in names (model constructors use them deliberately)
+        - -ST1016  # consistent receiver names
+        - -ST1020  # exported-func comment form
+        - -ST1021  # exported-type comment form
+        - -QF1001  # De Morgan quickfix
+        - -QF1011  # redundant type quickfix
+        - -QF1012  # Fprintf quickfix
+        - -ST1005  # error-string capitalization
+        - -SA1019  # use of our own deprecated symbols kept for compatibility
+
+  exclusions:
+    rules:
+      # Tests legitimately discard helper errors and may trip SA checks that
+      # target production assumptions (nil-context in a negative test, etc.).
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
+          - staticcheck
+      # Deferred/one-shot teardown on pgx and driver types errcheck cannot match
+      # by stdlib interface: Rows.Close, Tx.Rollback, a Bedrock stream.Close and
+      # a RAG reader Close whose error is not actionable. Same idiom as the rest
+      # of the stores; scoped to the exact teardown call text.
+      - linters: [errcheck]
+        source: '\.(Rollback|Close)\([^)]*\)$'
+      # Dead code already catalogued in the round-2 static-analysis report; its
+      # removal touches library .go files owned by the API/stores/providers
+      # fixers, so it is excluded here rather than silenced in source. Re-enable
+      # once those symbols are removed.
+      - path: agent/event\.go
+        text: "isStopped is unused"
+      - path: agent/memory/postgres/(schema|store)\.go
+        text: "(insertColumns|extractValues) is unused"
+      - path: agent/provider/bedrock/bedrock\.go
+        text: "(imageBytes|documentBytes) is unused"
+      - path: agent/ratelimit/redis/store\.go
+        text: "contextFor is unused"
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
