@@ -33,6 +33,12 @@ const (
 	defaultSearchDepth       = "basic"
 	defaultTimeout           = 10 * time.Second
 	defaultMaxCharsPerResult = 300
+
+	// minMaxResults and maxMaxResults bound WithMaxResults. Tavily accepts
+	// max_results from 1 to 20, so values outside this range are clamped at
+	// construction rather than sent through to a 4xx.
+	minMaxResults = 1
+	maxMaxResults = 20
 )
 
 // Option configures the web search tool.
@@ -48,8 +54,21 @@ type config struct {
 }
 
 // WithMaxResults sets the maximum number of search results. Default: 5.
+// The value is clamped to the range the Tavily API accepts (1 to 20): a value
+// below 1 becomes 1 and a value above 20 becomes 20, so an out-of-range option
+// never reaches the API as a malformed max_results.
 func WithMaxResults(n int) Option {
-	return func(c *config) { c.maxResults = n }
+	return func(c *config) { c.maxResults = clampMaxResults(n) }
+}
+
+func clampMaxResults(n int) int {
+	if n < minMaxResults {
+		return minMaxResults
+	}
+	if n > maxMaxResults {
+		return maxMaxResults
+	}
+	return n
 }
 
 // WithSearchDepth sets the Tavily search depth: "basic" or "advanced".
@@ -167,7 +186,7 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Tavily API returned %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("tavily API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
@@ -194,12 +213,24 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 	}
 
 	for i, r := range result.Results {
-		content := r.Content
-		if maxChars > 0 && len(content) > maxChars {
-			content = content[:maxChars] + "…"
-		}
+		content := truncateRunes(r.Content, maxChars)
 		fmt.Fprintf(&sb, "%d. %s (score: %.2f)\n   %s\n   %s\n\n", i+1, r.Title, r.Score, r.URL, content)
 	}
 
 	return sb.String(), nil
+}
+
+// truncateRunes shortens s to at most maxChars runes, appending an ellipsis
+// when it cuts. maxChars is counted in runes (not bytes) so a multibyte
+// character is never split mid-sequence, which would emit invalid UTF-8.
+// A non-positive maxChars disables truncation.
+func truncateRunes(s string, maxChars int) string {
+	if maxChars <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= maxChars {
+		return s
+	}
+	return string(runes[:maxChars]) + "…"
 }
