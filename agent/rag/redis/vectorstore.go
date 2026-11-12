@@ -84,8 +84,15 @@ type Store struct {
 }
 
 // New creates a new Store. Pings Redis, then creates the HNSW index via
-// FT.CREATE if it doesn't already exist.
+// FT.CREATE if it doesn't already exist. dim must be >= 1 and indexName must
+// be non-empty.
 func New(opts Options, indexName string, dim int, vopts ...StoreOption) (*Store, error) {
+	if dim < 1 {
+		return nil, fmt.Errorf("redis vectorstore: dim must be >= 1, got %d", dim)
+	}
+	if indexName == "" {
+		return nil, fmt.Errorf("redis vectorstore: indexName must not be empty")
+	}
 	client := newClient(opts)
 
 	s := &Store{
@@ -142,6 +149,37 @@ func (s *Store) documentID(key string) string {
 	return strings.TrimPrefix(key, s.indexName+":")
 }
 
+// decodeMetadata unmarshals a stored metadata JSON string. An empty string
+// decodes to a nil map (no metadata). A non-empty but malformed string is a
+// corrupted record and is surfaced as an error rather than silently returning
+// a document with nil metadata, which would be invisible data loss.
+func decodeMetadata(metadataJSON string) (map[string]string, error) {
+	if metadataJSON == "" {
+		return nil, nil
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		return nil, fmt.Errorf("decode metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+// validateEmbedding checks that an embedding matches the store's configured
+// dimension and contains only finite values. A mismatched length would
+// otherwise reach RediSearch as an opaque engine error (or silently wrong
+// results), and a NaN/Inf component corrupts the stored vector.
+func (s *Store) validateEmbedding(embedding []float64) error {
+	if len(embedding) != s.dim {
+		return fmt.Errorf("embedding dimension is %d, want %d", len(embedding), s.dim)
+	}
+	for i, v := range embedding {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("embedding value %d must be finite", i)
+		}
+	}
+	return nil
+}
+
 // float64sToFloat32Bytes converts a []float64 slice to a little-endian float32 binary blob.
 func float64sToFloat32Bytes(v []float64) []byte {
 	buf := make([]byte, len(v)*4)
@@ -167,6 +205,9 @@ func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]
 
 	ids := make([]string, len(docs))
 	for i, doc := range docs {
+		if err := s.validateEmbedding(embeddings[i]); err != nil {
+			return nil, fmt.Errorf("redis vectorstore: upsert: document %d: %w", i, err)
+		}
 		metaJSON, err := json.Marshal(doc.Metadata)
 		if err != nil {
 			return nil, fmt.Errorf("redis vectorstore: upsert: %w", err)
@@ -197,6 +238,9 @@ func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]
 func (s *Store) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]rag.ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("redis vectorstore: topK must be >= 1, got %d", topK)
+	}
+	if err := s.validateEmbedding(queryEmbedding); err != nil {
+		return nil, fmt.Errorf("redis vectorstore: search: %w", err)
 	}
 
 	blob := float64sToFloat32Bytes(queryEmbedding)
@@ -270,9 +314,9 @@ func (s *Store) parseRESP3(m map[interface{}]interface{}) ([]rag.ScoredDocument,
 		}
 		similarity := 1 - distance
 
-		var metadata map[string]string
-		if metadataJSON != "" {
-			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+		metadata, err := decodeMetadata(metadataJSON)
+		if err != nil {
+			return nil, fmt.Errorf("redis vectorstore: document %q: %w", s.documentID(key), err)
 		}
 
 		scored = append(scored, rag.ScoredDocument{
@@ -330,9 +374,9 @@ func (s *Store) parseRESP2(results []interface{}) ([]rag.ScoredDocument, error) 
 		}
 		similarity := 1 - distance
 
-		var metadata map[string]string
-		if metadataJSON != "" {
-			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+		metadata, err := decodeMetadata(metadataJSON)
+		if err != nil {
+			return nil, fmt.Errorf("redis vectorstore: document %q: %w", s.documentID(key), err)
 		}
 
 		scored = append(scored, rag.ScoredDocument{
@@ -385,9 +429,9 @@ func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error)
 		content := result["content"]
 		metadataJSON := result["metadata"]
 
-		var metadata map[string]string
-		if metadataJSON != "" {
-			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
+		metadata, err := decodeMetadata(metadataJSON)
+		if err != nil {
+			return nil, fmt.Errorf("redis vectorstore: find: document %q: %w", ids[i], err)
 		}
 
 		docs = append(docs, rag.Document{
@@ -403,9 +447,32 @@ func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error)
 	return docs, nil
 }
 
+// ErrUnsafeFilterValue is returned by DeleteByMetadata when a filter key or
+// value contains a character that cannot be matched unambiguously against the
+// JSON-encoded metadata TEXT field (see the DeleteByMetadata doc comment).
+var ErrUnsafeFilterValue = fmt.Errorf("redis vectorstore: unsafe filter key/value")
+
 // DeleteByMetadata deletes all documents whose metadata contains all key-value
 // pairs in the filter (AND semantics). Uses FT.SEARCH to find matching documents,
 // then DEL to remove them. Returns an error if the filter is empty.
+//
+// Experimental: metadata is stored as a single JSON string in a RediSearch
+// TEXT field, and this method matches each filter pair by searching for the
+// substring `"key":"value"` within that field. Because RediSearch TEXT fields
+// tokenize their input, substring matching is approximate: it can over-match
+// (a value that is a prefix/substring of another, or a pair that collides with
+// a different key) and is sensitive to tokenization. For exact, injection-safe
+// filtering, promote the keys you filter on to dedicated indexed fields (as the
+// memory/redis backend does with TAG fields) rather than relying on this path.
+//
+// To keep matching well-defined, keys and values that contain a double quote
+// ("), colon (:), or backslash (\) are rejected with ErrUnsafeFilterValue,
+// since those characters appear in the JSON encoding itself and would make the
+// substring ambiguous. Callers that need such values must delete by ID instead.
+//
+// This behavior and signature are stable; the "Experimental" note flags that
+// the substring matching strategy may be replaced by exact field matching in a
+// future release (a change that would only ever match more precisely).
 func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
 	if len(filter) == 0 {
 		return fmt.Errorf("vectorstore: filter must not be empty")
@@ -413,9 +480,14 @@ func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) 
 
 	// Build a FT.SEARCH query that matches all filter k/v pairs in the metadata
 	// TEXT field. Since metadata is stored as a JSON string (e.g. {"source":"readme.md"}),
-	// we search for each "key":"value" substring in the field.
+	// we search for each "key":"value" substring in the field. Reject values
+	// containing JSON structural characters up front so the substring is
+	// unambiguous.
 	var clauses []string
 	for k, v := range filter {
+		if !safeFilterComponent(k) || !safeFilterComponent(v) {
+			return fmt.Errorf("%w: key %q value %q (contains \" : or \\); delete by ID instead", ErrUnsafeFilterValue, k, v)
+		}
 		// Escape special RediSearch characters in the search term.
 		term := escapeRedisSearchTerm(fmt.Sprintf(`"%s":"%s"`, k, v))
 		clauses = append(clauses, fmt.Sprintf("@metadata:(%s)", term))
@@ -448,11 +520,22 @@ func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) 
 	return nil
 }
 
+// safeFilterComponent reports whether a filter key or value is free of the
+// JSON structural characters (double quote, colon, backslash) that would make
+// the `"key":"value"` substring match against the metadata TEXT field
+// ambiguous.
+func safeFilterComponent(s string) bool {
+	return !strings.ContainsAny(s, "\":\\")
+}
+
 // escapeRedisSearchTerm escapes special RediSearch characters in a search term.
+// The backslash is escaped first so that escape sequences inserted for the
+// other characters are not themselves re-escaped and mangled.
 func escapeRedisSearchTerm(s string) string {
-	// RediSearch special characters that need escaping.
+	// Escape backslash first; the remaining characters are RediSearch special
+	// characters that each need a leading backslash.
+	result := strings.ReplaceAll(s, `\`, `\\`)
 	special := []string{",", ".", "<", ">", "{", "}", "[", "]", "\"", "'", ":", ";", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", "+", "=", "~", "/", "|"}
-	result := s
 	for _, ch := range special {
 		result = strings.ReplaceAll(result, ch, `\`+ch)
 	}
