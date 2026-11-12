@@ -285,12 +285,6 @@ func (s *eventSink) close() {
 	s.mu.Unlock()
 }
 
-func (s *eventSink) isStopped() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stopped
-}
-
 // enqueue buffers ev for delivery from the consumer's goroutine.
 func (s *eventSink) enqueue(ev Event) {
 	if ev.Time.IsZero() {

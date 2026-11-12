@@ -365,12 +365,29 @@ func WithTopK(v int) Option {
 
 // WithStopSequences sets the stop sequences inference parameter on the agent.
 // Stop sequences cause the LLM to stop producing further tokens when generated.
+//
+// An empty stop sequence is rejected as a construction error: providers either
+// error on it or treat it as "stop immediately", so it is never a useful
+// configuration. The slice is copied, so later mutation of s by the caller
+// does not affect the agent's stored configuration.
 func WithStopSequences(s []string) Option {
 	return func(a *Runtime) error {
+		for i, seq := range s {
+			if seq == "" {
+				return fmt.Errorf("WithStopSequences: stop sequence [%d] must not be empty", i)
+			}
+		}
 		if a.inferenceConfig == nil {
 			a.inferenceConfig = &InferenceConfig{}
 		}
-		a.inferenceConfig.StopSequences = s
+		// Copy the slice so later caller mutation does not affect stored
+		// config, while preserving the nil-vs-empty distinction callers rely
+		// on (a nil slice stays nil; an empty slice stays a non-nil empty).
+		if s == nil {
+			a.inferenceConfig.StopSequences = nil
+		} else {
+			a.inferenceConfig.StopSequences = append([]string{}, s...)
+		}
 		return nil
 	}
 }

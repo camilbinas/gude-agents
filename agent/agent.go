@@ -63,6 +63,10 @@ type Runtime struct {
 }
 
 // New creates a Runtime with immutable instructions and construction options.
+//
+// A nil Option in opts is skipped rather than treated as an error, so callers
+// can build an option slice with conditional entries (for example a helper
+// that returns a nil Option to mean "no change") without filtering nils first.
 func New(provider Provider, instructions string, opts ...Option) (*Runtime, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("provider is required")

@@ -16,8 +16,12 @@ type Principal struct {
 	// that policies can inspect.
 	Attrs map[string]string
 	// Credentials holds opaque credential values (tokens, API keys, etc.)
-	// keyed by name. Never logged or transmitted by the framework.
-	Credentials map[string]string
+	// keyed by name. Never logged or transmitted by the framework. The
+	// json:"-" tag makes this structural: the Principal carried by value on
+	// every audit and observer record serializes with Credentials omitted, so
+	// a custom AuditSink or Observer that JSON-marshals a whole Principal (or
+	// a record containing one) never leaks credential values.
+	Credentials map[string]string `json:"-"`
 }
 
 // HasRole reports whether the principal holds the given role.
