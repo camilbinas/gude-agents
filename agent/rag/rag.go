@@ -169,8 +169,12 @@ func SplitText(text string, chunkSize, overlap int) ([]string, error) {
 	step := chunkSize - overlap
 	for i := 0; i < len(runes); i += step {
 		end := i + chunkSize
-		if end > len(runes) {
-			end = len(runes)
+		if end >= len(runes) {
+			// This chunk reaches the end of the input. Emit it and stop, so a
+			// positive overlap cannot produce a trailing chunk that is fully
+			// contained in the previous one (wasted, duplicate embeddings).
+			chunks = append(chunks, string(runes[i:]))
+			break
 		}
 		chunks = append(chunks, string(runes[i:end]))
 	}
@@ -421,6 +425,16 @@ func WithConcurrency(n int) IngestOption {
 }
 
 // Ingest splits texts, embeds each chunk, and stores the resulting documents.
+//
+// Idempotent re-ingest requires a "source" metadata key. When store implements
+// Manager, Ingest first deletes every existing chunk whose metadata "source"
+// matches one being ingested, so re-ingesting the same source replaces its
+// chunks instead of appending. A text whose metadata has no "source" key (or an
+// empty one) is NOT deduplicated: because generated chunk IDs are random, every
+// re-ingest of such a text appends a fresh set of chunks. Pass a stable
+// "source" value (document.LoadFiles does this automatically) whenever a text
+// may be ingested more than once. When store does not implement Manager, no
+// cleanup is possible and every call appends.
 func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string, metadata []map[string]string, opts ...IngestOption) error {
 	cfg := ingestConfig{chunkSize: 512, chunkOverlap: 64, concurrency: 1}
 	for _, opt := range opts {
@@ -466,33 +480,52 @@ func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string,
 			docs[i], embeddings[i] = chunk.doc, embedding
 		}
 	} else {
+		// Derive a cancelable context so the first failing (or ctx-cancelled)
+		// worker cancels the others' in-flight embed calls instead of letting
+		// them run to completion. The returned error is the first one to
+		// occur, not the first by slice order.
+		embedCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
 		sem := make(chan struct{}, cfg.concurrency)
-		errs := make([]error, len(chunks))
-		var wg sync.WaitGroup
+		var (
+			wg       sync.WaitGroup
+			firstErr error
+			errOnce  sync.Once
+		)
+		setErr := func(err error) {
+			errOnce.Do(func() {
+				firstErr = err
+				cancel()
+			})
+		}
 		for i, chunk := range chunks {
 			docs[i] = chunk.doc
 			wg.Add(1)
 			go func(index int, text string) {
 				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				if err := ctx.Err(); err != nil {
-					errs[index] = err
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-embedCtx.Done():
+					setErr(embedCtx.Err())
 					return
 				}
-				embedding, err := embedder.Embed(ctx, text)
+				if err := embedCtx.Err(); err != nil {
+					setErr(err)
+					return
+				}
+				embedding, err := embedder.Embed(embedCtx, text)
 				if err != nil {
-					errs[index] = fmt.Errorf("ingest: embed chunk %d: %w", index, err)
+					setErr(fmt.Errorf("ingest: embed chunk %d: %w", index, err))
 					return
 				}
 				embeddings[index] = embedding
 			}(i, chunk.chunk)
 		}
 		wg.Wait()
-		for _, err := range errs {
-			if err != nil {
-				return err
-			}
+		if firstErr != nil {
+			return firstErr
 		}
 	}
 

@@ -115,6 +115,12 @@ func ResolveIdentity(ctx context.Context, scope string) (string, error) {
 }
 
 // Entry wraps a recalled value with its similarity score and storage ID.
+//
+// ID is an opaque, backend-specific storage handle. Its exact form differs by
+// backend (for example, the Redis backend returns the full namespaced Redis
+// key while the Postgres backend returns the primary-key column value), so
+// callers must treat it as an identifier to pass back verbatim to Update and
+// Forget rather than parsing, constructing, or comparing it across backends.
 type Entry[T any] struct {
 	ID    string
 	Value T

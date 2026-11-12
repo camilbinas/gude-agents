@@ -69,9 +69,25 @@ for i, chunk := range chunks {
 }
 ```
 
-`SplitText` counts runes. `chunkSize` must be positive and `overlap` must be in `[0, chunkSize)`.
+`SplitText` counts runes. `chunkSize` must be positive and `overlap` must be in `[0, chunkSize)`. With a positive `overlap`, the final chunk always reaches the end of the input and is never a sub-overlap remnant of the previous chunk, so no duplicate near-empty chunk is emitted.
 
 The package includes an in-memory manager plus PostgreSQL and Redis stores; embedder integrations include Bedrock and OpenAI. Bedrock also provides Knowledge Base retrieval and reranking. Choose a backend that explicitly supports any metadata/full-text capability you use.
+
+### Idempotent re-ingest requires a `source`
+
+`rag.Ingest` only replaces existing chunks when the store implements `rag.Manager` **and** the per-text metadata carries a `source` key. For each distinct `source` being ingested, Ingest first calls `DeleteByMetadata({"source": ...})`, so re-ingesting the same source replaces its chunks. A text with no `source` (or an empty one) is never deduplicated: because generated chunk IDs are random, every re-ingest appends a fresh set of chunks. `document.LoadFiles`/`LoadDir` set `source` automatically; set it yourself for direct `Ingest` calls that may run more than once.
+
+### Embedding dimension enforcement
+
+The Postgres and Redis vector stores reject an `Upsert`/`Search` embedding whose length does not match the store's configured `dim`, and reject any non-finite (`NaN`/`Inf`) component, rather than surfacing an opaque engine error or writing corrupt vectors. `redis.New` also validates `dim >= 1` and a non-empty index name, matching `postgres.New`.
+
+### Redis `DeleteByMetadata` (experimental)
+
+The Redis vector store stores metadata as a single JSON string in a RediSearch `TEXT` field, and `DeleteByMetadata` matches each filter pair by substring. This is **experimental**: substring matching can over-match and is sensitive to tokenization. Filter keys/values containing `"`, `:`, or `\` are rejected with `redis.ErrUnsafeFilterValue`; delete such documents by ID instead. For exact, injection-safe filtering, promote the keys you filter on to dedicated indexed fields. The in-memory and Postgres managers match metadata exactly.
+
+### Bedrock Titan output dimensions
+
+`bedrock.WithDimensions` now applies to Amazon Titan Embeddings V2 as well as Cohere Embed v4. For Titan, allowed values are 256, 512, and 1024 (default 1024 when unset); an unsupported value is rejected by `Embed`. The value has no effect on Cohere v3 models.
 
 ## Backend and managed retriever setup
 

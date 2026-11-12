@@ -19,6 +19,8 @@ type RecallQuery struct {
 
 Optional `Updater`, `Forgetter`, and `BulkForgetter` capabilities support mutation/deletion.
 
+`memory.Entry.ID` is an opaque, backend-specific storage handle. Its form varies by backend — the Redis backend returns the full namespaced Redis key while the Postgres backend returns the primary-key column value — so treat it as a token to pass back verbatim to `Update` and `Forget`. Do not parse, construct, or compare it across backends.
+
 ```go
 query := memory.RecallQuery{
     Text: "preferred deployment region",
