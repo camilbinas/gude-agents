@@ -20,6 +20,11 @@ import (
 // are still charged. Image and document payloads (including images attached
 // to a ToolResultBlock) are not estimated; requests that carry large binary
 // content will be under-counted.
+//
+// WidgetBlock content is intentionally not counted: the engine strips every
+// widget from the conversation before building a ModelRequest, so a widget
+// never reaches a provider request or this estimator. The omission is correct,
+// not a gap.
 type CharEstimator struct{}
 
 // compile-time check: CharEstimator satisfies TokenEstimator.
