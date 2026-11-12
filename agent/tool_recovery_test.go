@@ -1219,3 +1219,39 @@ func TestApprovalResumeSkipsCompletedDeniedSibling(t *testing.T) {
 		t.Fatalf("guard=%d denied=%d approved=%d", guardCalls.Load(), deniedHandlers.Load(), approvedHandlers.Load())
 	}
 }
+
+// TestRecoveryUnsupportedWrapsInvariant verifies ErrExecutionRecoveryUnsupported
+// is returned with the specific invariant that failed while errors.Is still
+// matches the sentinel, so operators can tell a benign race from corruption.
+func TestRecoveryUnsupportedWrapsInvariant(t *testing.T) {
+	t.Run("helper keeps errors.Is and adds context", func(t *testing.T) {
+		err := recoveryUnsupported("some invariant")
+		if !errors.Is(err, ErrExecutionRecoveryUnsupported) {
+			t.Fatalf("errors.Is lost the sentinel: %v", err)
+		}
+		if !strings.Contains(err.Error(), "some invariant") {
+			t.Fatalf("error = %q, want it to carry the invariant", err.Error())
+		}
+	})
+
+	t.Run("non-recoverable phase reports why", func(t *testing.T) {
+		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+		// A completed execution is not in a recoverable tool phase.
+		if _, err := executions.Create(context.Background(), Execution{
+			ID: "done-1", ConversationID: "c", Status: ExecutionCompleted, Phase: ExecutionPhaseDone,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.RecoverExecution(Background(), "done-1")
+		if !errors.Is(err, ErrExecutionRecoveryUnsupported) {
+			t.Fatalf("err = %v, want ErrExecutionRecoveryUnsupported", err)
+		}
+		if !strings.Contains(err.Error(), "recoverable tool phase") {
+			t.Fatalf("err = %q, want it to name the failed invariant", err.Error())
+		}
+	})
+}
