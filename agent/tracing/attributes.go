@@ -34,12 +34,47 @@ const (
 	AttrAgentDocumentCount        = "agent.document_count"
 )
 
+// SemconvGenAIVersion documents the OpenTelemetry GenAI semantic-conventions
+// version these attribute names target. The GenAI conventions are published
+// (and versioned) separately from the stable OTel semconv packages in the
+// open-telemetry/semantic-conventions-genai repository and are currently at
+// Development stability, so the gen_ai.* keys below are hand-pinned string
+// constants rather than imported from a generated semconv package. Consult the
+// changelog of that repository before bumping this value.
+//
+// See: https://github.com/open-telemetry/semantic-conventions-genai
+const SemconvGenAIVersion = "1.37.0"
+
+// GenAI operation names, per gen_ai.operation.name well-known values.
+// Emitted by default on the corresponding spans; used to classify spans for
+// GenAI-aware observability backends and evaluation systems.
+const (
+	OperationInvokeAgent = "invoke_agent"
+	OperationChat        = "chat"
+	OperationExecuteTool = "execute_tool"
+)
+
 // Content capture attributes (opt-in via WithContentCapture).
+//
+// gen_ai.prompt and gen_ai.completion are DEPRECATED in the OpenTelemetry
+// GenAI semantic conventions in favor of the structured gen_ai.input.messages
+// and gen_ai.output.messages attributes (see AttrGenAIInputMessages /
+// AttrGenAIOutputMessages). They remain emitted for backward compatibility
+// with existing dashboards and can be turned off with WithoutLegacyContentAttributes.
 const (
 	AttrGenAIPrompt           = "gen_ai.prompt"
 	AttrGenAISystemPrompt     = "gen_ai.system_prompt"
 	AttrGenAICompletion       = "gen_ai.completion"
 	AttrGenAIProviderResponse = "gen_ai.provider.response"
+
+	// Structured content attributes per current GenAI semconv. These carry a
+	// JSON-encoded array of role/parts message objects.
+	AttrGenAIInputMessages  = "gen_ai.input.messages"
+	AttrGenAIOutputMessages = "gen_ai.output.messages"
+
+	// AttrGenAIOperationName classifies the span's operation (chat,
+	// execute_tool, invoke_agent). Emitted by default.
+	AttrGenAIOperationName = "gen_ai.operation.name"
 )
 
 // Inference config attributes (always recorded when set).

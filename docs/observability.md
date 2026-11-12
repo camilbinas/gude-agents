@@ -50,12 +50,41 @@ Choosing between them by environment is application code; the framework ships no
 
 ## Metrics
 
-- `metrics/prometheus.WithMetrics`, with optional namespace/registerer; the package can also return an HTTP handler.
+- `metrics/prometheus.WithMetrics`, with optional namespace/registerer; the package can also return an HTTP handler via `NewHandler`.
 - `metrics/otel.WithMetrics`, with a meter provider and optional namespace.
+
+`NewHandler` (Prometheus) is all-in-one: use it *or* `WithMetrics`, not both. With no `WithRegisterer`, `NewHandler` scrapes from its own fresh registry while `WithMetrics` defaults to `prometheus.DefaultRegisterer`, so combining them installs two hooks on two registries and the handler scrapes the wrong one. Pick the handler+option pair from a single `NewHandler` call, or pass the same `WithRegisterer` to both.
+
+### Tool-name label cardinality
+
+The `tool_name` label (Prometheus) / attribute (OTEL) is recorded verbatim by default. For a dynamic or user-supplied tool set — for example MCP tools registered at runtime — that is an unbounded-cardinality risk that can blow up Prometheus memory. Bound it with `WithToolNameAllowlist`, available on both backends: allowlisted names are recorded as-is, any other name is bucketed under `other`.
+
+```go
+agent.New(prov, instructions,
+    prometheusmetrics.WithMetrics(prometheusmetrics.WithToolNameAllowlist("search", "calculator")),
+)
+```
 
 ## Tracing
 
 `tracing.WithTracing(provider, options...)` uses OpenTelemetry. `WithScopeName` and `WithScheme` customize instrumentation; `WithContentCapture` opts into prompt/response capture. `tracing/sentry.WithSentry` configures Sentry through the same lifecycle model. Content capture can contain sensitive data and is off by default.
+
+### GenAI semantic conventions
+
+The observer targets the OpenTelemetry GenAI semantic conventions (version pinned and documented as `tracing.SemconvGenAIVersion`; the GenAI conventions are published separately from the stable OTel semconv packages and are at Development stability, so the `gen_ai.*` keys are hand-pinned constants).
+
+- `gen_ai.operation.name` (`invoke_agent` / `chat` / `execute_tool`) is emitted by default so GenAI-aware backends recognize the spans. Remap `RoleOperationName` in a custom scheme to change it.
+- Under `WithContentCapture`, the observer emits the structured `gen_ai.input.messages` / `gen_ai.output.messages` attributes (role + typed parts, JSON encoded) alongside the deprecated `gen_ai.prompt` / `gen_ai.completion` / `gen_ai.provider.response`. `WithoutLegacyContentAttributes` drops the deprecated pair and keeps only the structured attributes.
+- `WithSpecSpanNames` opts into the spec span-name format `{operation} {model}` (for example `chat gpt-4o`). It is opt-in because renaming spans breaks dashboards, alerts, and tests; the default gude-agents span names (`agent.invoke`, `agent.provider.call`, `agent.tool.<name>`) are unchanged.
+- Non-content scalar attributes `agent.token_usage.total`, `agent.user_message_length`, `tool.input_length`, and `tool.output_length` are emitted by default (lengths/counts only, never the payload); `agent.error` is set on invocation failure.
+
+### Exporter setup and transport security
+
+`tracing.Setup` configures an OTLP gRPC exporter from `OTEL_EXPORTER_OTLP_ENDPOINT` (default `localhost:4317`). The export defaults to plaintext (insecure), matching the localhost default. To use TLS against a remote collector, set `OTEL_EXPORTER_OTLP_TRACES_INSECURE` / `OTEL_EXPORTER_OTLP_INSECURE` to `false`, or pass `tracing.WithInsecure(false)` (the option takes precedence over the environment).
+
+### Sentry breadcrumb content
+
+`tracing/sentry.BreadcrumbMiddleware` records tool name, duration, and error status by default; tool input and result text are omitted to avoid leaking sensitive data. Pass `sentry.WithBreadcrumbContent()` to include them (truncated on a rune boundary, so always valid UTF-8), consistent with `tracing.WithContentCapture` and `slog.WithContentLogging`.
 
 ## Audit
 

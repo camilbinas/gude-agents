@@ -15,11 +15,16 @@ const defaultMeterName = "github.com/camilbinas/gude-agents"
 // llmBuckets defines histogram buckets tuned for LLM latencies.
 var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0}
 
+// otherToolName is the bucket label used for tool names not in the configured
+// allowlist (see WithToolNameAllowlist).
+const otherToolName = "other"
+
 // otelHook implements the observer capabilities needed for OpenTelemetry metrics.
 type otelHook struct {
-	meter     metric.Meter
-	meterName string
-	agentName string
+	meter             metric.Meter
+	meterName         string
+	agentName         string
+	toolNameAllowlist map[string]struct{} // nil = record every tool name verbatim
 
 	invokeTotal          metric.Int64Counter
 	invokeDuration       metric.Float64Histogram
@@ -177,7 +182,7 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 	if record.Phase != agent.End {
 		return ctx
 	}
-	toolAttr := attribute.String("tool_name", record.Name)
+	toolAttr := attribute.String("tool_name", h.toolLabel(record.Name))
 	h.toolCallDuration.Record(ctx, record.Duration.Seconds(),
 		metric.WithAttributes(append(h.baseAttrs(), toolAttr)...))
 	h.toolCallTotal.Add(ctx, 1,
@@ -215,6 +220,19 @@ func (h *otelHook) baseAttrs() []attribute.KeyValue {
 	return nil
 }
 
+// toolLabel returns the tool_name attribute value for a recorded tool call,
+// bucketing names outside the configured allowlist under "other". When no
+// allowlist is set, the name is returned unchanged.
+func (h *otelHook) toolLabel(name string) string {
+	if h.toolNameAllowlist == nil {
+		return name
+	}
+	if _, ok := h.toolNameAllowlist[name]; ok {
+		return name
+	}
+	return otherToolName
+}
+
 // Option configures the OTEL metrics observer.
 type Option func(*otelHook)
 
@@ -222,6 +240,25 @@ type Option func(*otelHook)
 // When empty, the default "github.com/camilbinas/gude-agents" is used.
 func WithNamespace(ns string) Option {
 	return func(h *otelHook) { h.meterName = ns }
+}
+
+// WithToolNameAllowlist bounds the cardinality of the tool_name attribute on
+// the agent.tool.call.total and agent.tool.call.duration metrics. Tool names
+// in the allowlist are recorded verbatim; any other name is bucketed under
+// "other".
+//
+// Dynamic or user-supplied tool names (for example MCP tools registered at
+// runtime) otherwise produce an unbounded set of metric attribute values. Set
+// an allowlist to the known, static tool set to keep cardinality bounded. When
+// no allowlist is configured, every tool name is recorded verbatim (unchanged
+// behavior).
+func WithToolNameAllowlist(names ...string) Option {
+	return func(h *otelHook) {
+		h.toolNameAllowlist = make(map[string]struct{}, len(names))
+		for _, n := range names {
+			h.toolNameAllowlist[n] = struct{}{}
+		}
+	}
 }
 
 // WithMetrics returns an agent.Option that enables OTEL metrics.
