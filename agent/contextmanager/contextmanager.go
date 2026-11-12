@@ -52,15 +52,46 @@ func (w *Window) HistoryBoundary(ctx context.Context, id string) (uint64, error)
 		return 0, nil
 	}
 	start := meta.LastSequence - w.count
-	for {
-		tail, err := w.store.LoadAfter(ctx, id, start)
+	// Find the largest boundary <= start (the smallest window) whose suffix
+	// does not orphan a ToolResult. Read a candidate range [lo, LastSequence]
+	// and scan boundaries inside it in memory. When every boundary in the range
+	// orphans a result, widen the range backwards, doubling its extra depth, so
+	// the common case is one read of about the window size and the worst case
+	// is O(log n) reads. Earlier revisions re-read the store once per decrement
+	// (O(n) round-trips, O(n^2) transfer); loading from 0 every turn would
+	// instead transfer the whole history to keep a small window.
+	depth := w.count
+	if depth == 0 {
+		depth = 1
+	}
+	for lo := start; ; {
+		tail, err := w.store.LoadAfter(ctx, id, lo)
 		if err != nil {
 			return 0, err
 		}
-		if !hasOrphanedToolResult(tail.Messages) || start == 0 {
-			return start, nil
+		// tail.Messages[i] has sequence lo+i+1, so tail.Messages[b-lo:] is the
+		// suffix LoadAfter(b) returns.
+		for boundary := start; boundary >= lo; boundary-- {
+			offset := boundary - lo
+			if offset > uint64(len(tail.Messages)) {
+				continue
+			}
+			if !hasOrphanedToolResult(tail.Messages[offset:]) {
+				return boundary, nil
+			}
+			if boundary == 0 {
+				break
+			}
 		}
-		start--
+		if lo == 0 {
+			return 0, nil
+		}
+		if lo > depth {
+			lo -= depth
+		} else {
+			lo = 0
+		}
+		depth *= 2
 	}
 }
 func (w *Window) Prepare(_ context.Context, in agent.ContextManagerInput) (agent.ContextManagerOutput, error) {
@@ -302,12 +333,11 @@ func (r *RollingSummary) Prepare(ctx context.Context, in agent.ContextManagerInp
 	if _, err := r.state.SaveContextState(ctx, in.ConversationID, r.key, encoded, stateRev); err != nil {
 		return agent.ContextManagerOutput{}, fmt.Errorf("contextmanager: save summary state: %w", err)
 	}
-	stateRev++
 	// The active range already begins at the old boundary. Drop newly covered
-	// entries locally without loading older history.
+	// entries locally without loading older history. We summarize at most once
+	// per Prepare, so the saved state's new revision is not needed again here.
 	in.Recent = in.Recent[cut:]
 	in.Boundary = state.CoveredThrough
-	_ = stateRev
 	return agent.ContextManagerOutput{Messages: build(state)}, nil
 }
 func hasUnresolved(messages []agent.Message) bool {

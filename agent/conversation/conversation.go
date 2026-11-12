@@ -114,14 +114,11 @@ func (m *InMemory) SaveContextState(_ context.Context, id, key string, data json
 	current.revision++
 	current.data = append(json.RawMessage(nil), data...)
 	entry.contextState[key] = current
-	// Context state alone deliberately does not create a listable conversation.
-	if entry.revision != 0 || entry.lastSequence != 0 || len(entry.messages) != 0 {
-		m.data[id] = entry
-	} else {
-		// Store state without creating canonical activity; it remains reachable
-		// by explicit ID and is removed by Delete.
-		m.data[id] = entry
-	}
+	// Store the derived state. This never advances entry.revision, so an entry
+	// that holds only context state stays invisible to List (which filters on
+	// revision > 0); it remains reachable by explicit ID and is removed by
+	// Delete.
+	m.data[id] = entry
 	return current.revision, nil
 }
 

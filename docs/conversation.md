@@ -56,7 +56,7 @@ a, _ := agent.New(provider, instructions,
 
 `ContextManager.HistoryBoundary` runs before `LoadAfter`; a rolling summary with `CoveredThrough: 850` therefore causes a normal request to read only messages after 850. The manager receives recent canonical messages, current unsaved messages and transient RAG separately. Its output is provider-only. The agent appends only genuine new user/assistant/tool messages at commit time.
 
-`contextmanager.Window`, `contextmanager.Filter`, and `contextmanager.RollingSummary` replace the old persistence wrappers. `RollingSummary` retains a verbatim recent tail and does not summarize unresolved tool calls or unsaved current input. Its synthetic summary marker is never appended to `ConversationStore`.
+`contextmanager.Window`, `contextmanager.Filter`, and `contextmanager.RollingSummary` replace the old persistence wrappers. `RollingSummary` retains a verbatim recent tail and does not summarize unresolved tool calls or unsaved current input. Its synthetic summary marker is never appended to `ConversationStore`. `Window.HistoryBoundary` picks a boundary that never splits a `ToolUse`/`ToolResult` pair: it may extend the window earlier than the requested message count to keep an orphaned `ToolResult` together with its `ToolUse`, and it resolves that boundary with a single range read rather than one read per candidate.
 
 ## Backends and migration
 
