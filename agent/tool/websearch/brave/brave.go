@@ -32,6 +32,12 @@ const (
 	defaultMaxResults        = 5
 	defaultTimeout           = 10 * time.Second
 	defaultMaxCharsPerResult = 300
+
+	// minMaxResults and maxMaxResults bound WithMaxResults. Brave's web search
+	// API rejects count=0 and caps the page at 20, so values outside this range
+	// are clamped at construction rather than sent through to a 4xx.
+	minMaxResults = 1
+	maxMaxResults = 20
 )
 
 // Option configures the Brave search tool.
@@ -45,8 +51,21 @@ type config struct {
 }
 
 // WithMaxResults sets the maximum number of search results. Default: 5.
+// The value is clamped to the range the Brave API accepts (1 to 20): a value
+// below 1 becomes 1 and a value above 20 becomes 20, so an out-of-range option
+// never reaches the API as a malformed count.
 func WithMaxResults(n int) Option {
-	return func(c *config) { c.maxResults = n }
+	return func(c *config) { c.maxResults = clampMaxResults(n) }
+}
+
+func clampMaxResults(n int) int {
+	if n < minMaxResults {
+		return minMaxResults
+	}
+	if n > maxMaxResults {
+		return maxMaxResults
+	}
+	return n
 }
 
 // WithTimeout sets the HTTP request timeout. Default: 10s.
@@ -139,7 +158,7 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Brave API returned %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("brave API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
@@ -161,11 +180,23 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 
 	var sb strings.Builder
 	for i, r := range result.Web.Results {
-		desc := r.Description
-		if maxChars > 0 && len(desc) > maxChars {
-			desc = desc[:maxChars] + "…"
-		}
+		desc := truncateRunes(r.Description, maxChars)
 		fmt.Fprintf(&sb, "%d. %s\n   %s\n   %s\n\n", i+1, r.Title, r.URL, desc)
 	}
 	return sb.String(), nil
+}
+
+// truncateRunes shortens s to at most maxChars runes, appending an ellipsis
+// when it cuts. maxChars is counted in runes (not bytes) so a multibyte
+// character is never split mid-sequence, which would emit invalid UTF-8.
+// A non-positive maxChars disables truncation.
+func truncateRunes(s string, maxChars int) string {
+	if maxChars <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= maxChars {
+		return s
+	}
+	return string(runes[:maxChars]) + "…"
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func testConfig(blocked func(net.IP) bool) *config {
@@ -165,5 +166,88 @@ func TestNonTextContentRejected(t *testing.T) {
 	_, err := fetch(t, testConfig(allowAll), hostURL(srv))
 	if err == nil || !strings.Contains(err.Error(), "non-text content type") {
 		t.Fatalf("err = %v, want non-text rejection", err)
+	}
+}
+
+// servePlain returns an httptest server that replies with the given body as
+// text/plain, so the default formatter passes the bytes through unchanged.
+func servePlain(body string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+	}))
+}
+
+func TestFetch_TruncateByCharsRuneSafe(t *testing.T) {
+	// 100 three-byte runes. maxChars is a rune budget, so truncation must cut
+	// on a rune boundary and keep valid UTF-8.
+	body := strings.Repeat("語", 100)
+	srv := servePlain(body)
+	defer srv.Close()
+
+	cfg := testConfig(allowAll)
+	cfg.maxChars = 10
+	out, err := fetchPage(context.Background(), newGuardedClient(cfg), hostURL(srv), cfg.maxBytes, cfg.maxChars, defaultFormatter)
+	if err != nil {
+		t.Fatalf("fetch error: %v", err)
+	}
+	if !utf8.ValidString(out) {
+		t.Fatalf("output is not valid UTF-8: %q", out)
+	}
+	if !strings.HasSuffix(out, "[truncated]") {
+		t.Errorf("expected [truncated] marker, got %q", out)
+	}
+	text := strings.TrimSuffix(out, "\n\n[truncated]")
+	if got := utf8.RuneCountInString(text); got != 10 {
+		t.Errorf("want 10 runes kept, got %d (%q)", got, text)
+	}
+}
+
+func TestFetch_TruncateByBytesRuneSafe(t *testing.T) {
+	// The body exceeds maxBytes mid-rune. After the byte cut the formatter must
+	// never see an invalid trailing rune, so the final output stays valid UTF-8.
+	body := strings.Repeat("あ", 100) // 3 bytes each
+	srv := servePlain(body)
+	defer srv.Close()
+
+	cfg := testConfig(allowAll)
+	cfg.maxBytes = 10 // cuts inside the 4th rune (bytes 9-11)
+	cfg.maxChars = defaultMaxChars
+	out, err := fetchPage(context.Background(), newGuardedClient(cfg), hostURL(srv), cfg.maxBytes, cfg.maxChars, defaultFormatter)
+	if err != nil {
+		t.Fatalf("fetch error: %v", err)
+	}
+	if !utf8.ValidString(out) {
+		t.Fatalf("output is not valid UTF-8: %q", out)
+	}
+	if strings.ContainsRune(out, '\uFFFD') {
+		t.Errorf("output contains the replacement rune: %q", out)
+	}
+}
+
+func TestTrimPartialRune(t *testing.T) {
+	full := []byte("あい") // 6 bytes, 2 runes
+	cases := []struct {
+		name string
+		in   []byte
+		want string
+	}{
+		{"complete", full, "あい"},
+		{"cut-after-first", full[:3], "あ"},
+		{"cut-mid-second-1", full[:4], "あ"},
+		{"cut-mid-second-2", full[:5], "あ"},
+		{"ascii-untouched", []byte("hello"), "hello"},
+		{"empty", []byte{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := trimPartialRune(c.in)
+			if !utf8.Valid(got) {
+				t.Fatalf("result not valid UTF-8: %q", got)
+			}
+			if string(got) != c.want {
+				t.Errorf("trimPartialRune(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
 	}
 }

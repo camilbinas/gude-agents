@@ -18,7 +18,9 @@ a, err := agent.New(prov, instructions, agent.WithTools(tools...))
 
 Use `NewStdioClient` for subprocess servers and `NewStreamableClient` for remote HTTP servers. The legacy SSE transport is not supported. `WithEnv` configures subprocess environment; do not expose secrets in tool descriptions or invocation KV.
 
-`IncludeTools`, `ExcludeTools`, and `WithToolPrefix` control exposed tools. Prefix names when combining servers to avoid collisions.
+`IncludeTools`, `ExcludeTools`, and `WithToolPrefix` control exposed tools. Prefix names when combining servers to avoid collisions. `IncludeTools` and `ExcludeTools` are mutually exclusive: passing both to the same `Tools()` call returns an error, so choose an allow-list or a deny-list rather than combining them.
+
+A `Client` wraps one session, and that session is safe for concurrent `CallTool` — the SDK multiplexes requests over its JSON-RPC connection — so the returned tools may run in parallel (for example under the agent's parallel tool dispatch) without extra locking. Concurrency is correctness, not throughput: all calls still share one transport (and, for stdio, one subprocess request stream). For higher throughput use a `Pool` (below), which spreads calls across several sessions.
 
 Close clients and pools during application shutdown; the agent does not manage the MCP client lifecycle.
 

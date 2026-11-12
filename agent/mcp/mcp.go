@@ -9,6 +9,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -19,6 +20,15 @@ import (
 )
 
 // Client connects to an MCP server and exposes its tools as gude-agents tool.Tool values.
+//
+// A Client wraps a single MCP session. That session is safe for concurrent
+// CallTool invocations: the underlying JSON-RPC connection multiplexes
+// requests by id and serializes access to its in-flight state, so the tools
+// returned by Tools may be executed in parallel (for example by the agent's
+// parallel tool dispatch) without extra locking. Concurrent calls still share
+// one transport, so for high request-stream throughput — especially over a
+// stdio subprocess that serves one stream — use Pool to spread calls across
+// several sessions.
 type Client struct {
 	session *sdkmcp.ClientSession
 }
@@ -117,6 +127,9 @@ func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, e
 			return nil, err
 		}
 	}
+	if len(cfg.include) > 0 && len(cfg.exclude) > 0 {
+		return nil, errors.New("mcp: IncludeTools and ExcludeTools are mutually exclusive; pass only one")
+	}
 
 	var tools []tool.Tool
 	for t, err := range c.session.Tools(ctx, nil) {
@@ -170,7 +183,8 @@ func WithToolPrefix(prefix string) ToolsOption {
 }
 
 // IncludeTools restricts Tools() to only the named tools.
-// Cannot be combined with ExcludeTools; IncludeTools takes precedence.
+// It cannot be combined with ExcludeTools: passing both to the same Tools()
+// call returns an error. Use one or the other.
 func IncludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) error {
 		if c.include == nil {
@@ -184,7 +198,8 @@ func IncludeTools(names ...string) ToolsOption {
 }
 
 // ExcludeTools filters out the named tools from Tools().
-// Ignored if IncludeTools is also provided.
+// It cannot be combined with IncludeTools: passing both to the same Tools()
+// call returns an error. Use one or the other.
 func ExcludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) error {
 		if c.exclude == nil {
