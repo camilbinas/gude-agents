@@ -317,6 +317,10 @@ func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord)
 		if record.DocumentCount > 0 {
 			span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentDocumentCount), record.DocumentCount))
 		}
+		if record.UserMessage != "" {
+			// Length only (not the content), so safe to record without content capture.
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentUserMsgLength), len(record.UserMessage)))
+		}
 		if h.captureContent {
 			h.setStructuredInput(span, record.SystemPrompt, record.UserMessage)
 			if !h.dropLegacyContent {
@@ -347,11 +351,13 @@ func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord)
 	}
 	if record.Err != nil {
 		recordError(span, record.Err)
+		span.SetAttributes(attribute.String(h.scheme.Key(RoleAgentError), record.Err.Error()))
 	} else {
 		span.SetStatus(codes.Ok, "")
 		span.SetAttributes(
 			attribute.Int(h.scheme.Key(RoleAgentTokenInput), record.Usage.InputTokens),
 			attribute.Int(h.scheme.Key(RoleAgentTokenOutput), record.Usage.OutputTokens),
+			attribute.Int(h.scheme.Key(RoleAgentTokenTotal), record.Usage.Total()),
 		)
 		if record.Usage.CacheReadTokens > 0 {
 			span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentTokenCacheRead), record.Usage.CacheReadTokens))
@@ -448,6 +454,10 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 		if key := h.scheme.Key(RoleOperationName); key != "" {
 			span.SetAttributes(attribute.String(key, OperationExecuteTool))
 		}
+		if len(record.Input) > 0 {
+			// Length only (not the payload), safe without content capture.
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleToolInputLength), len(record.Input)))
+		}
 		if h.captureContent && len(record.Input) > 0 {
 			span.SetAttributes(attribute.String(h.scheme.Key(RoleToolInput), string(record.Input)))
 		}
@@ -466,6 +476,10 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 	} else {
 		if record.ResultIsError {
 			span.SetStatus(codes.Error, "tool result error")
+		}
+		if record.Output != "" {
+			// Length only (not the payload), safe without content capture.
+			span.SetAttributes(attribute.Int(h.scheme.Key(RoleToolOutputLength), len(record.Output)))
 		}
 		if h.captureContent && record.Output != "" {
 			span.SetAttributes(attribute.String(h.scheme.Key(RoleToolOutput), record.Output))

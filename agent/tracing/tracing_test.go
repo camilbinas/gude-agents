@@ -1832,3 +1832,71 @@ func TestSpecSpanNamesFallbackWithoutModel(t *testing.T) {
 		t.Errorf("default spanName = %q, want agent.invoke", got)
 	}
 }
+
+// TestWiredScalarAttributes verifies the previously-unused roles are now
+// emitted: token total, user-message length, tool input/output lengths.
+func TestWiredScalarAttributes(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(
+		&agent.ModelResponse{
+			ToolCalls: []tool.Call{{ToolUseID: "1", Name: "echo", Input: []byte(`{"x":1}`)}},
+			Usage:     agent.TokenUsage{InputTokens: 3, OutputTokens: 4},
+		},
+		&agent.ModelResponse{Text: "done", Usage: agent.TokenUsage{InputTokens: 2, OutputTokens: 1}},
+	)
+	a, err := agent.New(prov, "sys", agent.WithTools(dummyTool("echo", "echoes")), WithTracing(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+
+	invokeSpan := findSpan(spans, "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if got := getAttr(*invokeSpan, string(RoleAgentUserMsgLength)).AsInt64(); got != int64(len("hello")) {
+		t.Errorf("user_message_length = %d, want %d", got, len("hello"))
+	}
+	if got := getAttr(*invokeSpan, string(RoleAgentTokenTotal)).AsInt64(); got <= 0 {
+		t.Errorf("token_usage.total = %d, want > 0", got)
+	}
+
+	toolSpan := findSpan(spans, "agent.tool.echo")
+	if toolSpan == nil {
+		t.Fatal("expected agent.tool.echo span")
+	}
+	if got := getAttr(*toolSpan, string(RoleToolInputLength)).AsInt64(); got != int64(len(`{"x":1}`)) {
+		t.Errorf("tool.input_length = %d, want %d", got, len(`{"x":1}`))
+	}
+	if got := getAttr(*toolSpan, string(RoleToolOutputLength)).AsInt64(); got <= 0 {
+		t.Errorf("tool.output_length = %d, want > 0", got)
+	}
+}
+
+// TestAgentErrorAttribute verifies RoleAgentError is emitted on invoke failure.
+func TestAgentErrorAttribute(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	a, err := agent.New(&errorProvider{err: fmt.Errorf("connection refused")}, "sys", WithTracing(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hi"); err == nil {
+		t.Fatal("expected error")
+	}
+
+	invokeSpan := findSpan(exp.GetSpans(), "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if got := getAttr(*invokeSpan, string(RoleAgentError)).AsString(); got == "" {
+		t.Error("agent.error attribute not set on failure")
+	}
+}
