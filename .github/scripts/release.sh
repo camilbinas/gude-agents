@@ -171,6 +171,64 @@ cmd_modules() {
   printf 'private   %s\n' "${PRIVATE_DIRS[@]}"
 }
 
+# Race lane: run the concurrency-sensitive modules (lib.sh race_dirs) under the
+# race detector. Nested modules require the previous release of their siblings,
+# so they build in the workspace against current source; the root module has no
+# internal requirements and runs alone (GOWORK=off), which proves the workspace
+# is not hiding a missing dependency.
+cmd_race() {
+  local dir failed=()
+  while read -r dir; do
+    [ -n "$dir" ] || continue
+    echo "::group::race $dir"
+    if [ "$dir" = . ]; then
+      GOWORK=off race_checks "$dir" || failed+=("$dir")
+    else
+      GOWORK="$REPO_ROOT/go.work" race_checks "$dir" || failed+=("$dir")
+    fi
+    echo "::endgroup::"
+  done < <(race_dirs)
+  [ "${#failed[@]}" -eq 0 ] || fail "modules with race failures: ${failed[*]}"
+}
+
+# Vulnerability scan: govulncheck over every published module. It reports only
+# vulnerabilities actually reachable from each module's code, so a finding is a
+# real call path, not just a flagged dependency version. Nested modules scan in
+# the workspace; the root module scans alone.
+cmd_vuln() {
+  local dir failed=()
+  command -v govulncheck >/dev/null || fail "govulncheck not found on PATH; install golang.org/x/vuln/cmd/govulncheck@latest"
+  for dir in "${PUBLISHED_DIRS[@]}"; do
+    echo "::group::govulncheck $dir"
+    if [ "$dir" = . ]; then
+      (cd "$REPO_ROOT/$dir" && GOWORK=off "${HERMETIC[@]}" govulncheck ./...) || failed+=("$dir")
+    else
+      (cd "$REPO_ROOT/$dir" && GOWORK="$REPO_ROOT/go.work" "${HERMETIC[@]}" govulncheck ./...) || failed+=("$dir")
+    fi
+    echo "::endgroup::"
+  done
+  [ "${#failed[@]}" -eq 0 ] || fail "modules with vulnerabilities: ${failed[*]}"
+}
+
+# Lint: golangci-lint over every published module, using the committed
+# .golangci.yml at the repo root. golangci-lint must be built by the same Go
+# toolchain that compiles the code, or it panics on newer std library ASTs, so
+# CI installs it with the active toolchain before calling this.
+cmd_lint() {
+  local dir failed=()
+  command -v golangci-lint >/dev/null || fail "golangci-lint not found on PATH; install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest with the active toolchain"
+  for dir in "${PUBLISHED_DIRS[@]}"; do
+    echo "::group::golangci-lint $dir"
+    if [ "$dir" = . ]; then
+      (cd "$REPO_ROOT/$dir" && GOWORK=off golangci-lint run --config "$REPO_ROOT/.golangci.yml" ./...) || failed+=("$dir")
+    else
+      (cd "$REPO_ROOT/$dir" && GOWORK="$REPO_ROOT/go.work" golangci-lint run --config "$REPO_ROOT/.golangci.yml" ./...) || failed+=("$dir")
+    fi
+    echo "::endgroup::"
+  done
+  [ "${#failed[@]}" -eq 0 ] || fail "modules with lint findings: ${failed[*]}"
+}
+
 cmd_validate() {
   require_version
   local semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
@@ -390,7 +448,7 @@ cmd_github_release() {
 
 # ---------------------------------------------------------------------------
 
-[ $# -ge 1 ] || fail "usage: release.sh <modules|choose-version|validate|test|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
+[ $# -ge 1 ] || fail "usage: release.sh <modules|choose-version|validate|test|race|vuln|lint|prepare|seal|verify|plan|commit|tags|push|github-release> [--version X] [--mode M]"
 command=$1
 shift
 parse_args "$@"
@@ -398,6 +456,9 @@ case "$command" in
   modules) cmd_modules ;;
   choose-version) cmd_choose_version ;;
   github-release) cmd_github_release ;;
+  race) cmd_race ;;
+  vuln) cmd_vuln ;;
+  lint) cmd_lint ;;
   validate | test | prepare | seal | verify | plan | commit | tags | push) "cmd_$command" ;;
   *) fail "unknown command '$command'" ;;
 esac

@@ -56,6 +56,40 @@ go_checks() {
   )
 }
 
+# race_checks <dir>: build and run one module's tests under the race detector,
+# with the caller's Go environment. The agent runtime is concurrency-heavy
+# (streaming iterators, interrupts, a shared Runtime), so the lanes that matter
+# run here in addition to the plain go_checks lane. Chained with && so a failure
+# counts on the left of ||.
+race_checks() {
+  (
+    cd "$REPO_ROOT/$1" \
+      && "${HERMETIC[@]}" go build ./... \
+      && "${HERMETIC[@]}" go test -race -count=1 ./...
+  )
+}
+
+# RACE_DIRS: the subset of published module directories that run under -race in
+# CI. The concurrency surface lives in the root module and in provider/*,
+# conversation/*, execution/*, ratelimit and tool; running every module under
+# -race would roughly double CI time for packages with no shared state. Only
+# directories that actually hold a go.mod are kept, so the list survives a module
+# being added, moved or removed.
+race_dirs() {
+  local dir
+  for dir in "${PUBLISHED_DIRS[@]}"; do
+    case "$dir" in
+      . | \
+      agent/provider/* | \
+      agent/conversation/* | \
+      agent/execution | agent/execution/* | \
+      agent/ratelimit/* | \
+      agent/tool/*)
+        echo "$dir" ;;
+    esac
+  done
+}
+
 # example_packages lists the tracked example programs that must compile.
 example_packages() {
   git -C "$REPO_ROOT" ls-files -- 'examples/*main.go' \
