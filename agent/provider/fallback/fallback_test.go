@@ -309,3 +309,42 @@ func TestStructuredInvokeUsesAutomaticChoiceWhenBackupCannotForceTool(t *testing
 	require.Len(t, primary.requests, 1)
 	assert.Nil(t, primary.requests[0].ToolChoice, "want provider-default automatic choice")
 }
+
+// cancelProvider cancels the shared context and fails, like a provider whose
+// stream was aborted by the caller.
+type cancelProvider struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (c *cancelProvider) Name() string { return "cancel" }
+
+func (c *cancelProvider) Stream(ctx context.Context, _ agent.ModelRequest, _ func(agent.ModelEvent)) (*agent.ModelResponse, error) {
+	c.calls++
+	c.cancel()
+	return nil, ctx.Err()
+}
+
+func TestStream_DoesNotFallBackAfterContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	primary := &cancelProvider{cancel: cancel}
+	backup := okProvider("backup")
+
+	_, err := fallback.New(primary, backup).Stream(ctx, agent.ModelRequest{}, nil)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, primary.calls)
+	assert.Equal(t, 0, backup.calls, "backup must not run under a cancelled context")
+}
+
+func TestStream_DoesNotStartWithDoneContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	primary := okProvider("primary")
+
+	_, err := fallback.New(primary).Stream(ctx, agent.ModelRequest{}, nil)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 0, primary.calls)
+}

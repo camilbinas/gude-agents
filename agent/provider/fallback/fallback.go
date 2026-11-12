@@ -14,6 +14,7 @@ package fallback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
@@ -94,10 +95,19 @@ var _ agent.Provider = (*Provider)(nil)
 var _ agent.CapabilityProvider = (*Provider)(nil)
 
 // Stream tries each provider in order, returning the first success. A failed
-// provider is retried only when it has not emitted an event to the caller.
+// provider is retried only when it has not emitted an event to the caller and
+// ctx is still live: once ctx is cancelled or its deadline has passed, no
+// further provider is started and the error is returned immediately, since a
+// fallback cannot succeed under a done context.
 func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	var lastErr error
 	for i, provider := range p.chain {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, errors.Join(err, lastErr)
+			}
+			return nil, err
+		}
 		var emitted atomic.Bool
 		attemptEmit := emit
 		if emit != nil {
