@@ -12,6 +12,9 @@ import (
 type slogHook struct {
 	logger   *slog.Logger
 	minLevel slog.Level
+	// content enables logging of user and model content (final response
+	// text, retrieval queries). Off by default; see WithContentLogging.
+	content bool
 }
 
 // Compile-time interface checks.
@@ -67,7 +70,7 @@ func (h *slogHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord)
 			attrs = append(attrs, slog.String("error", record.Err.Error()))
 		}
 		h.log(ctx, level, "invoke.end", attrs...)
-		if record.Err == nil && record.Response != "" {
+		if h.content && record.Err == nil && record.Response != "" {
 			h.log(ctx, slog.LevelInfo, "response.text", slog.String("text", record.Response))
 		}
 	}
@@ -196,9 +199,11 @@ func (h *slogHook) ObserveConversation(ctx context.Context, record agent.Convers
 func (h *slogHook) ObserveRetrieval(ctx context.Context, record agent.RetrievalRecord) context.Context {
 	switch record.Phase {
 	case agent.Start:
-		h.log(ctx, slog.LevelDebug, "retriever.start",
-			slog.String("query", record.Query),
-		)
+		var attrs []slog.Attr
+		if h.content {
+			attrs = append(attrs, slog.String("query", record.Query))
+		}
+		h.log(ctx, slog.LevelDebug, "retriever.start", attrs...)
 	case agent.End:
 		level := slog.LevelInfo
 		attrs := []slog.Attr{

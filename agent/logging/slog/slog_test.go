@@ -335,9 +335,40 @@ func TestInvokeEnd_IncludesTokenUsage(t *testing.T) {
 	}
 }
 
-func TestInvokeEnd_LogsResponseText(t *testing.T) {
+func TestContentIsNotLoggedByDefault(t *testing.T) {
 	ch := &captureHandler{}
 	h := newSlogHook([]Option{WithHandler(ch)})
+
+	h.ObserveInvoke(context.Background(), agent.InvokeRecord{Phase: agent.End, Response: "secret answer"})
+	h.ObserveRetrieval(context.Background(), agent.RetrievalRecord{Phase: agent.Start, Query: "secret query"})
+
+	for _, record := range ch.getRecords() {
+		if record.Message == "response.text" {
+			t.Fatal("response.text logged without WithContentLogging")
+		}
+		for key, value := range recordAttrs(record) {
+			if s := value.String(); s == "secret answer" || s == "secret query" {
+				t.Fatalf("%s: attribute %q leaks content %q", record.Message, key, s)
+			}
+		}
+	}
+}
+
+func TestContentLoggingLogsRetrievalQuery(t *testing.T) {
+	ch := &captureHandler{}
+	h := newSlogHook([]Option{WithHandler(ch), WithContentLogging()})
+
+	h.ObserveRetrieval(context.Background(), agent.RetrievalRecord{Phase: agent.Start, Query: "q"})
+
+	records := ch.getRecords()
+	if len(records) != 1 || recordAttrs(records[0])["query"].String() != "q" {
+		t.Fatalf("expected retriever.start with query, got %+v", records)
+	}
+}
+
+func TestInvokeEnd_LogsResponseText(t *testing.T) {
+	ch := &captureHandler{}
+	h := newSlogHook([]Option{WithHandler(ch), WithContentLogging()})
 
 	h.ObserveInvoke(context.Background(), agent.InvokeRecord{Phase: agent.End, Response: "hello"})
 

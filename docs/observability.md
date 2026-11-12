@@ -25,7 +25,7 @@ Observers run in registration order at lifecycle start and reverse order at end.
 ## Built-in logging
 
 - `logging/debug.WithLogging(opts...)` writes a readable lifecycle trace for local development. It prints to stdout with ANSI colors by default; `debug.WithWriter(w)` redirects it (a nil writer fails `agent.New`) and `debug.WithColor(false)` removes every escape sequence, dividers and errors included. Writes are serialized, so concurrent events never interleave. It is a development trace, not a structured log; `logging/slog` does not imitate it.
-- `logging/slog.WithLogging(...)` uses `log/slog`; configure `WithHandler` and `WithMinLevel`.
+- `logging/slog.WithLogging(...)` uses `log/slog`; configure `WithHandler` and `WithMinLevel`. It logs timings, token counts and errors but not user or model content; `WithContentLogging()` opts into logging the final response text and retrieval queries, matching `tracing.WithContentCapture()`. Enable it only where logs may hold user data.
 
 ```go
 import (
