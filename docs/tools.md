@@ -49,6 +49,19 @@ search := tool.New("search", "Search the catalog",
 )
 ```
 
+### Required fields
+
+For `New[T]` and `NewRich[T]` a field is marked **required** in the generated schema only when it carries the struct tag `required:"true"`. Every untagged field is optional: without the tag, schema validation accepts a call that omits the field and the handler receives the Go zero value. This is opt-in by design — Go cannot distinguish an absent field from a zero value — and it will not change in v1, so tag every field your handler cannot operate without:
+
+```go
+type Input struct {
+    Query string `json:"query" required:"true"` // must be supplied
+    Limit int    `json:"limit"`                  // optional; defaults to 0
+}
+```
+
+`NewRaw` takes an explicit schema instead, so set its `"required"` list directly.
+
 Use `NewRaw` when input must remain raw JSON. For a raw tool the schema is part of the definition, so it is a positional argument; `nil` becomes `{"type":"object"}`:
 
 ```go

@@ -23,6 +23,7 @@ result, err := a.Invoke(ctx, "What changed?")
 ## Build agents
 
 - [Tools](tools.md) and [middleware](middleware.md)
+- [Tool interception model](interception.md) — choose between Observer, Middleware, visibility, RBAC/ABAC, Guard and approval
 - [Interrupts and resume](interrupts.md)
 - [Conversation persistence](conversation.md)
 - [RAG](rag.md) and [long-term memory](memory.md)

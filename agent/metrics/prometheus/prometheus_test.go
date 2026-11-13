@@ -642,3 +642,52 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 		}
 	}
 }
+
+func TestToolNameAllowlist(t *testing.T) {
+	reg := prom.NewRegistry()
+	h := &prometheusHook{registerer: reg, gatherer: reg}
+	WithToolNameAllowlist("search", "calculator")(h)
+	h.register()
+
+	for _, name := range []string{"search", "calculator", "mcp_dynamic_1", "mcp_dynamic_2"} {
+		_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+			Phase: agent.End, Name: name, Duration: time.Second,
+		})
+	}
+
+	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
+		"tool_name": "search", "status": "success",
+	}); got != 1 {
+		t.Errorf("search count = %v, want 1", got)
+	}
+	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
+		"tool_name": "calculator", "status": "success",
+	}); got != 1 {
+		t.Errorf("calculator count = %v, want 1", got)
+	}
+	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
+		"tool_name": "other", "status": "success",
+	}); got != 2 {
+		t.Errorf("other bucket count = %v, want 2", got)
+	}
+	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
+		"tool_name": "mcp_dynamic_1", "status": "success",
+	}); got != 0 {
+		t.Errorf("mcp_dynamic_1 should not be a distinct series, got %v", got)
+	}
+}
+
+func TestToolNameNoAllowlistVerbatim(t *testing.T) {
+	reg := prom.NewRegistry()
+	h := &prometheusHook{registerer: reg, gatherer: reg}
+	h.register()
+
+	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+		Phase: agent.End, Name: "mcp_dynamic_1", Duration: time.Second,
+	})
+	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
+		"tool_name": "mcp_dynamic_1", "status": "success",
+	}); got != 1 {
+		t.Errorf("verbatim tool count = %v, want 1", got)
+	}
+}

@@ -22,6 +22,9 @@ func (h *prometheusHook) Handler() http.Handler {
 //
 // The hook is eagerly created so the handler is usable before agent.New is called.
 // When agent.New applies the returned option, it installs the same hook on the agent.
+//
+// Use NewHandler OR WithMetrics, not both: without WithRegisterer they use
+// different registries, so mixing them leaves the handler scraping an empty one.
 func NewHandler(opts ...Option) (agent.Option, http.Handler) {
 	hook := &prometheusHook{}
 	for _, o := range opts {

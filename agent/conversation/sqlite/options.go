@@ -2,10 +2,10 @@ package sqlite
 
 import "time"
 
-// Option configures a SQLiteMemory instance.
+// Option configures a Conversation instance.
 type Option func(*sqliteConfig)
 
-// sqliteConfig holds configuration for SQLiteMemory construction.
+// sqliteConfig holds configuration for Conversation construction.
 type sqliteConfig struct {
 	tableName   string
 	busyTimeout time.Duration

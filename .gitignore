@@ -3,9 +3,21 @@
 *.out
 *.test
 *.log
+# Build caches and scratch dirs; tmp/ matches at any depth, including caches
+# that land inside a module tree when GOCACHE points into the repo.
 tmp/
+**/tmp/
 .kiro/
+# Local AI agent task notes, briefs and review reports.
+.agents/
 .DS_Store
 **/testdata/rapid/
 go.work.sum
 examples/_local/*
+
+# The agentcore-deploy CDK sample vendors a Node toolchain and emits synthesized
+# output; none of it belongs in the Go module tree or in git.
+examples/agentcore-deploy/**/node_modules/
+examples/agentcore-deploy/**/cdk.out/
+**/node_modules/
+cdk.out/

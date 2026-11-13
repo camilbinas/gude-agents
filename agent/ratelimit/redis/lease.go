@@ -44,11 +44,11 @@ if state=="expired" then return -3 end
 if state~="pending" then if state==action then return -4 else return -5 end end
 local expires=tonumber(redis.call("HGET",ledger,"expires") or "0"); local terminalTTL=tonumber(redis.call("HGET",ledger,"terminal_ttl") or "0")
 if now_ms>=expires then action="expired"; actual=-1 end
+-- ARGV layout: [action, actual, tokenN, w1..wN, id]. The windows occupy
+-- ARGV[4 .. 3+tokenN]; the lease id follows them so the settlement loop below
+-- reads windows and the id by position without extra per-counter arguments.
+local id=ARGV[4+tokenN]
 local arg,key=4,1
-for i=1,tokenN do local w=tonumber(ARGV[arg]); arg=arg+1; local z,h,total=KEYS[key],KEYS[key+1],KEYS[key+2]; local old=tonumber(redis.call("HGET",h,ledger) or "0"); if old==0 then old=tonumber(redis.call("HGET",h,ARGV[arg]) or "0") end; key=key+3 end
--- The ledger ID is passed separately after all windows to avoid exposing a raw script status.
-local id=ARGV[arg]
-key=1; arg=4
 for i=1,tokenN do local w=tonumber(ARGV[arg]); arg=arg+1; local z,h,total=KEYS[key],KEYS[key+1],KEYS[key+2]; local old=tonumber(redis.call("HGET",h,id) or "0"); local n=actual; if n<0 then n=old end; local sum=tonumber(redis.call("GET",total) or "0")-old+n; if sum<0 then sum=0 end; redis.call("HSET",h,id,n); redis.call("ZADD",z,now_ms,id); redis.call("SET",total,sum); redis.call("PEXPIRE",z,w); redis.call("PEXPIRE",h,w); redis.call("PEXPIRE",total,w); key=key+3 end
 redis.call("HSET",ledger,"state",action); redis.call("PEXPIRE",ledger,terminalTTL)
 if action=="expired" then return -3 end

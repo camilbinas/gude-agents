@@ -9,6 +9,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -19,6 +20,10 @@ import (
 )
 
 // Client connects to an MCP server and exposes its tools as gude-agents tool.Tool values.
+//
+// A Client wraps a single MCP session that is safe for concurrent CallTool
+// invocations, so tools from Tools may run in parallel without extra locking.
+// They share one transport; use Pool for high-throughput workloads.
 type Client struct {
 	session *sdkmcp.ClientSession
 }
@@ -117,6 +122,9 @@ func (c *Client) Tools(ctx context.Context, opts ...ToolsOption) ([]tool.Tool, e
 			return nil, err
 		}
 	}
+	if len(cfg.include) > 0 && len(cfg.exclude) > 0 {
+		return nil, errors.New("mcp: IncludeTools and ExcludeTools are mutually exclusive; pass only one")
+	}
 
 	var tools []tool.Tool
 	for t, err := range c.session.Tools(ctx, nil) {
@@ -170,7 +178,7 @@ func WithToolPrefix(prefix string) ToolsOption {
 }
 
 // IncludeTools restricts Tools() to only the named tools.
-// Cannot be combined with ExcludeTools; IncludeTools takes precedence.
+// Cannot be combined with ExcludeTools; passing both returns an error.
 func IncludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) error {
 		if c.include == nil {
@@ -184,7 +192,7 @@ func IncludeTools(names ...string) ToolsOption {
 }
 
 // ExcludeTools filters out the named tools from Tools().
-// Ignored if IncludeTools is also provided.
+// Cannot be combined with IncludeTools; passing both returns an error.
 func ExcludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) error {
 		if c.exclude == nil {

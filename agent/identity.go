@@ -15,9 +15,10 @@ type Principal struct {
 	// Attrs carries arbitrary key-value attributes (org_id, tier, region, etc.)
 	// that policies can inspect.
 	Attrs map[string]string
-	// Credentials holds opaque credential values (tokens, API keys, etc.)
-	// keyed by name. Never logged or transmitted by the framework.
-	Credentials map[string]string
+	// Credentials holds opaque credential values (tokens, API keys, etc.) keyed
+	// by name. The json:"-" tag keeps them out of any marshaled audit or
+	// observer record so they are never logged or transmitted.
+	Credentials map[string]string `json:"-"`
 }
 
 // HasRole reports whether the principal holds the given role.

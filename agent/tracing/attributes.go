@@ -34,12 +34,31 @@ const (
 	AttrAgentDocumentCount        = "agent.document_count"
 )
 
+// SemconvGenAIVersion is the OpenTelemetry GenAI semantic-conventions version
+// the gen_ai.* keys target. Check that spec's changelog before bumping it.
+const SemconvGenAIVersion = "1.37.0"
+
+// GenAI operation names, per gen_ai.operation.name well-known values.
+const (
+	OperationInvokeAgent = "invoke_agent"
+	OperationChat        = "chat"
+	OperationExecuteTool = "execute_tool"
+)
+
 // Content capture attributes (opt-in via WithContentCapture).
+// gen_ai.prompt/gen_ai.completion are deprecated upstream in favor of the
+// structured input/output message attributes; disable via WithoutLegacyContentAttributes.
 const (
 	AttrGenAIPrompt           = "gen_ai.prompt"
 	AttrGenAISystemPrompt     = "gen_ai.system_prompt"
 	AttrGenAICompletion       = "gen_ai.completion"
 	AttrGenAIProviderResponse = "gen_ai.provider.response"
+
+	// Structured content: JSON-encoded array of role/parts message objects.
+	AttrGenAIInputMessages  = "gen_ai.input.messages"
+	AttrGenAIOutputMessages = "gen_ai.output.messages"
+
+	AttrGenAIOperationName = "gen_ai.operation.name"
 )
 
 // Inference config attributes (always recorded when set).

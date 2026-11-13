@@ -60,15 +60,19 @@ const (
 	RoleRetrieverQuery         AttrRole = AttrRole(AttrRetrieverQuery)
 	RoleRetrieverDocumentCount AttrRole = AttrRole(AttrRetrieverDocumentCount)
 
-	// Operation name — emitted per span to classify it for evaluation systems.
-	// Default is empty (disabled). Set via scheme to enable.
-	RoleOperationName AttrRole = ""
+	// Operation name — emitted per span by default. Map it to "" in a custom
+	// scheme to disable emission.
+	RoleOperationName AttrRole = AttrRole(AttrGenAIOperationName)
 
 	// Content capture (opt-in via WithContentCapture)
 	RoleGenAIPrompt           AttrRole = AttrRole(AttrGenAIPrompt)
 	RoleGenAISystemPrompt     AttrRole = AttrRole(AttrGenAISystemPrompt)
 	RoleGenAICompletion       AttrRole = AttrRole(AttrGenAICompletion)
 	RoleGenAIProviderResponse AttrRole = AttrRole(AttrGenAIProviderResponse)
+
+	// Structured content (opt-in via WithContentCapture).
+	RoleGenAIInputMessages  AttrRole = AttrRole(AttrGenAIInputMessages)
+	RoleGenAIOutputMessages AttrRole = AttrRole(AttrGenAIOutputMessages)
 
 	// Inference config
 	RoleGenAITemperature   AttrRole = AttrRole(AttrGenAITemperature)
@@ -89,11 +93,25 @@ type AttributeScheme map[AttrRole]string
 // Key returns the attribute key configured for role, or the role's default
 // string value if no override is configured. Safe to call on a nil map.
 func (s AttributeScheme) Key(role AttrRole) string {
+	if role == RoleOperationName {
+		// An explicit "" disables the operation name. Pre-v1.10 the role itself
+		// was "", so honor schemes that keyed it under the legacy empty role.
+		if v, ok := s[role]; ok {
+			return v
+		}
+		if v, ok := s[legacyRoleOperationName]; ok && v != "" {
+			return v
+		}
+		return string(role)
+	}
 	if v, ok := s[role]; ok && v != "" {
 		return v
 	}
 	return string(role)
 }
+
+// legacyRoleOperationName is the pre-v1.10 value of RoleOperationName.
+const legacyRoleOperationName AttrRole = ""
 
 // DefaultScheme returns the default attribute naming scheme used by
 // gude-agents. Returning an empty map relies on AttributeScheme.Key's

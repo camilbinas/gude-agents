@@ -52,15 +52,41 @@ func (w *Window) HistoryBoundary(ctx context.Context, id string) (uint64, error)
 		return 0, nil
 	}
 	start := meta.LastSequence - w.count
-	for {
-		tail, err := w.store.LoadAfter(ctx, id, start)
+	// Find the largest boundary <= start whose suffix does not orphan a
+	// ToolResult. Read a range [lo, LastSequence] and scan boundaries in memory,
+	// doubling the range backwards on a miss: common case is one window-sized
+	// read, worst case O(log n) reads.
+	depth := w.count
+	if depth == 0 {
+		depth = 1
+	}
+	for lo := start; ; {
+		tail, err := w.store.LoadAfter(ctx, id, lo)
 		if err != nil {
 			return 0, err
 		}
-		if !hasOrphanedToolResult(tail.Messages) || start == 0 {
-			return start, nil
+		// tail.Messages[i] has sequence lo+i+1, so [boundary-lo:] is LoadAfter(boundary).
+		for boundary := start; boundary >= lo; boundary-- {
+			offset := boundary - lo
+			if offset > uint64(len(tail.Messages)) {
+				continue
+			}
+			if !hasOrphanedToolResult(tail.Messages[offset:]) {
+				return boundary, nil
+			}
+			if boundary == 0 {
+				break
+			}
 		}
-		start--
+		if lo == 0 {
+			return 0, nil
+		}
+		if lo > depth {
+			lo -= depth
+		} else {
+			lo = 0
+		}
+		depth *= 2
 	}
 }
 func (w *Window) Prepare(_ context.Context, in agent.ContextManagerInput) (agent.ContextManagerOutput, error) {
@@ -302,12 +328,10 @@ func (r *RollingSummary) Prepare(ctx context.Context, in agent.ContextManagerInp
 	if _, err := r.state.SaveContextState(ctx, in.ConversationID, r.key, encoded, stateRev); err != nil {
 		return agent.ContextManagerOutput{}, fmt.Errorf("contextmanager: save summary state: %w", err)
 	}
-	stateRev++
 	// The active range already begins at the old boundary. Drop newly covered
 	// entries locally without loading older history.
 	in.Recent = in.Recent[cut:]
 	in.Boundary = state.CoveredThrough
-	_ = stateRev
 	return agent.ContextManagerOutput{Messages: build(state)}, nil
 }
 func hasUnresolved(messages []agent.Message) bool {

@@ -1,6 +1,3 @@
-// Package testutil provides shared property-based test generators for
-// agent.Message and agent.ContentBlock types. It is intended for use by
-// memory backend test suites to avoid duplicating generator code.
 package testutil
 
 import (
@@ -10,6 +7,9 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 	"pgregory.net/rapid"
 )
+
+// The Gen* generators below build random agent.Message / agent.ContentBlock
+// values for property-based tests and are public API for downstream suites.
 
 // GenTextBlock generates a random TextBlock with 0–50 alphanumeric characters.
 func GenTextBlock(t *rapid.T) agent.TextBlock {

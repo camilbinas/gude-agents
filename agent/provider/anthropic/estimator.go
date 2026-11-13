@@ -33,9 +33,13 @@ func NewEstimator(provider *AnthropicProvider) *Estimator {
 // request and returns the exact input token count reported by the Anthropic API.
 // On API errors, it returns (0, err).
 func (e *Estimator) EstimateTokens(ctx context.Context, req agent.ModelRequest) (int, error) {
+	msgs, err := toAnthropicMessages(req.Messages, false)
+	if err != nil {
+		return 0, fmt.Errorf("anthropic count_tokens: %w", err)
+	}
 	input := anthropicsdk.MessageCountTokensParams{
 		Model:    e.model,
-		Messages: toAnthropicMessages(req.Messages, false),
+		Messages: msgs,
 	}
 
 	if req.System != "" {
@@ -60,7 +64,7 @@ func (e *Estimator) EstimateTokens(ctx context.Context, req agent.ModelRequest) 
 func toCountTokensTools(specs []tool.Spec) []anthropicsdk.MessageCountTokensToolUnionParam {
 	tools := make([]anthropicsdk.MessageCountTokensToolUnionParam, len(specs))
 	for i, s := range specs {
-		props, _ := s.InputSchema["properties"]
+		props := s.InputSchema["properties"]
 		required, _ := s.InputSchema["required"].([]string)
 		if required == nil {
 			if reqAny, ok := s.InputSchema["required"].([]any); ok {

@@ -30,6 +30,8 @@ func WithName(name string) Option {
 }
 
 // WithMaxIterations sets the maximum number of call-execute-respond iterations.
+// The limit is shared and durable across resumes, so size it for the full
+// tool/provider loop including pauses, not for a single Invoke call.
 func WithMaxIterations(n int) Option {
 	return func(a *Runtime) error {
 		if n < 1 {
@@ -356,13 +358,24 @@ func WithTopK(v int) Option {
 }
 
 // WithStopSequences sets the stop sequences inference parameter on the agent.
-// Stop sequences cause the LLM to stop producing further tokens when generated.
+// An empty stop sequence is rejected as a construction error. The slice is
+// copied, preserving the nil-vs-empty distinction callers rely on.
 func WithStopSequences(s []string) Option {
 	return func(a *Runtime) error {
+		for i, seq := range s {
+			if seq == "" {
+				return fmt.Errorf("WithStopSequences: stop sequence [%d] must not be empty", i)
+			}
+		}
 		if a.inferenceConfig == nil {
 			a.inferenceConfig = &InferenceConfig{}
 		}
-		a.inferenceConfig.StopSequences = s
+		// Copy, keeping nil distinct from a non-nil empty slice.
+		if s == nil {
+			a.inferenceConfig.StopSequences = nil
+		} else {
+			a.inferenceConfig.StopSequences = append([]string{}, s...)
+		}
 		return nil
 	}
 }

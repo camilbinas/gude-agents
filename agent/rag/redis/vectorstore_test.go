@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -295,5 +296,191 @@ func TestStore_IDLifecycle(t *testing.T) {
 	}
 	if docs, err := store.Find(ctx, ids[0], generated[0]); err != nil || len(docs) != 0 {
 		t.Fatalf("Find after Delete = %+v, %v; want no documents", docs, err)
+	}
+}
+
+func TestNew_ValidatesDimAndIndexName(t *testing.T) {
+	if _, err := New(Options{Addr: "127.0.0.1:6379"}, "idx", 0); err == nil {
+		t.Fatal("expected error for dim=0, got nil")
+	}
+	if _, err := New(Options{Addr: "127.0.0.1:6379"}, "idx", -1); err == nil {
+		t.Fatal("expected error for negative dim, got nil")
+	}
+	if _, err := New(Options{Addr: "127.0.0.1:6379"}, "", 128); err == nil {
+		t.Fatal("expected error for empty indexName, got nil")
+	}
+}
+
+func TestStore_ValidateEmbedding(t *testing.T) {
+	s := &Store{dim: 3}
+
+	if err := s.validateEmbedding([]float64{1, 2, 3}); err != nil {
+		t.Fatalf("valid embedding rejected: %v", err)
+	}
+	if err := s.validateEmbedding([]float64{1, 2}); err == nil {
+		t.Fatal("expected error for wrong dimension, got nil")
+	}
+	if err := s.validateEmbedding([]float64{1, 2, math.NaN()}); err == nil {
+		t.Fatal("expected error for NaN, got nil")
+	}
+	if err := s.validateEmbedding([]float64{1, 2, math.Inf(1)}); err == nil {
+		t.Fatal("expected error for +Inf, got nil")
+	}
+	if err := s.validateEmbedding([]float64{1, 2, math.Inf(-1)}); err == nil {
+		t.Fatal("expected error for -Inf, got nil")
+	}
+}
+
+func TestStore_UpsertRejectsBadEmbedding(t *testing.T) {
+	s := &Store{dim: 3}
+	docs := []rag.Document{{Content: "a"}}
+
+	if _, err := s.Upsert(context.Background(), docs, [][]float64{{1, 2}}); err == nil {
+		t.Fatal("expected error for dimension mismatch, got nil")
+	}
+	if _, err := s.Upsert(context.Background(), docs, [][]float64{{1, 2, math.NaN()}}); err == nil {
+		t.Fatal("expected error for non-finite value, got nil")
+	}
+}
+
+func TestStore_SearchRejectsBadEmbedding(t *testing.T) {
+	s := &Store{dim: 3}
+	if _, err := s.Search(context.Background(), []float64{1, 2}, 1); err == nil {
+		t.Fatal("expected error for dimension mismatch, got nil")
+	}
+	if _, err := s.Search(context.Background(), []float64{1, 2, math.Inf(1)}, 1); err == nil {
+		t.Fatal("expected error for non-finite value, got nil")
+	}
+}
+
+func TestDecodeMetadata(t *testing.T) {
+	md, err := decodeMetadata("")
+	if err != nil {
+		t.Fatalf("empty string: unexpected error %v", err)
+	}
+	if md != nil {
+		t.Fatalf("empty string: expected nil map, got %v", md)
+	}
+
+	md, err = decodeMetadata(`{"source":"a.md","k":"v"}`)
+	if err != nil {
+		t.Fatalf("valid json: unexpected error %v", err)
+	}
+	if md["source"] != "a.md" || md["k"] != "v" {
+		t.Fatalf("valid json: wrong decode %v", md)
+	}
+
+	if _, err := decodeMetadata(`{not json`); err == nil {
+		t.Fatal("malformed json: expected error, got nil")
+	}
+}
+
+func TestDeleteByMetadata_EmptyFilter(t *testing.T) {
+	s := &Store{indexName: "idx", dim: 3}
+	if err := s.DeleteByMetadata(context.Background(), map[string]string{}); err == nil {
+		t.Fatal("expected error for empty filter, got nil")
+	}
+}
+
+func TestDeleteByMetadata_UnsafeValue(t *testing.T) {
+	s := &Store{indexName: "idx", dim: 3}
+	cases := []map[string]string{
+		{"source": `has"quote`},
+		{"source": "has:colon"},
+		{"source": `has\backslash`},
+		{`bad"key`: "v"},
+	}
+	for _, f := range cases {
+		err := s.DeleteByMetadata(context.Background(), f)
+		if err == nil {
+			t.Fatalf("expected error for unsafe filter %v, got nil", f)
+		}
+		if !errors.Is(err, ErrUnsafeFilterValue) {
+			t.Fatalf("filter %v: expected ErrUnsafeFilterValue, got %v", f, err)
+		}
+	}
+}
+
+func TestSafeFilterComponent(t *testing.T) {
+	safe := []string{"", "readme.md", "a_b-c.txt", "spaces ok", "unicodé"}
+	for _, s := range safe {
+		if !safeFilterComponent(s) {
+			t.Fatalf("%q should be safe", s)
+		}
+	}
+	unsafe := []string{`a"b`, "a:b", `a\b`}
+	for _, s := range unsafe {
+		if safeFilterComponent(s) {
+			t.Fatalf("%q should be unsafe", s)
+		}
+	}
+}
+
+func TestEscapeRedisSearchTerm_BackslashFirst(t *testing.T) {
+	// Backslash escaped to \\, without re-escaping escapes added for others.
+	got := escapeRedisSearchTerm(`a\b`)
+	if got != `a\\b` {
+		t.Fatalf("escapeRedisSearchTerm(%q) = %q, want %q", `a\b`, got, `a\\b`)
+	}
+	got = escapeRedisSearchTerm(`k:v`)
+	if got != `k\:v` {
+		t.Fatalf("escapeRedisSearchTerm(%q) = %q, want %q", `k:v`, got, `k\:v`)
+	}
+}
+
+func TestParseRESP2_PropagatesMetadataDecodeError(t *testing.T) {
+	s := &Store{indexName: "idx"}
+	// [total, key, [field,val,...]]
+	results := []interface{}{
+		int64(1),
+		"idx:doc1",
+		[]interface{}{"content", "hello", "metadata", "{bad json", "score", "0.1"},
+	}
+	if _, err := s.parseRESP2(results); err == nil {
+		t.Fatal("expected metadata decode error from parseRESP2, got nil")
+	}
+}
+
+func TestParseRESP3_PropagatesMetadataDecodeError(t *testing.T) {
+	s := &Store{indexName: "idx"}
+	m := map[interface{}]interface{}{
+		"results": []interface{}{
+			map[interface{}]interface{}{
+				"id": "idx:doc1",
+				"extra_attributes": map[interface{}]interface{}{
+					"content":  "hello",
+					"metadata": "{bad json",
+					"score":    "0.1",
+				},
+			},
+		},
+	}
+	if _, err := s.parseRESP3(m); err == nil {
+		t.Fatal("expected metadata decode error from parseRESP3, got nil")
+	}
+}
+
+func TestParseRESP2_DecodesValidMetadata(t *testing.T) {
+	s := &Store{indexName: "idx"}
+	results := []interface{}{
+		int64(1),
+		"idx:doc1",
+		[]interface{}{"content", "hello", "metadata", `{"source":"a.md"}`, "score", "0.25"},
+	}
+	scored, err := s.parseRESP2(results)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(scored) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(scored))
+	}
+	if scored[0].Document.ID != "doc1" {
+		t.Fatalf("expected logical id doc1, got %q", scored[0].Document.ID)
+	}
+	if scored[0].Document.Metadata["source"] != "a.md" {
+		t.Fatalf("metadata not decoded: %v", scored[0].Document.Metadata)
+	}
+	if got := scored[0].Score; got != 0.75 {
+		t.Fatalf("expected score 0.75 (1-0.25), got %v", got)
 	}
 }

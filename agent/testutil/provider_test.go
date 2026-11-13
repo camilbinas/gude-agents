@@ -9,6 +9,7 @@ import (
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/testutil"
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 func TestProvider_ScriptedResponses(t *testing.T) {
@@ -155,5 +156,52 @@ func TestProvider_Reset(t *testing.T) {
 	r, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 	if err != nil || r.Text != "a" {
 		t.Fatalf("expected a after reset, got %v / %v", r, err)
+	}
+}
+
+func TestProvider_StopReasonDefaults(t *testing.T) {
+	p := testutil.NewMockProvider(
+		testutil.WithResponses(
+			&agent.ModelResponse{Text: "plain text"},
+			&agent.ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "1", Name: "t", Input: []byte(`{}`)}}},
+			&agent.ModelResponse{Text: "cut off", StopReason: agent.ModelStopMaxTokens},
+		),
+	)
+
+	r1, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.StopReason != agent.ModelStopEndTurn {
+		t.Errorf("text response StopReason = %q, want end_turn", r1.StopReason)
+	}
+
+	r2, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.StopReason != agent.ModelStopToolUse {
+		t.Errorf("tool-call response StopReason = %q, want tool_use", r2.StopReason)
+	}
+
+	r3, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r3.StopReason != agent.ModelStopMaxTokens {
+		t.Errorf("explicit StopReason = %q, want max_tokens", r3.StopReason)
+	}
+}
+
+// Defaulting the stop reason must not mutate the shared scripted response.
+func TestProvider_StopReasonDoesNotMutateScript(t *testing.T) {
+	scripted := &agent.ModelResponse{Text: "hi"}
+	p := testutil.NewMockProvider(testutil.WithResponses(scripted))
+
+	if _, err := p.Stream(context.Background(), agent.ModelRequest{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if scripted.StopReason != agent.ModelStopUnknown {
+		t.Errorf("scripted response was mutated: StopReason = %q", scripted.StopReason)
 	}
 }

@@ -258,3 +258,75 @@ func TestDurationRecording(t *testing.T) {
 		}
 	}
 }
+
+// toolCountForName returns the agent.tool.call.total value for a tool_name (0 if absent).
+func toolCountForName(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	m := findMetric(rm, "agent.tool.call.total")
+	if m == nil {
+		return 0
+	}
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("agent.tool.call.total data type = %T", m.Data)
+	}
+	var total int64
+	for _, dp := range sum.DataPoints {
+		iter := dp.Attributes.Iter()
+		for iter.Next() {
+			kv := iter.Attribute()
+			if string(kv.Key) == "tool_name" && kv.Value.AsString() == name {
+				total += dp.Value
+			}
+		}
+	}
+	return total
+}
+
+func TestToolNameAllowlist(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+
+	h := &otelHook{}
+	WithToolNameAllowlist("search")(h)
+	h.meter = mp.Meter(defaultMeterName)
+	if err := h.register(); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	for _, name := range []string{"search", "mcp_dynamic_1", "mcp_dynamic_2"} {
+		_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: name})
+	}
+
+	if got := toolCountForName(t, reader, "search"); got != 1 {
+		t.Errorf("search count = %d, want 1", got)
+	}
+	if got := toolCountForName(t, reader, "other"); got != 2 {
+		t.Errorf("other bucket count = %d, want 2", got)
+	}
+	if got := toolCountForName(t, reader, "mcp_dynamic_1"); got != 0 {
+		t.Errorf("mcp_dynamic_1 should not be a distinct series, got %d", got)
+	}
+}
+
+func TestToolNameNoAllowlistVerbatim(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer mp.Shutdown(context.Background())
+
+	h := &otelHook{}
+	h.meter = mp.Meter(defaultMeterName)
+	if err := h.register(); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: "mcp_dynamic_1"})
+
+	if got := toolCountForName(t, reader, "mcp_dynamic_1"); got != 1 {
+		t.Errorf("verbatim count = %d, want 1", got)
+	}
+}

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
 )
@@ -41,7 +42,12 @@ func (f ParserFunc) Parse(ctx context.Context, path string) (string, error) {
 	return f(ctx, path)
 }
 
-// defaultParsers maps file extensions to their parsers.
+// defaultParsersMu guards defaultParsers against a RegisterParser call racing a
+// concurrent lookup.
+var defaultParsersMu sync.RWMutex
+
+// defaultParsers maps file extensions to their parsers. Access only through
+// defaultParsersMu.
 var defaultParsers = map[string]Parser{
 	".txt":  ParserFunc(parseText),
 	".md":   ParserFunc(parseText),
@@ -58,9 +64,11 @@ var defaultParsers = map[string]Parser{
 	".docx": ParserFunc(parseDocx),
 }
 
-// RegisterParser adds or overrides a parser for a file extension.
-// The extension should include the dot (e.g. ".pdf").
+// RegisterParser adds or overrides a parser for a file extension. The extension
+// should include the dot (e.g. ".pdf"). Safe for concurrent use.
 func RegisterParser(ext string, p Parser) {
+	defaultParsersMu.Lock()
+	defer defaultParsersMu.Unlock()
 	defaultParsers[strings.ToLower(ext)] = p
 }
 
@@ -113,6 +121,8 @@ func (c *loadConfig) parserFor(ext string) (Parser, bool) {
 	if p, ok := c.parsers[ext]; ok {
 		return p, true
 	}
+	defaultParsersMu.RLock()
+	defer defaultParsersMu.RUnlock()
 	p, ok := defaultParsers[ext]
 	return p, ok
 }

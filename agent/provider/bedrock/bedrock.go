@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -428,7 +429,7 @@ func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, em
 
 	out, err := p.client.ConverseStream(ctx, input)
 	if err != nil {
-		return nil, &agent.ProviderError{Cause: err}
+		return nil, classifyError(err)
 	}
 
 	resp := &agent.ModelResponse{}
@@ -439,10 +440,43 @@ func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, em
 	}
 	stream.Close()
 	if err := stream.Err(); err != nil {
-		return nil, &agent.ProviderError{Cause: err}
+		return nil, classifyError(err)
 	}
 
 	return resp, nil
+}
+
+// classifyError wraps a Bedrock SDK/transport error in an *agent.ProviderError
+// with retryability, HTTP status, and a Retry-After hint populated.
+func classifyError(err error) *agent.ProviderError {
+	pe := &agent.ProviderError{Cause: err}
+
+	var throttling *types.ThrottlingException
+	var unavailable *types.ServiceUnavailableException
+	var internal *types.InternalServerException
+	var modelTimeout *types.ModelTimeoutException
+	if errors.As(err, &throttling) || errors.As(err, &unavailable) ||
+		errors.As(err, &internal) || errors.As(err, &modelTimeout) {
+		pe.Retryable = true
+	}
+
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) {
+		pe.StatusCode = respErr.HTTPStatusCode()
+		if pvdr.RetryableStatus(pe.StatusCode) {
+			pe.Retryable = true
+		}
+		if respErr.Response != nil {
+			pe.RetryAfter = pvdr.RetryAfterFromResponse(respErr.Response.Response)
+		}
+		return pe
+	}
+
+	if pe.Retryable {
+		return pe
+	}
+	pe.Retryable = pvdr.RetryableNetworkError(err)
+	return pe
 }
 
 type streamState struct {
@@ -694,22 +728,25 @@ func toBedrockMessages(msgs []agent.Message, modelID string, cachingEnabled bool
 
 func toBedrockMessagesWithFetcher(ctx context.Context, fetchClient *http.Client, fetchPolicy urlFetchPolicy, msgs []agent.Message, modelID string, cachingEnabled bool) ([]types.Message, error) {
 	injectCachePoints := cachingEnabled && isClaudeModel(modelID)
-	out := make([]types.Message, len(msgs))
-	for i, m := range msgs {
+	out := make([]types.Message, 0, len(msgs))
+	for _, m := range msgs {
 		blocks, err := toBedrockContentBlocksWithFetcher(ctx, fetchClient, fetchPolicy, m.Content, modelID, injectCachePoints)
 		if err != nil {
 			return nil, err
 		}
-		// Bedrock requires every message to carry at least one content block.
-		// Dropping blank text (above) can leave a message empty; substitute a
-		// minimal placeholder so the request stays valid.
+		// Bedrock requires every message to carry at least one content block. A
+		// user turn gets a "(no content)" placeholder; an assistant turn is
+		// dropped instead, since the placeholder would corrupt the transcript.
 		if len(blocks) == 0 {
+			if m.Role == agent.RoleAssistant {
+				continue
+			}
 			blocks = []types.ContentBlock{&types.ContentBlockMemberText{Value: "(no content)"}}
 		}
-		out[i] = types.Message{
+		out = append(out, types.Message{
 			Role:    toBedrockRole(m.Role),
 			Content: blocks,
-		}
+		})
 	}
 	return out, nil
 }
@@ -844,14 +881,6 @@ func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Cl
 	return out, nil
 }
 
-// imageBytes returns the raw bytes from an ImageSource.
-// If Source.Data is set, it is returned directly.
-// If Source.Base64 is set, it is decoded from standard base64.
-// If Source.URL is set, the image is fetched via a bounded HTTP GET.
-func imageBytes(src agent.ImageSource) ([]byte, error) {
-	return imageBytesWithFetcher(context.Background(), newURLFetchClient(0), src)
-}
-
 func imageBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.ImageSource) ([]byte, error) {
 	return imageBytesWithFetcherAndPolicy(ctx, fetchClient, urlFetchPolicy{}, src)
 }
@@ -915,11 +944,7 @@ func sanitizeDocName(name string) string {
 	return name
 }
 
-// documentBytes returns the raw bytes from a DocumentSource, same logic as imageBytes.
-func documentBytes(src agent.DocumentSource) ([]byte, error) {
-	return documentBytesWithFetcher(context.Background(), newURLFetchClient(0), src)
-}
-
+// documentBytesWithFetcher returns the raw bytes from a DocumentSource.
 func documentBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.DocumentSource) ([]byte, error) {
 	return documentBytesWithFetcherAndPolicy(ctx, fetchClient, urlFetchPolicy{}, src)
 }
@@ -1151,19 +1176,4 @@ func addBearerTokenMiddleware(token string) func(stack *middleware.Stack) error 
 			middleware.After,
 		)
 	}
-}
-
-// bearerTransport wraps an http.RoundTripper and injects the Authorization header.
-// Used as a fallback if the smithy middleware approach isn't available.
-var _ http.RoundTripper = (*bearerTransport)(nil)
-
-type bearerTransport struct {
-	base  http.RoundTripper
-	token string
-}
-
-func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	r := req.Clone(req.Context())
-	r.Header.Set("Authorization", "Bearer "+t.token)
-	return t.base.RoundTrip(r)
 }

@@ -163,3 +163,49 @@ func TestBedrockEmbedder_CohereEmptyEmbeddingsError(t *testing.T) {
 		t.Errorf("expected 'empty embeddings' error, got: %v", err)
 	}
 }
+
+func TestBedrockEmbedder_TitanHonorsDimensions(t *testing.T) {
+	cases := []struct {
+		name string
+		dim  int
+		want string
+	}{
+		{"default", 0, `"dimensions":1024`},
+		{"256", 256, `"dimensions":256`},
+		{"512", 512, `"dimensions":512`},
+		{"1024", 1024, `"dimensions":1024`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var capturedBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedBody = make([]byte, r.ContentLength)
+				r.Body.Read(capturedBody)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"embedding":[0.1,0.2,0.3]}`))
+			}))
+			defer srv.Close()
+
+			e := &Embedder{client: testClient(t, srv.URL), modelID: "amazon.titan-embed-text-v2:0", dimensions: c.dim}
+			if _, err := e.Embed(context.Background(), "hello"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(string(capturedBody), c.want) {
+				t.Errorf("expected request body to contain %q, got: %s", c.want, capturedBody)
+			}
+		})
+	}
+}
+
+func TestBedrockEmbedder_TitanRejectsInvalidDimensions(t *testing.T) {
+	// No server call should be reached; validation happens before InvokeModel.
+	e := &Embedder{client: testClient(t, "http://127.0.0.1:1"), modelID: "amazon.titan-embed-text-v2:0", dimensions: 777}
+	_, err := e.Embed(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected error for invalid Titan dimensions, got nil")
+	}
+	if !strings.Contains(err.Error(), "256, 512, or 1024") {
+		t.Errorf("expected dimension validation error, got: %v", err)
+	}
+}

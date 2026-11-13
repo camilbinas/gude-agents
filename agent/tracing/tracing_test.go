@@ -1674,3 +1674,220 @@ func (m *mockMemory) Append(ctx context.Context, id string, messages []agent.Mes
 	}
 	return agent.ConversationCursor{Revision: next, LastSequence: uint64(len(snapshot.Messages) + len(messages))}, nil
 }
+
+func TestGenAIOperationNameByDefault(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProviderWithModel("gpt-test",
+		&agent.ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "1", Name: "echo", Input: []byte(`{}`)}}},
+		&agent.ModelResponse{Text: "done"},
+	)
+	a, err := agent.New(prov, "sys", agent.WithTools(dummyTool("echo", "echoes")), WithTracing(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+	cases := map[string]string{
+		"agent.invoke":        OperationInvokeAgent,
+		"agent.provider.call": OperationChat,
+		"agent.tool.echo":     OperationExecuteTool,
+	}
+	for spanName, wantOp := range cases {
+		s := findSpan(spans, spanName)
+		if s == nil {
+			t.Fatalf("expected %s span", spanName)
+		}
+		if got := getAttr(*s, AttrGenAIOperationName).AsString(); got != wantOp {
+			t.Errorf("%s: gen_ai.operation.name = %q, want %q", spanName, got, wantOp)
+		}
+	}
+}
+
+func TestStructuredContentMessages(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(&agent.ModelResponse{Text: "the answer"})
+	a, err := agent.New(prov, "you are helpful", WithTracing(tp, WithContentCapture()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "what is up"); err != nil {
+		t.Fatal(err)
+	}
+
+	invokeSpan := findSpan(exp.GetSpans(), "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+
+	inJSON := getAttr(*invokeSpan, AttrGenAIInputMessages).AsString()
+	if inJSON == "" {
+		t.Fatal("gen_ai.input.messages not set")
+	}
+	var inMsgs []genAIMessage
+	if err := json.Unmarshal([]byte(inJSON), &inMsgs); err != nil {
+		t.Fatalf("input messages not valid JSON: %v", err)
+	}
+	if len(inMsgs) != 2 || inMsgs[0].Role != "system" || inMsgs[1].Role != "user" {
+		t.Fatalf("input messages = %+v, want [system, user]", inMsgs)
+	}
+	if inMsgs[1].Parts[0].Content != "what is up" {
+		t.Errorf("user content = %q, want %q", inMsgs[1].Parts[0].Content, "what is up")
+	}
+
+	outJSON := getAttr(*invokeSpan, AttrGenAIOutputMessages).AsString()
+	var outMsgs []genAIMessage
+	if err := json.Unmarshal([]byte(outJSON), &outMsgs); err != nil {
+		t.Fatalf("output messages not valid JSON: %v", err)
+	}
+	if len(outMsgs) != 1 || outMsgs[0].Role != "assistant" || outMsgs[0].Parts[0].Content != "the answer" {
+		t.Fatalf("output messages = %+v, want one assistant message", outMsgs)
+	}
+
+	if got := getAttr(*invokeSpan, AttrGenAICompletion).AsString(); got != "the answer" {
+		t.Errorf("legacy gen_ai.completion = %q, want %q", got, "the answer")
+	}
+}
+
+func TestWithoutLegacyContentAttributes(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(&agent.ModelResponse{Text: "resp"})
+	a, err := agent.New(prov, "sys",
+		WithTracing(tp, WithContentCapture(), WithoutLegacyContentAttributes()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+
+	invokeSpan := findSpan(exp.GetSpans(), "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if got := getAttr(*invokeSpan, AttrGenAICompletion); got.AsString() != "" {
+		t.Errorf("gen_ai.completion should be omitted, got %q", got.AsString())
+	}
+	if got := getAttr(*invokeSpan, AttrGenAIPrompt); got.AsString() != "" {
+		t.Errorf("gen_ai.prompt should be omitted, got %q", got.AsString())
+	}
+	if getAttr(*invokeSpan, AttrGenAIOutputMessages).AsString() == "" {
+		t.Error("gen_ai.output.messages should still be set")
+	}
+}
+
+func TestWithSpecSpanNames(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProviderWithModel("gpt-test",
+		&agent.ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "1", Name: "echo", Input: []byte(`{}`)}}},
+		&agent.ModelResponse{Text: "done"},
+	)
+	a, err := agent.New(prov, "sys",
+		agent.WithTools(dummyTool("echo", "echoes")),
+		WithTracing(tp, WithSpecSpanNames()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+	for _, want := range []string{"invoke_agent gpt-test", "chat gpt-test", "execute_tool echo"} {
+		if findSpan(spans, want) == nil {
+			t.Errorf("expected span named %q", want)
+		}
+	}
+	if findSpan(spans, "agent.invoke") != nil {
+		t.Error("default agent.invoke span name should not appear with spec span names")
+	}
+}
+
+func TestSpecSpanNamesFallbackWithoutModel(t *testing.T) {
+	h := &otelHook{specSpanNames: true}
+	if got := h.spanName("agent.invoke", OperationInvokeAgent, ""); got != OperationInvokeAgent {
+		t.Errorf("spanName without model = %q, want %q", got, OperationInvokeAgent)
+	}
+	h2 := &otelHook{}
+	if got := h2.spanName("agent.invoke", OperationInvokeAgent, "m"); got != "agent.invoke" {
+		t.Errorf("default spanName = %q, want agent.invoke", got)
+	}
+}
+
+// Token total, user-message length, and tool input/output lengths are emitted.
+func TestWiredScalarAttributes(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	prov := newMockProvider(
+		&agent.ModelResponse{
+			ToolCalls: []tool.Call{{ToolUseID: "1", Name: "echo", Input: []byte(`{"x":1}`)}},
+			Usage:     agent.TokenUsage{InputTokens: 3, OutputTokens: 4},
+		},
+		&agent.ModelResponse{Text: "done", Usage: agent.TokenUsage{InputTokens: 2, OutputTokens: 1}},
+	)
+	a, err := agent.New(prov, "sys", agent.WithTools(dummyTool("echo", "echoes")), WithTracing(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := exp.GetSpans()
+
+	invokeSpan := findSpan(spans, "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if got := getAttr(*invokeSpan, string(RoleAgentUserMsgLength)).AsInt64(); got != int64(len("hello")) {
+		t.Errorf("user_message_length = %d, want %d", got, len("hello"))
+	}
+	if got := getAttr(*invokeSpan, string(RoleAgentTokenTotal)).AsInt64(); got <= 0 {
+		t.Errorf("token_usage.total = %d, want > 0", got)
+	}
+
+	toolSpan := findSpan(spans, "agent.tool.echo")
+	if toolSpan == nil {
+		t.Fatal("expected agent.tool.echo span")
+	}
+	if got := getAttr(*toolSpan, string(RoleToolInputLength)).AsInt64(); got != int64(len(`{"x":1}`)) {
+		t.Errorf("tool.input_length = %d, want %d", got, len(`{"x":1}`))
+	}
+	if got := getAttr(*toolSpan, string(RoleToolOutputLength)).AsInt64(); got <= 0 {
+		t.Errorf("tool.output_length = %d, want > 0", got)
+	}
+}
+
+func TestAgentErrorAttribute(t *testing.T) {
+	exp, tp := newTestTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	a, err := agent.New(&errorProvider{err: fmt.Errorf("connection refused")}, "sys", WithTracing(tp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Invoke(agent.Background(), "hi"); err == nil {
+		t.Fatal("expected error")
+	}
+
+	invokeSpan := findSpan(exp.GetSpans(), "agent.invoke")
+	if invokeSpan == nil {
+		t.Fatal("expected agent.invoke span")
+	}
+	if got := getAttr(*invokeSpan, string(RoleAgentError)).AsString(); got == "" {
+		t.Error("agent.error attribute not set on failure")
+	}
+}

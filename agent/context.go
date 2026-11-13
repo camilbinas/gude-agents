@@ -230,19 +230,53 @@ func (c *Context) WithExecutionID(id string) *Context {
 // Images returns the images attached to the invocation.
 func (c *Context) Images() []ImageBlock { return c.cfg.images }
 
-// WithImages attaches images to the user message of the invocation.
+// WithImages attaches images to the user message of the invocation. The slice
+// and each block's Source.Data are deep-copied, so later caller mutation does
+// not affect the stored attachments.
 func (c *Context) WithImages(imgs []ImageBlock) *Context {
-	c.cfg.images = imgs
+	c.cfg.images = copyImageBlocks(imgs)
 	return c
+}
+
+// copyImageBlocks deep-copies imgs (slice plus each Source.Data), returning nil
+// for a nil input to preserve round-trip equality with Images.
+func copyImageBlocks(imgs []ImageBlock) []ImageBlock {
+	if imgs == nil {
+		return nil
+	}
+	out := append([]ImageBlock(nil), imgs...)
+	for i := range out {
+		if out[i].Source.Data != nil {
+			out[i].Source.Data = append([]byte(nil), imgs[i].Source.Data...)
+		}
+	}
+	return out
 }
 
 // Documents returns the documents attached to the invocation.
 func (c *Context) Documents() []DocumentBlock { return c.cfg.documents }
 
-// WithDocuments attaches documents to the user message of the invocation.
+// WithDocuments attaches documents to the user message of the invocation. The
+// slice and each block's Source.Data are deep-copied, so later caller mutation
+// does not affect the stored attachments.
 func (c *Context) WithDocuments(docs []DocumentBlock) *Context {
-	c.cfg.documents = docs
+	c.cfg.documents = copyDocumentBlocks(docs)
 	return c
+}
+
+// copyDocumentBlocks deep-copies docs (slice plus each Source.Data), returning
+// nil for a nil input to preserve round-trip equality with Documents.
+func copyDocumentBlocks(docs []DocumentBlock) []DocumentBlock {
+	if docs == nil {
+		return nil
+	}
+	out := append([]DocumentBlock(nil), docs...)
+	for i := range out {
+		if out[i].Source.Data != nil {
+			out[i].Source.Data = append([]byte(nil), docs[i].Source.Data...)
+		}
+	}
+	return out
 }
 
 // InferenceConfig returns the per-invocation inference config override.
@@ -327,18 +361,8 @@ func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
 	if cfg.scopes != nil {
 		clone.scopes = maps.Clone(cfg.scopes)
 	}
-	if cfg.images != nil {
-		clone.images = append([]ImageBlock(nil), cfg.images...)
-		for i := range clone.images {
-			clone.images[i].Source.Data = append([]byte(nil), cfg.images[i].Source.Data...)
-		}
-	}
-	if cfg.documents != nil {
-		clone.documents = append([]DocumentBlock(nil), cfg.documents...)
-		for i := range clone.documents {
-			clone.documents[i].Source.Data = append([]byte(nil), cfg.documents[i].Source.Data...)
-		}
-	}
+	clone.images = copyImageBlocks(cfg.images)
+	clone.documents = copyDocumentBlocks(cfg.documents)
 	if cfg.inferenceConfig != nil {
 		inference := *cfg.inferenceConfig
 		if inference.Temperature != nil {

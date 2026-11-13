@@ -94,11 +94,9 @@ func conservativeLimit(left, right int) int {
 var _ agent.Provider = (*Provider)(nil)
 var _ agent.CapabilityProvider = (*Provider)(nil)
 
-// Stream tries each provider in order, returning the first success. A failed
-// provider is retried only when it has not emitted an event to the caller and
-// ctx is still live: once ctx is cancelled or its deadline has passed, no
-// further provider is started and the error is returned immediately, since a
-// fallback cannot succeed under a done context.
+// Stream tries each provider in order, returning the first success. It advances
+// to the next provider only if the failed one emitted no event, ctx is still
+// live, and the error is not classified non-retryable (see isNonRetryable).
 func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	var lastErr error
 	for i, provider := range p.chain {
@@ -126,6 +124,27 @@ func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func
 		if emitted.Load() {
 			return nil, lastErr
 		}
+		if isNonRetryable(err) {
+			return nil, lastErr
+		}
 	}
 	return nil, fmt.Errorf("all providers failed: %w", lastErr)
+}
+
+// isNonRetryable reports whether err is a context cancellation/deadline or a
+// classified non-retryable ProviderError. An unclassified error returns false
+// so the chain still advances.
+func isNonRetryable(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var pe *agent.ProviderError
+	if errors.As(err, &pe) {
+		// Non-retryable only when classified: a StatusCode is set and Retryable
+		// is false. A bare ProviderError is treated as unclassified.
+		if pe.StatusCode != 0 && !pe.Retryable {
+			return true
+		}
+	}
+	return false
 }

@@ -114,7 +114,9 @@ func ResolveIdentity(ctx context.Context, scope string) (string, error) {
 	return identity, nil
 }
 
-// Entry wraps a recalled value with its similarity score and storage ID.
+// Entry wraps a recalled value with its similarity score and storage ID. ID is
+// an opaque, backend-specific handle: pass it back verbatim to Update and
+// Forget; do not parse, construct, or compare it across backends.
 type Entry[T any] struct {
 	ID    string
 	Value T

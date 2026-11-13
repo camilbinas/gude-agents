@@ -19,7 +19,8 @@ import (
 // Tool input is counted as raw bytes without parsing, so malformed payloads
 // are still charged. Image and document payloads (including images attached
 // to a ToolResultBlock) are not estimated; requests that carry large binary
-// content will be under-counted.
+// content will be under-counted. WidgetBlock content is not counted: the engine
+// strips widgets before building a ModelRequest, so none reaches a provider.
 type CharEstimator struct{}
 
 // compile-time check: CharEstimator satisfies TokenEstimator.

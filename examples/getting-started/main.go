@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -13,7 +14,7 @@ import (
 )
 
 func main() {
-	// Choose a model that is available in your AWS region and account.
+	// Choose a model available in your AWS region and account.
 	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
 	// agent.Agent(...) returns a *agent.Runtime. agent.New(...) is the same
 	// constructor under its original name and remains available.
@@ -22,7 +23,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, err := a.Invoke(agent.Background(), "Why is the sky blue?")
+	// No conversation store, so no conversation ID is required.
+	ctx := agent.NewContext(context.Background())
+
+	result, err := a.Invoke(ctx, "Why is the sky blue?")
 	if err != nil {
 		log.Fatal(err)
 	}

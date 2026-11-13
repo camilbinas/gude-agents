@@ -171,13 +171,6 @@ func (s *tableSchema) recallColumn(field string) (string, bool) {
 	return "", false
 }
 
-// insertColumns returns column names for INSERT (all columns + embedding).
-func (s *tableSchema) insertColumns() string {
-	cols := s.columnNames()
-	cols = append(cols, s.EmbeddingCol)
-	return strings.Join(cols, ", ")
-}
-
 // placeholders returns $1, $2, ... $n for the given count.
 func placeholders(n int) string {
 	parts := make([]string, n)

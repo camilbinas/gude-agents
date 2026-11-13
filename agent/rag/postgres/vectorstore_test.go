@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -423,5 +425,97 @@ func TestSearch_L2ScoreIsBoundedAndOrdered(t *testing.T) {
 	}
 	if results[0].Score <= results[1].Score {
 		t.Errorf("expected near score (%v) > far score (%v)", results[0].Score, results[1].Score)
+	}
+}
+
+func TestStore_DistanceOpAndScoreExpr(t *testing.T) {
+	cases := []struct {
+		metric  string
+		wantOp  string
+		scoreHi string // substring that must appear in scoreExpr
+	}{
+		{"", "<=>", "1 - ("},
+		{"cosine", "<=>", "1 - ("},
+		{"l2", "<->", "1 / (1 + ("},
+		{"inner_product", "<#>", "-("},
+	}
+	for _, c := range cases {
+		s := &Store{colEmbed: `"embedding"`, distMetric: c.metric}
+		if got := s.distanceOp(); got != c.wantOp {
+			t.Errorf("metric %q: distanceOp = %q, want %q", c.metric, got, c.wantOp)
+		}
+		if got := s.scoreExpr(); !strings.Contains(got, c.scoreHi) {
+			t.Errorf("metric %q: scoreExpr = %q, want substring %q", c.metric, got, c.scoreHi)
+		}
+	}
+}
+
+func TestStore_ValidateEmbedding(t *testing.T) {
+	s := &Store{dim: 3}
+	if err := s.validateEmbedding([]float64{1, 2, 3}); err != nil {
+		t.Fatalf("valid embedding rejected: %v", err)
+	}
+	if err := s.validateEmbedding([]float64{1, 2}); err == nil {
+		t.Fatal("expected error for wrong dimension")
+	}
+	if err := s.validateEmbedding([]float64{1, 2, math.NaN()}); err == nil {
+		t.Fatal("expected error for NaN")
+	}
+	if err := s.validateEmbedding([]float64{1, 2, math.Inf(1)}); err == nil {
+		t.Fatal("expected error for Inf")
+	}
+}
+
+func TestStore_UpsertRejectsBadEmbedding_NoDB(t *testing.T) {
+	// Validation runs before any DB round-trip, so a nil pool is fine.
+	s := &Store{dim: 3, tableName: `"documents"`, colID: `"id"`, colContent: `"content"`, colEmbed: `"embedding"`}
+	docs := []rag.Document{{Content: "a"}}
+	if _, err := s.Upsert(context.Background(), docs, [][]float64{{1, 2}}); err == nil {
+		t.Fatal("expected error for dimension mismatch")
+	}
+	if _, err := s.Upsert(context.Background(), docs, [][]float64{{1, 2, math.NaN()}}); err == nil {
+		t.Fatal("expected error for non-finite value")
+	}
+}
+
+func TestStore_SearchRejectsBadEmbedding_NoDB(t *testing.T) {
+	s := &Store{dim: 3, tableName: `"documents"`, colID: `"id"`, colContent: `"content"`, colEmbed: `"embedding"`, distMetric: "cosine"}
+	if _, err := s.Search(context.Background(), []float64{1, 2}, 1); err == nil {
+		t.Fatal("expected error for dimension mismatch")
+	}
+	if _, err := s.Search(context.Background(), []float64{1, 2, math.Inf(-1)}, 1); err == nil {
+		t.Fatal("expected error for non-finite value")
+	}
+	// topK validation still comes first.
+	if _, err := s.Search(context.Background(), []float64{1, 2, 3}, 0); err == nil {
+		t.Fatal("expected error for topK=0")
+	}
+}
+
+func TestDecodeMetadata(t *testing.T) {
+	md, err := decodeMetadata(nil)
+	if err != nil || md != nil {
+		t.Fatalf("nil input: got (%v, %v), want (nil, nil)", md, err)
+	}
+	md, err = decodeMetadata([]byte{})
+	if err != nil || md != nil {
+		t.Fatalf("empty input: got (%v, %v), want (nil, nil)", md, err)
+	}
+	md, err = decodeMetadata([]byte(`{"source":"a.md"}`))
+	if err != nil {
+		t.Fatalf("valid: unexpected error %v", err)
+	}
+	if md["source"] != "a.md" {
+		t.Fatalf("valid: wrong decode %v", md)
+	}
+	if _, err := decodeMetadata([]byte(`{bad`)); err == nil {
+		t.Fatal("malformed: expected error")
+	}
+}
+
+func TestDeleteByMetadata_EmptyFilter_NoDB(t *testing.T) {
+	s := &Store{tableName: `"documents"`, colMeta: `"metadata"`}
+	if err := s.DeleteByMetadata(context.Background(), map[string]string{}); err == nil {
+		t.Fatal("expected error for empty filter")
 	}
 }

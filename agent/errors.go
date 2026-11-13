@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // --- Sentinel errors ---
@@ -44,9 +46,14 @@ var ErrStructuredOutputUnsupported = errors.New("structured output is unsupporte
 
 // --- Typed errors ---
 
-// ProviderError wraps a failure from an LLM provider call.
+// ProviderError wraps a failure from an LLM provider call. Adapters set the
+// optional fields so callers can back off and fail over; use IsRetryable to
+// test an error anywhere in a wrapped chain.
 type ProviderError struct {
-	Cause error
+	Cause      error
+	StatusCode int           // HTTP status, 0 when unknown (e.g. network error)
+	Retryable  bool          // retry or failover can plausibly succeed
+	RetryAfter time.Duration // provider-advised wait, 0 when not advised
 }
 
 func (e *ProviderError) Error() string { return "provider error: " + e.Cause.Error() }
@@ -54,6 +61,33 @@ func (e *ProviderError) Unwrap() error { return e.Cause }
 func (e *ProviderError) Is(target error) bool {
 	_, ok := target.(*ProviderError)
 	return ok
+}
+
+// IsRetryable reports whether err wraps a ProviderError the adapter marked
+// retryable. Context cancellation and deadline-exceeded always return false,
+// even when wrapped, since no retry can succeed under a done context.
+func IsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return pe.Retryable
+	}
+	return false
+}
+
+// RetryAfter returns the provider-advised minimum wait before retrying err, or
+// 0 when err is not a ProviderError or carries no advice.
+func RetryAfter(err error) time.Duration {
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return pe.RetryAfter
+	}
+	return 0
 }
 
 // ProviderCreationError wraps a failure from constructing an LLM provider.
@@ -118,13 +152,21 @@ func (e *MaxIterationsError) Is(target error) bool {
 	return target == ErrMaxIterationsExceeded
 }
 
-// StructuredOutputError is returned when structured output fails to produce
-// a valid typed response. Reason indicates what went wrong: "nil_agent",
-// "unsupported_capability", "no_tool_call", "wrong_tool",
-// "schema_validation", or "deserialize".
+// StructuredOutputError.Reason values; match on these consts, not the strings.
+const (
+	ReasonNilAgent              = "nil_agent"
+	ReasonUnsupportedCapability = "unsupported_capability"
+	ReasonNoToolCall            = "no_tool_call"
+	ReasonWrongTool             = "wrong_tool"
+	ReasonSchemaValidation      = "schema_validation"
+	ReasonDeserialize           = "deserialize"
+)
+
+// StructuredOutputError is returned when structured output fails to produce a
+// valid typed response. Reason is one of the Reason* consts above.
 type StructuredOutputError struct {
-	Reason string // "nil_agent", "no_tool_call", "wrong_tool", "schema_validation", "deserialize"
-	Cause  error  // underlying error (nil for no_tool_call/wrong_tool)
+	Reason string
+	Cause  error // underlying error (nil for no_tool_call/wrong_tool/nil_agent)
 }
 
 func (e *StructuredOutputError) Error() string {

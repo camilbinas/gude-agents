@@ -14,9 +14,25 @@ var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.
 // Option configures the Prometheus metrics observer.
 type Option func(*prometheusHook)
 
+// otherToolName buckets tool names outside the allowlist (see WithToolNameAllowlist).
+const otherToolName = "other"
+
 // WithNamespace sets a prefix for all metric names.
 func WithNamespace(ns string) Option {
 	return func(h *prometheusHook) { h.namespace = ns }
+}
+
+// WithToolNameAllowlist bounds tool_name label cardinality on the tool metrics:
+// listed names are recorded verbatim, any other is bucketed under "other".
+// Use it when dynamic tool names (e.g. runtime MCP tools) would otherwise blow
+// up time-series count. With no allowlist, every name is recorded verbatim.
+func WithToolNameAllowlist(names ...string) Option {
+	return func(h *prometheusHook) {
+		h.toolNameAllowlist = make(map[string]struct{}, len(names))
+		for _, n := range names {
+			h.toolNameAllowlist[n] = struct{}{}
+		}
+	}
 }
 
 // WithRegisterer sets a custom Prometheus registerer.
@@ -32,10 +48,11 @@ func WithRegisterer(r prometheus.Registerer) Option {
 
 // prometheusHook implements the observer capabilities needed for Prometheus metrics.
 type prometheusHook struct {
-	namespace   string
-	registerer  prometheus.Registerer
-	gatherer    prometheus.Gatherer
-	constLabels prometheus.Labels // includes agent_name when set
+	namespace         string
+	registerer        prometheus.Registerer
+	gatherer          prometheus.Gatherer
+	constLabels       prometheus.Labels   // includes agent_name when set
+	toolNameAllowlist map[string]struct{} // nil = record every tool name verbatim
 
 	invokeTotal          *prometheus.CounterVec
 	invokeDuration       prometheus.Histogram
@@ -185,9 +202,21 @@ func (h *prometheusHook) ObserveTool(ctx context.Context, record agent.ToolCallR
 	if record.Phase != agent.End {
 		return ctx
 	}
-	h.toolCallDuration.WithLabelValues(record.Name).Observe(record.Duration.Seconds())
-	h.toolCallTotal.WithLabelValues(record.Name, statusLabel(record.Err)).Inc()
+	name := h.toolLabel(record.Name)
+	h.toolCallDuration.WithLabelValues(name).Observe(record.Duration.Seconds())
+	h.toolCallTotal.WithLabelValues(name, statusLabel(record.Err)).Inc()
 	return ctx
+}
+
+// toolLabel returns name, or "other" when an allowlist is set and excludes it.
+func (h *prometheusHook) toolLabel(name string) string {
+	if h.toolNameAllowlist == nil {
+		return name
+	}
+	if _, ok := h.toolNameAllowlist[name]; ok {
+		return name
+	}
+	return otherToolName
 }
 
 func (h *prometheusHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {

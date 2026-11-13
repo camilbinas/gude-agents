@@ -114,6 +114,30 @@ The native structured-output column describes what can be used through the confi
 
 The fallback provider accepts a primary plus ordered fallbacks; it changes provider only if failure occurs before any event is emitted, avoiding mixed streams.
 
+## Error classification
+
+A provider call failure is wrapped in `*agent.ProviderError`. Beyond the underlying `Cause`, the adapters classify the error so callers can implement backoff and failover without type-asserting SDK-internal types:
+
+- `StatusCode int` — the HTTP status when the failure came from an HTTP response (0 for a transport/network error).
+- `Retryable bool` — whether retrying the same call, or failing over to another provider, can plausibly succeed. Rate limits (429), server errors (5xx), provider throttling/overload, and network errors are retryable; client errors such as 400/401/403/404 are not.
+- `RetryAfter time.Duration` — the provider-advised minimum wait, parsed from a `Retry-After` header when present (0 when not advised).
+
+Use the helpers rather than reaching into the struct:
+
+```go
+resp, err := prov.Stream(ctx, req, nil)
+if err != nil {
+    if agent.IsRetryable(err) {
+        time.Sleep(agent.RetryAfter(err)) // 0 when unadvised; add your own backoff
+        // ... retry ...
+    }
+}
+```
+
+`IsRetryable` returns false for context cancellation and deadline-exceeded even when wrapped, since no retry can succeed under a done context. The Anthropic, OpenAI and Bedrock adapters populate these fields; other adapters return an unclassified `ProviderError`.
+
+The `fallback` provider keys off this classification: it advances to the next provider on a retryable or unclassified error, but stops immediately on a classified non-retryable error (another provider cannot fix a malformed request or an auth failure) and on a done context.
+
 ## Live smoke tests
 Each provider adapter has an opt-in `live_test.go` that makes a few small real calls (basic response, streaming, tool use where the model supports it, and image/PDF input where the adapter supports it). They are skipped unless `TEST_LIVE_INFERENCE` is exactly `1`; the skip happens before any client is built, so credentials and `TEST_MODEL_ID` alone never trigger a call. When enabled, `TEST_MODEL_ID` is required (there is no default model) and a missing value fails the test with a configuration error. The Bedrock tests also require `AWS_REGION`. Run them from the provider's module directory:
 ```sh
@@ -122,4 +146,4 @@ TEST_LIVE_INFERENCE=1 TEST_MODEL_ID=<model> go test -run Live -v ./...
 Anthropic, Bedrock and OpenAI also run image and PDF checks, so pick a model that accepts them or narrow the run, for example `-run 'Live_(Converse|Stream|ToolUse)'`. The tool-use check is skipped when the model is catalogued as not supporting tools. Ollama and vLLM run text, streaming and tool checks only, because image support depends on the served model. The tests assert structure and ordering, not exact model wording. They call a paid API and are not run by CI or by the release process.
 ## Implementing a provider
 
-Map every provider request to `ModelRequest`, emit live text/thinking when available, and return authoritative aggregate text, tool calls, and `TokenUsage`. Respect context cancellation. Wrap backend failures with enough context for diagnosis but never log credentials or raw content by default. Keep provider streaming callbacks synchronous unless the implementation documents ordering and safe shutdown.
+Map every provider request to `ModelRequest`, emit live text/thinking when available, and return authoritative aggregate text, tool calls, and `TokenUsage`. Respect context cancellation. Wrap backend failures in `*agent.ProviderError` with enough context for diagnosis but never log credentials or raw content by default — prefer returning an error over logging through the stdlib global logger, which an embedder cannot route or silence. When the backend exposes a typed error, classify it: set `StatusCode`, `Retryable` and `RetryAfter` (see [Error classification](#error-classification)) so retry and failover layers work without SDK-specific code. Keep provider streaming callbacks synchronous unless the implementation documents ordering and safe shutdown.

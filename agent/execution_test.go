@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -356,13 +357,16 @@ func TestExecutionFailureAndCancellationReachTerminalState(t *testing.T) {
 		}
 	})
 	t.Run("canceled", func(t *testing.T) {
+		// Canceled only when the invocation ctx itself is done.
 		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
-		provider := &errorProvider{err: context.Canceled}
+		provider := &ctxErrorProvider{}
 		a, err := New(provider, "x", WithConversationStore(conversations), WithExecutionStore(executions))
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, _ := a.Invoke(Background().WithConversationID("c"), "go")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		result, _ := a.Invoke(NewContext(ctx).WithConversationID("c"), "go")
 		execution, loadErr := executions.Load(context.Background(), result.ExecutionID)
 		if loadErr != nil {
 			t.Fatal(loadErr)
@@ -371,6 +375,82 @@ func TestExecutionFailureAndCancellationReachTerminalState(t *testing.T) {
 			t.Fatalf("status = %s", execution.Status)
 		}
 	})
+
+	t.Run("provider timeout is failed not canceled", func(t *testing.T) {
+		// A provider timeout wrapping DeadlineExceeded is a failure, not a cancel.
+		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+		provider := &errorProvider{err: fmt.Errorf("slow provider: %w", context.DeadlineExceeded)}
+		a, err := New(provider, "x", WithConversationStore(conversations), WithExecutionStore(executions))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, invokeErr := a.Invoke(Background().WithConversationID("c"), "go")
+		if invokeErr == nil {
+			t.Fatal("Invoke succeeded")
+		}
+		var pe *ProviderError
+		if !errors.As(invokeErr, &pe) {
+			t.Fatalf("error = %v, want ProviderError", invokeErr)
+		}
+		execution, loadErr := executions.Load(context.Background(), result.ExecutionID)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if execution.Status != ExecutionFailed {
+			t.Fatalf("status = %s, want failed", execution.Status)
+		}
+		if execution.FailureCode != FailureCodeProvider {
+			t.Fatalf("failure code = %q, want %q", execution.FailureCode, FailureCodeProvider)
+		}
+		if execution.FailureMessage == "" {
+			t.Fatal("failure message is empty")
+		}
+	})
+}
+
+// ctxErrorProvider returns the invocation context's own error.
+type ctxErrorProvider struct{}
+
+func (ctxErrorProvider) Name() string { return "mock" }
+
+func (ctxErrorProvider) Stream(ctx context.Context, _ ModelRequest, _ func(ModelEvent)) (*ModelResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, context.Canceled
+}
+
+// Resume validates the conversation ID before the Paused->Running claim, so a
+// corrupt record with an empty conversation ID is not stranded in Running.
+func TestResumeValidatesBeforeClaimingRunning(t *testing.T) {
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	seeded, err := executions.Create(context.Background(), Execution{
+		ID:     "resume-no-conv",
+		Status: ExecutionPaused,
+		Phase:  ExecutionPhasePaused,
+		Pause: &ExecutionPause{
+			Type:  InterruptHumanInput,
+			Input: &InputInterrupt{Reason: "r", Question: "q"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(newScriptedProvider(), "x", WithConversationStore(conversations), WithExecutionStore(executions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := &Interrupt{ExecutionID: seeded.ID, ExecutionVersion: seeded.Version, Type: InterruptHumanInput}
+	if _, err := a.Resume(Background().WithConversationID("c"), in, Respond("hi")); !errors.Is(err, ErrConversationIDRequired) {
+		t.Fatalf("Resume err = %v, want ErrConversationIDRequired", err)
+	}
+	reloaded, err := executions.Load(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != ExecutionPaused || reloaded.Version != seeded.Version {
+		t.Fatalf("record = status %q version %d, want still paused at version %d", reloaded.Status, reloaded.Version, seeded.Version)
+	}
 }
 
 func TestWithExecutionIDIsStableAndCollisionConflicts(t *testing.T) {

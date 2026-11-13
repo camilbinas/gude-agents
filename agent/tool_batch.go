@@ -50,7 +50,7 @@ func (b toolBatchCoordinator) run() coordinatedToolBatch {
 		if outcome.kind == toolOutcomeCoordinationFailure {
 			result.err = outcome.err
 			if result.err == nil {
-				result.err = ErrExecutionRecoveryUnsupported
+				result.err = recoveryUnsupported("tool batch lost its active boundary to a concurrent worker")
 			}
 			return result
 		}

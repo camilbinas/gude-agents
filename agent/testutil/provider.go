@@ -1,3 +1,5 @@
+// Package testutil provides public test helpers: MockProvider and the
+// property-based message/content generators.
 package testutil
 
 import (
@@ -11,10 +13,10 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// MockProvider is a configurable test provider that covers the common patterns
-// needed across agent unit tests: scripted responses, request capture, streaming,
-// delays, and error injection. Configure via WithResponses, WithCapture,
-// WithError, WithDelay, and WithFailFirst options.
+// MockProvider is a configurable, concurrency-safe agent.Provider (and
+// agent.ModelIdentifier) for tests. Configure via the With* options. A scripted
+// response with an unset StopReason is defaulted in Stream (ModelStopToolUse
+// when it carries tool calls, else ModelStopEndTurn).
 type MockProvider struct {
 	mu        sync.Mutex
 	responses []*agent.ModelResponse
@@ -138,6 +140,17 @@ func (p *MockProvider) Stream(ctx context.Context, req agent.ModelRequest, emit 
 	}
 	resp := p.responses[p.callIndex]
 	p.callIndex++
+
+	// Default the stop reason without mutating the caller's scripted response.
+	if resp != nil && resp.StopReason == agent.ModelStopUnknown {
+		defaulted := *resp
+		if len(defaulted.ToolCalls) > 0 {
+			defaulted.StopReason = agent.ModelStopToolUse
+		} else {
+			defaulted.StopReason = agent.ModelStopEndTurn
+		}
+		resp = &defaulted
+	}
 
 	// Stream text via model events.
 	if emit != nil && len(resp.ToolCalls) == 0 && resp.Text != "" {

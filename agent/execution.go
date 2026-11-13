@@ -101,7 +101,7 @@ type ToolBatchExecution struct {
 }
 
 // ToolResolutionOutcome is an application-confirmed outcome for an ambiguous
-// unsafe call.
+// unsafe call. Experimental: the ReconcileToolExecution contract may change.
 type ToolResolutionOutcome string
 
 const (
@@ -110,6 +110,8 @@ const (
 	ToolResolutionRetry     ToolResolutionOutcome = "retry"
 )
 
+// ToolResolution is the application-confirmed outcome passed to
+// ReconcileToolExecution. Experimental: its shape may change.
 type ToolResolution struct {
 	Outcome      ToolResolutionOutcome
 	Output       string
@@ -130,7 +132,16 @@ func (e *ToolExecutionUncertainError) Error() string {
 }
 func (e *ToolExecutionUncertainError) Unwrap() error { return ErrToolExecutionUncertain }
 
+// ErrExecutionRecoveryUnsupported reports that a durable execution record is in
+// a shape recovery cannot act on. It is one sentinel so callers branch with
+// errors.Is; recoveryUnsupported wraps it with the specific invariant.
 var ErrExecutionRecoveryUnsupported = errors.New("execution recovery state unsupported")
+
+// recoveryUnsupported annotates ErrExecutionRecoveryUnsupported with the failed
+// invariant; errors.Is against the sentinel still reports true.
+func recoveryUnsupported(invariant string) error {
+	return fmt.Errorf("%w: %s", ErrExecutionRecoveryUnsupported, invariant)
+}
 
 // Execution is durable runtime state for one invocation. Version is an
 // ExecutionStore CAS version, distinct from the ConversationStore revision.
@@ -153,7 +164,72 @@ type Execution struct {
 	PendingPause *ExecutionPause     `json:"pending_pause,omitempty"`
 	ToolBatch    *ToolBatchExecution `json:"tool_batch,omitempty"`
 	Usage        TokenUsage          `json:"usage"`
-	Version      uint64              `json:"version"`
+
+	// FailureCode and FailureMessage give a bounded reason for a terminal
+	// non-success status; empty otherwise. The message is a truncated
+	// diagnostic, not a structured error to branch on.
+	FailureCode    string `json:"failure_code,omitempty"`
+	FailureMessage string `json:"failure_message,omitempty"`
+
+	Version uint64 `json:"version"`
+}
+
+// FailureCode values recorded on a terminal non-success Execution.Status.
+const (
+	FailureCodeProvider      = "provider"
+	FailureCodeGuardrail     = "guardrail"
+	FailureCodeTool          = "tool"
+	FailureCodeMaxIterations = "max_iterations"
+	FailureCodeTokenBudget   = "token_budget"
+	FailureCodeRateLimit     = "rate_limit"
+	FailureCodeCanceled      = "canceled"
+	FailureCodeInternal      = "internal"
+)
+
+const maxFailureMessageLen = 512
+
+// setFailureReason records a bounded reason for a terminal non-success status;
+// no-op on a nil error, leaving the fields empty.
+func setFailureReason(execution *Execution, runErr error) {
+	if execution == nil || runErr == nil {
+		return
+	}
+	execution.FailureCode = failureCodeFor(runErr)
+	execution.FailureMessage = truncateFailureMessage(runErr.Error())
+}
+
+func failureCodeFor(err error) string {
+	var (
+		provErr  *ProviderError
+		guardErr *GuardrailError
+		toolErr  *ToolExecutionUncertainError
+	)
+	switch {
+	case errors.As(err, &provErr):
+		return FailureCodeProvider
+	case errors.As(err, &guardErr):
+		return FailureCodeGuardrail
+	case errors.As(err, &toolErr), errors.Is(err, ErrExecutionRecoveryUnsupported), errors.Is(err, ErrToolExecutionUncertain):
+		return FailureCodeTool
+	case errors.Is(err, ErrMaxIterationsExceeded):
+		return FailureCodeMaxIterations
+	case errors.Is(err, ErrTokenBudgetExceeded):
+		return FailureCodeTokenBudget
+	case errors.Is(err, ErrRateLimitExceeded):
+		return FailureCodeRateLimit
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return FailureCodeCanceled
+	default:
+		return FailureCodeInternal
+	}
+}
+
+func truncateFailureMessage(msg string) string {
+	if len(msg) <= maxFailureMessageLen {
+		return msg
+	}
+	const ellipsis = "…"
+	return msg[:maxFailureMessageLen-len(ellipsis)] + ellipsis
 }
 
 // ExecutionStore persists small durable execution state. Create is create-only;

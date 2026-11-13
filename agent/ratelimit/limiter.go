@@ -194,6 +194,7 @@ func (r *RateLimiter) semaphore(key string) *concurrencySem {
 }
 
 // Lease is opaque to callers and identifies exactly one admitted attempt.
+// Commit or Release settles it exactly once.
 type Lease struct {
 	limiter *RateLimiter
 	id      string
@@ -220,7 +221,7 @@ func (r *RateLimiter) Reserve(ctx context.Context, request agent.RateLimitReques
 		}
 		lease.free = func() { lease.done.Do(s.free) }
 	}
-	reservation := r.reservation(id, request)
+	reservation := r.reservation(ctx, id, request)
 	for {
 		ok, err := r.store.Reserve(ctx, reservation)
 		if err != nil {
@@ -280,10 +281,14 @@ func (r *RateLimiter) ownedLease(opaque agent.RateLimitLease) (*Lease, error) {
 func isTerminal(err error) bool {
 	return err == ErrLeaseTerminal || err == ErrLeaseCrossTerminal || err == ErrLeaseExpired
 }
-func (r *RateLimiter) reservation(id string, request agent.RateLimitRequest) Reservation {
+
+// reservation builds the counter reservation for one attempt. The estimate
+// starts at the outputReservationFallback floor; a failing estimator keeps that
+// floor rather than reserving zero, so it under-reserves at most the input side.
+func (r *RateLimiter) reservation(ctx context.Context, id string, request agent.RateLimitRequest) Reservation {
 	estimate := r.outputReservationFallback
 	if r.tokenEstimator != nil && !r.tokenReservationDisabled && (r.tokenRateLimit != nil || r.globalTokenLimit != nil) {
-		if n, err := r.tokenEstimator.EstimateTokens(context.Background(), request.Request); err == nil && n > 0 {
+		if n, err := r.tokenEstimator.EstimateTokens(ctx, request.Request); err == nil && n > 0 {
 			estimate += n
 		}
 	}

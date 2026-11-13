@@ -37,7 +37,10 @@ func TestProperty_SystemBlockCacheControlOnLastElementOnly(t *testing.T) {
 			System: system,
 		}
 
-		result := p.buildParams(params)
+		result, err := p.buildParams(params)
+		if err != nil {
+			t.Fatalf("buildParams error: %v", err)
+		}
 
 		if len(result.System) == 0 {
 			t.Fatal("expected at least one System block, got none")
@@ -143,7 +146,10 @@ func TestProperty_DocumentBlockGetsCacheControlWhenCachingEnabled(t *testing.T) 
 		blocks := []agent.ContentBlock{inner}
 
 		// With caching disabled — no cache_control.
-		withoutCaching := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+		withoutCaching, err := toAnthropicContentBlocks(blocks, agent.RoleUser, false)
+		if err != nil {
+			t.Fatalf("toAnthropicContentBlocks (no caching) error: %v", err)
+		}
 		if len(withoutCaching) == 0 {
 			t.Fatal("expected non-empty result without caching")
 		}
@@ -155,7 +161,10 @@ func TestProperty_DocumentBlockGetsCacheControlWhenCachingEnabled(t *testing.T) 
 		}
 
 		// With caching enabled — cache_control must be set.
-		withCaching := toAnthropicContentBlocks(blocks, agent.RoleUser, true)
+		withCaching, err := toAnthropicContentBlocks(blocks, agent.RoleUser, true)
+		if err != nil {
+			t.Fatalf("toAnthropicContentBlocks (caching) error: %v", err)
+		}
 		if len(withCaching) == 0 {
 			t.Fatal("expected non-empty result with caching")
 		}
@@ -209,10 +218,16 @@ func TestProperty_NoDocumentBlock_IdenticalAnthropicPayload(t *testing.T) {
 		}
 
 		// Translate with cachingEnabled=false (baseline).
-		withoutCaching := toAnthropicContentBlocks(blocks, role, false)
+		withoutCaching, err := toAnthropicContentBlocks(blocks, role, false)
+		if err != nil {
+			t.Fatalf("toAnthropicContentBlocks (no caching) error: %v", err)
+		}
 		// Translate with cachingEnabled=true — must produce the same result
 		// because cachingEnabled only affects DocumentBlocks and system prompt.
-		withCaching := toAnthropicContentBlocks(blocks, role, true)
+		withCaching, err := toAnthropicContentBlocks(blocks, role, true)
+		if err != nil {
+			t.Fatalf("toAnthropicContentBlocks (caching) error: %v", err)
+		}
 
 		if len(withoutCaching) != len(withCaching) {
 			t.Fatalf("block count mismatch: without=%d with=%d", len(withoutCaching), len(withCaching))
@@ -251,8 +266,14 @@ func TestProperty_NoDocumentBlock_IdenticalAnthropicSystemPrompt(t *testing.T) {
 		pWithout := &AnthropicProvider{model: "claude-3-5-haiku-20241022", cachingEnabled: false}
 		pWith := &AnthropicProvider{model: "claude-3-5-haiku-20241022", cachingEnabled: true}
 
-		resultWithout := pWithout.buildParams(params)
-		resultWith := pWith.buildParams(params)
+		resultWithout, err := pWithout.buildParams(params)
+		if err != nil {
+			t.Fatalf("buildParams (without caching) error: %v", err)
+		}
+		resultWith, err := pWith.buildParams(params)
+		if err != nil {
+			t.Fatalf("buildParams (with caching) error: %v", err)
+		}
 
 		// With empty system, both should produce an empty System slice.
 		if len(resultWithout.System) != len(resultWith.System) {

@@ -1,3 +1,9 @@
+// Package tool defines the Tool type and the constructors that expose Go
+// functions to a model as callable tools with a JSON schema.
+//
+// For the typed constructors (New and NewRich) the input schema is reflected
+// from T. A field is required only when tagged required:"true"; all others are
+// optional. NewRaw takes an explicit schema, so set its "required" list directly.
 package tool
 
 import (
@@ -194,7 +200,8 @@ func (t Tool) Validate() error {
 	return nil
 }
 
-// New creates a Tool from a typed string handler and generates its JSON Schema from T.
+// New creates a Tool from a typed string handler and generates its JSON Schema
+// from T. A field of T is required only when tagged required:"true".
 func New[T any](name, description string, handler Handler[T], opts ...Option) Tool {
 	return newPlain(name, description, GenerateSchema[T](), adaptString(handler), opts...)
 }
@@ -224,7 +231,8 @@ func NewRaw(name, description string, schema map[string]any, handler Handler[jso
 	return newPlain(name, description, schema, handler, opts...)
 }
 
-// NewRich creates a Tool from a typed rich-output handler.
+// NewRich creates a Tool from a typed rich-output handler. Like New, a field of
+// T is required only when tagged required:"true".
 func NewRich[T any](name, description string, handler RichHandler[T], opts ...Option) Tool {
 	t := Tool{
 		Spec: Spec{Name: name, Description: description, InputSchema: GenerateSchema[T]()},
@@ -276,16 +284,29 @@ func applyOptions(t *Tool, opts []Option) {
 // GenerateSchema uses reflection to produce a JSON Schema from Go type T.
 func GenerateSchema[T any]() map[string]any {
 	t := reflect.TypeOf((*T)(nil)).Elem()
-	return buildObjectSchema(t)
+	return buildObjectSchema(t, nil)
 }
 
-func buildObjectSchema(t reflect.Type) map[string]any {
+// buildObjectSchema builds the schema for a struct. visiting tracks struct
+// types on the recursion stack so a self-referential type does not recurse
+// forever.
+func buildObjectSchema(t reflect.Type, visiting map[reflect.Type]bool) map[string]any {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
-		return GoTypeToSchema(t)
+		return goTypeToSchema(t, visiting)
 	}
+	if visiting[t] {
+		// Cycle: emit an open object and stop descending.
+		return map[string]any{"type": "object"}
+	}
+	if visiting == nil {
+		visiting = make(map[reflect.Type]bool)
+	}
+	visiting[t] = true
+	defer delete(visiting, t)
+
 	properties := make(map[string]any)
 	var required []string
 	for i := range t.NumField() {
@@ -303,7 +324,7 @@ func buildObjectSchema(t reflect.Type) map[string]any {
 				name = parts[0]
 			}
 		}
-		prop := GoTypeToSchema(field.Type)
+		prop := goTypeToSchema(field.Type, visiting)
 		if desc := field.Tag.Get("description"); desc != "" {
 			prop["description"] = desc
 		}
@@ -328,7 +349,12 @@ func buildObjectSchema(t reflect.Type) map[string]any {
 }
 
 // GoTypeToSchema maps a Go reflect.Type to a JSON Schema type descriptor.
+// Self-referential struct types emit a generic {"type":"object"}.
 func GoTypeToSchema(t reflect.Type) map[string]any {
+	return goTypeToSchema(t, nil)
+}
+
+func goTypeToSchema(t reflect.Type, visiting map[reflect.Type]bool) map[string]any {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -343,11 +369,11 @@ func GoTypeToSchema(t reflect.Type) map[string]any {
 	case reflect.Bool:
 		return map[string]any{"type": "boolean"}
 	case reflect.Slice, reflect.Array:
-		return map[string]any{"type": "array", "items": GoTypeToSchema(t.Elem())}
+		return map[string]any{"type": "array", "items": goTypeToSchema(t.Elem(), visiting)}
 	case reflect.Struct:
-		return buildObjectSchema(t)
+		return buildObjectSchema(t, visiting)
 	case reflect.Map:
-		return map[string]any{"type": "object", "additionalProperties": GoTypeToSchema(t.Elem())}
+		return map[string]any{"type": "object", "additionalProperties": goTypeToSchema(t.Elem(), visiting)}
 	default:
 		return map[string]any{"type": "string"}
 	}

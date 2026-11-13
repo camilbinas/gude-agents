@@ -25,6 +25,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -208,7 +209,8 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 
 	truncatedBySize := false
 	if int64(len(body)) > maxBytes {
-		body = body[:maxBytes]
+		// Drop any trailing partial UTF-8 rune left by the byte cut.
+		body = trimPartialRune(body[:maxBytes])
 		truncatedBySize = true
 	}
 
@@ -217,8 +219,9 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 		return "", fmt.Errorf("format content: %w", err)
 	}
 
-	if len(text) > maxChars {
-		text = text[:maxChars]
+	// Truncate by rune count so a multibyte character is not split.
+	if runes := []rune(text); len(runes) > maxChars {
+		text = string(runes[:maxChars])
 		truncatedBySize = true
 	}
 
@@ -227,6 +230,23 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 	}
 
 	return text, nil
+}
+
+// trimPartialRune drops a trailing incomplete UTF-8 rune left by a byte-length
+// cut, leaving valid UTF-8 untouched.
+func trimPartialRune(b []byte) []byte {
+	for len(b) > 0 && !utf8.Valid(b) {
+		// Walk back over continuation bytes (0b10xxxxxx) and the lead byte.
+		i := len(b) - 1
+		for i > 0 && b[i]&0xC0 == 0x80 {
+			i--
+		}
+		if utf8.Valid(b[:i]) {
+			return b[:i]
+		}
+		b = b[:i]
+	}
+	return b
 }
 
 // isTextContent checks whether the Content-Type header indicates text-based content.

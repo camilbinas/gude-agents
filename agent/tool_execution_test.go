@@ -387,3 +387,41 @@ func TestToolExecutionPolicyAppliesToDurableRuns(t *testing.T) {
 		t.Fatalf("durable run: max=%d started=%v, want sequential provider order", max, started)
 	}
 }
+
+// A batch cancelled before parallel dispatch must invoke no handler, mirroring
+// the sequential branch.
+func TestParallelBatchCancelledBeforeDispatchRunsNoHandler(t *testing.T) {
+	p := &probe{}
+	names := []string{"a", "b", "c", "d"}
+	tools := make([]tool.Tool, len(names))
+	for i, name := range names {
+		tools[i] = probedTool(p, name, 0, nil)
+	}
+	// Unbounded parallel (default) + >1 call takes the parallel path.
+	a, err := New(mockProvider{}, "sys", WithTools(tools...))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	base := NewContext(ctx)
+	inv := base.forInvocation(ctx, &invocationRuntime{})
+	r := &run{a: a, c: inv, h: a.hooks(inv), execution: &Execution{ID: "x"}}
+
+	_, available := a.visibleTools(inv)
+	outcomes := r.executeBatch(inv, batchOf(names...), available, nil)
+
+	if started := func() []string { _, s := p.snapshot(); return s }(); len(started) != 0 {
+		t.Fatalf("handlers started under a cancelled batch = %v, want none", started)
+	}
+	if len(outcomes) != len(names) {
+		t.Fatalf("outcomes = %d, want %d", len(outcomes), len(names))
+	}
+	for i, o := range outcomes {
+		if !o.result.IsError || !strings.HasPrefix(o.result.Content, "not executed") {
+			t.Fatalf("outcome %d = %+v, want a not-executed error", i, o.result)
+		}
+	}
+}

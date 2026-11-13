@@ -33,6 +33,10 @@ const (
 	defaultSearchDepth       = "basic"
 	defaultTimeout           = 10 * time.Second
 	defaultMaxCharsPerResult = 300
+
+	// Tavily accepts max_results 1 to 20; WithMaxResults clamps here.
+	minMaxResults = 1
+	maxMaxResults = 20
 )
 
 // Option configures the web search tool.
@@ -47,9 +51,20 @@ type config struct {
 	client        *http.Client
 }
 
-// WithMaxResults sets the maximum number of search results. Default: 5.
+// WithMaxResults sets the maximum number of search results (default 5, clamped
+// to the Tavily API range 1 to 20).
 func WithMaxResults(n int) Option {
-	return func(c *config) { c.maxResults = n }
+	return func(c *config) { c.maxResults = clampMaxResults(n) }
+}
+
+func clampMaxResults(n int) int {
+	if n < minMaxResults {
+		return minMaxResults
+	}
+	if n > maxMaxResults {
+		return maxMaxResults
+	}
+	return n
 }
 
 // WithSearchDepth sets the Tavily search depth: "basic" or "advanced".
@@ -167,7 +182,7 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Tavily API returned %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("tavily API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
@@ -194,12 +209,23 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 	}
 
 	for i, r := range result.Results {
-		content := r.Content
-		if maxChars > 0 && len(content) > maxChars {
-			content = content[:maxChars] + "…"
-		}
+		content := truncateRunes(r.Content, maxChars)
 		fmt.Fprintf(&sb, "%d. %s (score: %.2f)\n   %s\n   %s\n\n", i+1, r.Title, r.Score, r.URL, content)
 	}
 
 	return sb.String(), nil
+}
+
+// truncateRunes shortens s to at most maxChars runes (not bytes, so no split
+// multibyte character), appending an ellipsis when it cuts. maxChars <= 0
+// disables truncation.
+func truncateRunes(s string, maxChars int) string {
+	if maxChars <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= maxChars {
+		return s
+	}
+	return string(runes[:maxChars]) + "…"
 }

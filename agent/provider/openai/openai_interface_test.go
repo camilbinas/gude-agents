@@ -23,7 +23,7 @@ func TestToOpenAIUserMessages_MixedTypes_DoesNotPanic(t *testing.T) {
 		agent.TextBlock{Text: "after"},
 	}
 
-	result := toOpenAIUserMessages(blocks)
+	result := mustUserMessages(t, blocks)
 	if len(result) == 0 {
 		t.Error("expected non-empty translated result")
 	}

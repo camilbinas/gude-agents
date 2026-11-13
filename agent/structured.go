@@ -17,7 +17,7 @@ const structuredOutputToolName = "structured_output"
 func structuredOutputToolChoice(caps ModelCapabilities) (*tool.Choice, error) {
 	if caps.ToolUse == Unsupported {
 		return nil, &StructuredOutputError{
-			Reason: "unsupported_capability",
+			Reason: ReasonUnsupportedCapability,
 			Cause:  fmt.Errorf("%w: tool use", ErrStructuredOutputUnsupported),
 		}
 	}
@@ -28,7 +28,7 @@ func structuredOutputToolChoice(caps ModelCapabilities) (*tool.Choice, error) {
 		return nil, nil
 	}
 	return nil, &StructuredOutputError{
-		Reason: "unsupported_capability",
+		Reason: ReasonUnsupportedCapability,
 		Cause:  fmt.Errorf("%w: neither named nor automatic tool choice", ErrStructuredOutputUnsupported),
 	}
 }
@@ -112,7 +112,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 	}
 
 	if len(resp.ToolCalls) == 0 {
-		return Result{}, &StructuredOutputError{Reason: "no_tool_call"}
+		return Result{}, &StructuredOutputError{Reason: ReasonNoToolCall}
 	}
 	var found *tool.Call
 	for i := range resp.ToolCalls {
@@ -122,7 +122,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 		}
 	}
 	if found == nil {
-		return Result{}, &StructuredOutputError{Reason: "wrong_tool"}
+		return Result{}, &StructuredOutputError{Reason: ReasonWrongTool}
 	}
 
 	rawText := string(found.Input)
@@ -142,13 +142,13 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 	// enforced. Syntactically invalid JSON is a decode failure, not a schema
 	// violation.
 	if !json.Valid([]byte(rawText)) {
-		return Result{}, &StructuredOutputError{Reason: "deserialize", Cause: fmt.Errorf("invalid JSON")}
+		return Result{}, &StructuredOutputError{Reason: ReasonDeserialize, Cause: fmt.Errorf("invalid JSON")}
 	}
 	if err := ValidateToolInput(schema, json.RawMessage(rawText)); err != nil {
-		return Result{}, &StructuredOutputError{Reason: "schema_validation", Cause: err}
+		return Result{}, &StructuredOutputError{Reason: ReasonSchemaValidation, Cause: err}
 	}
 	if err := decode([]byte(rawText)); err != nil {
-		return Result{}, &StructuredOutputError{Reason: "deserialize", Cause: err}
+		return Result{}, &StructuredOutputError{Reason: ReasonDeserialize, Cause: err}
 	}
 
 	if r.hasConversation() {

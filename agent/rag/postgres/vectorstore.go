@@ -31,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -169,6 +170,9 @@ func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]
 	batch := &pgx.Batch{}
 	ids := make([]string, len(docs))
 	for i, doc := range docs {
+		if err := s.validateEmbedding(embeddings[i]); err != nil {
+			return nil, fmt.Errorf("postgres vectorstore: upsert: document %d: %w", i, err)
+		}
 		vec := float64sToFloat32(embeddings[i])
 		id := doc.ID
 		if id == "" {
@@ -248,9 +252,11 @@ func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error)
 			if err := rows.Scan(&id, &content, &metaJSON); err != nil {
 				return nil, fmt.Errorf("postgres vectorstore: find scan: %w", err)
 			}
-			if len(metaJSON) > 0 {
-				_ = json.Unmarshal(metaJSON, &metadata)
+			md, err := decodeMetadata(metaJSON)
+			if err != nil {
+				return nil, fmt.Errorf("postgres vectorstore: find: document %q: %w", id, err)
 			}
+			metadata = md
 		} else {
 			if err := rows.Scan(&id, &content); err != nil {
 				return nil, fmt.Errorf("postgres vectorstore: find scan: %w", err)
@@ -282,6 +288,9 @@ func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error)
 func (s *Store) Search(ctx context.Context, queryEmbedding []float64, topK int) ([]rag.ScoredDocument, error) {
 	if topK < 1 {
 		return nil, fmt.Errorf("postgres vectorstore: topK must be >= 1, got %d", topK)
+	}
+	if err := s.validateEmbedding(queryEmbedding); err != nil {
+		return nil, fmt.Errorf("postgres vectorstore: search: %w", err)
 	}
 
 	op := s.distanceOp()
@@ -323,9 +332,11 @@ func (s *Store) Search(ctx context.Context, queryEmbedding []float64, topK int) 
 			if err := rows.Scan(&id, &content, &metaJSON, &similarity); err != nil {
 				return nil, fmt.Errorf("postgres vectorstore: scan: %w", err)
 			}
-			if len(metaJSON) > 0 {
-				_ = json.Unmarshal(metaJSON, &metadata)
+			md, err := decodeMetadata(metaJSON)
+			if err != nil {
+				return nil, fmt.Errorf("postgres vectorstore: search: document %q: %w", id, err)
 			}
+			metadata = md
 		} else {
 			if err := rows.Scan(&id, &content, &similarity); err != nil {
 				return nil, fmt.Errorf("postgres vectorstore: scan: %w", err)
@@ -394,4 +405,31 @@ func float64sToFloat32(v []float64) []float32 {
 		out[i] = float32(f)
 	}
 	return out
+}
+
+// validateEmbedding checks that an embedding matches the store's dimension and
+// contains only finite values.
+func (s *Store) validateEmbedding(embedding []float64) error {
+	if len(embedding) != s.dim {
+		return fmt.Errorf("embedding dimension is %d, want %d", len(embedding), s.dim)
+	}
+	for i, v := range embedding {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("embedding value %d must be finite", i)
+		}
+	}
+	return nil
+}
+
+// decodeMetadata unmarshals a JSONB metadata value; an empty value yields a nil
+// map, a malformed value an error.
+func decodeMetadata(metaJSON []byte) (map[string]string, error) {
+	if len(metaJSON) == 0 {
+		return nil, nil
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(metaJSON, &metadata); err != nil {
+		return nil, fmt.Errorf("decode metadata: %w", err)
+	}
+	return metadata, nil
 }

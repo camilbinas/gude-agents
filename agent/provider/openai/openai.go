@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/camilbinas/gude-agents/agent"
 	pvdr "github.com/camilbinas/gude-agents/agent/provider"
@@ -216,7 +218,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 	if err := validateOpenAIDocumentSources(req.Messages); err != nil {
 		return nil, &agent.ProviderError{Cause: err}
 	}
-	input := p.buildParams(req)
+	input, err := p.buildParams(req)
+	if err != nil {
+		return nil, &agent.ProviderError{Cause: err}
+	}
 	input.StreamOptions = openaisdk.ChatCompletionStreamOptionsParam{
 		IncludeUsage: openaisdk.Bool(true),
 	}
@@ -227,11 +232,6 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 
 	// Track in-flight tool calls being assembled from deltas.
 	// OpenAI streams tool calls by index.
-	type toolCallAccum struct {
-		id        string
-		name      string
-		arguments string
-	}
 	toolCalls := map[int64]*toolCallAccum{}
 
 	for stream.Next() {
@@ -280,12 +280,37 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 	}
 
 	if err := stream.Err(); err != nil {
-		return nil, &agent.ProviderError{Cause: err}
+		return nil, classifyError(err)
 	}
 
-	// Collect accumulated tool calls in index order.
-	for i := int64(0); i < int64(len(toolCalls)); i++ {
-		acc := toolCalls[i]
+	resp.ToolCalls = collectToolCalls(toolCalls)
+
+	return resp, nil
+}
+
+// toolCallAccum accumulates a single streamed tool call delivered across deltas.
+type toolCallAccum struct {
+	id        string
+	name      string
+	arguments string
+}
+
+// collectToolCalls returns the accumulated tool calls in ascending index order.
+// Indices are sorted rather than assumed dense/zero-based, since OpenAI-compatible
+// servers may emit sparse indices that would otherwise be dropped or reordered.
+func collectToolCalls(toolCalls map[int64]*toolCallAccum) []tool.Call {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	indices := make([]int64, 0, len(toolCalls))
+	for idx := range toolCalls {
+		indices = append(indices, idx)
+	}
+	sort.Slice(indices, func(a, b int) bool { return indices[a] < indices[b] })
+
+	out := make([]tool.Call, 0, len(indices))
+	for _, idx := range indices {
+		acc := toolCalls[idx]
 		if acc == nil {
 			continue
 		}
@@ -293,24 +318,42 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)
 		}
-		resp.ToolCalls = append(resp.ToolCalls, tool.Call{
+		out = append(out, tool.Call{
 			ToolUseID: acc.id,
 			Name:      acc.name,
 			Input:     input,
 		})
 	}
+	return out
+}
 
-	return resp, nil
+// classifyError wraps an OpenAI SDK/transport error in an *agent.ProviderError
+// with retryability, HTTP status, and a Retry-After hint populated.
+func classifyError(err error) *agent.ProviderError {
+	pe := &agent.ProviderError{Cause: err}
+	var apiErr *openaisdk.Error
+	if errors.As(err, &apiErr) {
+		pe.StatusCode = apiErr.StatusCode
+		pe.Retryable = pvdr.RetryableStatus(apiErr.StatusCode)
+		pe.RetryAfter = pvdr.RetryAfterFromResponse(apiErr.Response)
+		return pe
+	}
+	pe.Retryable = pvdr.RetryableNetworkError(err)
+	return pe
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-func (p *OpenAIProvider) buildParams(req agent.ModelRequest) openaisdk.ChatCompletionNewParams {
+func (p *OpenAIProvider) buildParams(req agent.ModelRequest) (openaisdk.ChatCompletionNewParams, error) {
+	msgs, err := toOpenAIMessages(req.Messages, req.System)
+	if err != nil {
+		return openaisdk.ChatCompletionNewParams{}, err
+	}
 	input := openaisdk.ChatCompletionNewParams{
 		Model:    shared.ChatModel(p.model),
-		Messages: toOpenAIMessages(req.Messages, req.System),
+		Messages: msgs,
 	}
 	if p.maxTokens > 0 {
 		input.MaxCompletionTokens = openaisdk.Int(p.maxTokens)
@@ -342,7 +385,7 @@ func (p *OpenAIProvider) buildParams(req agent.ModelRequest) openaisdk.ChatCompl
 			input.MaxCompletionTokens = openaisdk.Int(int64(*cfg.MaxTokens))
 		}
 	}
-	return input
+	return input, nil
 }
 
 // normalizeFinishReason maps an OpenAI-compatible finish_reason onto
@@ -412,8 +455,9 @@ func validateOpenAIDocumentSources(msgs []agent.Message) error {
 }
 
 // toOpenAIMessages converts framework Messages to OpenAI ChatCompletionMessageParamUnion.
-// The system prompt is prepended as a system message.
-func toOpenAIMessages(msgs []agent.Message, system string) []openaisdk.ChatCompletionMessageParamUnion {
+// The system prompt is prepended as a system message. Returns an error when an
+// attachment's bytes cannot be decoded.
+func toOpenAIMessages(msgs []agent.Message, system string) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
 	var out []openaisdk.ChatCompletionMessageParamUnion
 
 	if system != "" {
@@ -423,17 +467,22 @@ func toOpenAIMessages(msgs []agent.Message, system string) []openaisdk.ChatCompl
 	for _, m := range msgs {
 		switch m.Role {
 		case agent.RoleUser:
-			out = append(out, toOpenAIUserMessages(m.Content)...)
+			userMsgs, err := toOpenAIUserMessages(m.Content)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, userMsgs...)
 		case agent.RoleAssistant:
 			out = append(out, toOpenAIAssistantMessage(m.Content))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // toOpenAIUserMessages converts user content blocks to OpenAI messages.
-// ToolResultBlocks become individual tool messages; TextBlocks become user messages.
-func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletionMessageParamUnion {
+// ToolResultBlocks become tool messages; TextBlocks become user messages.
+// Returns an error when an image's bytes cannot be decoded.
+func toOpenAIUserMessages(blocks []agent.ContentBlock) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
 	var out []openaisdk.ChatCompletionMessageParamUnion
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -459,7 +508,7 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 				} else {
 					bytes, err := imageBytes(v.Source)
 					if err != nil {
-						continue
+						return nil, fmt.Errorf("ImageBlock: %w", err)
 					}
 					b64 = base64.StdEncoding.EncodeToString(bytes)
 				}
@@ -499,7 +548,7 @@ func toOpenAIUserMessages(blocks []agent.ContentBlock) []openaisdk.ChatCompletio
 			}))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // toOpenAIAssistantMessage converts assistant content blocks to an OpenAI assistant message.

@@ -198,7 +198,7 @@ func TestStream_WrapsProviderError(t *testing.T) {
 
 func TestBuildParams_ToolsMapping(t *testing.T) {
 	p := &AnthropicProvider{model: "claude-3-5-haiku-20241022"}
-	result := p.buildParams(agent.ModelRequest{Tools: []tool.Spec{{
+	result := mustBuildParams(t, p, agent.ModelRequest{Tools: []tool.Spec{{
 		Name:        "get_weather",
 		Description: "Get weather",
 		InputSchema: map[string]any{
@@ -228,7 +228,7 @@ func TestBuildParams_NilInferenceConfig_UsesConstructorDefaults(t *testing.T) {
 			{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if result.MaxTokens != 4096 {
 		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
@@ -256,7 +256,7 @@ func TestBuildParams_TemperatureMapping(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.Temperature.Valid() {
 		t.Fatal("expected Temperature to be set")
@@ -279,7 +279,7 @@ func TestBuildParams_TopPMapping(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{TopP: &topP},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.TopP.Valid() {
 		t.Fatal("expected TopP to be set")
@@ -298,7 +298,7 @@ func TestBuildParams_TopKMapping(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{TopK: &topK},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.TopK.Valid() {
 		t.Fatal("expected TopK to be set")
@@ -317,7 +317,7 @@ func TestBuildParams_StopSequencesMapping(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{StopSequences: stops},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if len(result.StopSequences) != 2 {
 		t.Fatalf("expected 2 stop sequences, got %d", len(result.StopSequences))
@@ -336,7 +336,7 @@ func TestBuildParams_MaxTokensOverridesDefault(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{MaxTokens: &maxTok},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if result.MaxTokens != 2048 {
 		t.Errorf("expected MaxTokens 2048, got %d", result.MaxTokens)
@@ -362,7 +362,7 @@ func TestBuildParams_AllFieldsSet(t *testing.T) {
 		},
 		InferenceConfig: cfg,
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	if !result.Temperature.Valid() || result.Temperature.Value != 0.5 {
 		t.Errorf("expected Temperature 0.5, got %v", result.Temperature.Value)
@@ -390,7 +390,7 @@ func TestBuildParams_PartialInferenceConfig_OnlyTemperature(t *testing.T) {
 		},
 		InferenceConfig: &agent.InferenceConfig{Temperature: &temp},
 	}
-	result := p.buildParams(params)
+	result := mustBuildParams(t, p, params)
 
 	// Temperature should be set
 	if !result.Temperature.Valid() || result.Temperature.Value != 0.3 {
@@ -423,7 +423,7 @@ func TestToAnthropicContentBlocks_ImageBlock_RawBytes(t *testing.T) {
 		},
 	}
 
-	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser, false)
+	result := mustContentBlocks(t, []agent.ContentBlock{block}, agent.RoleUser, false)
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(result))
@@ -455,7 +455,7 @@ func TestToAnthropicContentBlocks_ImageBlock_PreEncodedBase64(t *testing.T) {
 		},
 	}
 
-	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser, false)
+	result := mustContentBlocks(t, []agent.ContentBlock{block}, agent.RoleUser, false)
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(result))
@@ -487,7 +487,7 @@ func TestToAnthropicContentBlocks_ImageBlock_MIMETypeMapping(t *testing.T) {
 				},
 			}
 
-			result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleUser, false)
+			result := mustContentBlocks(t, []agent.ContentBlock{block}, agent.RoleUser, false)
 
 			if len(result) != 1 {
 				t.Fatalf("expected 1 block, got %d", len(result))
@@ -516,7 +516,7 @@ func TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped(t *testing.T) 
 		},
 	}
 
-	result := toAnthropicContentBlocks([]agent.ContentBlock{block}, agent.RoleAssistant, false)
+	result := mustContentBlocks(t, []agent.ContentBlock{block}, agent.RoleAssistant, false)
 
 	if len(result) != 0 {
 		t.Errorf("expected 0 blocks for assistant-role ImageBlock, got %d", len(result))
@@ -524,11 +524,11 @@ func TestToAnthropicContentBlocks_ImageBlock_AssistantRoleSkipped(t *testing.T) 
 }
 
 func TestBuildAnthropicDocParam_FileID(t *testing.T) {
-	doc, ok := buildAnthropicDocParam(agent.DocumentBlock{Source: agent.DocumentSource{
+	doc, err := buildAnthropicDocParam(agent.DocumentBlock{Source: agent.DocumentSource{
 		FileID: "file_abc123",
 	}})
-	if !ok {
-		t.Fatal("expected FileID document conversion to succeed")
+	if err != nil {
+		t.Fatalf("expected FileID document conversion to succeed, got error: %v", err)
 	}
 	if doc.Source.OfFile == nil {
 		t.Fatalf("expected FileID document source, got %#v", doc.Source)
@@ -557,11 +557,11 @@ func TestClaudeHaiku45MaxTokensDefault(t *testing.T) {
 			want: 64_000,
 		},
 		{
-			name: "unknown model retains generic default",
+			name: "unknown model uses conservative default",
 			factory: func(opts ...Option) (*AnthropicProvider, error) {
 				return New("claude-unlisted-model", opts...)
 			},
-			want: 128000,
+			want: defaultMaxTokens,
 		},
 		{
 			name:    "model with a 128K ceiling uses it",
@@ -582,7 +582,7 @@ func TestClaudeHaiku45MaxTokensDefault(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new provider: %v", err)
 			}
-			if got := p.buildParams(params).MaxTokens; got != tt.want {
+			if got := mustBuildParams(t, p, params).MaxTokens; got != tt.want {
 				t.Errorf("MaxTokens = %d, want %d", got, tt.want)
 			}
 		})
@@ -600,13 +600,13 @@ func TestClaudeHaiku45MaxTokenOverrides(t *testing.T) {
 			Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}},
 		}},
 	}
-	if got := p.buildParams(params).MaxTokens; got != 2048 {
+	if got := mustBuildParams(t, p, params).MaxTokens; got != 2048 {
 		t.Errorf("provider option MaxTokens = %d, want 2048", got)
 	}
 
 	perCallLimit := 1024
 	params.InferenceConfig = &agent.InferenceConfig{MaxTokens: &perCallLimit}
-	if got := p.buildParams(params).MaxTokens; got != int64(perCallLimit) {
+	if got := mustBuildParams(t, p, params).MaxTokens; got != int64(perCallLimit) {
 		t.Errorf("per-call MaxTokens = %d, want %d", got, perCallLimit)
 	}
 }
@@ -671,7 +671,7 @@ func TestBuildParamsUsesAdvisoryMaxTokensCapabilities(t *testing.T) {
 			if tt.requestMax != nil {
 				params.InferenceConfig = &agent.InferenceConfig{MaxTokens: tt.requestMax}
 			}
-			got := p.buildParams(params)
+			got := mustBuildParams(t, p, params)
 			if got.MaxTokens != tt.want {
 				t.Fatalf("MaxTokens = %d, want %d", got.MaxTokens, tt.want)
 			}

@@ -169,8 +169,11 @@ func SplitText(text string, chunkSize, overlap int) ([]string, error) {
 	step := chunkSize - overlap
 	for i := 0; i < len(runes); i += step {
 		end := i + chunkSize
-		if end > len(runes) {
-			end = len(runes)
+		if end >= len(runes) {
+			// Last chunk: stop here so overlap cannot emit a trailing chunk
+			// fully contained in the previous one.
+			chunks = append(chunks, string(runes[i:]))
+			break
 		}
 		chunks = append(chunks, string(runes[i:end]))
 	}
@@ -421,6 +424,10 @@ func WithConcurrency(n int) IngestOption {
 }
 
 // Ingest splits texts, embeds each chunk, and stores the resulting documents.
+//
+// Re-ingest is idempotent only per "source" metadata key: when store implements
+// Manager, existing chunks with a matching "source" are deleted first. A text
+// with no "source" is always appended, never deduplicated.
 func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string, metadata []map[string]string, opts ...IngestOption) error {
 	cfg := ingestConfig{chunkSize: 512, chunkOverlap: 64, concurrency: 1}
 	for _, opt := range opts {
@@ -466,33 +473,50 @@ func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string,
 			docs[i], embeddings[i] = chunk.doc, embedding
 		}
 	} else {
+		// Cancelable context so the first failing worker cancels the others'
+		// in-flight embed calls. firstErr is the first error to occur.
+		embedCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
 		sem := make(chan struct{}, cfg.concurrency)
-		errs := make([]error, len(chunks))
-		var wg sync.WaitGroup
+		var (
+			wg       sync.WaitGroup
+			firstErr error
+			errOnce  sync.Once
+		)
+		setErr := func(err error) {
+			errOnce.Do(func() {
+				firstErr = err
+				cancel()
+			})
+		}
 		for i, chunk := range chunks {
 			docs[i] = chunk.doc
 			wg.Add(1)
 			go func(index int, text string) {
 				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				if err := ctx.Err(); err != nil {
-					errs[index] = err
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-embedCtx.Done():
+					setErr(embedCtx.Err())
 					return
 				}
-				embedding, err := embedder.Embed(ctx, text)
+				if err := embedCtx.Err(); err != nil {
+					setErr(err)
+					return
+				}
+				embedding, err := embedder.Embed(embedCtx, text)
 				if err != nil {
-					errs[index] = fmt.Errorf("ingest: embed chunk %d: %w", index, err)
+					setErr(fmt.Errorf("ingest: embed chunk %d: %w", index, err))
 					return
 				}
 				embeddings[index] = embedding
 			}(i, chunk.chunk)
 		}
 		wg.Wait()
-		for _, err := range errs {
-			if err != nil {
-				return err
-			}
+		if firstErr != nil {
+			return firstErr
 		}
 	}
 
