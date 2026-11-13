@@ -77,6 +77,30 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	}
 }
 
+func TestForcedToolChoiceModelReportsCatalogMetadata(t *testing.T) {
+	p, err := New("claude-sonnet-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps := p.Capabilities()
+	if caps.ContextWindowTokens != 1_000_000 || caps.MaxOutputTokens != 128_000 || caps.ToolUse != agent.Supported ||
+		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported || caps.ToolChoice.Specific != agent.Supported {
+		t.Fatalf("capabilities = %+v", caps)
+	}
+}
+
+func TestForcedToolChoiceSmallContextModelReportsCatalogMetadata(t *testing.T) {
+	p, err := New("claude-opus-4-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps := p.Capabilities()
+	if caps.ContextWindowTokens != 200_000 || caps.MaxOutputTokens != 64_000 || caps.ToolUse != agent.Supported ||
+		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported || caps.ToolChoice.Specific != agent.Supported {
+		t.Fatalf("capabilities = %+v", caps)
+	}
+}
+
 func TestUnknownModelReportsOnlyTheAdapterBaseline(t *testing.T) {
 	p, err := New("my-custom-claude")
 	if err != nil {
