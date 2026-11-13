@@ -26,6 +26,17 @@ var namedModels = []struct {
 	{"ClaudeSonnet5_5", ClaudeSonnet5_5, "claude-sonnet-5-5"},
 }
 
+// catalogOnlyModels lists current IDs that have no named constructor; New(id)
+// supplies their catalog metadata.
+var catalogOnlyModels = []string{
+	"claude-haiku-5-5",
+	"claude-fable-5-2",
+	"claude-fable-5-1",
+	"claude-mythos-5-2",
+	"claude-mythos-5-1",
+	"claude-mythos-5",
+}
+
 func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	for _, m := range namedModels {
 		t.Run(m.name, func(t *testing.T) {
@@ -50,14 +61,23 @@ func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	}
 }
 
-func TestEveryCatalogEntryHasANamedConstructor(t *testing.T) {
-	named := map[string]bool{}
+func TestEveryCatalogEntryIsReachable(t *testing.T) {
+	reachable := map[string]bool{}
 	for _, m := range namedModels {
-		named[m.id] = true
+		reachable[m.id] = true
+	}
+	for _, id := range catalogOnlyModels {
+		reachable[id] = true
 	}
 	for id := range catalog {
-		if !named[id] {
-			t.Errorf("catalog entry %q has no named constructor", id)
+		if !reachable[id] {
+			t.Errorf("catalog entry %q has no named constructor and is not listed as catalog-only", id)
+		}
+	}
+	// catalogOnlyModels must be present in the catalog.
+	for _, id := range catalogOnlyModels {
+		if _, ok := catalog[id]; !ok {
+			t.Errorf("catalog-only model %q is missing from the catalog", id)
 		}
 	}
 }

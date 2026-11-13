@@ -18,6 +18,9 @@ type modelProfile struct {
 // auto, any (Required) and tool (Specific) tool_choice, so each ToolChoice
 // field reflects what the model itself accepts. A field without a source stays
 // Unknown. Numeric limits are advisory metadata, not enforced limits.
+//
+// Some entries have no named constructor (see catalogOnlyModels in the test):
+// New(id) still supplies their metadata.
 var catalog = map[string]modelProfile{
 	// 200K context, 64K output; forced tool use accepted (any, tool).
 	"claude-haiku-4-5":  {capabilities: caps200kFullToolChoice},
@@ -31,9 +34,15 @@ var catalog = map[string]modelProfile{
 	"claude-opus-4-8":   {capabilities: caps1mFullToolChoice},
 	"claude-opus-5":     {capabilities: caps1mFullToolChoice},
 	"claude-fable-5":    {capabilities: caps1mFullToolChoice},
+	"claude-mythos-5":   {capabilities: caps1mFullToolChoice}, // same specs as claude-fable-5
+	"claude-haiku-5-5":  {capabilities: caps1mFullToolChoice},
 	// 1M context, 128K output; forced tool use returns 400 (auto only).
 	"claude-opus-5-5":   {capabilities: caps1mAutoOnlyToolChoice},
 	"claude-sonnet-5-5": {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-fable-5-2":  {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-fable-5-1":  {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-mythos-5-2": {capabilities: caps1mAutoOnlyToolChoice}, // same specs as claude-fable-5-2
+	"claude-mythos-5-1": {capabilities: caps1mAutoOnlyToolChoice}, // same specs as claude-fable-5-1
 }
 
 // fullToolChoice is the mode set for models that accept auto, any and tool.
