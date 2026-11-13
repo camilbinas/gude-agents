@@ -22,20 +22,24 @@ type modelProfile struct {
 // Some entries have no named constructor (see catalogOnlyModels in the test):
 // New(id) still supplies their metadata.
 var catalog = map[string]modelProfile{
-	// 200K context, 64K output; forced tool use accepted (any, tool).
-	"claude-haiku-4-5":  {capabilities: caps200kFullToolChoice},
-	"claude-sonnet-4-5": {capabilities: caps200kFullToolChoice},
-	"claude-opus-4-5":   {capabilities: caps200kFullToolChoice},
-	// 1M context, 128K output; forced tool use accepted (any, tool).
-	"claude-sonnet-4-6": {capabilities: caps1mFullToolChoice},
-	"claude-sonnet-5":   {capabilities: caps1mFullToolChoice},
-	"claude-opus-4-6":   {capabilities: caps1mFullToolChoice},
-	"claude-opus-4-7":   {capabilities: caps1mFullToolChoice},
-	"claude-opus-4-8":   {capabilities: caps1mFullToolChoice},
-	"claude-opus-5":     {capabilities: caps1mFullToolChoice},
-	"claude-fable-5":    {capabilities: caps1mFullToolChoice},
-	"claude-mythos-5":   {capabilities: caps1mFullToolChoice}, // same specs as claude-fable-5
-	"claude-haiku-5-5":  {capabilities: caps1mFullToolChoice},
+	// 200K context, 64K output; forced tool use accepted (any, tool); native
+	// JSON outputs (output_config.format) supported.
+	"claude-haiku-4-5":  {capabilities: caps200kFullToolChoiceNativeSO},
+	"claude-sonnet-4-5": {capabilities: caps200kFullToolChoiceNativeSO},
+	"claude-opus-4-5":   {capabilities: caps200kFullToolChoiceNativeSO},
+	// 1M context, 128K output; forced tool use accepted (any, tool); native
+	// JSON outputs supported (4.6 generation).
+	"claude-sonnet-4-6": {capabilities: caps1mFullToolChoiceNativeSO},
+	"claude-opus-4-6":   {capabilities: caps1mFullToolChoiceNativeSO},
+	// 1M context, 128K output; forced tool use accepted (any, tool); native
+	// JSON outputs rejected from Opus 4.7 onward, so these keep the tool path.
+	"claude-sonnet-5":  {capabilities: caps1mFullToolChoice},
+	"claude-opus-4-7":  {capabilities: caps1mFullToolChoice},
+	"claude-opus-4-8":  {capabilities: caps1mFullToolChoice},
+	"claude-opus-5":    {capabilities: caps1mFullToolChoice},
+	"claude-fable-5":   {capabilities: caps1mFullToolChoice},
+	"claude-mythos-5":  {capabilities: caps1mFullToolChoice}, // same specs as claude-fable-5
+	"claude-haiku-5-5": {capabilities: caps1mFullToolChoice},
 	// 1M context, 128K output; forced tool use returns 400 (auto only).
 	"claude-opus-5-5":   {capabilities: caps1mAutoOnlyToolChoice},
 	"claude-sonnet-5-5": {capabilities: caps1mAutoOnlyToolChoice},
@@ -79,6 +83,18 @@ var caps1mAutoOnlyToolChoice = agent.ModelCapabilities{
 	MaxOutputTokens:     128_000,
 	ToolUse:             agent.Supported,
 	ToolChoice:          autoOnlyToolChoice,
+}
+
+// Native structured-output variants: the 4.5/4.6 generation accepts
+// output_config.format (JSON outputs). Opus 4.7 and every later model reject it.
+var caps200kFullToolChoiceNativeSO = withNativeStructuredOutput(caps200kFullToolChoice)
+var caps1mFullToolChoiceNativeSO = withNativeStructuredOutput(caps1mFullToolChoice)
+
+// withNativeStructuredOutput returns a copy of c with native structured output
+// marked Supported.
+func withNativeStructuredOutput(c agent.ModelCapabilities) agent.ModelCapabilities {
+	c.NativeStructuredOutput = agent.Supported
+	return c
 }
 
 // Named Claude models. Each delegates to New with its canonical model ID; the

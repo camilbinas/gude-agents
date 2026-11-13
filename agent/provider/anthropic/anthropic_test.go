@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -713,5 +714,100 @@ func TestClaude55CallerCapabilityOverrideWins(t *testing.T) {
 	}
 	if got := p.Capabilities().ToolChoice.Specific; got != agent.Supported {
 		t.Fatalf("Specific = %v, want caller override Supported", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Native structured output (output_config.format)
+// ---------------------------------------------------------------------------
+
+func TestBuildParams_ResponseFormat_SendsOutputConfigFormat(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-sonnet-4-5", maxTokens: ptr(1024)}
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"city": map[string]any{"type": "string"}},
+		"required":             []any{"city"},
+		"additionalProperties": false,
+	}
+	result := mustBuildParams(t, p, agent.ModelRequest{
+		Messages:       []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+		ResponseFormat: &agent.ResponseFormat{Name: "answer", Schema: schema},
+	})
+
+	if result.OutputConfig.Format.Type != "json_schema" {
+		t.Errorf("format type = %q, want json_schema", result.OutputConfig.Format.Type)
+	}
+	if fmt.Sprint(result.OutputConfig.Format.Schema) != fmt.Sprint(schema) {
+		t.Errorf("schema = %#v, want %#v (sent verbatim)", result.OutputConfig.Format.Schema, schema)
+	}
+	if len(result.Tools) != 0 {
+		t.Errorf("Tools = %#v, want none when ResponseFormat is set", result.Tools)
+	}
+}
+
+func TestBuildParams_NoResponseFormat_OmitsOutputConfigFormat(t *testing.T) {
+	p := &AnthropicProvider{model: "claude-sonnet-4-5", maxTokens: ptr(1024)}
+	result := mustBuildParams(t, p, agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+	})
+	if result.OutputConfig.Format.Schema != nil {
+		t.Errorf("Format.Schema = %#v, want nil when ResponseFormat is unset", result.OutputConfig.Format.Schema)
+	}
+}
+
+// TestStream_ResponseFormat_RequestAndText drives a full Stream call and checks
+// the wire request carries output_config.format with the schema and no tools,
+// and that the model's JSON answer comes back as resp.Text.
+func TestStream_ResponseFormat_RequestAndText(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseBody([][2]string{
+			{"message_start", `{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0}}}`},
+			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\"city\":"}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\"Paris\"}"}}`},
+			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":4}}`},
+			{"message_stop", `{"type":"message_stop"}`},
+		}))
+	}))
+	defer srv.Close()
+
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+	}
+	resp, err := newTestProvider(srv.URL).Stream(context.Background(), agent.ModelRequest{
+		Messages:       []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "capital of France?"}}}},
+		ResponseFormat: &agent.ResponseFormat{Name: "answer", Schema: schema},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if resp.Text != `{"city":"Paris"}` {
+		t.Errorf("Text = %q, want the model JSON", resp.Text)
+	}
+
+	oc, ok := gotBody["output_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("request has no output_config object: %#v", gotBody["output_config"])
+	}
+	format, ok := oc["format"].(map[string]any)
+	if !ok {
+		t.Fatalf("output_config has no format object: %#v", oc["format"])
+	}
+	if format["type"] != "json_schema" {
+		t.Errorf("format.type = %v, want json_schema", format["type"])
+	}
+	if _, ok := format["schema"].(map[string]any); !ok {
+		t.Errorf("format.schema missing or wrong type: %#v", format["schema"])
+	}
+	if _, present := gotBody["tools"]; present {
+		t.Errorf("request sent tools alongside structured output: %#v", gotBody["tools"])
+	}
+	if _, present := gotBody["tool_choice"]; present {
+		t.Errorf("request sent tool_choice alongside structured output: %#v", gotBody["tool_choice"])
 	}
 }

@@ -97,6 +97,34 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	}
 }
 
+// nativeStructuredOutputModels are the catalog IDs whose docs confirm native
+// JSON outputs (output_config.format): the 4.5 and 4.6 generations. Opus 4.7
+// and every later model reject output_config.format and keep the tool path.
+var nativeStructuredOutputModels = map[string]bool{
+	"claude-haiku-4-5":  true,
+	"claude-sonnet-4-5": true,
+	"claude-opus-4-5":   true,
+	"claude-sonnet-4-6": true,
+	"claude-opus-4-6":   true,
+}
+
+func TestCatalogNativeStructuredOutputFlags(t *testing.T) {
+	for id := range catalog {
+		p, err := New(id)
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		got := p.Capabilities().NativeStructuredOutput
+		want := agent.Unsupported
+		if nativeStructuredOutputModels[id] {
+			want = agent.Supported
+		}
+		if got != want {
+			t.Errorf("%q NativeStructuredOutput = %v, want %v", id, got, want)
+		}
+	}
+}
+
 func TestForcedToolChoiceModelReportsCatalogMetadata(t *testing.T) {
 	p, err := New("claude-sonnet-5")
 	if err != nil {
