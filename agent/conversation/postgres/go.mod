@@ -3,7 +3,7 @@ module github.com/camilbinas/gude-agents/agent/conversation/postgres
 go 1.26.0
 
 require (
-	github.com/camilbinas/gude-agents v1.9.0
+	github.com/camilbinas/gude-agents v1.10.0
 	github.com/jackc/pgx/v5 v5.9.2
 )
 

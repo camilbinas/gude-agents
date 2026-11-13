@@ -1,7 +1,7 @@
-github.com/camilbinas/gude-agents v1.9.0 h1:mxOgCqUE3pPZIhdwDid5i4MfVHhEQLwy77EpnvlXiXs=
-github.com/camilbinas/gude-agents v1.9.0/go.mod h1:nMkycovKE+SZ2QbRkxph6VeXmp6UHOkpmOUhAeIVoy0=
-github.com/camilbinas/gude-agents/agent/rag/openai v1.9.0 h1:kSaH1MFJYUqOGIQmXH1D3lzKtpdbDOasVA+xGmv3e1k=
-github.com/camilbinas/gude-agents/agent/rag/openai v1.9.0/go.mod h1:Ztkx8Z2pIwR4R7n79Dr2GvjnJY9fwma4/KWZvn5DhJg=
+github.com/camilbinas/gude-agents v1.10.0 h1:3/zae7sA7HAdLoFPRgRZyvBWCWdZV+cz+8KghyS8CSk=
+github.com/camilbinas/gude-agents v1.10.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents/agent/rag/openai v1.10.0 h1:b1Rb1NlhKxz6A8vBkGL3P82yURClCKAB5O9K1y/O6qQ=
+github.com/camilbinas/gude-agents/agent/rag/openai v1.10.0/go.mod h1:Js2hzjatrJy5lwH6rHCr3BL3rs3jiBh/kO4BWYFrdTw=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/openai/openai-go/v3 v3.31.0 h1:3KxL3H+gw6vBkBW6dmcwhbFqP4kyMgmaWTsuRheyF8w=

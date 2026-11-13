@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
-	github.com/camilbinas/gude-agents v1.9.0
-	github.com/camilbinas/gude-agents/agent/execution v1.9.0
+	github.com/camilbinas/gude-agents v1.10.0
+	github.com/camilbinas/gude-agents/agent/execution v1.10.0
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
