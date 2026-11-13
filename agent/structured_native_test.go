@@ -92,3 +92,56 @@ func TestInvokeSchema_NativeModeWorksWithoutToolUse(t *testing.T) {
 		t.Fatalf("native mode must not need tool use: %v", err)
 	}
 }
+
+func TestClosedObjects(t *testing.T) {
+	in := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"properties": map[string]any{"type": "string"}, // a field named like the keyword
+			"tags":       map[string]any{"type": "object"}, // map field: stays open
+			"items": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}},
+			},
+			"open": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": true},
+		},
+	}
+	out := closedObjects(in)
+	if out["additionalProperties"] != false {
+		t.Fatal("root object must be closed")
+	}
+	props := out["properties"].(map[string]any)
+	if _, added := props["additionalProperties"]; added {
+		t.Fatal("property names must not be treated as a schema")
+	}
+	if _, set := props["tags"].(map[string]any)["additionalProperties"]; set {
+		t.Fatal("an object without properties must stay open")
+	}
+	item := props["items"].(map[string]any)["items"].(map[string]any)
+	if item["additionalProperties"] != false {
+		t.Fatal("nested array item objects must be closed")
+	}
+	if props["open"].(map[string]any)["additionalProperties"] != true {
+		t.Fatal("an explicit additionalProperties must be kept")
+	}
+	if _, touched := in["additionalProperties"]; touched {
+		t.Fatal("the caller's schema must not be modified")
+	}
+}
+
+func TestInvokeSchema_NativeSendsClosedSchemaButValidatesOriginal(t *testing.T) {
+	p := &nativeSchemaProvider{caps: ModelCapabilities{NativeStructuredOutput: Supported}, text: `{"name":"gude"}`}
+	a, err := New(p, "sys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.InvokeSchema(Background(), "q", nativeTestSchema, func(json.RawMessage) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if p.got.ResponseFormat.Schema["additionalProperties"] != false {
+		t.Fatal("native request must close objects")
+	}
+	if _, touched := nativeTestSchema["additionalProperties"]; touched {
+		t.Fatal("the caller's schema must not be modified")
+	}
+}

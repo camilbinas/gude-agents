@@ -102,7 +102,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 		InferenceConfig: cfg,
 	}
 	if native {
-		modelReq.ResponseFormat = &ResponseFormat{Name: structuredOutputToolName, Schema: schema}
+		modelReq.ResponseFormat = &ResponseFormat{Name: structuredOutputToolName, Schema: closedObjects(schema)}
 	}
 
 	provC, provF := h.onModelStart(c, ModelCallRecord{
@@ -177,4 +177,55 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 		}
 	}
 	return Result{Text: rawText, StopReason: StopEndTurn, Metadata: resp.Metadata}, nil
+}
+
+// closedObjects returns a copy of schema where every object with properties
+// and no additionalProperties gets additionalProperties: false. Native schema
+// modes require it, and decoding drops unknown fields anyway. Property names
+// are never treated as schema keywords.
+func closedObjects(schema map[string]any) map[string]any {
+	out, _ := closeSchema(schema).(map[string]any)
+	return out
+}
+
+// closeSchema copies one schema node. Keys of "properties" (and $defs-style
+// maps) are names, so only their values are walked as schemas.
+func closeSchema(v any) any {
+	s, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := make(map[string]any, len(s)+1)
+	for k, val := range s {
+		switch k {
+		case "properties", "$defs", "definitions", "patternProperties":
+			if named, ok := val.(map[string]any); ok {
+				walked := make(map[string]any, len(named))
+				for name, sub := range named {
+					walked[name] = closeSchema(sub)
+				}
+				out[k] = walked
+				continue
+			}
+		case "items", "additionalProperties", "not":
+			out[k] = closeSchema(val)
+			continue
+		case "anyOf", "oneOf", "allOf", "prefixItems":
+			if list, ok := val.([]any); ok {
+				walked := make([]any, len(list))
+				for i, sub := range list {
+					walked[i] = closeSchema(sub)
+				}
+				out[k] = walked
+				continue
+			}
+		}
+		out[k] = val
+	}
+	if _, set := s["additionalProperties"]; !set {
+		if _, hasProps := s["properties"].(map[string]any); hasProps {
+			out["additionalProperties"] = false
+		}
+	}
+	return out
 }
