@@ -47,23 +47,29 @@ func (a *Runtime) InvokeSchema(c *Context, userMessage string, schema map[string
 	if decode == nil {
 		return Result{}, fmt.Errorf("structured output decoder is required")
 	}
-	toolChoice, err := structuredOutputToolChoice(CapabilitiesOf(a.provider))
-	if err != nil {
-		return Result{}, err
+	caps := CapabilitiesOf(a.provider)
+	native := caps.NativeStructuredOutput == Supported
+	var toolChoice *tool.Choice
+	if !native {
+		var err error
+		if toolChoice, err = structuredOutputToolChoice(caps); err != nil {
+			return Result{}, err
+		}
 	}
 	inv := c.forInvocation(c, &invocationRuntime{})
 	convID := inv.ConversationID()
 	return a.lifecycle(inv, convID, userMessage, func(r *run) (Result, error) {
-		return r.structuredTurn(userMessage, schema, toolChoice, func(raw []byte) error {
+		return r.structuredTurn(userMessage, schema, native, toolChoice, func(raw []byte) error {
 			return decode(json.RawMessage(raw))
 		})
 	})
 }
 
-// structuredTurn runs a single schema-tool model call, applies output
-// guardrails to the raw JSON, decodes it with decode and only then persists
-// the turn. Result.Text is the guardrail-processed JSON.
-func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoice *tool.Choice, decode func([]byte) error) (Result, error) {
+// structuredTurn runs a single model call, either with the provider's native
+// schema mode or with a schema tool, applies output guardrails to the raw
+// JSON, decodes it with decode and only then persists the turn. Result.Text is
+// the guardrail-processed JSON.
+func (r *run) structuredTurn(userMessage string, schema map[string]any, native bool, toolChoice *tool.Choice, decode func([]byte) error) (Result, error) {
 	a, c, h := r.a, r.c, &r.h
 
 	messages, ragStart, err := r.prepareTurn(userMessage)
@@ -76,21 +82,27 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 	}
 
 	system := a.instructionsFor(c)
-	structuredSpec := tool.Spec{
-		Name:        structuredOutputToolName,
-		Description: "Respond with structured JSON output conforming to the schema.",
-		InputSchema: schema,
+	var tools []tool.Spec
+	if !native {
+		tools = []tool.Spec{{
+			Name:        structuredOutputToolName,
+			Description: "Respond with structured JSON output conforming to the schema.",
+			InputSchema: schema,
+		}}
 	}
-	modelMessages, err := r.modelMessages(c, messages, ragStart, system, []tool.Spec{structuredSpec})
+	modelMessages, err := r.modelMessages(c, messages, ragStart, system, tools)
 	if err != nil {
 		return Result{}, fmt.Errorf("structured output: %w", err)
 	}
 	modelReq := ModelRequest{
 		Messages:        modelMessages,
 		System:          system,
-		Tools:           []tool.Spec{structuredSpec},
+		Tools:           tools,
 		ToolChoice:      toolChoice,
 		InferenceConfig: cfg,
+	}
+	if native {
+		modelReq.ResponseFormat = &ResponseFormat{Name: structuredOutputToolName, Schema: schema}
 	}
 
 	provC, provF := h.onModelStart(c, ModelCallRecord{
@@ -111,21 +123,25 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, toolChoi
 		return Result{}, ErrTokenBudgetExceeded
 	}
 
-	if len(resp.ToolCalls) == 0 {
-		return Result{}, &StructuredOutputError{Reason: ReasonNoToolCall}
-	}
-	var found *tool.Call
-	for i := range resp.ToolCalls {
-		if resp.ToolCalls[i].Name == structuredOutputToolName {
-			found = &resp.ToolCalls[i]
-			break
+	var rawText string
+	if native {
+		rawText = resp.Text
+	} else {
+		if len(resp.ToolCalls) == 0 {
+			return Result{}, &StructuredOutputError{Reason: ReasonNoToolCall}
 		}
+		var found *tool.Call
+		for i := range resp.ToolCalls {
+			if resp.ToolCalls[i].Name == structuredOutputToolName {
+				found = &resp.ToolCalls[i]
+				break
+			}
+		}
+		if found == nil {
+			return Result{}, &StructuredOutputError{Reason: ReasonWrongTool}
+		}
+		rawText = string(found.Input)
 	}
-	if found == nil {
-		return Result{}, &StructuredOutputError{Reason: ReasonWrongTool}
-	}
-
-	rawText := string(found.Input)
 	for _, g := range a.outputGuardrails {
 		gC, gf := h.onGuardrailStart(c, "output", rawText)
 		rawText, err = g(gC, rawText)
