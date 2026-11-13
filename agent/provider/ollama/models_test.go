@@ -82,6 +82,48 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	}
 }
 
+// toolCatalogModels are the names whose ollama.com/library page shows the
+// "tools" capability tag; New must report ToolUse supported with the context
+// window left Unknown (it is the server's num_ctx, not the model maximum).
+var toolCatalogModels = []string{
+	"qwen2.5", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5:32b",
+	"llama3.2", "llama3.2:1b", "llama3.2:3b",
+	"mistral", "mistral-nemo",
+	"qwen3.6", "qwen3.5", "qwen3-coder", "gemma4",
+	"gpt-oss", "gpt-oss:20b", "gpt-oss:120b",
+}
+
+func TestToolCatalogModelsReportToolUseWithUnknownContext(t *testing.T) {
+	for _, id := range toolCatalogModels {
+		t.Run(id, func(t *testing.T) {
+			p, err := New(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			caps := p.Capabilities()
+			want := baseline
+			want.ToolUse = agent.Supported
+			if caps != want {
+				t.Fatalf("capabilities = %+v, want baseline plus ToolUse supported %+v", caps, want)
+			}
+		})
+	}
+}
+
+// gemma3 and phi4 have named constructors but no "tools" tag on their library
+// pages, so they must report only the baseline, not ToolUse.
+func TestModelsWithoutToolsTagStayBaseline(t *testing.T) {
+	for _, id := range []string{"gemma3", "gemma3:4b", "phi4"} {
+		p, err := New(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Capabilities() != baseline {
+			t.Fatalf("%s capabilities = %+v, want the baseline", id, p.Capabilities())
+		}
+	}
+}
+
 func TestUnlistedAndCustomModelsReportOnlyTheBaseline(t *testing.T) {
 	for _, id := range []string{"phi4", "my-local-finetune"} {
 		p, err := New(id)
