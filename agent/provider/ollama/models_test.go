@@ -82,6 +82,33 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	}
 }
 
+// Ollama documents structured outputs only on its native /api/generate "format"
+// field, not on the OpenAI-compatible response_format this adapter uses, so no
+// catalog model may claim NativeStructuredOutput Supported; they keep the tool
+// path. Users who front a build that honors response_format can still opt in
+// with WithNativeStructuredOutput.
+func TestNoCatalogModelClaimsNativeStructuredOutput(t *testing.T) {
+	for id := range catalog {
+		p, err := New(id)
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		if got := p.Capabilities().NativeStructuredOutput; got == agent.Supported {
+			t.Errorf("%q must not report NativeStructuredOutput Supported, got %v", id, got)
+		}
+	}
+}
+
+func TestNativeStructuredOutputIsOptIn(t *testing.T) {
+	p, err := GPTOSS(WithNativeStructuredOutput(agent.Supported))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Capabilities().NativeStructuredOutput != agent.Supported {
+		t.Fatal("WithNativeStructuredOutput(Supported) must opt a model in")
+	}
+}
+
 // toolCatalogModels are the names whose ollama.com/library page shows the
 // "tools" capability tag; New must report ToolUse supported with the context
 // window left Unknown (it is the server's num_ctx, not the model maximum).

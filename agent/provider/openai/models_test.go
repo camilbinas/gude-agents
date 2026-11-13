@@ -138,8 +138,30 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	if caps.ToolChoice != (agent.ToolChoiceCapabilities{}) {
 		t.Fatalf("tool-choice modes are not documented per model and must stay Unknown: %+v", caps.ToolChoice)
 	}
-	if caps.NativeStructuredOutput != agent.Unsupported {
-		t.Fatalf("adapter baseline lost: %v", caps.NativeStructuredOutput)
+	// gpt-4.1 documents native structured output on Chat Completions.
+	if caps.NativeStructuredOutput != agent.Supported {
+		t.Fatalf("NativeStructuredOutput = %v, want Supported", caps.NativeStructuredOutput)
+	}
+}
+
+func TestCatalogNativeStructuredOutputFollowsToolUse(t *testing.T) {
+	for id, profile := range catalog {
+		p, err := New(id)
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		caps := p.Capabilities()
+		switch profile.capabilities.ToolUse {
+		case agent.Supported:
+			if caps.NativeStructuredOutput != agent.Supported {
+				t.Errorf("%q: ToolUse Supported but NativeStructuredOutput = %v", id, caps.NativeStructuredOutput)
+			}
+		default:
+			// Unknown or Responses-API-only models must keep the tool path.
+			if caps.NativeStructuredOutput == agent.Supported {
+				t.Errorf("%q: ToolUse %v must not report NativeStructuredOutput Supported", id, profile.capabilities.ToolUse)
+			}
+		}
 	}
 }
 
@@ -209,7 +231,14 @@ func TestCallerOptionsOverrideCatalogDefaults(t *testing.T) {
 }
 
 func TestFineGrainedOptionsCanResetCatalogFieldsToUnknown(t *testing.T) {
-	p, err := New("gpt-5.6", WithToolUse(agent.Unknown), WithContextWindowTokens(0), WithMaxOutputTokens(0))
+	// gpt-5.6 documents native structured output, so reaching the baseline also
+	// takes resetting that flag back to the adapter default (Unsupported).
+	p, err := New("gpt-5.6",
+		WithToolUse(agent.Unknown),
+		WithContextWindowTokens(0),
+		WithMaxOutputTokens(0),
+		WithNativeStructuredOutput(agent.Unsupported),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

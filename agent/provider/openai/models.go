@@ -33,42 +33,52 @@ type modelProfile struct {
 // API no longer accepts them, so their named constructors fall back to the
 // adapter baseline. Their Deprecated constructors remain for source
 // compatibility.
+// Native structured output (response_format json_schema) is documented on Chat
+// Completions for the same models that support function calling there; the
+// catalog marks it Supported exactly where ToolUse is Supported. Models whose
+// tool calling is Unknown or Responses-API-only leave it Unknown/Unsupported
+// so unknown models keep the tool path.
 var catalog = map[string]modelProfile{
-	"gpt-4o":      {capabilities: caps(128_000, 16_384, agent.Supported)},
-	"gpt-4o-mini": {capabilities: caps(128_000, 16_384, agent.Supported)},
+	"gpt-4o":      {capabilities: caps(128_000, 16_384, agent.Supported, agent.Supported)},
+	"gpt-4o-mini": {capabilities: caps(128_000, 16_384, agent.Supported, agent.Supported)},
 
-	"gpt-4.1":      {capabilities: caps(1_047_576, 32_768, agent.Supported)},
-	"gpt-4.1-mini": {capabilities: caps(1_047_576, 32_768, agent.Supported)},
+	"gpt-4.1":      {capabilities: caps(1_047_576, 32_768, agent.Supported, agent.Supported)},
+	"gpt-4.1-mini": {capabilities: caps(1_047_576, 32_768, agent.Supported, agent.Supported)},
 
-	"gpt-5":      {capabilities: caps(400_000, 128_000, agent.Supported)},
-	"gpt-5-mini": {capabilities: caps(400_000, 128_000, agent.Supported)},
-	"gpt-5-nano": {capabilities: caps(400_000, 128_000, agent.Supported)},
+	"gpt-5":      {capabilities: caps(400_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5-mini": {capabilities: caps(400_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5-nano": {capabilities: caps(400_000, 128_000, agent.Supported, agent.Supported)},
 
-	"gpt-5.4":      {capabilities: caps(1_050_000, 128_000, agent.Supported)},
-	"gpt-5.4-mini": {capabilities: caps(400_000, 128_000, agent.Supported)},
-	"gpt-5.4-nano": {capabilities: caps(400_000, 128_000, agent.Supported)},
-	"gpt-5.5":      {capabilities: caps(1_050_000, 128_000, agent.Supported)},
+	"gpt-5.4":      {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5.4-mini": {capabilities: caps(400_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5.4-nano": {capabilities: caps(400_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5.5":      {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
 
 	// "gpt-5.6" is an alias that OpenAI routes to GPT-5.6 Sol.
-	"gpt-5.6":       {capabilities: caps(1_050_000, 128_000, agent.Supported)},
-	"gpt-5.6-sol":   {capabilities: caps(1_050_000, 128_000, agent.Supported)},
-	"gpt-5.6-terra": {capabilities: caps(1_050_000, 128_000, agent.Supported)},
-	"gpt-5.6-luna":  {capabilities: caps(1_050_000, 128_000, agent.Supported)},
+	"gpt-5.6":       {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5.6-sol":   {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5.6-terra": {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
+	"gpt-5.6-luna":  {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
 
-	"gpt-6-astra":   {capabilities: caps(1_050_000, 128_000, agent.Supported)},
-	"gpt-6-sol":     {capabilities: caps(1_050_000, 128_000, agent.Unknown)},
-	"gpt-6-luna":    {capabilities: caps(1_050_000, 128_000, agent.Unknown)},
-	"gpt-6.1-sol":   {capabilities: caps(1_050_000, 128_000, agent.Unsupported)},
-	"gpt-6.1-terra": {capabilities: caps(1_050_000, 128_000, agent.Unsupported)},
+	"gpt-6-astra": {capabilities: caps(1_050_000, 128_000, agent.Supported, agent.Supported)},
+	// gpt-6-sol/luna: tool calling (and so response_format) on Chat Completions
+	// needs reasoning_effort=none, not this adapter's default; leave Unknown.
+	"gpt-6-sol":  {capabilities: caps(1_050_000, 128_000, agent.Unknown, agent.Unknown)},
+	"gpt-6-luna": {capabilities: caps(1_050_000, 128_000, agent.Unknown, agent.Unknown)},
+	// gpt-6.1-sol/terra: tool calling requires the Responses API, so native
+	// structured output is unavailable through this Chat Completions adapter.
+	"gpt-6.1-sol":   {capabilities: caps(1_050_000, 128_000, agent.Unsupported, agent.Unsupported)},
+	"gpt-6.1-terra": {capabilities: caps(1_050_000, 128_000, agent.Unsupported, agent.Unsupported)},
 
-	"o3": {capabilities: caps(200_000, 100_000, agent.Supported)},
+	"o3": {capabilities: caps(200_000, 100_000, agent.Supported, agent.Supported)},
 }
 
-func caps(contextWindow, maxOutput int, toolUse agent.Capability) agent.ModelCapabilities {
+func caps(contextWindow, maxOutput int, toolUse, nativeStructured agent.Capability) agent.ModelCapabilities {
 	return agent.ModelCapabilities{
-		ContextWindowTokens: contextWindow,
-		MaxOutputTokens:     maxOutput,
-		ToolUse:             toolUse,
+		ContextWindowTokens:    contextWindow,
+		MaxOutputTokens:        maxOutput,
+		ToolUse:                toolUse,
+		NativeStructuredOutput: nativeStructured,
 	}
 }
 

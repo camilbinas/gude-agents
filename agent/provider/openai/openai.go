@@ -364,6 +364,9 @@ func (p *OpenAIProvider) buildParams(req agent.ModelRequest) (openaisdk.ChatComp
 	if req.ToolChoice != nil {
 		input.ToolChoice = toOpenAIToolChoice(req.ToolChoice)
 	}
+	if req.ResponseFormat != nil {
+		input.ResponseFormat = toOpenAIResponseFormat(req.ResponseFormat)
+	}
 	if p.thinkingEffort != "" {
 		input.ReasoningEffort = shared.ReasoningEffort(p.thinkingEffort)
 	}
@@ -617,6 +620,107 @@ func toOpenAITools(specs []tool.Spec) []openaisdk.ChatCompletionToolUnionParam {
 		})
 	}
 	return tools
+}
+
+// toOpenAIResponseFormat maps the framework ResponseFormat onto OpenAI's
+// native json_schema response mode. strict is enabled only when the schema
+// already satisfies OpenAI's strict-mode subset, so the user's schema is sent
+// unchanged and never silently rewritten.
+func toOpenAIResponseFormat(rf *agent.ResponseFormat) openaisdk.ChatCompletionNewParamsResponseFormatUnion {
+	js := shared.ResponseFormatJSONSchemaJSONSchemaParam{
+		Name:   rf.Name,
+		Schema: rf.Schema,
+	}
+	if schemaMeetsStrictMode(rf.Schema) {
+		js.Strict = openaisdk.Bool(true)
+	}
+	return openaisdk.ChatCompletionNewParamsResponseFormatUnion{
+		OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{JSONSchema: js},
+	}
+}
+
+// schemaMeetsStrictMode reports whether schema already satisfies OpenAI's
+// strict structured-output subset: every object sets additionalProperties
+// false and lists every property in required, and no unsupported combinator
+// (anyOf is allowed, but oneOf/allOf/not are not) appears. It never mutates
+// the schema; a schema that falls short is sent non-strict.
+func schemaMeetsStrictMode(schema map[string]any) bool {
+	return strictOK(any(schema))
+}
+
+func strictOK(node any) bool {
+	switch n := node.(type) {
+	case map[string]any:
+		if _, bad := n["oneOf"]; bad {
+			return false
+		}
+		if _, bad := n["allOf"]; bad {
+			return false
+		}
+		if _, bad := n["not"]; bad {
+			return false
+		}
+		if typeIsObject(n["type"]) {
+			if ap, ok := n["additionalProperties"].(bool); !ok || ap {
+				return false
+			}
+			props, _ := n["properties"].(map[string]any)
+			if !requiredCoversProps(props, n["required"]) {
+				return false
+			}
+		}
+		for _, v := range n {
+			if !strictOK(v) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, v := range n {
+			if !strictOK(v) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+// typeIsObject reports whether a JSON Schema "type" value is "object", as a
+// bare string or within a type array.
+func typeIsObject(t any) bool {
+	switch v := t.(type) {
+	case string:
+		return v == "object"
+	case []any:
+		for _, e := range v {
+			if s, ok := e.(string); ok && s == "object" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// requiredCoversProps reports whether required lists every key in props.
+func requiredCoversProps(props map[string]any, required any) bool {
+	req, ok := required.([]any)
+	if !ok && required != nil {
+		return false
+	}
+	set := make(map[string]bool, len(req))
+	for _, r := range req {
+		if s, ok := r.(string); ok {
+			set[s] = true
+		}
+	}
+	for k := range props {
+		if !set[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // toOpenAIToolChoice maps a framework ToolChoice to the OpenAI tool_choice parameter.

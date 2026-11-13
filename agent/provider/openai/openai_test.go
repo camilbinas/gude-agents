@@ -940,3 +940,161 @@ func TestStream_AccumulatesTextToolCallsUsageAndEvents(t *testing.T) {
 		t.Fatalf("Usage = %#v, want input=100 output=20 cache-read=60 cache-write=0", resp.Usage)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// buildParams — native structured output (response_format json_schema)
+// ---------------------------------------------------------------------------
+
+// strictSchema is an object schema that already satisfies OpenAI's strict-mode
+// subset: additionalProperties false and every property required.
+func strictSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+			"age":  map[string]any{"type": "integer"},
+		},
+		"required": []any{"name", "age"},
+	}
+}
+
+func TestBuildParams_ResponseFormatSendsJSONSchema_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 4096}
+	schema := strictSchema()
+	req := agent.ModelRequest{
+		Messages:       []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+		ResponseFormat: &agent.ResponseFormat{Name: "person", Schema: schema},
+	}
+	result := mustBuildParams(t, p, req)
+
+	js := result.ResponseFormat.OfJSONSchema
+	if js == nil {
+		t.Fatal("expected OfJSONSchema response format to be set")
+	}
+	if js.JSONSchema.Name != "person" {
+		t.Fatalf("schema name = %q, want %q", js.JSONSchema.Name, "person")
+	}
+	// The user's schema is sent unchanged.
+	got, ok := js.JSONSchema.Schema.(map[string]any)
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]any", js.JSONSchema.Schema)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(schema) {
+		t.Fatalf("schema was rewritten: got %v, want %v", got, schema)
+	}
+	// A strict-eligible schema enables strict mode.
+	if !js.JSONSchema.Strict.Valid() || js.JSONSchema.Strict.Value != true {
+		t.Fatalf("expected strict=true for a strict-eligible schema, got %+v", js.JSONSchema.Strict)
+	}
+	// No tools are sent alongside native structured output.
+	if len(result.Tools) != 0 {
+		t.Fatalf("expected no tools with native response format, got %d", len(result.Tools))
+	}
+}
+
+func TestBuildParams_NoResponseFormatLeavesItUnset_OpenAI(t *testing.T) {
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 4096}
+	req := agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+	}
+	result := mustBuildParams(t, p, req)
+	if result.ResponseFormat.OfJSONSchema != nil {
+		t.Fatal("expected no response format when ResponseFormat is nil")
+	}
+}
+
+func TestBuildParams_NonStrictSchemaOmitsStrict_OpenAI(t *testing.T) {
+	// additionalProperties is not false and a property is missing from
+	// required, so strict mode must not be claimed and the schema is untouched.
+	loose := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+			"age":  map[string]any{"type": "integer"},
+		},
+		"required": []any{"name"},
+	}
+	p := &OpenAIProvider{model: "gpt-4o", maxTokens: 4096}
+	req := agent.ModelRequest{
+		Messages:       []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+		ResponseFormat: &agent.ResponseFormat{Name: "loose", Schema: loose},
+	}
+	result := mustBuildParams(t, p, req)
+	js := result.ResponseFormat.OfJSONSchema
+	if js == nil {
+		t.Fatal("expected json_schema response format")
+	}
+	if js.JSONSchema.Strict.Valid() {
+		t.Fatalf("expected strict to be omitted for a non-strict schema, got %+v", js.JSONSchema.Strict)
+	}
+	got, _ := js.JSONSchema.Schema.(map[string]any)
+	if fmt.Sprint(got) != fmt.Sprint(loose) {
+		t.Fatalf("schema was rewritten: got %v, want %v", got, loose)
+	}
+}
+
+func TestSchemaMeetsStrictMode(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema map[string]any
+		want   bool
+	}{
+		{"strict object", strictSchema(), true},
+		{
+			"missing additionalProperties false",
+			map[string]any{"type": "object", "properties": map[string]any{"a": map[string]any{"type": "string"}}, "required": []any{"a"}},
+			false,
+		},
+		{
+			"required missing a property",
+			map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"a": map[string]any{"type": "string"}, "b": map[string]any{"type": "string"}}, "required": []any{"a"}},
+			false,
+		},
+		{
+			"oneOf present",
+			map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{}, "required": []any{}, "oneOf": []any{}},
+			false,
+		},
+		{
+			"nested object strict",
+			map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"child": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"x": map[string]any{"type": "string"}}, "required": []any{"x"}},
+				},
+				"required": []any{"child"},
+			},
+			true,
+		},
+		{
+			"nested object not strict",
+			map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"child": map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}},
+				},
+				"required": []any{"child"},
+			},
+			false,
+		},
+		{
+			"array of strict objects",
+			map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"items": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"x": map[string]any{"type": "string"}}, "required": []any{"x"}}},
+				},
+				"required": []any{"items"},
+			},
+			true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := schemaMeetsStrictMode(c.schema); got != c.want {
+				t.Fatalf("schemaMeetsStrictMode = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
