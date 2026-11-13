@@ -48,9 +48,6 @@ type ModelCapabilities struct {
 	// NativeStructuredOutput reports whether this configured provider/model
 	// supports a native schema/JSON response mechanism implemented by Gude,
 	// rather than emulating structured output through tool calling.
-	//
-	// Deprecated: Gude always produces structured output through tool calling
-	// and never reads this field, so setting it has no effect.
 	NativeStructuredOutput Capability
 }
 

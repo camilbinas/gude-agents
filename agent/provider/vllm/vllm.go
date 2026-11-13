@@ -25,16 +25,15 @@ type Option = openai.Option
 var (
 	// WithBaseURL overrides the vLLM server URL. By default, the URL is read
 	// from VLLM_BASE_URL, falling back to http://localhost:8000/v1.
-	WithBaseURL             = openai.WithBaseURL
-	WithCapabilities        = openai.WithCapabilities
-	WithContextWindowTokens = openai.WithContextWindowTokens
-	WithMaxOutputTokens     = openai.WithMaxOutputTokens
-	WithToolUse             = openai.WithToolUse
-	WithToolChoice          = openai.WithToolChoice
-	WithToolChoiceAuto      = openai.WithToolChoiceAuto
-	WithToolChoiceRequired  = openai.WithToolChoiceRequired
-	WithToolChoiceSpecific  = openai.WithToolChoiceSpecific
-	// Deprecated: Gude never reads NativeStructuredOutput, so this option has no effect.
+	WithBaseURL                = openai.WithBaseURL
+	WithCapabilities           = openai.WithCapabilities
+	WithContextWindowTokens    = openai.WithContextWindowTokens
+	WithMaxOutputTokens        = openai.WithMaxOutputTokens
+	WithToolUse                = openai.WithToolUse
+	WithToolChoice             = openai.WithToolChoice
+	WithToolChoiceAuto         = openai.WithToolChoiceAuto
+	WithToolChoiceRequired     = openai.WithToolChoiceRequired
+	WithToolChoiceSpecific     = openai.WithToolChoiceSpecific
 	WithNativeStructuredOutput = openai.WithNativeStructuredOutput
 )
 
