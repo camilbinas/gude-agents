@@ -82,7 +82,7 @@ Runnable, progressively more advanced programs are in
 
 ## Development
 
-Go 1.25 or newer. The workspace is driven by `go.work`; run `go` commands from
+Go 1.26 or newer. The workspace is driven by `go.work`; run `go` commands from
 inside a module directory and `GOWORK` resolves automatically.
 
 Point the build cache outside the working tree so caches and built binaries

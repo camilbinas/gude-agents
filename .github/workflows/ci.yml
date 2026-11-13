@@ -13,7 +13,7 @@ permissions:
 env:
   # Pin the toolchain CI builds and tests with. govulncheck flagged stdlib
   # issues in go1.27.2; 1.27.4 is the latest 1.27 patch and carries the fixes.
-  # The modules keep their own `go 1.25.0` directive; this only sets what CI runs.
+  # The modules keep their own `go 1.26.0` directive; this only sets what CI runs.
   GO_VERSION: "1.27.4"
 
 jobs:

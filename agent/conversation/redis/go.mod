@@ -1,6 +1,6 @@
 module github.com/camilbinas/gude-agents/agent/conversation/redis
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
