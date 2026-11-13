@@ -156,7 +156,7 @@ func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	}
 }
 
-func TestEveryCatalogEntryIsReachableThroughANamedConstructor(t *testing.T) {
+func TestEveryCatalogEntryIsReachableThroughANamedConstructorOrCatalogOnly(t *testing.T) {
 	reached := map[string]bool{}
 	for _, m := range namedModels {
 		if _, ok := lookupProfile(m.id); ok {
@@ -168,8 +168,37 @@ func TestEveryCatalogEntryIsReachableThroughANamedConstructor(t *testing.T) {
 		}
 	}
 	for id := range catalog {
-		if !reached[id] {
-			t.Errorf("catalog entry %q is not used by any named constructor", id)
+		if reached[id] || catalogOnlyModels[id] {
+			continue
+		}
+		t.Errorf("catalog entry %q has no named constructor and is not listed in catalogOnlyModels", id)
+	}
+}
+
+// TestCatalogOnlyModelsAreCatalogOnly verifies each catalog-only ID is in the
+// catalog, is constructible through New, and has no named constructor.
+func TestCatalogOnlyModelsAreCatalogOnly(t *testing.T) {
+	named := map[string]bool{}
+	for _, m := range namedModels {
+		named[m.id] = true
+		if _, rest, ok := strings.Cut(m.id, "."); ok {
+			named[rest] = true
+		}
+	}
+	for id := range catalogOnlyModels {
+		if _, ok := catalog[id]; !ok {
+			t.Errorf("catalogOnlyModels lists %q, which is not in the catalog", id)
+		}
+		if named[id] {
+			t.Errorf("catalogOnlyModels lists %q, but a named constructor uses it", id)
+		}
+		p, err := New(id, WithAPIKey("test-key"))
+		if err != nil {
+			t.Errorf("New(%q) failed: %v", id, err)
+			continue
+		}
+		if p.Capabilities() == baselineCapabilities() {
+			t.Errorf("catalog-only %q reports only the baseline; its entry is not wired up", id)
 		}
 	}
 }

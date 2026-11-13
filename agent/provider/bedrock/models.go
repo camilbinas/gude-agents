@@ -39,7 +39,8 @@ type modelProfile struct {
 // are still valid; they report the adapter baseline.
 var catalog = map[string]modelProfile{
 	// Anthropic Claude. Every Claude card documents client tool use with the
-	// full tool_choice set (auto, any, tool); only the 5.5 models restrict it.
+	// full tool_choice set (auto, any, tool); only the Opus/Sonnet 5.5 cards
+	// restrict it (Haiku 5.5 and the Fable 5.x cards do not).
 	"anthropic.claude-haiku-4-5-20251001-v1:0":  claude(200_000, 64_000),
 	"anthropic.claude-sonnet-4-5-20250929-v1:0": claude(200_000, 64_000),
 	"anthropic.claude-sonnet-4-6":               claude(1_000_000, 64_000),
@@ -50,6 +51,9 @@ var catalog = map[string]modelProfile{
 	"anthropic.claude-opus-4-8":                 claude(1_000_000, 128_000),
 	"anthropic.claude-opus-5":                   claude(1_000_000, 128_000),
 	"anthropic.claude-fable-5":                  claude(1_000_000, 128_000),
+	"anthropic.claude-haiku-5-5":                claude(1_000_000, 128_000), // catalog-only
+	"anthropic.claude-fable-5-1":                claude(1_000_000, 128_000), // catalog-only
+	"anthropic.claude-fable-5-2":                claude(1_000_000, 128_000), // catalog-only
 	"anthropic.claude-opus-5-5":                 claude55(),
 	"anthropic.claude-sonnet-5-5":               claude55(),
 
@@ -68,15 +72,51 @@ var catalog = map[string]modelProfile{
 	"openai.gpt-6-astra":      plain(1_050_000, 128_000),
 	"openai.gpt-6-luna":       plain(1_050_000, 128_000),
 	"openai.gpt-6.1-sol":      plain(1_000_000, 131_072),
+	"openai.gpt-6.1-terra":    plain(1_050_000, 128_000), // catalog-only
+	"openai.gpt-5.6-sol":      plain(1_050_000, 128_000), // catalog-only
+	"openai.gpt-5.6-luna":     plain(1_050_000, 128_000), // catalog-only
+	"openai.gpt-5.6-terra":    plain(1_050_000, 128_000), // catalog-only
+	"openai.gpt-5.4":          plain(1_050_000, 128_000), // catalog-only
+	"openai.gpt-5.5":          plain(1_050_000, 128_000), // catalog-only
 
 	// Qwen on Bedrock.
 	"qwen.qwen3-235b-a22b-2507-v1:0": plain(256_000, 8_000),
+
+	// Moonshot AI. The cards document the context window but no output ceiling.
+	"moonshotai.kimi-k3":   contextOnly(1_000_000), // catalog-only
+	"moonshotai.kimi-k3.1": contextOnly(1_000_000), // catalog-only
+
+	// Z.AI.
+	"zai.glm-5.3": plain(1_000_000, 128_000), // catalog-only
 
 	// xAI. The card documents the context window but no output ceiling.
 	"xai.grok-4.6": {
 		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 500_000},
 		thinkingStyle: thinkingStyleGrok,
 	},
+	"xai.grok-4.7": { // catalog-only
+		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 524_288},
+		thinkingStyle: thinkingStyleGrok,
+	},
+}
+
+// catalogOnlyModels are catalog entries deliberately reachable only through
+// New(id), with no named constructor (the post-v1 API forbids adding one).
+// Keep it in sync with the "catalog-only" entries above.
+var catalogOnlyModels = map[string]bool{
+	"anthropic.claude-haiku-5-5": true,
+	"anthropic.claude-fable-5-1": true,
+	"anthropic.claude-fable-5-2": true,
+	"openai.gpt-6.1-terra":       true,
+	"openai.gpt-5.6-sol":         true,
+	"openai.gpt-5.6-luna":        true,
+	"openai.gpt-5.6-terra":       true,
+	"openai.gpt-5.4":             true,
+	"openai.gpt-5.5":             true,
+	"moonshotai.kimi-k3":         true,
+	"moonshotai.kimi-k3.1":       true,
+	"zai.glm-5.3":                true,
+	"xai.grok-4.7":               true,
 }
 
 // claude returns the profile of a Claude model with Claude-style thinking,
@@ -120,6 +160,12 @@ func claude55() modelProfile {
 // shape.
 func plain(contextWindow, maxOutput int) modelProfile {
 	return modelProfile{capabilities: agent.ModelCapabilities{ContextWindowTokens: contextWindow, MaxOutputTokens: maxOutput}}
+}
+
+// contextOnly returns a profile with only a documented context window; the
+// card states no output ceiling, so MaxOutputTokens stays Unknown.
+func contextOnly(contextWindow int) modelProfile {
+	return modelProfile{capabilities: agent.ModelCapabilities{ContextWindowTokens: contextWindow}}
 }
 
 // inferenceProfilePrefixes are the geography prefixes Bedrock puts in front of
