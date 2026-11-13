@@ -92,36 +92,29 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Unsupported || caps.ToolChoice.Specific != agent.Unsupported {
 		t.Fatalf("capabilities = %+v", caps)
 	}
-	if caps.NativeStructuredOutput != agent.Unsupported {
-		t.Fatalf("adapter baseline lost: NativeStructuredOutput = %v", caps.NativeStructuredOutput)
+	if caps.NativeStructuredOutput != agent.Supported {
+		t.Fatalf("NativeStructuredOutput = %v, want Supported", caps.NativeStructuredOutput)
 	}
 }
 
-// nativeStructuredOutputModels are the catalog IDs whose docs confirm native
-// JSON outputs (output_config.format): the 4.5 and 4.6 generations. Opus 4.7
-// and every later model reject output_config.format and keep the tool path.
-var nativeStructuredOutputModels = map[string]bool{
-	"claude-haiku-4-5":  true,
-	"claude-sonnet-4-5": true,
-	"claude-opus-4-5":   true,
-	"claude-sonnet-4-6": true,
-	"claude-opus-4-6":   true,
-}
-
+// Every catalog Claude model accepts output_config.format (checked live via
+// Bedrock on 2026-11-13), and unknown models keep the tool path.
 func TestCatalogNativeStructuredOutputFlags(t *testing.T) {
 	for id := range catalog {
 		p, err := New(id)
 		if err != nil {
 			t.Fatalf("New(%q): %v", id, err)
 		}
-		got := p.Capabilities().NativeStructuredOutput
-		want := agent.Unsupported
-		if nativeStructuredOutputModels[id] {
-			want = agent.Supported
+		if got := p.Capabilities().NativeStructuredOutput; got != agent.Supported {
+			t.Errorf("%q NativeStructuredOutput = %v, want Supported", id, got)
 		}
-		if got != want {
-			t.Errorf("%q NativeStructuredOutput = %v, want %v", id, got, want)
-		}
+	}
+	p, err := New("claude-unknown-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Capabilities().NativeStructuredOutput; got != agent.Unsupported {
+		t.Errorf("unknown model NativeStructuredOutput = %v, want Unsupported", got)
 	}
 }
 
@@ -197,6 +190,7 @@ func TestFineGrainedOptionsCanResetCatalogFieldsToUnknown(t *testing.T) {
 		WithToolChoiceSpecific(agent.Unknown),
 		WithContextWindowTokens(0),
 		WithMaxOutputTokens(0),
+		WithNativeStructuredOutput(agent.Unsupported),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -285,9 +285,6 @@ func TestNativeStructuredOutputMatchesModelCards(t *testing.T) {
 		"global.anthropic.claude-opus-5-5",
 		"global.anthropic.claude-fable-5",
 		"anthropic.claude-haiku-5-5",
-		"amazon.nova-micro-v1:0",
-		"amazon.nova-pro-v1:0",
-		"global.amazon.nova-2-lite-v1:0",
 		"openai.gpt-oss-20b-1:0",
 		"global.openai.gpt-6-astra",
 		"us.openai.gpt-6.1-sol",
@@ -297,6 +294,10 @@ func TestNativeStructuredOutputMatchesModelCards(t *testing.T) {
 		"xai.grok-4.7",
 	}
 	unsupported := []string{
+		"amazon.nova-micro-v1:0", // rejects outputConfig live
+		"amazon.nova-lite-v1:0",
+		"amazon.nova-pro-v1:0",
+		"global.amazon.nova-2-lite-v1:0",
 		"openai.gpt-oss-120b-1:0",
 		"openai.gpt-6.1-terra",
 		"openai.gpt-5.5",

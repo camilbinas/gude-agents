@@ -58,11 +58,12 @@ var catalog = map[string]modelProfile{
 	"anthropic.claude-sonnet-5-5":               claude55(),
 
 	// Amazon Nova.
-	"amazon.nova-micro-v1:0": withNativeSO(plain(128_000, 10_000)),
-	"amazon.nova-lite-v1:0":  withNativeSO(plain(300_000, 10_000)),
-	"amazon.nova-pro-v1:0":   withNativeSO(plain(300_000, 10_000)),
+	// Nova rejects outputConfig ("This model doesn't support the outputConfig field"), checked live 2026-11-13.
+	"amazon.nova-micro-v1:0": plain(128_000, 10_000),
+	"amazon.nova-lite-v1:0":  plain(300_000, 10_000),
+	"amazon.nova-pro-v1:0":   plain(300_000, 10_000),
 	"amazon.nova-2-lite-v1:0": {
-		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 64_000, NativeStructuredOutput: agent.Supported},
+		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 64_000},
 		thinkingStyle: thinkingStyleNova2,
 	},
 
