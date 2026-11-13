@@ -8,6 +8,8 @@
 tmp/
 **/tmp/
 .kiro/
+# Local AI agent task notes, briefs and review reports.
+.agents/
 .DS_Store
 **/testdata/rapid/
 go.work.sum

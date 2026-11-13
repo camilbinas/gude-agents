@@ -70,18 +70,6 @@ linters:
       # of the stores; scoped to the exact teardown call text.
       - linters: [errcheck]
         source: '\.(Rollback|Close)\([^)]*\)$'
-      # Dead code already catalogued in the round-2 static-analysis report; its
-      # removal touches library .go files owned by the API/stores/providers
-      # fixers, so it is excluded here rather than silenced in source. Re-enable
-      # once those symbols are removed.
-      - path: agent/event\.go
-        text: "isStopped is unused"
-      - path: agent/memory/postgres/(schema|store)\.go
-        text: "(insertColumns|extractValues) is unused"
-      - path: agent/provider/bedrock/bedrock\.go
-        text: "(imageBytes|documentBytes) is unused"
-      - path: agent/ratelimit/redis/store\.go
-        text: "contextFor is unused"
 
 formatters:
   enable:
