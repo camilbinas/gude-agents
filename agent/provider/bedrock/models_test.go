@@ -266,8 +266,61 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	caps := p.Capabilities()
 	if caps.ContextWindowTokens != 1_000_000 || caps.MaxOutputTokens != 64_000 || caps.ToolUse != agent.Supported ||
 		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported ||
-		caps.ToolChoice.Specific != agent.Supported || caps.NativeStructuredOutput != agent.Unsupported {
+		caps.ToolChoice.Specific != agent.Supported || caps.NativeStructuredOutput != agent.Supported {
 		t.Fatalf("capabilities = %+v", caps)
+	}
+}
+
+// TestNativeStructuredOutputMatchesModelCards pins which catalog models report
+// native structured output as Supported. Flags mirror each model's Bedrock
+// model card: Claude, Nova, and the documented OpenAI/Qwen/Z.AI/xAI entries
+// list Structured outputs on bedrock-runtime; gpt-oss-120b, the undocumented
+// catalog-only gpt-5.x / gpt-6.1-terra, and the Kimi K3 entries do not, so they
+// keep the Unsupported baseline that leaves unknown models on the tool path.
+func TestNativeStructuredOutputMatchesModelCards(t *testing.T) {
+	supported := []string{
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"global.anthropic.claude-sonnet-4-6",
+		"global.anthropic.claude-sonnet-5-5",
+		"global.anthropic.claude-opus-5-5",
+		"global.anthropic.claude-fable-5",
+		"anthropic.claude-haiku-5-5",
+		"amazon.nova-micro-v1:0",
+		"amazon.nova-pro-v1:0",
+		"global.amazon.nova-2-lite-v1:0",
+		"openai.gpt-oss-20b-1:0",
+		"global.openai.gpt-6-astra",
+		"us.openai.gpt-6.1-sol",
+		"qwen.qwen3-235b-a22b-2507-v1:0",
+		"zai.glm-5.3",
+		"global.xai.grok-4.6",
+		"xai.grok-4.7",
+	}
+	unsupported := []string{
+		"openai.gpt-oss-120b-1:0",
+		"openai.gpt-6.1-terra",
+		"openai.gpt-5.5",
+		"moonshotai.kimi-k3",
+		"moonshotai.kimi-k3.1",
+		"vendor.unknown-model-v1:0", // unknown models keep the baseline
+	}
+	for _, id := range supported {
+		p, err := New(id, WithAPIKey("test-key"))
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		if got := p.Capabilities().NativeStructuredOutput; got != agent.Supported {
+			t.Errorf("%s NativeStructuredOutput = %v, want Supported", id, got)
+		}
+	}
+	for _, id := range unsupported {
+		p, err := New(id, WithAPIKey("test-key"))
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		if got := p.Capabilities().NativeStructuredOutput; got != agent.Unsupported {
+			t.Errorf("%s NativeStructuredOutput = %v, want Unsupported", id, got)
+		}
 	}
 }
 
@@ -348,6 +401,9 @@ func TestFineGrainedOptionsCanResetCatalogFieldsToUnknown(t *testing.T) {
 		WithToolChoiceSpecific(agent.Unknown),
 		WithContextWindowTokens(0),
 		WithMaxOutputTokens(0),
+		// Sonnet 5.5 reports native structured output; reset it to the
+		// adapter baseline (Unsupported) along with the other fields.
+		WithNativeStructuredOutput(agent.Unsupported),
 	)
 	if err != nil {
 		t.Fatal(err)

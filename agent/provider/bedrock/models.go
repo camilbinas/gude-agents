@@ -58,20 +58,22 @@ var catalog = map[string]modelProfile{
 	"anthropic.claude-sonnet-5-5":               claude55(),
 
 	// Amazon Nova.
-	"amazon.nova-micro-v1:0": plain(128_000, 10_000),
-	"amazon.nova-lite-v1:0":  plain(300_000, 10_000),
-	"amazon.nova-pro-v1:0":   plain(300_000, 10_000),
+	"amazon.nova-micro-v1:0": withNativeSO(plain(128_000, 10_000)),
+	"amazon.nova-lite-v1:0":  withNativeSO(plain(300_000, 10_000)),
+	"amazon.nova-pro-v1:0":   withNativeSO(plain(300_000, 10_000)),
 	"amazon.nova-2-lite-v1:0": {
-		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 64_000},
+		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 64_000, NativeStructuredOutput: agent.Supported},
 		thinkingStyle: thinkingStyleNova2,
 	},
 
-	// OpenAI models on Bedrock.
-	"openai.gpt-oss-20b-1:0":  plain(128_000, 16_000),
+	// OpenAI models on Bedrock. gpt-oss-120b's card does not list structured
+	// outputs; the gpt-5.x and gpt-6.1-terra catalog-only entries have no
+	// documented card, so all stay at the Unsupported baseline.
+	"openai.gpt-oss-20b-1:0":  withNativeSO(plain(128_000, 16_000)),
 	"openai.gpt-oss-120b-1:0": plain(128_000, 16_000),
-	"openai.gpt-6-astra":      plain(1_050_000, 128_000),
-	"openai.gpt-6-luna":       plain(1_050_000, 128_000),
-	"openai.gpt-6.1-sol":      plain(1_000_000, 131_072),
+	"openai.gpt-6-astra":      withNativeSO(plain(1_050_000, 128_000)),
+	"openai.gpt-6-luna":       withNativeSO(plain(1_050_000, 128_000)),
+	"openai.gpt-6.1-sol":      withNativeSO(plain(1_000_000, 131_072)),
 	"openai.gpt-6.1-terra":    plain(1_050_000, 128_000), // catalog-only
 	"openai.gpt-5.6-sol":      plain(1_050_000, 128_000), // catalog-only
 	"openai.gpt-5.6-luna":     plain(1_050_000, 128_000), // catalog-only
@@ -80,22 +82,22 @@ var catalog = map[string]modelProfile{
 	"openai.gpt-5.5":          plain(1_050_000, 128_000), // catalog-only
 
 	// Qwen on Bedrock.
-	"qwen.qwen3-235b-a22b-2507-v1:0": plain(256_000, 8_000),
+	"qwen.qwen3-235b-a22b-2507-v1:0": withNativeSO(plain(256_000, 8_000)),
 
 	// Moonshot AI. The cards document the context window but no output ceiling.
 	"moonshotai.kimi-k3":   contextOnly(1_000_000), // catalog-only
 	"moonshotai.kimi-k3.1": contextOnly(1_000_000), // catalog-only
 
 	// Z.AI.
-	"zai.glm-5.3": plain(1_000_000, 128_000), // catalog-only
+	"zai.glm-5.3": withNativeSO(plain(1_000_000, 128_000)), // catalog-only
 
 	// xAI. The card documents the context window but no output ceiling.
 	"xai.grok-4.6": {
-		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 500_000},
+		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 500_000, NativeStructuredOutput: agent.Supported},
 		thinkingStyle: thinkingStyleGrok,
 	},
 	"xai.grok-4.7": { // catalog-only
-		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 524_288},
+		capabilities:  agent.ModelCapabilities{ContextWindowTokens: 524_288, NativeStructuredOutput: agent.Supported},
 		thinkingStyle: thinkingStyleGrok,
 	},
 }
@@ -133,6 +135,8 @@ func claude(contextWindow, maxOutput int) modelProfile {
 				Required: agent.Supported,
 				Specific: agent.Supported,
 			},
+			// Every Claude card lists Structured outputs on bedrock-runtime.
+			NativeStructuredOutput: agent.Supported,
 		},
 		thinkingStyle: thinkingStyleClaude,
 	}
@@ -151,6 +155,9 @@ func claude55() modelProfile {
 				Required: agent.Unsupported,
 				Specific: agent.Unsupported,
 			},
+			// Structured outputs is listed on the 5.5 cards (JSON Schema
+			// output format works even though forced tool choice does not).
+			NativeStructuredOutput: agent.Supported,
 		},
 		thinkingStyle: thinkingStyleClaude,
 	}
@@ -160,6 +167,14 @@ func claude55() modelProfile {
 // shape.
 func plain(contextWindow, maxOutput int) modelProfile {
 	return modelProfile{capabilities: agent.ModelCapabilities{ContextWindowTokens: contextWindow, MaxOutputTokens: maxOutput}}
+}
+
+// withNativeSO marks a profile's card-documented native structured-output
+// support. Use it per-entry so each Supported flag maps to a verified model
+// card, rather than blanketing a shared helper.
+func withNativeSO(p modelProfile) modelProfile {
+	p.capabilities.NativeStructuredOutput = agent.Supported
+	return p
 }
 
 // contextOnly returns a profile with only a documented context window; the
