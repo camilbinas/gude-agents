@@ -52,8 +52,8 @@ var catalog = map[string]modelProfile{
 	"anthropic.claude-opus-5":                   claude(1_000_000, 128_000),
 	"anthropic.claude-fable-5":                  claude(1_000_000, 128_000),
 	"anthropic.claude-haiku-5-5":                claude(1_000_000, 128_000), // catalog-only
-	"anthropic.claude-fable-5-1":                claude(1_000_000, 128_000), // catalog-only
-	"anthropic.claude-fable-5-2":                claude(1_000_000, 128_000), // catalog-only
+	"anthropic.claude-fable-5-1":                claude55(),                 // catalog-only; Anthropic API rejects forced tool choice
+	"anthropic.claude-fable-5-2":                claude55(),                 // catalog-only; Anthropic API rejects forced tool choice
 	"anthropic.claude-opus-5-5":                 claude55(),
 	"anthropic.claude-sonnet-5-5":               claude55(),
 
