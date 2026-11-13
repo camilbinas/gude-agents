@@ -309,20 +309,10 @@ func buildObjectSchema(t reflect.Type, visiting map[reflect.Type]bool) map[strin
 
 	properties := make(map[string]any)
 	var required []string
-	for i := range t.NumField() {
-		field := t.Field(i)
-		if !field.IsExported() {
+	for _, f := range schemaFields(t) {
+		field, name := f.field, f.name
+		if _, seen := properties[name]; seen {
 			continue
-		}
-		name := field.Name
-		if jsonTag := field.Tag.Get("json"); jsonTag != "" {
-			parts := strings.Split(jsonTag, ",")
-			if parts[0] == "-" {
-				continue
-			}
-			if parts[0] != "" {
-				name = parts[0]
-			}
 		}
 		prop := goTypeToSchema(field.Type, visiting)
 		if desc := field.Tag.Get("description"); desc != "" {
@@ -346,6 +336,66 @@ func buildObjectSchema(t reflect.Type, visiting map[reflect.Type]bool) map[strin
 		schema["required"] = required
 	}
 	return schema
+}
+
+type schemaField struct {
+	field reflect.StructField
+	name  string
+}
+
+// schemaFields lists the JSON fields of struct t the way encoding/json sees
+// them: untagged embedded structs are flattened, and shallower fields win.
+func schemaFields(t reflect.Type) []schemaField {
+	return collectSchemaFields(t, map[reflect.Type]bool{})
+}
+
+func collectSchemaFields(t reflect.Type, seen map[reflect.Type]bool) []schemaField {
+	if seen[t] {
+		return nil
+	}
+	seen[t] = true
+	defer delete(seen, t)
+	var direct, promoted []schemaField
+	for i := range t.NumField() {
+		field := t.Field(i)
+		name, tagged, skip := jsonFieldName(field)
+		if skip {
+			continue
+		}
+		if field.Anonymous && !tagged {
+			ft := field.Type
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				promoted = append(promoted, collectSchemaFields(ft, seen)...)
+				continue
+			}
+		}
+		if !field.IsExported() {
+			continue
+		}
+		direct = append(direct, schemaField{field: field, name: name})
+	}
+	return append(direct, promoted...)
+}
+
+// jsonFieldName returns the JSON name of field, whether the tag set a name,
+// and whether encoding/json ignores the field.
+func jsonFieldName(field reflect.StructField) (name string, tagged, skip bool) {
+	name = field.Name
+	tag := field.Tag.Get("json")
+	if tag == "" {
+		return name, false, false
+	}
+	parts := strings.Split(tag, ",")
+	if parts[0] == "-" && len(parts) == 1 {
+		return "", false, true
+	}
+	if parts[0] != "" {
+		return parts[0], true, false
+	}
+	return name, false, false
 }
 
 // GoTypeToSchema maps a Go reflect.Type to a JSON Schema type descriptor.
