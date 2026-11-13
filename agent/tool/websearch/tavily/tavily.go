@@ -34,9 +34,7 @@ const (
 	defaultTimeout           = 10 * time.Second
 	defaultMaxCharsPerResult = 300
 
-	// minMaxResults and maxMaxResults bound WithMaxResults. Tavily accepts
-	// max_results from 1 to 20, so values outside this range are clamped at
-	// construction rather than sent through to a 4xx.
+	// Tavily accepts max_results 1 to 20; WithMaxResults clamps here.
 	minMaxResults = 1
 	maxMaxResults = 20
 )
@@ -53,10 +51,8 @@ type config struct {
 	client        *http.Client
 }
 
-// WithMaxResults sets the maximum number of search results. Default: 5.
-// The value is clamped to the range the Tavily API accepts (1 to 20): a value
-// below 1 becomes 1 and a value above 20 becomes 20, so an out-of-range option
-// never reaches the API as a malformed max_results.
+// WithMaxResults sets the maximum number of search results (default 5, clamped
+// to the Tavily API range 1 to 20).
 func WithMaxResults(n int) Option {
 	return func(c *config) { c.maxResults = clampMaxResults(n) }
 }
@@ -220,10 +216,9 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 	return sb.String(), nil
 }
 
-// truncateRunes shortens s to at most maxChars runes, appending an ellipsis
-// when it cuts. maxChars is counted in runes (not bytes) so a multibyte
-// character is never split mid-sequence, which would emit invalid UTF-8.
-// A non-positive maxChars disables truncation.
+// truncateRunes shortens s to at most maxChars runes (not bytes, so no split
+// multibyte character), appending an ellipsis when it cuts. maxChars <= 0
+// disables truncation.
 func truncateRunes(s string, maxChars int) string {
 	if maxChars <= 0 {
 		return s

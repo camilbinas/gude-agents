@@ -15,8 +15,7 @@ const defaultMeterName = "github.com/camilbinas/gude-agents"
 // llmBuckets defines histogram buckets tuned for LLM latencies.
 var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0}
 
-// otherToolName is the bucket label used for tool names not in the configured
-// allowlist (see WithToolNameAllowlist).
+// otherToolName buckets tool names outside the allowlist (see WithToolNameAllowlist).
 const otherToolName = "other"
 
 // otelHook implements the observer capabilities needed for OpenTelemetry metrics.
@@ -220,9 +219,7 @@ func (h *otelHook) baseAttrs() []attribute.KeyValue {
 	return nil
 }
 
-// toolLabel returns the tool_name attribute value for a recorded tool call,
-// bucketing names outside the configured allowlist under "other". When no
-// allowlist is set, the name is returned unchanged.
+// toolLabel returns name, or "other" when an allowlist is set and excludes it.
 func (h *otelHook) toolLabel(name string) string {
 	if h.toolNameAllowlist == nil {
 		return name
@@ -242,16 +239,10 @@ func WithNamespace(ns string) Option {
 	return func(h *otelHook) { h.meterName = ns }
 }
 
-// WithToolNameAllowlist bounds the cardinality of the tool_name attribute on
-// the agent.tool.call.total and agent.tool.call.duration metrics. Tool names
-// in the allowlist are recorded verbatim; any other name is bucketed under
-// "other".
-//
-// Dynamic or user-supplied tool names (for example MCP tools registered at
-// runtime) otherwise produce an unbounded set of metric attribute values. Set
-// an allowlist to the known, static tool set to keep cardinality bounded. When
-// no allowlist is configured, every tool name is recorded verbatim (unchanged
-// behavior).
+// WithToolNameAllowlist bounds tool_name cardinality on the tool metrics:
+// listed names are recorded verbatim, any other is bucketed under "other".
+// Use it when dynamic tool names (e.g. runtime MCP tools) would otherwise be
+// unbounded. With no allowlist, every name is recorded verbatim.
 func WithToolNameAllowlist(names ...string) Option {
 	return func(h *otelHook) {
 		h.toolNameAllowlist = make(map[string]struct{}, len(names))

@@ -12,7 +12,6 @@ func TestSchemeKeyOperationName(t *testing.T) {
 		{"empty scheme emits default", AttributeScheme{}, AttrGenAIOperationName},
 		{"current role key", AttributeScheme{RoleOperationName: "op"}, "op"},
 		{"current role disabled", AttributeScheme{RoleOperationName: ""}, ""},
-		// Before v1.10 the role was "", so enabling schemes keyed it that way.
 		{"legacy empty-role key", AttributeScheme{"": "op"}, "op"},
 		{"current key wins over legacy", AttributeScheme{RoleOperationName: "new", "": "old"}, "new"},
 	}

@@ -231,17 +231,15 @@ func (c *Context) WithExecutionID(id string) *Context {
 func (c *Context) Images() []ImageBlock { return c.cfg.images }
 
 // WithImages attaches images to the user message of the invocation. The slice
-// and each ImageBlock's Source.Data bytes are copied on the way in, matching
-// the isolation Clone provides: mutating imgs (or the backing byte slices)
-// after the call does not affect the invocation's stored attachments.
+// and each block's Source.Data are deep-copied, so later caller mutation does
+// not affect the stored attachments.
 func (c *Context) WithImages(imgs []ImageBlock) *Context {
 	c.cfg.images = copyImageBlocks(imgs)
 	return c
 }
 
-// copyImageBlocks returns a deep copy of imgs: a fresh slice whose every
-// ImageBlock has its Source.Data bytes copied into new backing storage. It
-// returns nil for a nil input to preserve round-trip equality with Images.
+// copyImageBlocks deep-copies imgs (slice plus each Source.Data), returning nil
+// for a nil input to preserve round-trip equality with Images.
 func copyImageBlocks(imgs []ImageBlock) []ImageBlock {
 	if imgs == nil {
 		return nil
@@ -259,17 +257,15 @@ func copyImageBlocks(imgs []ImageBlock) []ImageBlock {
 func (c *Context) Documents() []DocumentBlock { return c.cfg.documents }
 
 // WithDocuments attaches documents to the user message of the invocation. The
-// slice and each DocumentBlock's Source.Data bytes are copied on the way in,
-// matching the isolation Clone provides: mutating docs (or the backing byte
-// slices) after the call does not affect the invocation's stored attachments.
+// slice and each block's Source.Data are deep-copied, so later caller mutation
+// does not affect the stored attachments.
 func (c *Context) WithDocuments(docs []DocumentBlock) *Context {
 	c.cfg.documents = copyDocumentBlocks(docs)
 	return c
 }
 
-// copyDocumentBlocks returns a deep copy of docs: a fresh slice whose every
-// DocumentBlock has its Source.Data bytes copied into new backing storage. It
-// returns nil for a nil input to preserve round-trip equality with Documents.
+// copyDocumentBlocks deep-copies docs (slice plus each Source.Data), returning
+// nil for a nil input to preserve round-trip equality with Documents.
 func copyDocumentBlocks(docs []DocumentBlock) []DocumentBlock {
 	if docs == nil {
 		return nil

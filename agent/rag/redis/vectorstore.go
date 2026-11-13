@@ -149,10 +149,8 @@ func (s *Store) documentID(key string) string {
 	return strings.TrimPrefix(key, s.indexName+":")
 }
 
-// decodeMetadata unmarshals a stored metadata JSON string. An empty string
-// decodes to a nil map (no metadata). A non-empty but malformed string is a
-// corrupted record and is surfaced as an error rather than silently returning
-// a document with nil metadata, which would be invisible data loss.
+// decodeMetadata unmarshals a stored metadata JSON string; an empty string
+// yields a nil map, a malformed string an error.
 func decodeMetadata(metadataJSON string) (map[string]string, error) {
 	if metadataJSON == "" {
 		return nil, nil
@@ -164,10 +162,8 @@ func decodeMetadata(metadataJSON string) (map[string]string, error) {
 	return metadata, nil
 }
 
-// validateEmbedding checks that an embedding matches the store's configured
-// dimension and contains only finite values. A mismatched length would
-// otherwise reach RediSearch as an opaque engine error (or silently wrong
-// results), and a NaN/Inf component corrupts the stored vector.
+// validateEmbedding checks that an embedding matches the store's dimension and
+// contains only finite values.
 func (s *Store) validateEmbedding(embedding []float64) error {
 	if len(embedding) != s.dim {
 		return fmt.Errorf("embedding dimension is %d, want %d", len(embedding), s.dim)
@@ -447,32 +443,17 @@ func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error)
 	return docs, nil
 }
 
-// ErrUnsafeFilterValue is returned by DeleteByMetadata when a filter key or
-// value contains a character that cannot be matched unambiguously against the
-// JSON-encoded metadata TEXT field (see the DeleteByMetadata doc comment).
+// ErrUnsafeFilterValue is returned by DeleteByMetadata for a filter key/value
+// containing a double quote, colon, or backslash.
 var ErrUnsafeFilterValue = fmt.Errorf("redis vectorstore: unsafe filter key/value")
 
 // DeleteByMetadata deletes all documents whose metadata contains all key-value
 // pairs in the filter (AND semantics). Uses FT.SEARCH to find matching documents,
 // then DEL to remove them. Returns an error if the filter is empty.
 //
-// Experimental: metadata is stored as a single JSON string in a RediSearch
-// TEXT field, and this method matches each filter pair by searching for the
-// substring `"key":"value"` within that field. Because RediSearch TEXT fields
-// tokenize their input, substring matching is approximate: it can over-match
-// (a value that is a prefix/substring of another, or a pair that collides with
-// a different key) and is sensitive to tokenization. For exact, injection-safe
-// filtering, promote the keys you filter on to dedicated indexed fields (as the
-// memory/redis backend does with TAG fields) rather than relying on this path.
-//
-// To keep matching well-defined, keys and values that contain a double quote
-// ("), colon (:), or backslash (\) are rejected with ErrUnsafeFilterValue,
-// since those characters appear in the JSON encoding itself and would make the
-// substring ambiguous. Callers that need such values must delete by ID instead.
-//
-// This behavior and signature are stable; the "Experimental" note flags that
-// the substring matching strategy may be replaced by exact field matching in a
-// future release (a change that would only ever match more precisely).
+// Experimental: matching is approximate substring matching over the JSON-encoded
+// metadata TEXT field, so it can over-match; filter keys/values containing a
+// double quote, colon, or backslash are rejected with ErrUnsafeFilterValue.
 func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
 	if len(filter) == 0 {
 		return fmt.Errorf("vectorstore: filter must not be empty")
@@ -480,9 +461,7 @@ func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) 
 
 	// Build a FT.SEARCH query that matches all filter k/v pairs in the metadata
 	// TEXT field. Since metadata is stored as a JSON string (e.g. {"source":"readme.md"}),
-	// we search for each "key":"value" substring in the field. Reject values
-	// containing JSON structural characters up front so the substring is
-	// unambiguous.
+	// we search for each "key":"value" substring in the field.
 	var clauses []string
 	for k, v := range filter {
 		if !safeFilterComponent(k) || !safeFilterComponent(v) {
@@ -520,20 +499,15 @@ func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) 
 	return nil
 }
 
-// safeFilterComponent reports whether a filter key or value is free of the
-// JSON structural characters (double quote, colon, backslash) that would make
-// the `"key":"value"` substring match against the metadata TEXT field
-// ambiguous.
+// safeFilterComponent reports whether a filter key/value is free of double
+// quote, colon, and backslash.
 func safeFilterComponent(s string) bool {
 	return !strings.ContainsAny(s, "\":\\")
 }
 
 // escapeRedisSearchTerm escapes special RediSearch characters in a search term.
-// The backslash is escaped first so that escape sequences inserted for the
-// other characters are not themselves re-escaped and mangled.
 func escapeRedisSearchTerm(s string) string {
-	// Escape backslash first; the remaining characters are RediSearch special
-	// characters that each need a leading backslash.
+	// Escape backslash first so escapes added below are not re-escaped.
 	result := strings.ReplaceAll(s, `\`, `\\`)
 	special := []string{",", ".", "<", ">", "{", "}", "[", "]", "\"", "'", ":", ";", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", "+", "=", "~", "/", "|"}
 	for _, ch := range special {

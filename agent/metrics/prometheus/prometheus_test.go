@@ -643,9 +643,6 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	}
 }
 
-// TestToolNameAllowlist verifies that tool names outside the allowlist are
-// bucketed under "other" to bound label cardinality, while allowlisted names
-// are recorded verbatim.
 func TestToolNameAllowlist(t *testing.T) {
 	reg := prom.NewRegistry()
 	h := &prometheusHook{registerer: reg, gatherer: reg}
@@ -668,13 +665,11 @@ func TestToolNameAllowlist(t *testing.T) {
 	}); got != 1 {
 		t.Errorf("calculator count = %v, want 1", got)
 	}
-	// Both dynamic tools collapse into "other".
 	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
 		"tool_name": "other", "status": "success",
 	}); got != 2 {
 		t.Errorf("other bucket count = %v, want 2", got)
 	}
-	// Raw dynamic names must not appear as their own series.
 	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{
 		"tool_name": "mcp_dynamic_1", "status": "success",
 	}); got != 0 {
@@ -682,8 +677,6 @@ func TestToolNameAllowlist(t *testing.T) {
 	}
 }
 
-// TestToolNameNoAllowlistVerbatim confirms the default (no allowlist) records
-// every tool name verbatim.
 func TestToolNameNoAllowlistVerbatim(t *testing.T) {
 	reg := prom.NewRegistry()
 	h := &prometheusHook{registerer: reg, gatherer: reg}

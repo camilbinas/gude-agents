@@ -97,17 +97,12 @@ func toolResult(id string) agent.Message {
 	return agent.Message{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.ToolResultBlock{ToolUseID: id, Content: "ok"}}}
 }
 
-// TestWindowBoundaryExtendsPastLongRunOfOrphanedToolResults verifies that when
-// the preferred window would start in the middle of a long run of ToolResult
-// blocks whose ToolUse lies before the window, HistoryBoundary walks back far
-// enough to include the ToolUse and never splits the pair — regardless of how
-// many orphaned results sit between the window start and that ToolUse.
+// A window landing inside a long orphaned-result run must extend back to the
+// ToolUse and never split the pair.
 func TestWindowBoundaryExtendsPastLongRunOfOrphanedToolResults(t *testing.T) {
 	store := conversation.NewInMemory()
 	ctx := context.Background()
 
-	// One ToolUse followed by many ToolResults (a batch tool-call fan-out),
-	// then a trailing plain message. A small window lands inside the results.
 	events := []agent.Message{message("preamble"), toolUse("x")}
 	const orphans = 50
 	for i := 0; i < orphans; i++ {
@@ -118,7 +113,6 @@ func TestWindowBoundaryExtendsPastLongRunOfOrphanedToolResults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Window of 3 would naively start at sequence len-3, inside the results.
 	w, err := NewWindow(store, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -131,21 +125,16 @@ func TestWindowBoundaryExtendsPastLongRunOfOrphanedToolResults(t *testing.T) {
 	if hasOrphanedToolResult(tail.Messages) {
 		t.Fatalf("boundary %d still orphans a tool result: %#v", boundary, tail.Messages)
 	}
-	// The boundary must sit just before the ToolUse (sequence 2), i.e. 1.
 	if boundary != 1 {
 		t.Fatalf("boundary = %d, want 1 (just before the ToolUse at sequence 2)", boundary)
 	}
 }
 
-// TestWindowBoundaryFallsToZeroWhenToolUseIsFirst verifies that when the only
-// resolving ToolUse is the very first message and its results run right up to
-// the end, the boundary falls back to 0 (read from start) rather than leaving
-// an orphaned result.
+// When the only resolving ToolUse is the first message, the boundary falls back
+// to 0 rather than orphaning a result.
 func TestWindowBoundaryFallsToZeroWhenToolUseIsFirst(t *testing.T) {
 	store := conversation.NewInMemory()
 	ctx := context.Background()
-	// Every message after the first ToolUse is a result for it, so no window
-	// smaller than the whole transcript is self-contained.
 	events := []agent.Message{toolUse("x"), toolResult("x"), toolResult("x"), toolResult("x")}
 	if _, err := store.Append(ctx, "c", events, 0); err != nil {
 		t.Fatal(err)
@@ -167,9 +156,8 @@ func TestWindowBoundaryFallsToZeroWhenToolUseIsFirst(t *testing.T) {
 	}
 }
 
-// TestWindowBoundaryKeepsPreferredWindowWhenSelfContained verifies the common
-// case: a preferred window with no tool pairs crossing its edge keeps exactly
-// the requested number of messages.
+// A window with no tool pairs crossing its edge keeps exactly the requested
+// number of messages.
 func TestWindowBoundaryKeepsPreferredWindowWhenSelfContained(t *testing.T) {
 	store := conversation.NewInMemory()
 	ctx := context.Background()
@@ -190,9 +178,7 @@ func TestWindowBoundaryKeepsPreferredWindowWhenSelfContained(t *testing.T) {
 	}
 }
 
-// countingStore wraps a ConversationStore and counts LoadAfter calls, to prove
-// HistoryBoundary issues a bounded number of store round-trips rather than one
-// per orphaned result.
+// countingStore counts LoadAfter calls.
 type countingStore struct {
 	inner     agent.ConversationStore
 	loadAfter int
@@ -209,9 +195,7 @@ func (c *countingStore) Append(ctx context.Context, id string, msgs []agent.Mess
 	return c.inner.Append(ctx, id, msgs, rev)
 }
 
-// TestWindowBoundaryIssuesBoundedLoadAfterCalls proves the N+1 is gone: even
-// with a long orphaned-result run, HistoryBoundary makes a small, constant
-// number of LoadAfter round-trips independent of the run length.
+// HistoryBoundary makes O(log n) LoadAfter calls, not one per orphaned result.
 func TestWindowBoundaryIssuesBoundedLoadAfterCalls(t *testing.T) {
 	ctx := context.Background()
 	mem := conversation.NewInMemory()
@@ -230,9 +214,6 @@ func TestWindowBoundaryIssuesBoundedLoadAfterCalls(t *testing.T) {
 	if _, err := w.HistoryBoundary(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	// Previous implementation: 1 (metadata) + up to 100 decrements. New
-	// implementation: metadata read + a range read that doubles its depth on
-	// each miss, so O(log n) reads.
 	if cs.loadAfter > 2+7 {
 		t.Fatalf("LoadAfter called %d times; expected O(log n) (N+1 regression)", cs.loadAfter)
 	}
@@ -249,9 +230,8 @@ func (r *recordingStore) LoadAfter(ctx context.Context, id string, after uint64)
 	return r.countingStore.LoadAfter(ctx, id, after)
 }
 
-// TestWindowBoundaryReadsOnlyTheWindowWhenSelfContained proves the common case
-// stays cheap: a self-contained window is resolved from one range read that
-// starts at the preferred boundary, never from the full history.
+// A self-contained window is resolved from one range read at the preferred
+// boundary, never from the full history.
 func TestWindowBoundaryReadsOnlyTheWindowWhenSelfContained(t *testing.T) {
 	ctx := context.Background()
 	mem := conversation.NewInMemory()

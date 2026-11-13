@@ -170,9 +170,8 @@ func SplitText(text string, chunkSize, overlap int) ([]string, error) {
 	for i := 0; i < len(runes); i += step {
 		end := i + chunkSize
 		if end >= len(runes) {
-			// This chunk reaches the end of the input. Emit it and stop, so a
-			// positive overlap cannot produce a trailing chunk that is fully
-			// contained in the previous one (wasted, duplicate embeddings).
+			// Last chunk: stop here so overlap cannot emit a trailing chunk
+			// fully contained in the previous one.
 			chunks = append(chunks, string(runes[i:]))
 			break
 		}
@@ -426,15 +425,9 @@ func WithConcurrency(n int) IngestOption {
 
 // Ingest splits texts, embeds each chunk, and stores the resulting documents.
 //
-// Idempotent re-ingest requires a "source" metadata key. When store implements
-// Manager, Ingest first deletes every existing chunk whose metadata "source"
-// matches one being ingested, so re-ingesting the same source replaces its
-// chunks instead of appending. A text whose metadata has no "source" key (or an
-// empty one) is NOT deduplicated: because generated chunk IDs are random, every
-// re-ingest of such a text appends a fresh set of chunks. Pass a stable
-// "source" value (document.LoadFiles does this automatically) whenever a text
-// may be ingested more than once. When store does not implement Manager, no
-// cleanup is possible and every call appends.
+// Re-ingest is idempotent only per "source" metadata key: when store implements
+// Manager, existing chunks with a matching "source" are deleted first. A text
+// with no "source" is always appended, never deduplicated.
 func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string, metadata []map[string]string, opts ...IngestOption) error {
 	cfg := ingestConfig{chunkSize: 512, chunkOverlap: 64, concurrency: 1}
 	for _, opt := range opts {
@@ -480,10 +473,8 @@ func Ingest(ctx context.Context, store Store, embedder Embedder, texts []string,
 			docs[i], embeddings[i] = chunk.doc, embedding
 		}
 	} else {
-		// Derive a cancelable context so the first failing (or ctx-cancelled)
-		// worker cancels the others' in-flight embed calls instead of letting
-		// them run to completion. The returned error is the first one to
-		// occur, not the first by slice order.
+		// Cancelable context so the first failing worker cancels the others'
+		// in-flight embed calls. firstErr is the first error to occur.
 		embedCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 

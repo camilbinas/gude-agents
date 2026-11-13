@@ -1,25 +1,9 @@
 // Package tool defines the Tool type and the constructors that expose Go
 // functions to a model as callable tools with a JSON schema.
 //
-// # Required fields
-//
-// For the typed constructors (New and NewRich) the input schema is generated
-// from the Go type T by reflection. A field is marked required in the schema
-// only when it carries the struct tag required:"true"; every other field is
-// optional. This is deliberate — Go has no way to distinguish "absent" from a
-// zero value, so the constructor cannot infer requiredness — but it is easy to
-// miss: without the tag, schema validation accepts a call that omits the field
-// and json.Unmarshal leaves the zero value. Tag every field the handler cannot
-// operate without:
-//
-//	type SearchInput struct {
-//	    Query string `json:"query" description:"Search query" required:"true"`
-//	    Limit int    `json:"limit"` // optional; defaults to the zero value
-//	}
-//
-// The default is opt-in (tag to require) and will not change in v1, to keep
-// existing typed tools compiling with the same schema. NewRaw takes an explicit
-// schema instead, so set its "required" list directly.
+// For the typed constructors (New and NewRich) the input schema is reflected
+// from T. A field is required only when tagged required:"true"; all others are
+// optional. NewRaw takes an explicit schema, so set its "required" list directly.
 package tool
 
 import (
@@ -217,12 +201,7 @@ func (t Tool) Validate() error {
 }
 
 // New creates a Tool from a typed string handler and generates its JSON Schema
-// from T.
-//
-// A field of T is marked required in the schema only when it has the struct tag
-// required:"true"; untagged fields are optional and may be omitted by the
-// model. See the package doc ("Required fields") for the rationale and an
-// example.
+// from T. A field of T is required only when tagged required:"true".
 func New[T any](name, description string, handler Handler[T], opts ...Option) Tool {
 	return newPlain(name, description, GenerateSchema[T](), adaptString(handler), opts...)
 }
@@ -252,9 +231,8 @@ func NewRaw(name, description string, schema map[string]any, handler Handler[jso
 	return newPlain(name, description, schema, handler, opts...)
 }
 
-// NewRich creates a Tool from a typed rich-output handler. Like New, it marks a
-// field of T required only when it has the struct tag required:"true"; see the
-// package doc ("Required fields").
+// NewRich creates a Tool from a typed rich-output handler. Like New, a field of
+// T is required only when tagged required:"true".
 func NewRich[T any](name, description string, handler RichHandler[T], opts ...Option) Tool {
 	t := Tool{
 		Spec: Spec{Name: name, Description: description, InputSchema: GenerateSchema[T]()},
@@ -309,10 +287,8 @@ func GenerateSchema[T any]() map[string]any {
 	return buildObjectSchema(t, nil)
 }
 
-// buildObjectSchema builds the schema for a struct (or delegates to
-// GoTypeToSchema for a non-struct). visiting tracks the struct types currently
-// on the recursion stack so a self-referential type (for example
-// type Node struct{ Next *Node }) emits a generic object instead of recursing
+// buildObjectSchema builds the schema for a struct. visiting tracks struct
+// types on the recursion stack so a self-referential type does not recurse
 // forever.
 func buildObjectSchema(t reflect.Type, visiting map[reflect.Type]bool) map[string]any {
 	for t.Kind() == reflect.Pointer {
@@ -322,9 +298,7 @@ func buildObjectSchema(t reflect.Type, visiting map[reflect.Type]bool) map[strin
 		return goTypeToSchema(t, visiting)
 	}
 	if visiting[t] {
-		// Cycle: the type references itself (directly or through a field).
-		// JSON Schema cannot express the unbounded nesting, so emit an open
-		// object and stop descending.
+		// Cycle: emit an open object and stop descending.
 		return map[string]any{"type": "object"}
 	}
 	if visiting == nil {
@@ -375,9 +349,7 @@ func buildObjectSchema(t reflect.Type, visiting map[reflect.Type]bool) map[strin
 }
 
 // GoTypeToSchema maps a Go reflect.Type to a JSON Schema type descriptor.
-// Self-referential struct types are handled safely: a type reached while it is
-// already being built emits a generic {"type":"object"} rather than recursing
-// without bound.
+// Self-referential struct types emit a generic {"type":"object"}.
 func GoTypeToSchema(t reflect.Type) map[string]any {
 	return goTypeToSchema(t, nil)
 }

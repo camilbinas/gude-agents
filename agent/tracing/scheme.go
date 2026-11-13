@@ -60,9 +60,8 @@ const (
 	RoleRetrieverQuery         AttrRole = AttrRole(AttrRetrieverQuery)
 	RoleRetrieverDocumentCount AttrRole = AttrRole(AttrRetrieverDocumentCount)
 
-	// Operation name — emitted per span by default to classify it for
-	// GenAI-aware backends and evaluation systems (gen_ai.operation.name).
-	// Map it to "" in a custom scheme to disable emission.
+	// Operation name — emitted per span by default. Map it to "" in a custom
+	// scheme to disable emission.
 	RoleOperationName AttrRole = AttrRole(AttrGenAIOperationName)
 
 	// Content capture (opt-in via WithContentCapture)
@@ -71,8 +70,7 @@ const (
 	RoleGenAICompletion       AttrRole = AttrRole(AttrGenAICompletion)
 	RoleGenAIProviderResponse AttrRole = AttrRole(AttrGenAIProviderResponse)
 
-	// Structured content attributes per current GenAI semconv
-	// (opt-in via WithContentCapture).
+	// Structured content (opt-in via WithContentCapture).
 	RoleGenAIInputMessages  AttrRole = AttrRole(AttrGenAIInputMessages)
 	RoleGenAIOutputMessages AttrRole = AttrRole(AttrGenAIOutputMessages)
 
@@ -96,9 +94,8 @@ type AttributeScheme map[AttrRole]string
 // string value if no override is configured. Safe to call on a nil map.
 func (s AttributeScheme) Key(role AttrRole) string {
 	if role == RoleOperationName {
-		// An explicit "" disables the operation name. Before v1.10 the role
-		// itself was "", so schemes that enabled it keyed their mapping as "";
-		// honor those entries.
+		// An explicit "" disables the operation name. Pre-v1.10 the role itself
+		// was "", so honor schemes that keyed it under the legacy empty role.
 		if v, ok := s[role]; ok {
 			return v
 		}

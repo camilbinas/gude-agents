@@ -1220,9 +1220,8 @@ func TestApprovalResumeSkipsCompletedDeniedSibling(t *testing.T) {
 	}
 }
 
-// TestRecoveryUnsupportedWrapsInvariant verifies ErrExecutionRecoveryUnsupported
-// is returned with the specific invariant that failed while errors.Is still
-// matches the sentinel, so operators can tell a benign race from corruption.
+// recoveryUnsupported carries the failed invariant while errors.Is still
+// matches ErrExecutionRecoveryUnsupported.
 func TestRecoveryUnsupportedWrapsInvariant(t *testing.T) {
 	t.Run("helper keeps errors.Is and adds context", func(t *testing.T) {
 		err := recoveryUnsupported("some invariant")
@@ -1236,7 +1235,6 @@ func TestRecoveryUnsupportedWrapsInvariant(t *testing.T) {
 
 	t.Run("non-recoverable phase reports why", func(t *testing.T) {
 		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
-		// A completed execution is not in a recoverable tool phase.
 		if _, err := executions.Create(context.Background(), Execution{
 			ID: "done-1", ConversationID: "c", Status: ExecutionCompleted, Phase: ExecutionPhaseDone,
 		}); err != nil {

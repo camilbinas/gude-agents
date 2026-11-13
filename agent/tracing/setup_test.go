@@ -22,7 +22,6 @@ func TestInsecureExport(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Clear both env vars so tests don't leak into each other.
 			t.Setenv("OTEL_EXPORTER_OTLP_TRACES_INSECURE", "")
 			t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "")
 			if tc.envKey != "" {

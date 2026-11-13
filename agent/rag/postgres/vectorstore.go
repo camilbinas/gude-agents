@@ -407,10 +407,8 @@ func float64sToFloat32(v []float64) []float32 {
 	return out
 }
 
-// validateEmbedding checks that an embedding matches the store's configured
-// dimension and contains only finite values. A length mismatch would otherwise
-// surface only as an opaque pgvector dimension error, and a NaN/Inf component
-// would be written to the column and corrupt distance computations.
+// validateEmbedding checks that an embedding matches the store's dimension and
+// contains only finite values.
 func (s *Store) validateEmbedding(embedding []float64) error {
 	if len(embedding) != s.dim {
 		return fmt.Errorf("embedding dimension is %d, want %d", len(embedding), s.dim)
@@ -423,10 +421,8 @@ func (s *Store) validateEmbedding(embedding []float64) error {
 	return nil
 }
 
-// decodeMetadata unmarshals a JSONB metadata column value. An empty value
-// decodes to a nil map. A non-empty but malformed value is surfaced as an
-// error rather than silently dropping the metadata, which would be invisible
-// data loss.
+// decodeMetadata unmarshals a JSONB metadata value; an empty value yields a nil
+// map, a malformed value an error.
 func decodeMetadata(metaJSON []byte) (map[string]string, error) {
 	if len(metaJSON) == 0 {
 		return nil, nil

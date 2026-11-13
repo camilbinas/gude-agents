@@ -331,10 +331,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 }
 
 // classifyError wraps an Anthropic SDK/transport error in an *agent.ProviderError
-// with retryability, HTTP status, and a Retry-After hint populated. A typed
-// *anthropicsdk.Error carries the HTTP status (429/5xx and overloaded_error are
-// retryable; 4xx client errors are not); any other error is treated as a
-// transport failure and classified via provider.RetryableNetworkError.
+// with retryability, HTTP status, and a Retry-After hint populated.
 func classifyError(err error) *agent.ProviderError {
 	pe := &agent.ProviderError{Cause: err}
 	var apiErr *anthropicsdk.Error
@@ -367,21 +364,14 @@ func (p *AnthropicProvider) resolveThinkingBudget() int64 {
 	return 0
 }
 
-// defaultMaxTokens is the conservative output-token ceiling the adapter
-// requests when neither an explicit max_tokens nor a known model ceiling is
-// available. It is low enough to be accepted by every current Claude model,
-// including the smaller ones whose real ceiling is far below the largest
-// models'. Callers that need more should set it explicitly (WithMaxTokens or
-// InferenceConfig.MaxTokens) or construct the provider with a known model ID so
-// its catalog ceiling applies.
+// defaultMaxTokens is the output-token ceiling requested when neither an
+// explicit max_tokens nor a known model ceiling is available. It is low enough
+// to be accepted by every current Claude model.
 const defaultMaxTokens int64 = 8192
 
 func (p *AnthropicProvider) buildParams(req agent.ModelRequest) (anthropicsdk.MessageNewParams, error) {
-	// Anthropic requires max_tokens. A known model ceiling informs the implicit
-	// default; when the ceiling is unknown we fall back to a conservative value
-	// that every model accepts rather than a large number a smaller model would
-	// reject. An explicit provider or invocation setting always wins: metadata
-	// is advisory and the live provider remains authoritative for validation.
+	// Anthropic requires max_tokens. An explicit provider or invocation setting
+	// always wins over the model ceiling or defaultMaxTokens.
 	ceiling := int64(p.capabilities.MaxOutputTokens)
 	maxTokens := defaultMaxTokens
 	usesCapabilityDefault := p.maxTokens == nil && ceiling > 0
@@ -551,9 +541,7 @@ func buildAnthropicToolResultParam(v agent.ToolResultBlock) anthropicsdk.ToolRes
 }
 
 // buildAnthropicImageParam constructs an ImageBlockParam from an ImageBlock.
-// It returns an error if the image bytes cannot be decoded, so a malformed
-// attachment surfaces to the caller instead of being silently dropped. The
-// caller may set CacheControl on the returned struct.
+// It returns an error if the image bytes cannot be decoded.
 func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam, error) {
 	if v.Source.URL != "" {
 		return anthropicsdk.ImageBlockParam{
@@ -583,9 +571,7 @@ func buildAnthropicImageParam(v agent.ImageBlock) (anthropicsdk.ImageBlockParam,
 }
 
 // buildAnthropicDocParam constructs a DocumentBlockParam from a DocumentBlock.
-// It returns an error if the document bytes cannot be decoded, so a malformed
-// attachment surfaces to the caller instead of being silently dropped. The
-// caller may set CacheControl on the returned struct.
+// It returns an error if the document bytes cannot be decoded.
 func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockParam, error) {
 	if v.Source.FileID != "" {
 		return anthropicsdk.DocumentBlockParam{
@@ -619,11 +605,8 @@ func buildAnthropicDocParam(v agent.DocumentBlock) (anthropicsdk.DocumentBlockPa
 }
 
 // toAnthropicContentBlocks translates a slice of ContentBlocks to Anthropic SDK params.
-// When cachingEnabled, cache_control is attached to every DocumentBlock.
-// toAnthropicContentBlocks translates a slice of ContentBlocks to Anthropic SDK
-// params. Image and document blocks whose bytes cannot be decoded produce an
-// error rather than being silently dropped. Image/document blocks on an
-// assistant-role message are not supported by the API and are skipped.
+// When cachingEnabled, cache_control is attached to every DocumentBlock. Returns an
+// error if image/document bytes cannot be decoded.
 func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cachingEnabled bool) ([]anthropicsdk.ContentBlockParamUnion, error) {
 	out := make([]anthropicsdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {

@@ -60,12 +60,9 @@ func (a *Runtime) TextStream(ctx *Context, input string) iter.Seq2[string, error
 // returns its Result. With an ExecutionStore, Resume atomically transitions
 // the observed paused execution to running before any tool or provider work.
 //
-// Resume shares the execution's iteration budget (see WithMaxIterations); it
-// does not reset it. A resumed invocation continues from the iteration that was
-// in progress when it paused. An execution that paused on its final allowed
-// iteration has no budget left, so Resume returns a MaxIterationsError before
-// any further provider call. Raise WithMaxIterations if an approval or
-// human-input pause is expected late in a long loop.
+// Resume shares the execution's iteration budget (WithMaxIterations) and does
+// not reset it, so an execution paused on its final allowed iteration returns
+// MaxIterationsError before any further provider call.
 func (a *Runtime) Resume(ctx *Context, in *Interrupt, r ResumeResponse) (Result, error) {
 	return collectResult(a.ResumeStream(ctx, in, r))
 }
@@ -322,10 +319,8 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	case runErr == nil:
 		execution.Status = ExecutionCompleted
 	case r.invocationCanceled(runErr):
-		// Canceled is reserved for the invocation ctx itself being done
-		// (caller cancellation or a caller-set deadline). A provider-side
-		// WithProviderTimeout deadline leaves r.c live and surfaces as a
-		// ProviderError; it is a failure, not a cancellation.
+		// Canceled only for the invocation ctx itself; a WithProviderTimeout
+		// deadline surfaces as a ProviderError and is a failure, not a cancel.
 		execution.Status = ExecutionCanceled
 		setFailureReason(&execution, runErr)
 	default:
@@ -342,17 +337,14 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	return nil
 }
 
-// invocationCanceled reports whether runErr reflects the invocation context
-// itself being canceled or deadline-exceeded, rather than an inner deadline
-// such as WithProviderTimeout. It inspects the live invocation ctx: a
-// provider-side timeout leaves r.c undone, so its wrapped
-// context.DeadlineExceeded must not be read as a caller cancellation.
+// invocationCanceled reports whether runErr reflects the invocation ctx itself
+// being canceled, not an inner deadline such as WithProviderTimeout. It checks
+// the live ctx so a provider timeout wrapping DeadlineExceeded is not misread.
 func (r *run) invocationCanceled(runErr error) bool {
 	if cerr := r.c.Err(); cerr != nil && errors.Is(runErr, cerr) {
 		return true
 	}
-	// A ProviderError (including a provider-timeout) is a failure even when it
-	// wraps a context sentinel from an inner, already-canceled child ctx.
+	// A ProviderError is a failure even if it wraps a context sentinel.
 	var pe *ProviderError
 	if errors.As(runErr, &pe) {
 		return false
@@ -1406,11 +1398,9 @@ func (r *run) pauseRecoveredExecution(in *Interrupt) error {
 // canonical ToolResult; Retry makes the same idempotency key eligible for
 // RecoverExecution.
 //
-// Experimental: this manual reconciliation path and the ToolResolution* API it
-// consumes are the most intricate part of the recovery surface. Their shape may
-// change in a minor release; prefer RecoverExecution for automatic recovery and
-// reach for ReconcileToolExecution only for a non-replay-safe call whose outcome
-// a human has confirmed against the external system.
+// Experimental: this manual path and the ToolResolution* API may change in a
+// minor release; prefer RecoverExecution and use this only for a non-replay-safe
+// call whose outcome a human has confirmed against the external system.
 func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (Execution, error) {
 	if a.executionStore == nil || a.conversation == nil {
 		return Execution{}, ErrNoExecutionStore
@@ -1617,9 +1607,8 @@ func (r *run) interrupt(in *Interrupt, snapshot []Message) (Result, error) {
 	execution.Usage = c.rt.totalUsage()
 	execution.Pause = pauseFromInterrupt(in)
 	execution.PendingPause = nil
-	// A pause is a committed outcome, not cancellable work: persist it under a
-	// detached, bounded context like finalizeExecution so a ctx cancelled at the
-	// moment of pausing cannot abort the CAS that records the pause.
+	// Persist the pause under a detached, bounded context so a ctx cancelled
+	// mid-pause cannot abort the CAS that records this committed outcome.
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(c), 5*time.Second)
 	defer cancel()
 	updated, err := a.executionStore.Save(saveCtx, execution, execution.Version)

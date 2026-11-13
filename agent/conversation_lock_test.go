@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// locksLen reports the number of live entries. It takes the map mutex so it is
-// safe to call concurrently with acquire/release.
+// locksLen reports the number of live entries under the map mutex.
 func (l *conversationLocks) locksLen() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -26,7 +25,6 @@ func TestConversationLocksEvictWhenIdle(t *testing.T) {
 		t.Fatalf("entries after release = %d, want 0 (idle entries must be evicted)", got)
 	}
 
-	// A distinct ID reuses no prior entry and is likewise evicted.
 	locks.acquire("c2").release()
 	if got := locks.locksLen(); got != 0 {
 		t.Fatalf("entries after second release = %d, want 0", got)
@@ -65,7 +63,6 @@ func TestConversationLocksSerializeSameID(t *testing.T) {
 
 func TestConversationLocksDifferentIDsDoNotBlock(t *testing.T) {
 	var locks conversationLocks
-	// Hold c1; acquiring c2 must not block on it.
 	h1 := locks.acquire("c1")
 	done := make(chan struct{})
 	go func() {
@@ -93,8 +90,7 @@ func TestConversationLocksHighCardinalityDoesNotGrow(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	// Every ID was acquired and released; none is held, so the map is empty
-	// rather than retaining one mutex per distinct ID for the lifetime.
+	// Map is empty, not one mutex per distinct ID retained for the lifetime.
 	if got := locks.locksLen(); got != 0 {
 		t.Fatalf("entries after high-cardinality churn = %d, want 0", got)
 	}

@@ -1675,10 +1675,6 @@ func (m *mockMemory) Append(ctx context.Context, id string, messages []agent.Mes
 	return agent.ConversationCursor{Revision: next, LastSequence: uint64(len(snapshot.Messages) + len(messages))}, nil
 }
 
-// ---------------------------------------------------------------------------
-// GenAI semconv alignment (operation name, structured content, span names)
-// ---------------------------------------------------------------------------
-
 func TestGenAIOperationNameByDefault(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
@@ -1754,7 +1750,6 @@ func TestStructuredContentMessages(t *testing.T) {
 		t.Fatalf("output messages = %+v, want one assistant message", outMsgs)
 	}
 
-	// Legacy attributes still present by default for backward compatibility.
 	if got := getAttr(*invokeSpan, AttrGenAICompletion).AsString(); got != "the answer" {
 		t.Errorf("legacy gen_ai.completion = %q, want %q", got, "the answer")
 	}
@@ -1785,7 +1780,6 @@ func TestWithoutLegacyContentAttributes(t *testing.T) {
 	if got := getAttr(*invokeSpan, AttrGenAIPrompt); got.AsString() != "" {
 		t.Errorf("gen_ai.prompt should be omitted, got %q", got.AsString())
 	}
-	// Structured attributes must still be present.
 	if getAttr(*invokeSpan, AttrGenAIOutputMessages).AsString() == "" {
 		t.Error("gen_ai.output.messages should still be set")
 	}
@@ -1816,7 +1810,6 @@ func TestWithSpecSpanNames(t *testing.T) {
 			t.Errorf("expected span named %q", want)
 		}
 	}
-	// Default names must be gone.
 	if findSpan(spans, "agent.invoke") != nil {
 		t.Error("default agent.invoke span name should not appear with spec span names")
 	}
@@ -1833,8 +1826,7 @@ func TestSpecSpanNamesFallbackWithoutModel(t *testing.T) {
 	}
 }
 
-// TestWiredScalarAttributes verifies the previously-unused roles are now
-// emitted: token total, user-message length, tool input/output lengths.
+// Token total, user-message length, and tool input/output lengths are emitted.
 func TestWiredScalarAttributes(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
@@ -1879,7 +1871,6 @@ func TestWiredScalarAttributes(t *testing.T) {
 	}
 }
 
-// TestAgentErrorAttribute verifies RoleAgentError is emitted on invoke failure.
 func TestAgentErrorAttribute(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())

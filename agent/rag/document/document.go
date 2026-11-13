@@ -42,10 +42,8 @@ func (f ParserFunc) Parse(ctx context.Context, path string) (string, error) {
 	return f(ctx, path)
 }
 
-// defaultParsersMu guards defaultParsers. RegisterParser mutates the map and
-// parserFor reads it, so without a lock a RegisterParser call racing a lookup
-// (e.g. a concurrent LoadFiles) is a data race. Registration is normally done
-// from init, but the mutex removes the footgun for callers that register later.
+// defaultParsersMu guards defaultParsers against a RegisterParser call racing a
+// concurrent lookup.
 var defaultParsersMu sync.RWMutex
 
 // defaultParsers maps file extensions to their parsers. Access only through
@@ -66,10 +64,8 @@ var defaultParsers = map[string]Parser{
 	".docx": ParserFunc(parseDocx),
 }
 
-// RegisterParser adds or overrides a parser for a file extension.
-// The extension should include the dot (e.g. ".pdf").
-// RegisterParser is safe to call concurrently with itself and with LoadFiles/
-// LoadDir.
+// RegisterParser adds or overrides a parser for a file extension. The extension
+// should include the dot (e.g. ".pdf"). Safe for concurrent use.
 func RegisterParser(ext string, p Parser) {
 	defaultParsersMu.Lock()
 	defer defaultParsersMu.Unlock()

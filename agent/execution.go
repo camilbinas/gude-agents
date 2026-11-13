@@ -101,10 +101,7 @@ type ToolBatchExecution struct {
 }
 
 // ToolResolutionOutcome is an application-confirmed outcome for an ambiguous
-// unsafe call.
-//
-// Experimental: consumed only by ReconcileToolExecution, whose manual
-// reconciliation contract may change in a minor release.
+// unsafe call. Experimental: the ReconcileToolExecution contract may change.
 type ToolResolutionOutcome string
 
 const (
@@ -114,10 +111,7 @@ const (
 )
 
 // ToolResolution is the application-confirmed outcome passed to
-// ReconcileToolExecution.
-//
-// Experimental: part of the manual reconciliation path; its shape may change in
-// a minor release.
+// ReconcileToolExecution. Experimental: its shape may change.
 type ToolResolution struct {
 	Outcome      ToolResolutionOutcome
 	Output       string
@@ -139,17 +133,12 @@ func (e *ToolExecutionUncertainError) Error() string {
 func (e *ToolExecutionUncertainError) Unwrap() error { return ErrToolExecutionUncertain }
 
 // ErrExecutionRecoveryUnsupported reports that a durable execution record is in
-// a shape recovery cannot act on: a missing or already-completed tool boundary,
-// a status/phase mismatch, a duplicate or misaligned call ID, or a transcript
-// that does not match the recorded batch. It is deliberately one sentinel so
-// callers branch with errors.Is; recoveryUnsupported wraps it with the specific
-// invariant that failed so operators can tell a benign race from real
-// corruption without losing errors.Is compatibility.
+// a shape recovery cannot act on. It is one sentinel so callers branch with
+// errors.Is; recoveryUnsupported wraps it with the specific invariant.
 var ErrExecutionRecoveryUnsupported = errors.New("execution recovery state unsupported")
 
-// recoveryUnsupported annotates ErrExecutionRecoveryUnsupported with the
-// invariant that failed. errors.Is(err, ErrExecutionRecoveryUnsupported) still
-// reports true.
+// recoveryUnsupported annotates ErrExecutionRecoveryUnsupported with the failed
+// invariant; errors.Is against the sentinel still reports true.
 func recoveryUnsupported(invariant string) error {
 	return fmt.Errorf("%w: %s", ErrExecutionRecoveryUnsupported, invariant)
 }
@@ -176,48 +165,31 @@ type Execution struct {
 	ToolBatch    *ToolBatchExecution `json:"tool_batch,omitempty"`
 	Usage        TokenUsage          `json:"usage"`
 
-	// FailureCode and FailureMessage are a bounded, inspectable reason for a
-	// terminal non-success status. They are set when an execution reaches
-	// ExecutionFailed or ExecutionCanceled and are empty otherwise. The message
-	// is truncated to keep the durable record small; it is a diagnostic, not a
-	// structured error to branch on. Backends that store the execution as one
-	// JSON payload (all stores in agent/execution) round-trip these fields with
-	// no schema change; older records simply decode them as empty.
+	// FailureCode and FailureMessage give a bounded reason for a terminal
+	// non-success status; empty otherwise. The message is a truncated
+	// diagnostic, not a structured error to branch on.
 	FailureCode    string `json:"failure_code,omitempty"`
 	FailureMessage string `json:"failure_message,omitempty"`
 
 	Version uint64 `json:"version"`
 }
 
-// Bounded failure-reason codes recorded on a terminal non-success Execution.
-// They classify why a run ended; FailureMessage carries the truncated detail.
+// FailureCode values recorded on a terminal non-success Execution.Status.
 const (
-	// FailureCodeProvider is a provider call failure, including a provider-side
-	// WithProviderTimeout deadline.
-	FailureCodeProvider = "provider"
-	// FailureCodeGuardrail is an input or output guardrail rejection.
-	FailureCodeGuardrail = "guardrail"
-	// FailureCodeTool is a terminal tool coordination/recovery failure.
-	FailureCodeTool = "tool"
-	// FailureCodeMaxIterations is loop iteration-limit exhaustion.
+	FailureCodeProvider      = "provider"
+	FailureCodeGuardrail     = "guardrail"
+	FailureCodeTool          = "tool"
 	FailureCodeMaxIterations = "max_iterations"
-	// FailureCodeTokenBudget is cumulative token-budget exhaustion.
-	FailureCodeTokenBudget = "token_budget"
-	// FailureCodeRateLimit is a rate-limiter rejection.
-	FailureCodeRateLimit = "rate_limit"
-	// FailureCodeCanceled is caller cancellation or a caller-set ctx deadline.
-	FailureCodeCanceled = "canceled"
-	// FailureCodeInternal is any other non-success terminal error.
-	FailureCodeInternal = "internal"
+	FailureCodeTokenBudget   = "token_budget"
+	FailureCodeRateLimit     = "rate_limit"
+	FailureCodeCanceled      = "canceled"
+	FailureCodeInternal      = "internal"
 )
 
-// maxFailureMessageLen bounds the durable failure message so a pathological
-// error string cannot bloat the execution record.
 const maxFailureMessageLen = 512
 
-// setFailureReason records a bounded, inspectable reason for a terminal
-// non-success status. It is a no-op for a nil error so a canceled-with-no-error
-// path leaves the fields empty.
+// setFailureReason records a bounded reason for a terminal non-success status;
+// no-op on a nil error, leaving the fields empty.
 func setFailureReason(execution *Execution, runErr error) {
 	if execution == nil || runErr == nil {
 		return

@@ -357,8 +357,7 @@ func TestExecutionFailureAndCancellationReachTerminalState(t *testing.T) {
 		}
 	})
 	t.Run("canceled", func(t *testing.T) {
-		// Canceled is reserved for the invocation ctx itself being done. The
-		// provider observes and returns that ctx error.
+		// Canceled only when the invocation ctx itself is done.
 		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
 		provider := &ctxErrorProvider{}
 		a, err := New(provider, "x", WithConversationStore(conversations), WithExecutionStore(executions))
@@ -378,9 +377,7 @@ func TestExecutionFailureAndCancellationReachTerminalState(t *testing.T) {
 	})
 
 	t.Run("provider timeout is failed not canceled", func(t *testing.T) {
-		// A provider-side WithProviderTimeout deadline leaves the invocation ctx
-		// live, so it is a failure, not a caller cancellation, even though the
-		// returned error wraps context.DeadlineExceeded.
+		// A provider timeout wrapping DeadlineExceeded is a failure, not a cancel.
 		conversations, executions := newTestMemoryStore(), newTestExecutionStore()
 		provider := &errorProvider{err: fmt.Errorf("slow provider: %w", context.DeadlineExceeded)}
 		a, err := New(provider, "x", WithConversationStore(conversations), WithExecutionStore(executions))
@@ -411,8 +408,7 @@ func TestExecutionFailureAndCancellationReachTerminalState(t *testing.T) {
 	})
 }
 
-// ctxErrorProvider returns the invocation context's own error, so a canceled
-// or deadline-exceeded invocation ctx surfaces as that ctx error.
+// ctxErrorProvider returns the invocation context's own error.
 type ctxErrorProvider struct{}
 
 func (ctxErrorProvider) Name() string { return "mock" }
@@ -424,12 +420,10 @@ func (ctxErrorProvider) Stream(ctx context.Context, _ ModelRequest, _ func(Model
 	return nil, context.Canceled
 }
 
-// TestResumeValidatesBeforeClaimingRunning verifies the resume path validates
-// the conversation ID before the Paused->Running claim Save, so a corrupt
-// paused record with an empty conversation ID is not left stranded in Running.
+// Resume validates the conversation ID before the Paused->Running claim, so a
+// corrupt record with an empty conversation ID is not stranded in Running.
 func TestResumeValidatesBeforeClaimingRunning(t *testing.T) {
 	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
-	// A paused record with an empty conversation ID (corrupt/legacy).
 	seeded, err := executions.Create(context.Background(), Execution{
 		ID:     "resume-no-conv",
 		Status: ExecutionPaused,
@@ -450,7 +444,6 @@ func TestResumeValidatesBeforeClaimingRunning(t *testing.T) {
 	if _, err := a.Resume(Background().WithConversationID("c"), in, Respond("hi")); !errors.Is(err, ErrConversationIDRequired) {
 		t.Fatalf("Resume err = %v, want ErrConversationIDRequired", err)
 	}
-	// The record must still be Paused at its original version: no claim happened.
 	reloaded, err := executions.Load(context.Background(), seeded.ID)
 	if err != nil {
 		t.Fatal(err)

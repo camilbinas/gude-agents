@@ -194,8 +194,7 @@ func (r *RateLimiter) semaphore(key string) *concurrencySem {
 }
 
 // Lease is opaque to callers and identifies exactly one admitted attempt.
-// Its lifecycle is driven entirely through RateLimiter: Reserve returns a
-// lease, and Commit or Release settles it exactly once.
+// Commit or Release settles it exactly once.
 type Lease struct {
 	limiter *RateLimiter
 	id      string
@@ -283,13 +282,9 @@ func isTerminal(err error) bool {
 	return err == ErrLeaseTerminal || err == ErrLeaseCrossTerminal || err == ErrLeaseExpired
 }
 
-// reservation builds the counter reservation for one attempt. The token
-// estimate starts at outputReservationFallback (the known floor) and the input
-// estimator only adds to it. The caller ctx is threaded into the estimator so
-// its deadline and cancellation are honored. If the estimator errors, the
-// input estimate is dropped but the fallback floor is kept rather than
-// reserving zero, so a failing estimator under-reserves at most the input side
-// instead of the whole request.
+// reservation builds the counter reservation for one attempt. The estimate
+// starts at the outputReservationFallback floor; a failing estimator keeps that
+// floor rather than reserving zero, so it under-reserves at most the input side.
 func (r *RateLimiter) reservation(ctx context.Context, id string, request agent.RateLimitRequest) Reservation {
 	estimate := r.outputReservationFallback
 	if r.tokenEstimator != nil && !r.tokenReservationDisabled && (r.tokenRateLimit != nil || r.globalTokenLimit != nil) {

@@ -561,9 +561,6 @@ func TestClaudeHaiku45MaxTokensDefault(t *testing.T) {
 			factory: func(opts ...Option) (*AnthropicProvider, error) {
 				return New("claude-unlisted-model", opts...)
 			},
-			// An unknown model has no catalog ceiling, so the adapter requests a
-			// conservative default every current Claude model accepts rather than
-			// the former 128000, which smaller models reject.
 			want: defaultMaxTokens,
 		},
 		{

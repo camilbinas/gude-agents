@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// TestRegisterParser_ConcurrentNoRace exercises RegisterParser concurrently
-// with parser lookups (via a loadConfig.parserFor call, the same read path
-// LoadFiles uses). Run with -race, it fails if the defaultParsers map is
-// accessed without synchronization.
+// TestRegisterParser_ConcurrentNoRace runs RegisterParser concurrently with
+// lookups; under -race it fails if defaultParsers is accessed unsynchronized.
 func TestRegisterParser_ConcurrentNoRace(t *testing.T) {
 	stub := ParserFunc(func(_ context.Context, _ string) (string, error) { return "", nil })
 	cfg := newLoadConfig(nil)
@@ -24,7 +22,6 @@ func TestRegisterParser_ConcurrentNoRace(t *testing.T) {
 			ext := fmt.Sprintf(".race%d", n)
 			for j := 0; j < 200; j++ {
 				RegisterParser(ext, stub)
-				// Read through the same lookup path LoadFiles uses.
 				_, _ = cfg.parserFor(ext)
 				_, _ = cfg.parserFor(".md")
 			}
@@ -32,7 +29,6 @@ func TestRegisterParser_ConcurrentNoRace(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Sanity: the registered extensions are now resolvable.
 	for i := 0; i < workers; i++ {
 		if _, ok := cfg.parserFor(fmt.Sprintf(".race%d", i)); !ok {
 			t.Fatalf("parser for .race%d not registered", i)

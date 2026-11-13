@@ -8,8 +8,7 @@ import (
 	agent "github.com/camilbinas/gude-agents/agent"
 )
 
-// erroringEstimator always fails, and records the ctx it was handed so the test
-// can verify the caller ctx (not context.Background) is threaded through.
+// erroringEstimator always fails and records the ctx it was handed.
 type erroringEstimator struct{ gotCtx context.Context }
 
 func (e *erroringEstimator) EstimateTokens(ctx context.Context, _ ModelRequest) (int, error) {
@@ -36,8 +35,7 @@ func TestReservation_EstimatorErrorKeepsFallbackFloor(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ctxKey{}, "sentinel")
 	res := r.reservation(ctx, "id", agent.RateLimitRequest{Key: "k"})
 
-	// On estimator error the input estimate (123) is dropped, but the output
-	// fallback floor (50) is kept rather than reserving 0.
+	// Estimator error drops the input estimate but keeps the fallback floor.
 	if got := tokenAmount(res); got != 50 {
 		t.Errorf("reserved tokens = %d, want 50 (fallback floor, estimator dropped)", got)
 	}

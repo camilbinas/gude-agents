@@ -8,10 +8,8 @@ import (
 	"pgregory.net/rapid"
 )
 
-// The property-based generators below (GenTextBlock, GenMessage, ...) are
-// supported public API for building random agent.Message / agent.ContentBlock
-// values in table- and property-based tests. The memory-backend suites use
-// them, but they are not internal: downstream test suites may import them too.
+// The Gen* generators below build random agent.Message / agent.ContentBlock
+// values for property-based tests and are public API for downstream suites.
 
 // GenTextBlock generates a random TextBlock with 0–50 alphanumeric characters.
 func GenTextBlock(t *rapid.T) agent.TextBlock {

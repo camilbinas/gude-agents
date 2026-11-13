@@ -52,14 +52,10 @@ func (w *Window) HistoryBoundary(ctx context.Context, id string) (uint64, error)
 		return 0, nil
 	}
 	start := meta.LastSequence - w.count
-	// Find the largest boundary <= start (the smallest window) whose suffix
-	// does not orphan a ToolResult. Read a candidate range [lo, LastSequence]
-	// and scan boundaries inside it in memory. When every boundary in the range
-	// orphans a result, widen the range backwards, doubling its extra depth, so
-	// the common case is one read of about the window size and the worst case
-	// is O(log n) reads. Earlier revisions re-read the store once per decrement
-	// (O(n) round-trips, O(n^2) transfer); loading from 0 every turn would
-	// instead transfer the whole history to keep a small window.
+	// Find the largest boundary <= start whose suffix does not orphan a
+	// ToolResult. Read a range [lo, LastSequence] and scan boundaries in memory,
+	// doubling the range backwards on a miss: common case is one window-sized
+	// read, worst case O(log n) reads.
 	depth := w.count
 	if depth == 0 {
 		depth = 1
@@ -69,8 +65,7 @@ func (w *Window) HistoryBoundary(ctx context.Context, id string) (uint64, error)
 		if err != nil {
 			return 0, err
 		}
-		// tail.Messages[i] has sequence lo+i+1, so tail.Messages[b-lo:] is the
-		// suffix LoadAfter(b) returns.
+		// tail.Messages[i] has sequence lo+i+1, so [boundary-lo:] is LoadAfter(boundary).
 		for boundary := start; boundary >= lo; boundary-- {
 			offset := boundary - lo
 			if offset > uint64(len(tail.Messages)) {
@@ -334,8 +329,7 @@ func (r *RollingSummary) Prepare(ctx context.Context, in agent.ContextManagerInp
 		return agent.ContextManagerOutput{}, fmt.Errorf("contextmanager: save summary state: %w", err)
 	}
 	// The active range already begins at the old boundary. Drop newly covered
-	// entries locally without loading older history. We summarize at most once
-	// per Prepare, so the saved state's new revision is not needed again here.
+	// entries locally without loading older history.
 	in.Recent = in.Recent[cut:]
 	in.Boundary = state.CoveredThrough
 	return agent.ContextManagerOutput{Messages: build(state)}, nil

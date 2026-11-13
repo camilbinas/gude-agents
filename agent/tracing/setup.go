@@ -20,14 +20,12 @@ import (
 type SetupOption func(*setupConfig)
 
 type setupConfig struct {
-	// insecure, when non-nil, forces the transport security explicitly and
-	// overrides the environment. nil means "decide from endpoint + env".
+	// insecure, when non-nil, overrides the environment. nil = decide from env.
 	insecure *bool
 }
 
-// WithInsecure forces plaintext (insecure bool = true) or TLS (false) for the
-// OTLP gRPC export, overriding the OTEL_EXPORTER_OTLP_INSECURE /
-// OTEL_EXPORTER_OTLP_TRACES_INSECURE environment variables.
+// WithInsecure forces plaintext (true) or TLS (false) for the OTLP gRPC export,
+// overriding the OTEL_EXPORTER_OTLP_[TRACES_]INSECURE environment variables.
 func WithInsecure(insecure bool) SetupOption {
 	return func(c *setupConfig) { c.insecure = &insecure }
 }
@@ -37,13 +35,8 @@ func WithInsecure(insecure bool) SetupOption {
 // The provider is set as the global OTEL TracerProvider.
 // Returns a shutdown function that flushes pending spans and shuts down the provider.
 //
-// Transport security: by default the export is insecure (plaintext), matching
-// the localhost default endpoint. This default is overridden, in order of
-// precedence, by the WithInsecure option and then by the standard
-// OTEL_EXPORTER_OTLP_TRACES_INSECURE / OTEL_EXPORTER_OTLP_INSECURE environment
-// variables (set either to "false" to enable TLS when pointing at a remote
-// collector). Previously the export was always plaintext regardless of these
-// signals, which could silently ship spans to a remote endpoint unencrypted.
+// The export defaults to insecure (plaintext); override via WithInsecure or the
+// OTEL_EXPORTER_OTLP_[TRACES_]INSECURE env vars to enable TLS for a remote collector.
 func Setup(ctx context.Context, opts ...SetupOption) (shutdown func(context.Context) error, err error) {
 	var cfg setupConfig
 	for _, opt := range opts {
@@ -79,10 +72,8 @@ func Setup(ctx context.Context, opts ...SetupOption) (shutdown func(context.Cont
 	return tp.Shutdown, nil
 }
 
-// insecureExport decides whether the OTLP gRPC export should use an insecure
-// (plaintext) connection. Precedence: explicit WithInsecure option, then the
-// standard OTEL_EXPORTER_OTLP_TRACES_INSECURE / OTEL_EXPORTER_OTLP_INSECURE
-// environment variables, then the historical default of insecure=true.
+// insecureExport reports whether the OTLP gRPC export uses plaintext.
+// Precedence: WithInsecure option, then the *_INSECURE env vars, then true.
 func insecureExport(cfg setupConfig) bool {
 	if cfg.insecure != nil {
 		return *cfg.insecure
@@ -94,7 +85,7 @@ func insecureExport(cfg setupConfig) bool {
 			}
 		}
 	}
-	return true // historical default: plaintext (suits the localhost default endpoint)
+	return true // default: plaintext
 }
 
 // TracingPreset returns an agent.Option that enables tracing using the global

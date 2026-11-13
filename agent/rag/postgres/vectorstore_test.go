@@ -428,10 +428,6 @@ func TestSearch_L2ScoreIsBoundedAndOrdered(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Server-free unit tests (no live Postgres required)
-// ---------------------------------------------------------------------------
-
 func TestStore_DistanceOpAndScoreExpr(t *testing.T) {
 	cases := []struct {
 		metric  string
@@ -471,8 +467,7 @@ func TestStore_ValidateEmbedding(t *testing.T) {
 }
 
 func TestStore_UpsertRejectsBadEmbedding_NoDB(t *testing.T) {
-	// A dimension/finiteness check happens before any DB round-trip, so a
-	// bad embedding is rejected even with a nil pool.
+	// Validation runs before any DB round-trip, so a nil pool is fine.
 	s := &Store{dim: 3, tableName: `"documents"`, colID: `"id"`, colContent: `"content"`, colEmbed: `"embedding"`}
 	docs := []rag.Document{{Content: "a"}}
 	if _, err := s.Upsert(context.Background(), docs, [][]float64{{1, 2}}); err == nil {

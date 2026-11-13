@@ -102,9 +102,6 @@ func TestClassifyError_ContextCanceledNotRetryable(t *testing.T) {
 }
 
 func TestToBedrockMessages_EmptyAssistantMessageDropped(t *testing.T) {
-	// An assistant message whose only content is blank text produces no blocks.
-	// It must be dropped rather than filled with a "(no content)" placeholder,
-	// which would corrupt the transcript.
 	msgs, err := toBedrockMessages([]agent.Message{
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}},
 		{Role: agent.RoleAssistant, Content: []agent.ContentBlock{agent.TextBlock{Text: ""}}},
@@ -129,8 +126,6 @@ func TestToBedrockMessages_EmptyAssistantMessageDropped(t *testing.T) {
 }
 
 func TestToBedrockMessages_EmptyUserMessageGetsPlaceholder(t *testing.T) {
-	// A user message with only blank text still needs a valid non-empty block;
-	// the "(no content)" placeholder is acceptable on a user turn.
 	msgs, err := toBedrockMessages([]agent.Message{
 		{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: ""}}},
 	}, "anthropic.claude-3-5-haiku-20241022-v1:0", false)

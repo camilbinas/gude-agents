@@ -30,14 +30,8 @@ func WithName(name string) Option {
 }
 
 // WithMaxIterations sets the maximum number of call-execute-respond iterations.
-//
-// The limit is shared across the whole execution, including resumes. The
-// iteration counter is durable: a resumed invocation continues from the
-// iteration recorded when it paused, it does not restart at one. An execution
-// that pauses on its final allowed iteration therefore has no iteration budget
-// left, and Resume returns a MaxIterationsError without calling the provider
-// again. Size the limit for the full tool/provider loop you expect, pauses
-// included, not for a single Invoke call.
+// The limit is shared and durable across resumes, so size it for the full
+// tool/provider loop including pauses, not for a single Invoke call.
 func WithMaxIterations(n int) Option {
 	return func(a *Runtime) error {
 		if n < 1 {
@@ -364,12 +358,8 @@ func WithTopK(v int) Option {
 }
 
 // WithStopSequences sets the stop sequences inference parameter on the agent.
-// Stop sequences cause the LLM to stop producing further tokens when generated.
-//
-// An empty stop sequence is rejected as a construction error: providers either
-// error on it or treat it as "stop immediately", so it is never a useful
-// configuration. The slice is copied, so later mutation of s by the caller
-// does not affect the agent's stored configuration.
+// An empty stop sequence is rejected as a construction error. The slice is
+// copied, preserving the nil-vs-empty distinction callers rely on.
 func WithStopSequences(s []string) Option {
 	return func(a *Runtime) error {
 		for i, seq := range s {
@@ -380,9 +370,7 @@ func WithStopSequences(s []string) Option {
 		if a.inferenceConfig == nil {
 			a.inferenceConfig = &InferenceConfig{}
 		}
-		// Copy the slice so later caller mutation does not affect stored
-		// config, while preserving the nil-vs-empty distinction callers rely
-		// on (a nil slice stays nil; an empty slice stays a non-nil empty).
+		// Copy, keeping nil distinct from a non-nil empty slice.
 		if s == nil {
 			a.inferenceConfig.StopSequences = nil
 		} else {

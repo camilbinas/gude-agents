@@ -447,16 +447,10 @@ func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, em
 }
 
 // classifyError wraps a Bedrock SDK/transport error in an *agent.ProviderError
-// with retryability, HTTP status, and a Retry-After hint populated. It
-// recognizes the modeled throttling/overload exceptions as retryable, reads the
-// HTTP status from a smithy ResponseError when present (429/5xx retryable, 4xx
-// not), and otherwise classifies transport errors via
-// provider.RetryableNetworkError.
+// with retryability, HTTP status, and a Retry-After hint populated.
 func classifyError(err error) *agent.ProviderError {
 	pe := &agent.ProviderError{Cause: err}
 
-	// Modeled retryable exceptions: throttling, transient server faults and
-	// model timeouts are all worth retrying or failing over.
 	var throttling *types.ThrottlingException
 	var unavailable *types.ServiceUnavailableException
 	var internal *types.InternalServerException
@@ -466,7 +460,6 @@ func classifyError(err error) *agent.ProviderError {
 		pe.Retryable = true
 	}
 
-	// HTTP status, when the error carries an HTTP response.
 	var respErr *smithyhttp.ResponseError
 	if errors.As(err, &respErr) {
 		pe.StatusCode = respErr.HTTPStatusCode()
@@ -741,16 +734,9 @@ func toBedrockMessagesWithFetcher(ctx context.Context, fetchClient *http.Client,
 		if err != nil {
 			return nil, err
 		}
-		// Bedrock requires every message to carry at least one content block.
-		// Dropping blank text (above) can leave a message empty, which needs a
-		// role-aware fallback:
-		//   - A USER turn gets a visible "(no content)" placeholder so the
-		//     request stays valid.
-		//   - An ASSISTANT turn must NOT get that placeholder: injecting it would
-		//     corrupt the transcript, making the model read its own prior turn as
-		//     having literally said "(no content)". Bedrock also rejects a blank
-		//     text block, so there is no safe filler. The only correct action is
-		//     to drop the empty assistant message entirely.
+		// Bedrock requires every message to carry at least one content block. A
+		// user turn gets a "(no content)" placeholder; an assistant turn is
+		// dropped instead, since the placeholder would corrupt the transcript.
 		if len(blocks) == 0 {
 			if m.Role == agent.RoleAssistant {
 				continue
@@ -958,8 +944,7 @@ func sanitizeDocName(name string) string {
 	return name
 }
 
-// documentBytesWithFetcher returns the raw bytes from a DocumentSource, fetching
-// a URL source via a bounded HTTP GET when necessary.
+// documentBytesWithFetcher returns the raw bytes from a DocumentSource.
 func documentBytesWithFetcher(ctx context.Context, fetchClient *http.Client, src agent.DocumentSource) ([]byte, error) {
 	return documentBytesWithFetcherAndPolicy(ctx, fetchClient, urlFetchPolicy{}, src)
 }

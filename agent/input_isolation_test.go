@@ -6,15 +6,12 @@ import (
 	"testing"
 )
 
-// --- Fix 1: WithImages / WithDocuments copy slice and Source.Data bytes ---
-
 func TestWithImages_CopiesSliceAndData(t *testing.T) {
 	data := []byte{0x1, 0x2, 0x3}
 	imgs := []ImageBlock{{Source: ImageSource{Data: data, MIMEType: "image/png"}}}
 
 	c := Background().WithImages(imgs)
 
-	// Mutate the caller's slice header and the backing bytes after the call.
 	imgs[0].Source.Data[0] = 0xFF
 	imgs[0] = ImageBlock{Source: ImageSource{Data: []byte{0x9}, MIMEType: "image/jpeg"}}
 
@@ -60,8 +57,6 @@ func TestWithImages_NilStaysNil(t *testing.T) {
 	}
 }
 
-// --- Fix 2: Principal.Credentials never serializes ---
-
 func TestPrincipal_CredentialsNotSerialized(t *testing.T) {
 	p := Principal{
 		ID:          "u1",
@@ -76,7 +71,6 @@ func TestPrincipal_CredentialsNotSerialized(t *testing.T) {
 	if strings.Contains(string(b), "SECRET-TOKEN") || strings.Contains(string(b), "api_key") {
 		t.Fatalf("Principal JSON leaked credentials: %s", b)
 	}
-	// The value is still usable in-process.
 	if p.Credential("api_key") != "SECRET-TOKEN" {
 		t.Fatal("Credential accessor should still return the value in-process")
 	}
@@ -113,7 +107,6 @@ func TestInvokeAuditRecord_CredentialsNotSerialized(t *testing.T) {
 }
 
 func TestInvokeRecord_CredentialsNotSerialized(t *testing.T) {
-	// Observer records carry Principal by value too.
 	rec := InvokeRecord{
 		Principal: Principal{ID: "u1", Credentials: map[string]string{"token": "LEAK-ME"}},
 	}
@@ -125,8 +118,6 @@ func TestInvokeRecord_CredentialsNotSerialized(t *testing.T) {
 		t.Fatalf("InvokeRecord JSON leaked credentials: %s", b)
 	}
 }
-
-// --- Fix 4: WithStopSequences copies and rejects empty strings ---
 
 func TestWithStopSequences_RejectsEmpty(t *testing.T) {
 	_, err := New(plainProvider{}, "x", WithStopSequences([]string{"STOP", ""}))
@@ -150,10 +141,8 @@ func TestWithStopSequences_CopiesSlice(t *testing.T) {
 	}
 }
 
-// --- Fix 6: enum comparison is type-aware ---
-
 func TestValidateToolInput_EnumTypeAware(t *testing.T) {
-	// enum of numbers must reject a string that formats the same way.
+	// A numeric enum must reject a string that formats the same.
 	numSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -167,7 +156,6 @@ func TestValidateToolInput_EnumTypeAware(t *testing.T) {
 		t.Fatal(`string "1" must NOT satisfy a numeric enum [1,2]`)
 	}
 
-	// large number formatting: 1e10 vs 10000000000 must match by value.
 	bigSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -178,7 +166,6 @@ func TestValidateToolInput_EnumTypeAware(t *testing.T) {
 		t.Fatalf("1e10 should match 10000000000 by value: %v", err)
 	}
 
-	// string enum still works.
 	strSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -192,7 +179,6 @@ func TestValidateToolInput_EnumTypeAware(t *testing.T) {
 		t.Fatal("blue must not satisfy string enum [red,green]")
 	}
 
-	// bool enum: string "true" must not match boolean true.
 	boolSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -206,8 +192,6 @@ func TestValidateToolInput_EnumTypeAware(t *testing.T) {
 		t.Fatal(`string "true" must not satisfy a boolean enum`)
 	}
 }
-
-// --- Fix 10: nil options are skipped by New ---
 
 func TestNew_SkipsNilOptions(t *testing.T) {
 	a, err := New(plainProvider{}, "x", nil, WithName("named"), nil)

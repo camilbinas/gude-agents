@@ -169,8 +169,7 @@ func TestNonTextContentRejected(t *testing.T) {
 	}
 }
 
-// servePlain returns an httptest server that replies with the given body as
-// text/plain, so the default formatter passes the bytes through unchanged.
+// servePlain serves body as text/plain.
 func servePlain(body string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -179,8 +178,7 @@ func servePlain(body string) *httptest.Server {
 }
 
 func TestFetch_TruncateByCharsRuneSafe(t *testing.T) {
-	// 100 three-byte runes. maxChars is a rune budget, so truncation must cut
-	// on a rune boundary and keep valid UTF-8.
+	// 100 three-byte runes; truncation must cut on a rune boundary.
 	body := strings.Repeat("語", 100)
 	srv := servePlain(body)
 	defer srv.Close()
@@ -204,8 +202,7 @@ func TestFetch_TruncateByCharsRuneSafe(t *testing.T) {
 }
 
 func TestFetch_TruncateByBytesRuneSafe(t *testing.T) {
-	// The body exceeds maxBytes mid-rune. After the byte cut the formatter must
-	// never see an invalid trailing rune, so the final output stays valid UTF-8.
+	// maxBytes cuts mid-rune; output must stay valid UTF-8.
 	body := strings.Repeat("あ", 100) // 3 bytes each
 	srv := servePlain(body)
 	defer srv.Close()

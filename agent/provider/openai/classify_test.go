@@ -74,9 +74,7 @@ func TestClassifyError_ContextCanceledNotRetryable(t *testing.T) {
 }
 
 func TestCollectToolCalls_SparseAndNonZeroBasedIndices(t *testing.T) {
-	// Indices are sparse and do not start at zero. The former 0..n-1 loop would
-	// drop every one of these; collectToolCalls must return all three in index
-	// order.
+	// Sparse, non-zero-based indices must all be returned in index order.
 	in := map[int64]*toolCallAccum{
 		5: {id: "call_a", name: "alpha", arguments: `{"x":1}`},
 		2: {id: "call_b", name: "beta", arguments: ""},
@@ -86,7 +84,6 @@ func TestCollectToolCalls_SparseAndNonZeroBasedIndices(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d tool calls, want 3", len(got))
 	}
-	// Expect ascending index order: 2 (beta), 5 (alpha), 9 (gamma).
 	wantOrder := []struct {
 		id, name, args string
 	}{

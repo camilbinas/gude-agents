@@ -21,14 +21,9 @@ import (
 
 // Client connects to an MCP server and exposes its tools as gude-agents tool.Tool values.
 //
-// A Client wraps a single MCP session. That session is safe for concurrent
-// CallTool invocations: the underlying JSON-RPC connection multiplexes
-// requests by id and serializes access to its in-flight state, so the tools
-// returned by Tools may be executed in parallel (for example by the agent's
-// parallel tool dispatch) without extra locking. Concurrent calls still share
-// one transport, so for high request-stream throughput — especially over a
-// stdio subprocess that serves one stream — use Pool to spread calls across
-// several sessions.
+// A Client wraps a single MCP session that is safe for concurrent CallTool
+// invocations, so tools from Tools may run in parallel without extra locking.
+// They share one transport; use Pool for high-throughput workloads.
 type Client struct {
 	session *sdkmcp.ClientSession
 }
@@ -183,8 +178,7 @@ func WithToolPrefix(prefix string) ToolsOption {
 }
 
 // IncludeTools restricts Tools() to only the named tools.
-// It cannot be combined with ExcludeTools: passing both to the same Tools()
-// call returns an error. Use one or the other.
+// Cannot be combined with ExcludeTools; passing both returns an error.
 func IncludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) error {
 		if c.include == nil {
@@ -198,8 +192,7 @@ func IncludeTools(names ...string) ToolsOption {
 }
 
 // ExcludeTools filters out the named tools from Tools().
-// It cannot be combined with IncludeTools: passing both to the same Tools()
-// call returns an error. Use one or the other.
+// Cannot be combined with IncludeTools; passing both returns an error.
 func ExcludeTools(names ...string) ToolsOption {
 	return func(c *toolsConfig) error {
 		if c.exclude == nil {

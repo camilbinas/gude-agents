@@ -8,9 +8,7 @@ import (
 	openaisdk "github.com/openai/openai-go/v3"
 )
 
-// mustBuildParams calls p.buildParams and fails the test on error. buildParams
-// now returns an error alongside the params so attachment decode failures
-// surface instead of being dropped.
+// mustBuildParams calls p.buildParams and fails the test on error.
 func mustBuildParams(t *testing.T, p *OpenAIProvider, req agent.ModelRequest) openaisdk.ChatCompletionNewParams {
 	t.Helper()
 	params, err := p.buildParams(req)

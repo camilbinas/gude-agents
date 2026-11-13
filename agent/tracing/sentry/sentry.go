@@ -163,10 +163,6 @@ func WithSentry(opts ...tracing.TracingOption) agent.Option {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Middleware options
-// ---------------------------------------------------------------------------
-
 // MiddlewareOption configures the Sentry middleware behavior.
 type MiddlewareOption func(*middlewareConfig)
 
@@ -182,25 +178,18 @@ func newMiddlewareConfig(opts ...MiddlewareOption) middlewareConfig {
 	return cfg
 }
 
-// WithBreadcrumbContent enables recording tool input and result text in Sentry
-// breadcrumbs. It is off by default because tool I/O can contain sensitive data
-// (PII, secrets, proprietary content), mirroring tracing.WithContentCapture and
-// slog.WithContentLogging.
-//
-// When disabled (the default), breadcrumbs still record the tool name, duration,
-// and error status, but omit the input and result payloads. Enable this only in
-// environments where the breadcrumb sink may hold user data and that is acceptable.
+// WithBreadcrumbContent records tool input and result text in breadcrumbs. Off
+// by default because tool I/O can contain sensitive data; enable only where the
+// breadcrumb sink may hold user data.
 func WithBreadcrumbContent() MiddlewareOption {
 	return func(c *middlewareConfig) { c.captureContent = true }
 }
 
-// maxBreadcrumbTextRunes bounds how much tool input/result text is recorded in a
-// breadcrumb when content capture is enabled.
+// maxBreadcrumbTextRunes bounds recorded tool I/O text when content capture is on.
 const maxBreadcrumbTextRunes = 200
 
-// truncateRunes returns s truncated to at most maxRunes runes, appending an
-// ellipsis when truncation occurs. Unlike slicing a string by byte offset, it
-// never splits a multi-byte UTF-8 rune, so the result is always valid UTF-8.
+// truncateRunes truncates s to at most maxRunes runes (appending "..." when cut),
+// cutting on a rune boundary so the result is always valid UTF-8.
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes < 0 {
 		maxRunes = 0
@@ -208,7 +197,6 @@ func truncateRunes(s string, maxRunes int) string {
 	if utf8.RuneCountInString(s) <= maxRunes {
 		return s
 	}
-	// Walk maxRunes runes to find the byte boundary to cut at.
 	count := 0
 	for i := range s {
 		if count == maxRunes {
@@ -246,14 +234,9 @@ func ErrorCaptureMiddleware() agent.Middleware {
 }
 
 // BreadcrumbMiddleware returns an agent.Middleware that adds a Sentry
-// breadcrumb for every tool call.
-//
-// By default the breadcrumb records only the tool name, duration, and (on
-// failure) the error message. Tool input and result text are omitted because
-// they can contain sensitive data; pass WithBreadcrumbContent() to include
-// them (consistent with tracing.WithContentCapture and slog.WithContentLogging).
-// When content is included it is truncated on a rune boundary, so the recorded
-// text is always valid UTF-8.
+// breadcrumb for every tool call. By default it records only tool name,
+// duration, and (on failure) the error; pass WithBreadcrumbContent() to also
+// record input and result text (truncated on a rune boundary).
 func BreadcrumbMiddleware(opts ...MiddlewareOption) agent.Middleware {
 	cfg := newMiddlewareConfig(opts...)
 	return func(next agent.ToolHandlerFunc) agent.ToolHandlerFunc {

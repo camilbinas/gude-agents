@@ -12,9 +12,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// rewriteTransport sends every request to base instead of its real host, so a
-// tool that targets a fixed public URL can be exercised against an httptest
-// server. It records the last request for header assertions.
+// rewriteTransport redirects every request to base and records the last one for
+// header assertions.
 type rewriteTransport struct {
 	base string
 	last *http.Request
@@ -118,7 +117,6 @@ func TestSearch_APIKeyOnlyInHeaderAndNeverLogged(t *testing.T) {
 		t.Fatalf("search error: %v", err)
 	}
 
-	// The key must travel only in the X-Subscription-Token header.
 	if got := rt.last.Header.Get("X-Subscription-Token"); got != key {
 		t.Errorf("API key header = %q, want %q", got, key)
 	}

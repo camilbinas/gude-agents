@@ -8,8 +8,6 @@ import (
 )
 
 func TestFormatter_ReturnsWebfetchFormatter(t *testing.T) {
-	// Formatter must satisfy the webfetch.Formatter type so it can be passed to
-	// webfetch.WithFormatter without an adapter.
 	var _ webfetch.Formatter = Formatter()
 }
 
@@ -29,7 +27,7 @@ func TestFormatter_ConvertsHTMLToMarkdown(t *testing.T) {
 			t.Errorf("markdown output missing %q:\n%s", want, out)
 		}
 	}
-	// List items are preserved (marker style can vary by converter).
+	// List items survive regardless of marker style.
 	if !strings.Contains(out, "one") || !strings.Contains(out, "two") {
 		t.Errorf("list items not preserved:\n%s", out)
 	}

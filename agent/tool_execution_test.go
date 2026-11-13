@@ -388,10 +388,8 @@ func TestToolExecutionPolicyAppliesToDurableRuns(t *testing.T) {
 	}
 }
 
-// TestParallelBatchCancelledBeforeDispatchRunsNoHandler verifies the parallel
-// branch of executeBatch honors a cancelled context before invoking any
-// handler, mirroring the sequential branch. Regression for a batch cancelled
-// just before parallel dispatch invoking every handler anyway.
+// A batch cancelled before parallel dispatch must invoke no handler, mirroring
+// the sequential branch.
 func TestParallelBatchCancelledBeforeDispatchRunsNoHandler(t *testing.T) {
 	p := &probe{}
 	names := []string{"a", "b", "c", "d"}
@@ -399,15 +397,14 @@ func TestParallelBatchCancelledBeforeDispatchRunsNoHandler(t *testing.T) {
 	for i, name := range names {
 		tools[i] = probedTool(p, name, 0, nil)
 	}
-	// Unbounded parallel is the default; more than one call takes the parallel
-	// path in executeBatch.run.
+	// Unbounded parallel (default) + >1 call takes the parallel path.
 	a, err := New(mockProvider{}, "sys", WithTools(tools...))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancelled before dispatch
+	cancel()
 
 	base := NewContext(ctx)
 	inv := base.forInvocation(ctx, &invocationRuntime{})

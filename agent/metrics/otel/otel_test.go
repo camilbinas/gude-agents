@@ -259,8 +259,7 @@ func TestDurationRecording(t *testing.T) {
 	}
 }
 
-// toolCountForName collects agent.tool.call.total and returns the counter value
-// for the given tool_name label (0 if absent).
+// toolCountForName returns the agent.tool.call.total value for a tool_name (0 if absent).
 func toolCountForName(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
@@ -288,8 +287,6 @@ func toolCountForName(t *testing.T, reader *sdkmetric.ManualReader, name string)
 	return total
 }
 
-// TestToolNameAllowlist verifies non-allowlisted tool names are bucketed under
-// "other" on the OTEL tool metrics.
 func TestToolNameAllowlist(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -317,7 +314,6 @@ func TestToolNameAllowlist(t *testing.T) {
 	}
 }
 
-// TestToolNameNoAllowlistVerbatim confirms the default records names verbatim.
 func TestToolNameNoAllowlistVerbatim(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

@@ -168,7 +168,6 @@ func TestProvider_StopReasonDefaults(t *testing.T) {
 		),
 	)
 
-	// Text response defaults to end_turn.
 	r1, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +176,6 @@ func TestProvider_StopReasonDefaults(t *testing.T) {
 		t.Errorf("text response StopReason = %q, want end_turn", r1.StopReason)
 	}
 
-	// Tool-call response defaults to tool_use.
 	r2, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +184,6 @@ func TestProvider_StopReasonDefaults(t *testing.T) {
 		t.Errorf("tool-call response StopReason = %q, want tool_use", r2.StopReason)
 	}
 
-	// Explicit stop reason is preserved verbatim.
 	r3, err := p.Stream(context.Background(), agent.ModelRequest{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -196,8 +193,7 @@ func TestProvider_StopReasonDefaults(t *testing.T) {
 	}
 }
 
-// TestProvider_StopReasonDoesNotMutateScript confirms defaulting the stop
-// reason does not mutate the shared scripted response (so it can be reused).
+// Defaulting the stop reason must not mutate the shared scripted response.
 func TestProvider_StopReasonDoesNotMutateScript(t *testing.T) {
 	scripted := &agent.ModelResponse{Text: "hi"}
 	p := testutil.NewMockProvider(testutil.WithResponses(scripted))

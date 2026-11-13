@@ -288,8 +288,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 	return resp, nil
 }
 
-// toolCallAccum accumulates the fields of a single streamed tool call, which
-// OpenAI delivers across multiple deltas keyed by index.
+// toolCallAccum accumulates a single streamed tool call delivered across deltas.
 type toolCallAccum struct {
 	id        string
 	name      string
@@ -297,10 +296,8 @@ type toolCallAccum struct {
 }
 
 // collectToolCalls returns the accumulated tool calls in ascending index order.
-// OpenAI-compatible servers (vLLM, Ollama, gateways) are not guaranteed to emit
-// dense, zero-based indices, so it iterates the actual keys sorted rather than
-// assuming a contiguous 0..n-1 range, which would drop or reorder calls when
-// the indices are sparse or do not start at zero.
+// Indices are sorted rather than assumed dense/zero-based, since OpenAI-compatible
+// servers may emit sparse indices that would otherwise be dropped or reordered.
 func collectToolCalls(toolCalls map[int64]*toolCallAccum) []tool.Call {
 	if len(toolCalls) == 0 {
 		return nil
@@ -331,10 +328,7 @@ func collectToolCalls(toolCalls map[int64]*toolCallAccum) []tool.Call {
 }
 
 // classifyError wraps an OpenAI SDK/transport error in an *agent.ProviderError
-// with retryability, HTTP status, and a Retry-After hint populated. A typed
-// *openaisdk.Error carries the HTTP status (429/5xx retryable; 4xx client
-// errors not); any other error is treated as a transport failure and
-// classified via provider.RetryableNetworkError.
+// with retryability, HTTP status, and a Retry-After hint populated.
 func classifyError(err error) *agent.ProviderError {
 	pe := &agent.ProviderError{Cause: err}
 	var apiErr *openaisdk.Error
@@ -461,9 +455,8 @@ func validateOpenAIDocumentSources(msgs []agent.Message) error {
 }
 
 // toOpenAIMessages converts framework Messages to OpenAI ChatCompletionMessageParamUnion.
-// The system prompt is prepended as a system message. It returns an error when
-// an attachment's bytes cannot be decoded, so a malformed block surfaces to the
-// caller instead of being silently dropped (matching the other adapters).
+// The system prompt is prepended as a system message. Returns an error when an
+// attachment's bytes cannot be decoded.
 func toOpenAIMessages(msgs []agent.Message, system string) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
 	var out []openaisdk.ChatCompletionMessageParamUnion
 
@@ -487,9 +480,8 @@ func toOpenAIMessages(msgs []agent.Message, system string) ([]openaisdk.ChatComp
 }
 
 // toOpenAIUserMessages converts user content blocks to OpenAI messages.
-// ToolResultBlocks become individual tool messages; TextBlocks become user
-// messages. An image whose bytes cannot be decoded produces an error rather
-// than being silently skipped.
+// ToolResultBlocks become tool messages; TextBlocks become user messages.
+// Returns an error when an image's bytes cannot be decoded.
 func toOpenAIUserMessages(blocks []agent.ContentBlock) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
 	var out []openaisdk.ChatCompletionMessageParamUnion
 	for _, b := range blocks {

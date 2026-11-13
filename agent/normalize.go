@@ -4,22 +4,12 @@ package agent
 type NormStrategy int
 
 const (
-	// NormMerge merges consecutive same-role messages into one. It is the
-	// default and the recommended strategy for v1.
-	NormMerge NormStrategy = iota
-	// NormFill inserts synthetic opposite-role messages ("Understood." /
-	// "Continue.") between consecutive same-role messages.
-	//
-	// Experimental: NormFill injects synthetic turns the user never wrote,
-	// which can surprise downstream consumers of the transcript. It may change
-	// or be removed in a future release; prefer NormMerge.
+	NormMerge NormStrategy = iota // merge consecutive same-role messages (default)
+	// NormFill inserts synthetic opposite-role messages between same-role runs.
+	// Experimental: injects turns the user never wrote; prefer NormMerge.
 	NormFill
-	// NormRemove keeps only the last message in each same-role run, dropping
-	// the earlier ones.
-	//
-	// Experimental: NormRemove silently discards message content, which can
-	// surprise users. It may change or be removed in a future release; prefer
-	// NormMerge.
+	// NormRemove keeps only the last message in each same-role run.
+	// Experimental: silently discards content; prefer NormMerge.
 	NormRemove
 )
 

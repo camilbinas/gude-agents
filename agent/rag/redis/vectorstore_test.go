@@ -417,13 +417,11 @@ func TestSafeFilterComponent(t *testing.T) {
 }
 
 func TestEscapeRedisSearchTerm_BackslashFirst(t *testing.T) {
-	// A backslash in the input must be escaped to \\, and must not re-escape
-	// the escapes added for other special characters.
+	// Backslash escaped to \\, without re-escaping escapes added for others.
 	got := escapeRedisSearchTerm(`a\b`)
 	if got != `a\\b` {
 		t.Fatalf("escapeRedisSearchTerm(%q) = %q, want %q", `a\b`, got, `a\\b`)
 	}
-	// A colon is escaped once; the leading backslash it adds is not doubled.
 	got = escapeRedisSearchTerm(`k:v`)
 	if got != `k\:v` {
 		t.Fatalf("escapeRedisSearchTerm(%q) = %q, want %q", `k:v`, got, `k\:v`)

@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// node is directly self-referential through a pointer field.
 type node struct {
 	Value string `json:"value"`
 	Next  *node  `json:"next"`
@@ -19,7 +18,6 @@ type ringB struct {
 	A *ringA `json:"a"`
 }
 
-// selfSlice references itself through a slice element.
 type selfSlice struct {
 	Name     string      `json:"name"`
 	Children []selfSlice `json:"children"`
@@ -35,8 +33,7 @@ func TestGenerateSchema_DirectCycleTerminates(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing 'next' property: %v", props)
 		}
-		// On the cycle the self-reference collapses to an open object with no
-		// further 'properties' descent.
+		// Cycle collapses to an open object, no further properties.
 		if next["type"] != "object" {
 			t.Errorf("want cycle node emitted as object, got %v", next["type"])
 		}
@@ -81,8 +78,7 @@ func TestGenerateSchema_SelfReferentialSliceTerminates(t *testing.T) {
 }
 
 func TestGenerateSchema_SiblingSameTypeStillExpands(t *testing.T) {
-	// Two fields of the same (non-recursive) type must both expand fully; the
-	// visited set must not treat the second sibling as a cycle.
+	// A sibling field of the same non-recursive type is not treated as a cycle.
 	type leaf struct {
 		X string `json:"x"`
 	}

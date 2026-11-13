@@ -11,9 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStream_StopsOnClassifiedNonRetryableError verifies the chain does NOT
-// advance past a classified non-retryable ProviderError (e.g. a 400 or 401):
-// another provider cannot fix a malformed request or an auth failure.
 func TestStream_StopsOnClassifiedNonRetryableError(t *testing.T) {
 	for _, status := range []int{400, 401, 403, 404} {
 		primary := failProvider(&agent.ProviderError{
@@ -33,8 +30,6 @@ func TestStream_StopsOnClassifiedNonRetryableError(t *testing.T) {
 	}
 }
 
-// TestStream_AdvancesOnClassifiedRetryableError verifies the chain advances on
-// a classified retryable ProviderError (e.g. a 429 or 503).
 func TestStream_AdvancesOnClassifiedRetryableError(t *testing.T) {
 	for _, status := range []int{429, 500, 503} {
 		primary := failProvider(&agent.ProviderError{
@@ -53,8 +48,6 @@ func TestStream_AdvancesOnClassifiedRetryableError(t *testing.T) {
 	}
 }
 
-// TestStream_AdvancesOnUnclassifiedError verifies that an error with no
-// retryability classification still advances (the conservative default).
 func TestStream_AdvancesOnUnclassifiedError(t *testing.T) {
 	// A bare ProviderError (no StatusCode) is unclassified.
 	primary := failProvider(&agent.ProviderError{Cause: errAny})

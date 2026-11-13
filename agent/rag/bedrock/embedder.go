@@ -42,18 +42,14 @@ func WithRegion(region string) EmbedderOption {
 	return func(o *embedderOptions) { o.region = region }
 }
 
-// WithDimensions sets the output vector dimension of the embedding model.
-//
-// For Cohere Embed v4, allowed values are 256, 512, 1024, and 1536 (the model
-// default applies when unset). For Amazon Titan Embeddings V2, allowed values
-// are 256, 512, and 1024 (default 1024 when unset); an unsupported value is
-// rejected by Embed. This option has no effect on Cohere v3 models.
+// WithDimensions sets the output vector dimension. Cohere Embed v4 allows 256,
+// 512, 1024, 1536; Titan Embeddings V2 allows 256, 512, 1024 (default 1024).
+// No effect on Cohere v3 models.
 func WithDimensions(d int) EmbedderOption {
 	return func(o *embedderOptions) { o.dimensions = d }
 }
 
-// titanAllowedDimensions are the output dimensions Amazon Titan Embeddings V2
-// supports. 1024 is the default when WithDimensions is not set.
+// titanAllowedDimensions are the output dimensions Titan Embeddings V2 supports.
 var titanAllowedDimensions = map[int]bool{256: true, 512: true, 1024: true}
 
 // WithEmbeddingTypes sets the embedding type(s) returned by Cohere v3/v4 models.
@@ -206,10 +202,6 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 			})
 		}
 	} else {
-		// Titan Embed v2 supports output dimensions 256/512/1024. Honor
-		// WithDimensions when set, defaulting to 1024, and reject unsupported
-		// values rather than silently coupling the store dim to a magic
-		// constant.
 		dim := 1024
 		if e.dimensions != 0 {
 			if !titanAllowedDimensions[e.dimensions] {

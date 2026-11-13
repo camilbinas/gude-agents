@@ -13,8 +13,8 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// rewriteTransport sends every request to base instead of its real host and
-// records the last request (including a copy of its body) for assertions.
+// rewriteTransport redirects every request to base and records the last one
+// (with its body) for assertions.
 type rewriteTransport struct {
 	base     string
 	last     *http.Request

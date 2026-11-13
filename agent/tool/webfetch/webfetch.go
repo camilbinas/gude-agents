@@ -209,8 +209,7 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 
 	truncatedBySize := false
 	if int64(len(body)) > maxBytes {
-		// Cut at the byte budget, then drop any trailing partial UTF-8
-		// sequence so the formatter never sees an invalid final rune.
+		// Drop any trailing partial UTF-8 rune left by the byte cut.
 		body = trimPartialRune(body[:maxBytes])
 		truncatedBySize = true
 	}
@@ -220,8 +219,7 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 		return "", fmt.Errorf("format content: %w", err)
 	}
 
-	// Truncate by rune count, not byte index, so a multibyte character at the
-	// boundary is never split into invalid UTF-8.
+	// Truncate by rune count so a multibyte character is not split.
 	if runes := []rune(text); len(runes) > maxChars {
 		text = string(runes[:maxChars])
 		truncatedBySize = true
@@ -234,9 +232,8 @@ func fetchPage(ctx context.Context, client *http.Client, pageURL string, maxByte
 	return text, nil
 }
 
-// trimPartialRune removes a trailing byte sequence that is the start of a
-// multibyte UTF-8 rune cut short by a byte-length limit. It leaves valid UTF-8
-// untouched and never trims more than the final (incomplete) rune.
+// trimPartialRune drops a trailing incomplete UTF-8 rune left by a byte-length
+// cut, leaving valid UTF-8 untouched.
 func trimPartialRune(b []byte) []byte {
 	for len(b) > 0 && !utf8.Valid(b) {
 		// Walk back over continuation bytes (0b10xxxxxx) and the lead byte.

@@ -38,12 +38,9 @@ func TestTruncateRunes(t *testing.T) {
 	}
 }
 
-// TestTruncateRunesUTF8Safe is the regression test for the byte-slicing bug:
-// truncation must land on a rune boundary and always produce valid UTF-8.
+// Regression: truncation must land on a rune boundary and stay valid UTF-8.
 func TestTruncateRunesUTF8Safe(t *testing.T) {
-	// Each "世" is 3 bytes. A byte-offset slice at an odd boundary would split
-	// a rune and emit invalid UTF-8.
-	s := strings.Repeat("世", 300) // 900 bytes, 300 runes
+	s := strings.Repeat("世", 300) // 3 bytes each: 900 bytes, 300 runes
 	for _, max := range []int{0, 1, 50, 199, 200, 299, 300} {
 		got := truncateRunes(s, max)
 		trimmed := strings.TrimSuffix(got, "...")
@@ -72,8 +69,8 @@ func (r *recordingTransport) Flush(time.Duration) bool              { return tru
 func (r *recordingTransport) FlushWithContext(context.Context) bool { return true }
 func (r *recordingTransport) Close()                                {}
 
-// runBreadcrumbTool runs a tool through BreadcrumbMiddleware on an isolated hub
-// and returns the breadcrumb data recorded for the call.
+// runBreadcrumbTool runs a tool through BreadcrumbMiddleware and returns the
+// breadcrumb data recorded for the call.
 func runBreadcrumbTool(t *testing.T, result agent.ToolResult, toolErr error, opts ...MiddlewareOption) map[string]any {
 	t.Helper()
 
@@ -84,9 +81,8 @@ func runBreadcrumbTool(t *testing.T, result agent.ToolResult, toolErr error, opt
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	// BreadcrumbMiddleware records on the current hub (gosentry.AddBreadcrumb),
-	// so rebind the current hub's client/scope for the duration of this call
-	// and restore it afterwards.
+	// BreadcrumbMiddleware records on the current hub, so rebind it for this
+	// call and restore it afterwards.
 	cur := gosentry.CurrentHub()
 	prevClient := cur.Client()
 	cur.BindClient(client)
@@ -105,7 +101,7 @@ func runBreadcrumbTool(t *testing.T, result agent.ToolResult, toolErr error, opt
 		t.Fatalf("handler err = %v, want %v", err, toolErr)
 	}
 
-	// Trigger an event so breadcrumbs attached to the scope are captured.
+	// Trigger an event so scope breadcrumbs are captured.
 	cur.CaptureMessage("probe")
 
 	tr := client.Transport.(*recordingTransport)

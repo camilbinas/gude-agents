@@ -8,9 +8,7 @@ import (
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 )
 
-// mustBuildParams calls p.buildParams and fails the test on error. It keeps the
-// property/unit tests readable now that buildParams returns an error alongside
-// the params (content decode failures surface instead of being dropped).
+// mustBuildParams calls p.buildParams and fails the test on error.
 func mustBuildParams(t *testing.T, p *AnthropicProvider, req agent.ModelRequest) anthropicsdk.MessageNewParams {
 	t.Helper()
 	params, err := p.buildParams(req)

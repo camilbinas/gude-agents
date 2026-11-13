@@ -40,20 +40,12 @@ type TracingOption func(*otelHook)
 // sensitive data (PII, secrets, proprietary content).
 //
 // When enabled, the following attributes are added:
-//   - gen_ai.input.messages / gen_ai.output.messages (structured content per the
-//     current GenAI semantic conventions; see SemconvGenAIVersion)
-//   - gen_ai.prompt (user message on agent.invoke) — deprecated, see below
-//   - gen_ai.system_prompt (system prompt on agent.invoke) — deprecated
-//   - gen_ai.completion (response text on agent.invoke) — deprecated
-//   - gen_ai.provider.response (response text on agent.provider.call) — deprecated
+//   - gen_ai.input.messages / gen_ai.output.messages (structured content)
+//   - gen_ai.prompt / gen_ai.system_prompt / gen_ai.completion /
+//     gen_ai.provider.response (deprecated; suppress via WithoutLegacyContentAttributes)
 //   - tool.input / tool.output (on agent.tool.* spans)
 //   - guardrail.input / guardrail.output (on guardrail spans)
 //   - retriever.query (on retriever spans)
-//
-// gen_ai.prompt and gen_ai.completion are deprecated upstream in favor of the
-// structured gen_ai.input.messages/gen_ai.output.messages attributes, which are
-// now emitted alongside them. Pass WithoutLegacyContentAttributes to emit only
-// the structured attributes.
 func WithContentCapture() TracingOption {
 	return func(h *otelHook) {
 		h.captureContent = true
@@ -68,29 +60,18 @@ func WithScopeName(name string) TracingOption {
 	}
 }
 
-// WithoutLegacyContentAttributes suppresses the deprecated gen_ai.prompt,
-// gen_ai.system_prompt, gen_ai.completion, and gen_ai.provider.response
-// attributes, emitting only the structured gen_ai.input.messages and
-// gen_ai.output.messages attributes defined by the current OpenTelemetry
-// GenAI semantic conventions (see SemconvGenAIVersion).
-//
-// Only has an effect together with WithContentCapture. The default keeps the
-// legacy attributes alongside the structured ones for backward compatibility
-// with existing dashboards.
+// WithoutLegacyContentAttributes suppresses the deprecated gen_ai.prompt/
+// system_prompt/completion/provider.response attributes, emitting only the
+// structured message attributes. Only effective with WithContentCapture.
 func WithoutLegacyContentAttributes() TracingOption {
 	return func(h *otelHook) {
 		h.dropLegacyContent = true
 	}
 }
 
-// WithSpecSpanNames names spans per the OpenTelemetry GenAI semantic
-// conventions, "{gen_ai.operation.name} {gen_ai.request.model}" (for example
-// "chat gpt-4o" or "invoke_agent"), instead of the default gude-agents span
-// names (agent.invoke, agent.provider.call, agent.tool.<name>, ...).
-//
-// This is opt-in because renaming spans breaks dashboards, alerts, and tests
-// that match on the existing names. New deployments targeting GenAI-aware
-// backends should enable it; existing ones can migrate when ready.
+// WithSpecSpanNames names spans per the GenAI semconv
+// "{operation} {model}" format (e.g. "chat gpt-4o") instead of the default
+// gude-agents names. Opt-in: renaming spans breaks existing dashboards/alerts.
 func WithSpecSpanNames() TracingOption {
 	return func(h *otelHook) {
 		h.specSpanNames = true
@@ -100,18 +81,12 @@ func WithSpecSpanNames() TracingOption {
 // otelHook implements the tracing-related observer capabilities with
 // OpenTelemetry spans.
 type otelHook struct {
-	tracer         trace.Tracer
-	captureContent bool
-	scopeName      string
-	scheme         AttributeScheme
-	// dropLegacyContent, when true, suppresses the deprecated
-	// gen_ai.prompt/gen_ai.completion/gen_ai.provider.response attributes and
-	// emits only the structured gen_ai.input.messages/gen_ai.output.messages.
+	tracer            trace.Tracer
+	captureContent    bool
+	scopeName         string
+	scheme            AttributeScheme
 	dropLegacyContent bool
-	// specSpanNames, when true, names spans per the GenAI semconv
-	// "{gen_ai.operation.name} {gen_ai.request.model}" format instead of the
-	// default gude-agents names (agent.invoke, agent.provider.call, ...).
-	specSpanNames bool
+	specSpanNames     bool
 }
 
 type spanContextKey struct {
@@ -119,11 +94,9 @@ type spanContextKey struct {
 	capability string
 }
 
-// newOtelHook constructs an otelHook with the given options applied. The
-// tracer is left nil for the caller to set after it knows the final scope name
-// (see resolvedScopeName); pass a non-nil tracer only in tests that bypass a
-// TracerProvider. The scheme is left as a nil map by default; AttributeScheme.Key
-// falls back to each role's default key when the map is nil or missing an entry.
+// newOtelHook constructs an otelHook with the given options applied. Pass a
+// nil tracer and set it from resolvedScopeName once the scope name is known;
+// a non-nil tracer is for tests that bypass a TracerProvider.
 func newOtelHook(tracer trace.Tracer, opts ...TracingOption) *otelHook {
 	h := &otelHook{tracer: tracer}
 	for _, opt := range opts {
@@ -165,8 +138,7 @@ func (h *otelHook) startSpan(ctx context.Context, capability, name string, times
 	return context.WithValue(ctx, spanContextKey{owner: h, capability: capability}, span), span
 }
 
-// resolvedScopeName returns the instrumentation scope name for this hook,
-// falling back to the package default when unset.
+// resolvedScopeName returns the scope name, or the package default when unset.
 func (h *otelHook) resolvedScopeName() string {
 	if h.scopeName != "" {
 		return h.scopeName
@@ -198,10 +170,8 @@ func recordError(span trace.Span, err error) {
 	span.SetStatus(codes.Error, err.Error())
 }
 
-// spanName returns the span name for an operation. When spec span naming is
-// enabled it follows the GenAI semconv "{operation} {model}" format (dropping
-// the trailing space when the model is unknown); otherwise it returns the
-// provided gude-agents default name.
+// spanName returns defaultName, or the GenAI semconv "{operation} {model}"
+// form (operation alone when model is unknown) when spec span naming is on.
 func (h *otelHook) spanName(defaultName, operation, modelID string) string {
 	if !h.specSpanNames || operation == "" {
 		return defaultName
@@ -212,9 +182,8 @@ func (h *otelHook) spanName(defaultName, operation, modelID string) string {
 	return operation + " " + modelID
 }
 
-// genAIMessage is the structured message shape used by gen_ai.input.messages
-// and gen_ai.output.messages (a role plus typed parts), per the GenAI
-// semantic conventions.
+// genAIMessage is the structured message shape (role plus typed parts) used by
+// the gen_ai.input.messages / gen_ai.output.messages attributes.
 type genAIMessage struct {
 	Role  string      `json:"role"`
 	Parts []genAIPart `json:"parts"`
@@ -225,9 +194,8 @@ type genAIPart struct {
 	Content string `json:"content,omitempty"`
 }
 
-// encodeMessages JSON-encodes a slice of structured messages for the
-// gen_ai.input.messages / gen_ai.output.messages attributes. It returns the
-// empty string (and the caller omits the attribute) on an encoding error.
+// encodeMessages JSON-encodes the messages, returning "" on error so the
+// caller omits the attribute.
 func encodeMessages(msgs []genAIMessage) string {
 	b, err := json.Marshal(msgs)
 	if err != nil {
@@ -318,7 +286,7 @@ func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord)
 			span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentDocumentCount), record.DocumentCount))
 		}
 		if record.UserMessage != "" {
-			// Length only (not the content), so safe to record without content capture.
+			// Length only, so safe without content capture.
 			span.SetAttributes(attribute.Int(h.scheme.Key(RoleAgentUserMsgLength), len(record.UserMessage)))
 		}
 		if h.captureContent {
@@ -455,7 +423,7 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 			span.SetAttributes(attribute.String(key, OperationExecuteTool))
 		}
 		if len(record.Input) > 0 {
-			// Length only (not the payload), safe without content capture.
+			// Length only, safe without content capture.
 			span.SetAttributes(attribute.Int(h.scheme.Key(RoleToolInputLength), len(record.Input)))
 		}
 		if h.captureContent && len(record.Input) > 0 {
@@ -478,7 +446,7 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 			span.SetStatus(codes.Error, "tool result error")
 		}
 		if record.Output != "" {
-			// Length only (not the payload), safe without content capture.
+			// Length only, safe without content capture.
 			span.SetAttributes(attribute.Int(h.scheme.Key(RoleToolOutputLength), len(record.Output)))
 		}
 		if h.captureContent && record.Output != "" {

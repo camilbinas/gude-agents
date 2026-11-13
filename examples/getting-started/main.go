@@ -14,8 +14,7 @@ import (
 )
 
 func main() {
-	// Choose the model explicitly. Gude never picks one for you. This model
-	// must be available in your AWS region and account.
+	// Choose a model available in your AWS region and account.
 	provider := bedrock.Must(bedrock.GlobalClaudeSonnet5_5())
 	// agent.Agent(...) returns a *agent.Runtime. agent.New(...) is the same
 	// constructor under its original name and remains available.
@@ -24,8 +23,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// agent.NewContext configures one invocation. This agent has no
-	// conversation store, so no conversation ID is required.
+	// No conversation store, so no conversation ID is required.
 	ctx := agent.NewContext(context.Background())
 
 	result, err := a.Invoke(ctx, "Why is the sky blue?")

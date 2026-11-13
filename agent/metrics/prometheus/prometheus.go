@@ -14,8 +14,7 @@ var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.
 // Option configures the Prometheus metrics observer.
 type Option func(*prometheusHook)
 
-// otherToolName is the bucket label used for tool names not in the configured
-// allowlist (see WithToolNameAllowlist).
+// otherToolName buckets tool names outside the allowlist (see WithToolNameAllowlist).
 const otherToolName = "other"
 
 // WithNamespace sets a prefix for all metric names.
@@ -23,16 +22,10 @@ func WithNamespace(ns string) Option {
 	return func(h *prometheusHook) { h.namespace = ns }
 }
 
-// WithToolNameAllowlist bounds the cardinality of the tool_name label on the
-// agent_tool_call_total and agent_tool_call_duration_seconds metrics. Tool
-// names in the allowlist are recorded verbatim; any other name is bucketed
-// under "other".
-//
-// Prometheus keeps one time series per distinct label combination, so a
-// tool_name label fed by dynamic or user-supplied tool names (for example MCP
-// tools registered at runtime) can blow up memory. Set an allowlist to the
-// known, static tool set to keep cardinality bounded. When no allowlist is
-// configured, every tool name is recorded verbatim (unchanged behavior).
+// WithToolNameAllowlist bounds tool_name label cardinality on the tool metrics:
+// listed names are recorded verbatim, any other is bucketed under "other".
+// Use it when dynamic tool names (e.g. runtime MCP tools) would otherwise blow
+// up time-series count. With no allowlist, every name is recorded verbatim.
 func WithToolNameAllowlist(names ...string) Option {
 	return func(h *prometheusHook) {
 		h.toolNameAllowlist = make(map[string]struct{}, len(names))
@@ -215,9 +208,7 @@ func (h *prometheusHook) ObserveTool(ctx context.Context, record agent.ToolCallR
 	return ctx
 }
 
-// toolLabel returns the tool_name label value for a recorded tool call,
-// bucketing names outside the configured allowlist under "other". When no
-// allowlist is set, the name is returned unchanged.
+// toolLabel returns name, or "other" when an allowlist is set and excludes it.
 func (h *prometheusHook) toolLabel(name string) string {
 	if h.toolNameAllowlist == nil {
 		return name

@@ -46,27 +46,14 @@ var ErrStructuredOutputUnsupported = errors.New("structured output is unsupporte
 
 // --- Typed errors ---
 
-// ProviderError wraps a failure from an LLM provider call.
-//
-// Provider adapters classify the underlying SDK/transport error and populate
-// the optional fields so callers can implement backoff and failover without
-// type-asserting SDK-internal error types:
-//
-//   - StatusCode is the HTTP status code when the failure came from an HTTP
-//     response (0 when unknown, e.g. a transport/network error).
-//   - Retryable reports whether retrying the same call, or failing over to
-//     another provider, can plausibly succeed. Rate limits (429), server
-//     errors (5xx), provider throttling/overload, and network errors are
-//     retryable; client errors such as 400/401/403/404 are not.
-//   - RetryAfter is the provider-advised minimum wait before a retry, parsed
-//     from a Retry-After header when present (0 when not advised).
-//
-// Use IsRetryable to test an error anywhere in a wrapped chain.
+// ProviderError wraps a failure from an LLM provider call. Adapters set the
+// optional fields so callers can back off and fail over; use IsRetryable to
+// test an error anywhere in a wrapped chain.
 type ProviderError struct {
 	Cause      error
-	StatusCode int
-	Retryable  bool
-	RetryAfter time.Duration
+	StatusCode int           // HTTP status, 0 when unknown (e.g. network error)
+	Retryable  bool          // retry or failover can plausibly succeed
+	RetryAfter time.Duration // provider-advised wait, 0 when not advised
 }
 
 func (e *ProviderError) Error() string { return "provider error: " + e.Cause.Error() }
@@ -76,13 +63,9 @@ func (e *ProviderError) Is(target error) bool {
 	return ok
 }
 
-// IsRetryable reports whether err (or any error it wraps) is a ProviderError
-// that the adapter classified as retryable. It returns false for a nil error,
-// for an unclassified error, and for a ProviderError marked non-retryable.
-//
-// Context cancellation and deadline-exceeded errors are never retryable:
-// IsRetryable returns false for them even when wrapped in a ProviderError,
-// since no retry or failover can succeed under a done context.
+// IsRetryable reports whether err wraps a ProviderError the adapter marked
+// retryable. Context cancellation and deadline-exceeded always return false,
+// even when wrapped, since no retry can succeed under a done context.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -169,34 +152,19 @@ func (e *MaxIterationsError) Is(target error) bool {
 	return target == ErrMaxIterationsExceeded
 }
 
-// StructuredOutputError reason values. Match on these consts rather than the
-// bare strings; the set is exhaustive for StructuredOutputError.Reason.
+// StructuredOutputError.Reason values; match on these consts, not the strings.
 const (
-	// ReasonNilAgent: structured.Invoke was called with a nil *Runtime.
-	ReasonNilAgent = "nil_agent"
-	// ReasonUnsupportedCapability: the provider cannot satisfy structured
-	// output through either a named or automatic schema tool choice.
+	ReasonNilAgent              = "nil_agent"
 	ReasonUnsupportedCapability = "unsupported_capability"
-	// ReasonNoToolCall: the model returned no tool call at all.
-	ReasonNoToolCall = "no_tool_call"
-	// ReasonWrongTool: the model called a tool other than the schema tool.
-	ReasonWrongTool = "wrong_tool"
-	// ReasonSchemaValidation: the returned JSON failed schema validation.
-	ReasonSchemaValidation = "schema_validation"
-	// ReasonDeserialize: the returned JSON was invalid or failed to decode
-	// into the target type.
-	ReasonDeserialize = "deserialize"
+	ReasonNoToolCall            = "no_tool_call"
+	ReasonWrongTool             = "wrong_tool"
+	ReasonSchemaValidation      = "schema_validation"
+	ReasonDeserialize           = "deserialize"
 )
 
-// StructuredOutputError is returned when structured output fails to produce
-// a valid typed response. Reason indicates what went wrong and is one of the
-// exported Reason* consts: ReasonNilAgent, ReasonUnsupportedCapability,
-// ReasonNoToolCall, ReasonWrongTool, ReasonSchemaValidation, or
-// ReasonDeserialize.
+// StructuredOutputError is returned when structured output fails to produce a
+// valid typed response. Reason is one of the Reason* consts above.
 type StructuredOutputError struct {
-	// Reason is one of the Reason* consts: ReasonNilAgent,
-	// ReasonUnsupportedCapability, ReasonNoToolCall, ReasonWrongTool,
-	// ReasonSchemaValidation, or ReasonDeserialize.
 	Reason string
 	Cause  error // underlying error (nil for no_tool_call/wrong_tool/nil_agent)
 }

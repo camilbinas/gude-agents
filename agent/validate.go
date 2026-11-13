@@ -50,9 +50,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 		}
 	}
 
-	// Enum check. Comparison is type-aware: a JSON string never matches a
-	// JSON number (so "1" does not satisfy an enum of [1]) and numbers are
-	// compared by value, not by %v formatting (so 1e10 matches 10000000000).
+	// Enum check; comparison is type-aware (see enumEqual).
 	if enumVals, ok := schema["enum"].([]any); ok && value != nil {
 		valid := false
 		for _, ev := range enumVals {
@@ -134,12 +132,9 @@ func validateValue(schema map[string]any, value any, path string) error {
 	return nil
 }
 
-// enumEqual reports whether a decoded JSON value matches an enum candidate,
-// comparing by JSON type rather than by %v formatting. Both arguments are the
-// output of encoding/json: strings are string, numbers are float64, booleans
-// are bool, null is nil. Mismatched JSON types never compare equal (a string
-// never equals a number), numbers compare by value, and objects/arrays fall
-// back to formatted equality (enum of composite values is unusual).
+// enumEqual reports whether two encoding/json-decoded values match, comparing
+// by JSON type: mismatched types never compare equal, numbers compare by value,
+// and composites fall back to formatted equality.
 func enumEqual(a, b any) bool {
 	switch av := a.(type) {
 	case string:
@@ -154,9 +149,7 @@ func enumEqual(a, b any) bool {
 	case nil:
 		return b == nil
 	default:
-		// Composite enum values (objects, arrays) are not canonicalized by
-		// JSON decoding into a comparable form; fall back to formatted
-		// equality, which is adequate for the rare composite-enum case.
+		// Composite values (objects, arrays): formatted equality.
 		return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 	}
 }

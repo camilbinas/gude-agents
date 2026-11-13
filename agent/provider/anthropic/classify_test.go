@@ -46,13 +46,11 @@ func TestClassifyError_HTTPStatus(t *testing.T) {
 }
 
 func TestClassifyError_OverloadedIsRetryable(t *testing.T) {
-	// A 529 overloaded_error body; the type is retryable even though 529 is not
-	// caught by the generic 5xx rule until >= 500 (it is, but assert type path).
 	sdkErr := &anthropicsdk.Error{}
 	if err := sdkErr.UnmarshalJSON([]byte(`{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}`)); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	sdkErr.StatusCode = 400 // force non-retryable status to prove the type path wins
+	sdkErr.StatusCode = 400 // non-retryable status to prove the type path wins
 	pe := classifyError(sdkErr)
 	if !pe.Retryable {
 		t.Errorf("overloaded_error should be retryable even with status %d", sdkErr.StatusCode)

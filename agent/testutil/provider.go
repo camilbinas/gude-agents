@@ -1,8 +1,5 @@
-// Package testutil provides supported, public test helpers for building agents
-// in tests: MockProvider (a configurable agent.Provider) and the property-based
-// message/content generators. These are part of the module's public API and
-// follow its compatibility guarantees; depend on them from your own test
-// suites.
+// Package testutil provides public test helpers: MockProvider and the
+// property-based message/content generators.
 package testutil
 
 import (
@@ -16,19 +13,10 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// MockProvider is a configurable, concurrency-safe test implementation of
-// agent.Provider (and agent.ModelIdentifier). It is supported public API for
-// use in downstream test suites, covering the common patterns needed across
-// agent unit tests: scripted responses, request capture, streaming, delays, and
-// error injection. Configure via WithResponses, WithCapture, WithError,
-// WithDelay, WithFailFirst, WithStreamWords, and WithModelID.
-//
-// Scripted responses are returned verbatim, including their StopReason and
-// RawStopReason. When a scripted response leaves StopReason unset
-// (ModelStopUnknown), Stream fills in a sensible default so the response looks
-// like a real provider reply: ModelStopToolUse when it carries tool calls,
-// otherwise ModelStopEndTurn. Set StopReason explicitly on a response to
-// exercise other stop reasons (max_tokens, content_filter, ...).
+// MockProvider is a configurable, concurrency-safe agent.Provider (and
+// agent.ModelIdentifier) for tests. Configure via the With* options. A scripted
+// response with an unset StopReason is defaulted in Stream (ModelStopToolUse
+// when it carries tool calls, else ModelStopEndTurn).
 type MockProvider struct {
 	mu        sync.Mutex
 	responses []*agent.ModelResponse
@@ -153,8 +141,7 @@ func (p *MockProvider) Stream(ctx context.Context, req agent.ModelRequest, emit 
 	resp := p.responses[p.callIndex]
 	p.callIndex++
 
-	// Default the stop reason so the mock looks like a real provider reply,
-	// without mutating the caller's scripted response (it may be reused).
+	// Default the stop reason without mutating the caller's scripted response.
 	if resp != nil && resp.StopReason == agent.ModelStopUnknown {
 		defaulted := *resp
 		if len(defaulted.ToolCalls) > 0 {

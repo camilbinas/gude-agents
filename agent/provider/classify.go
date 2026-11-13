@@ -9,21 +9,15 @@ import (
 	"time"
 )
 
-// RetryableStatus reports whether an HTTP status code names a condition that a
-// retry or provider failover can plausibly recover from: 429 (rate limited) and
-// any 5xx server error are retryable; every other code (including client errors
-// such as 400/401/403/404) is not. A zero status is treated as "unknown" and
-// reported as not retryable by this helper alone — callers classify transport
-// errors separately via RetryableNetworkError.
+// RetryableStatus reports whether an HTTP status code is retryable: 429 and any
+// 5xx. Every other code (including a zero/unknown status) returns false.
 func RetryableStatus(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
 }
 
-// RetryableNetworkError reports whether err is a transport-level error that is
-// worth retrying: context cancellation and deadline-exceeded are never
-// retryable (no retry can succeed under a done context), while timeouts and
-// other net.Error / net.OpError transport failures are. It returns false for a
-// nil error.
+// RetryableNetworkError reports whether err is a retryable transport error.
+// net.Error / net.OpError failures are retryable; context cancellation,
+// deadline-exceeded, and a nil error are not.
 func RetryableNetworkError(err error) bool {
 	if err == nil {
 		return false
@@ -39,9 +33,8 @@ func RetryableNetworkError(err error) bool {
 	return errors.As(err, &opErr)
 }
 
-// ParseRetryAfter parses an HTTP Retry-After header value, supporting both the
-// delta-seconds form ("120") and the HTTP-date form. It returns 0 when the
-// value is empty or unparseable, or when the date is in the past.
+// ParseRetryAfter parses an HTTP Retry-After header in either delta-seconds or
+// HTTP-date form. Returns 0 when empty, unparseable, or in the past.
 func ParseRetryAfter(value string) time.Duration {
 	if value == "" {
 		return 0

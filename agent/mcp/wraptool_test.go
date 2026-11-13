@@ -10,9 +10,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// inMemoryClient wires an MCP server (with the given tools registered) to a
-// Client over an in-memory transport, so wrapTool can be exercised end to end
-// without a subprocess or network.
+// inMemoryClient wires an MCP server to a Client over an in-memory transport.
 func inMemoryClient(t *testing.T, register func(*sdkmcp.Server)) *Client {
 	t.Helper()
 	ctx := context.Background()
@@ -64,7 +62,6 @@ func TestWrapTool_SchemaConversionAndPrefix(t *testing.T) {
 	if tl.Spec.Description != "get weather" {
 		t.Errorf("description = %q", tl.Spec.Description)
 	}
-	// Schema must be converted to map[string]any with properties preserved.
 	if tl.Spec.InputSchema["type"] != "object" {
 		t.Errorf("schema type = %v, want object", tl.Spec.InputSchema["type"])
 	}
@@ -73,7 +70,6 @@ func TestWrapTool_SchemaConversionAndPrefix(t *testing.T) {
 		t.Errorf("schema properties not preserved: %v", tl.Spec.InputSchema)
 	}
 
-	// Calling the wrapped tool reaches the server under the ORIGINAL name.
 	out, err := tl.Handler(context.Background(), json.RawMessage(`{"city":"paris"}`))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -102,8 +98,6 @@ func TestWrapTool_IsErrorMapsToError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected IsError result to map to a Go error")
 	}
-	// The error wraps the tool name and the error text, and the text is still
-	// returned so callers that ignore the error can see it.
 	if !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "upstream exploded") {
 		t.Errorf("error = %v, want tool name + text", err)
 	}
@@ -148,8 +142,7 @@ func TestWrapTool_ConcurrentCallTool(t *testing.T) {
 	}
 	h := tools[0].Handler
 
-	// The single session must tolerate concurrent CallTool (verified against
-	// the SDK's jsonrpc2 multiplexing); run under -race to catch a regression.
+	// A single session must tolerate concurrent CallTool; run under -race.
 	const n = 20
 	var wg sync.WaitGroup
 	errs := make(chan error, n)

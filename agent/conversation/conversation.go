@@ -114,10 +114,8 @@ func (m *InMemory) SaveContextState(_ context.Context, id, key string, data json
 	current.revision++
 	current.data = append(json.RawMessage(nil), data...)
 	entry.contextState[key] = current
-	// Store the derived state. This never advances entry.revision, so an entry
-	// that holds only context state stays invisible to List (which filters on
-	// revision > 0); it remains reachable by explicit ID and is removed by
-	// Delete.
+	// Does not advance entry.revision, so a state-only entry stays invisible to
+	// List (which filters revision > 0) but reachable by ID and via Delete.
 	m.data[id] = entry
 	return current.revision, nil
 }
