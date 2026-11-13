@@ -160,6 +160,8 @@ func WithToolChoiceSpecific(capability agent.Capability) Option {
 
 // WithNativeStructuredOutput overrides native schema/JSON structured-output
 // support, including an explicit reset to agent.Unknown.
+//
+// Deprecated: Gude never reads NativeStructuredOutput, so this option has no effect.
 func WithNativeStructuredOutput(capability agent.Capability) Option {
 	return func(o *options) { o.capabilities.NativeStructuredOutput = capability }
 }

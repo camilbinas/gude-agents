@@ -26,15 +26,16 @@ type Option = openai.Option
 var (
 	// WithBaseURL overrides the Ollama server URL. By default, the URL is read
 	// from OLLAMA_HOST, falling back to http://localhost:11434.
-	WithBaseURL                = openai.WithBaseURL
-	WithCapabilities           = openai.WithCapabilities
-	WithContextWindowTokens    = openai.WithContextWindowTokens
-	WithMaxOutputTokens        = openai.WithMaxOutputTokens
-	WithToolUse                = openai.WithToolUse
-	WithToolChoice             = openai.WithToolChoice
-	WithToolChoiceAuto         = openai.WithToolChoiceAuto
-	WithToolChoiceRequired     = openai.WithToolChoiceRequired
-	WithToolChoiceSpecific     = openai.WithToolChoiceSpecific
+	WithBaseURL             = openai.WithBaseURL
+	WithCapabilities        = openai.WithCapabilities
+	WithContextWindowTokens = openai.WithContextWindowTokens
+	WithMaxOutputTokens     = openai.WithMaxOutputTokens
+	WithToolUse             = openai.WithToolUse
+	WithToolChoice          = openai.WithToolChoice
+	WithToolChoiceAuto      = openai.WithToolChoiceAuto
+	WithToolChoiceRequired  = openai.WithToolChoiceRequired
+	WithToolChoiceSpecific  = openai.WithToolChoiceSpecific
+	// Deprecated: Gude never reads NativeStructuredOutput, so this option has no effect.
 	WithNativeStructuredOutput = openai.WithNativeStructuredOutput
 )
 

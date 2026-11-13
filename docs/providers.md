@@ -101,7 +101,7 @@ Models that appear to be missing a value are intentionally `Unknown`. Add the va
 
 OpenAI-compatible servers (Ollama, vLLM, gateways) never consult the OpenAI catalogue, because a server can serve any model under any name, including one that looks like an OpenAI model. `openai.NewCompatible` is the constructor they share.
 
-The native structured-output column describes what can be used through the configured Gude provider, not the underlying model in isolation. This distinction is why OpenAI remains `agent.Unsupported` for `NativeStructuredOutput` until its adapter implements a native response-schema path.
+`NativeStructuredOutput` and the `WithNativeStructuredOutput` options are deprecated. Gude always produces structured output through tool calling and never reads the field.
 
 
 ## Built-ins
