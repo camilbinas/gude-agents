@@ -266,31 +266,6 @@ func (s *Store[T]) extractPK(value T) string {
 	return fmt.Sprintf("%v", v.Field(col.FieldIndex).Interface())
 }
 
-// extractValues extracts all column values from the struct in schema order.
-func (s *Store[T]) extractValues(value T) ([]any, error) {
-	v := reflect.ValueOf(value)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-
-	args := make([]any, len(s.schema.Columns))
-	for i, col := range s.schema.Columns {
-		field := v.Field(col.FieldIndex)
-		val := field.Interface()
-
-		if col.IsJSONB {
-			data, err := json.Marshal(val)
-			if err != nil {
-				return nil, fmt.Errorf("marshal jsonb field %s: %w", col.Column, err)
-			}
-			args[i] = data
-		} else {
-			args[i] = val
-		}
-	}
-	return args, nil
-}
-
 // extractInsertValues extracts column names and values for INSERT, skipping
 // PK and noinput columns when their value is zero (lets postgres DEFAULT handle them).
 func (s *Store[T]) extractInsertValues(value T) ([]string, []any, error) {

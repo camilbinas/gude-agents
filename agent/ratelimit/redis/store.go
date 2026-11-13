@@ -2,7 +2,6 @@
 package redis
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -57,6 +56,3 @@ func (s *Store) effectiveTerminal(window time.Duration) time.Duration {
 	return ttl
 }
 func validTTL(d time.Duration) bool { return d > 0 && d.Milliseconds() > 0 }
-func contextFor(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-}
