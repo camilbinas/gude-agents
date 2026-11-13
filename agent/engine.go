@@ -50,7 +50,8 @@ func (a *Runtime) Stream(ctx *Context, input string) iter.Seq2[Event, error] {
 // is yielded as a final ("", err) pair.
 //
 // The concatenation of the chunks equals Result.Text when the model emits no
-// text alongside tool calls and no output guardrail rewrites the answer. Use
+// text alongside tool calls. With output guardrails, the final answer arrives
+// as one chunk after every guardrail passes, and not at all if one fails. Use
 // Stream or Invoke when the invocation can be interrupted.
 func (a *Runtime) TextStream(ctx *Context, input string) iter.Seq2[string, error] {
 	return textProjection(a.Stream(ctx, input))
@@ -542,9 +543,17 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 		modelStart := time.Now()
 		r.emitLifecycle(EventModelStart, LifecycleEvent{Iteration: iteration})
 
+		// With output guardrails, text is held until we know whether this is
+		// the final answer, so unchecked text never reaches the caller.
+		holdText := len(a.outputGuardrails) > 0
+		var heldText []string
 		resp, err := a.callProvider(provC, modelReq, func(event ModelEvent) {
 			switch event.Type {
 			case ModelEventText:
+				if holdText {
+					heldText = append(heldText, event.Text)
+					return
+				}
 				c.emit(Event{Type: EventText, Text: &TextEvent{Content: event.Text}})
 			case ModelEventThinking:
 				c.emit(Event{Type: EventThinking, Thinking: &ThinkingEvent{Content: event.Text}})
@@ -582,6 +591,9 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 		}
 
 		if len(resp.ToolCalls) > 0 {
+			for _, chunk := range heldText {
+				c.emit(Event{Type: EventText, Text: &TextEvent{Content: chunk}})
+			}
 			assistant := toolUseMessage(resp)
 			if r.executionDurable {
 				// The canonical transcript owns all assistant text. Persist the
@@ -650,6 +662,9 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 				endIteration(0, true, gErr)
 				return Result{}, &GuardrailError{Direction: "output", Cause: gErr}
 			}
+		}
+		if holdText && finalText != "" {
+			c.emit(Event{Type: EventText, Text: &TextEvent{Content: finalText}})
 		}
 		if finalText != "" {
 			messages.appendCanonical(Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: finalText}}})
