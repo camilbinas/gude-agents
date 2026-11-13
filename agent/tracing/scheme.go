@@ -95,11 +95,26 @@ type AttributeScheme map[AttrRole]string
 // Key returns the attribute key configured for role, or the role's default
 // string value if no override is configured. Safe to call on a nil map.
 func (s AttributeScheme) Key(role AttrRole) string {
+	if role == RoleOperationName {
+		// An explicit "" disables the operation name. Before v1.10 the role
+		// itself was "", so schemes that enabled it keyed their mapping as "";
+		// honor those entries.
+		if v, ok := s[role]; ok {
+			return v
+		}
+		if v, ok := s[legacyRoleOperationName]; ok && v != "" {
+			return v
+		}
+		return string(role)
+	}
 	if v, ok := s[role]; ok && v != "" {
 		return v
 	}
 	return string(role)
 }
+
+// legacyRoleOperationName is the pre-v1.10 value of RoleOperationName.
+const legacyRoleOperationName AttrRole = ""
 
 // DefaultScheme returns the default attribute naming scheme used by
 // gude-agents. Returning an empty map relies on AttributeScheme.Key's
