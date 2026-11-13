@@ -6,7 +6,9 @@ import (
 	"github.com/camilbinas/gude-agents/agent"
 )
 
-// namedModels lists every named constructor with the canonical ID it must use.
+// namedModels lists every named constructor backed by a catalog entry with the
+// canonical ID it must use. Constructors for shut-down IDs (no catalog entry)
+// are covered separately by shutDownModels.
 var namedModels = []struct {
 	name string
 	new  func(...Option) (*OpenAIProvider, error)
@@ -16,7 +18,6 @@ var namedModels = []struct {
 	{"GPT4oMini", GPT4oMini, "gpt-4o-mini"},
 	{"GPT4_1", GPT4_1, "gpt-4.1"},
 	{"GPT4_1Mini", GPT4_1Mini, "gpt-4.1-mini"},
-	{"GPT4_1Nano", GPT4_1Nano, "gpt-4.1-nano"},
 	{"GPT5", GPT5, "gpt-5"},
 	{"GPT5Mini", GPT5Mini, "gpt-5-mini"},
 	{"GPT5Nano", GPT5Nano, "gpt-5-nano"},
@@ -33,9 +34,24 @@ var namedModels = []struct {
 	{"GPT6_1Sol", GPT6_1Sol, "gpt-6.1-sol"},
 	{"GPT6Luna", GPT6Luna, "gpt-6-luna"},
 	{"O3", O3, "o3"},
+}
+
+// shutDownModels lists constructors kept only for source compatibility. OpenAI
+// shut these IDs down, so the catalog drops them and the constructor falls back
+// to the adapter baseline.
+var shutDownModels = []struct {
+	name string
+	new  func(...Option) (*OpenAIProvider, error)
+	id   string
+}{
+	{"GPT4_1Nano", GPT4_1Nano, "gpt-4.1-nano"},
 	{"O3Mini", O3Mini, "o3-mini"},
 	{"O4Mini", O4Mini, "o4-mini"},
 }
+
+// catalogOnlyModels lists IDs that are current but have no named constructor;
+// New(id) supplies catalog metadata.
+var catalogOnlyModels = []string{"gpt-6.1-terra"}
 
 func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	for _, m := range namedModels {
@@ -61,14 +77,43 @@ func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	}
 }
 
-func TestEveryCatalogEntryHasANamedConstructor(t *testing.T) {
-	named := map[string]bool{}
+func TestShutDownConstructorsReportTheBaseline(t *testing.T) {
+	for _, m := range shutDownModels {
+		t.Run(m.name, func(t *testing.T) {
+			p, err := m.new()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.ModelID() != m.id {
+				t.Fatalf("model ID = %q, want %q", p.ModelID(), m.id)
+			}
+			if _, ok := catalog[m.id]; ok {
+				t.Fatalf("%q is shut down and must not have a catalog entry", m.id)
+			}
+			if p.Capabilities() != baselineCapabilities() {
+				t.Fatalf("capabilities = %+v, want the baseline %+v", p.Capabilities(), baselineCapabilities())
+			}
+		})
+	}
+}
+
+func TestEveryCatalogEntryIsReachable(t *testing.T) {
+	reachable := map[string]bool{}
 	for _, m := range namedModels {
-		named[m.id] = true
+		reachable[m.id] = true
+	}
+	for _, id := range catalogOnlyModels {
+		reachable[id] = true
 	}
 	for id := range catalog {
-		if !named[id] {
-			t.Errorf("catalog entry %q has no named constructor", id)
+		if !reachable[id] {
+			t.Errorf("catalog entry %q has no named constructor and is not listed as catalog-only", id)
+		}
+	}
+	// catalogOnlyModels must be present in the catalog.
+	for _, id := range catalogOnlyModels {
+		if _, ok := catalog[id]; !ok {
+			t.Errorf("catalog-only model %q is missing from the catalog", id)
 		}
 	}
 }
@@ -100,13 +145,29 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 
 func TestGPT61SolDocumentsNoToolCallingOnChatCompletions(t *testing.T) {
 	p, _ := New("gpt-6.1-sol")
-	if p.Capabilities().ToolUse != agent.Unsupported {
-		t.Fatalf("ToolUse = %v, want Unsupported through Chat Completions", p.Capabilities().ToolUse)
+	caps := p.Capabilities()
+	if caps.ToolUse != agent.Unsupported {
+		t.Fatalf("ToolUse = %v, want Unsupported through Chat Completions", caps.ToolUse)
+	}
+	// Context and output limits are published on the model page.
+	if caps.ContextWindowTokens != 1_050_000 || caps.MaxOutputTokens != 128_000 {
+		t.Fatalf("limits = %d/%d, want 1050000/128000", caps.ContextWindowTokens, caps.MaxOutputTokens)
 	}
 	// Callers can still override the documented limitation.
 	q, _ := New("gpt-6.1-sol", WithToolUse(agent.Unknown))
 	if q.Capabilities().ToolUse != agent.Unknown {
 		t.Fatal("WithToolUse(Unknown) must reset the catalog value")
+	}
+}
+
+func TestGPT61TerraDocumentsNoToolCallingOnChatCompletions(t *testing.T) {
+	p, _ := New("gpt-6.1-terra")
+	caps := p.Capabilities()
+	if caps.ToolUse != agent.Unsupported {
+		t.Fatalf("ToolUse = %v, want Unsupported through Chat Completions", caps.ToolUse)
+	}
+	if caps.ContextWindowTokens != 1_050_000 || caps.MaxOutputTokens != 128_000 {
+		t.Fatalf("limits = %d/%d, want 1050000/128000", caps.ContextWindowTokens, caps.MaxOutputTokens)
 	}
 }
 
