@@ -236,8 +236,40 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	}
 	caps := p.Capabilities()
 	if caps.ContextWindowTokens != 1_000_000 || caps.MaxOutputTokens != 64_000 || caps.ToolUse != agent.Supported ||
+		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported ||
 		caps.ToolChoice.Specific != agent.Supported || caps.NativeStructuredOutput != agent.Unsupported {
 		t.Fatalf("capabilities = %+v", caps)
+	}
+}
+
+// TestNon55ClaudeModelsSupportFullToolChoice pins the card-documented tool
+// support shared by every Claude model except the 5.5 pair.
+func TestNon55ClaudeModelsSupportFullToolChoice(t *testing.T) {
+	for _, id := range []string{
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"global.anthropic.claude-sonnet-4-6",
+		"global.anthropic.claude-sonnet-5",
+		"global.anthropic.claude-opus-4-5-20251101-v1:0",
+		"global.anthropic.claude-opus-4-6-v1",
+		"global.anthropic.claude-opus-4-7",
+		"global.anthropic.claude-opus-4-8",
+		"global.anthropic.claude-opus-5",
+		"global.anthropic.claude-fable-5",
+	} {
+		t.Run(id, func(t *testing.T) {
+			p, err := New(id, WithAPIKey("test-key"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			caps := p.Capabilities()
+			if caps.ToolUse != agent.Supported {
+				t.Fatalf("ToolUse = %v, want Supported", caps.ToolUse)
+			}
+			if caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported || caps.ToolChoice.Specific != agent.Supported {
+				t.Fatalf("ToolChoice = %+v, want all Supported", caps.ToolChoice)
+			}
+		})
 	}
 }
 
