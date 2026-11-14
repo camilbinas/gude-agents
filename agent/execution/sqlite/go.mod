@@ -3,8 +3,8 @@ module github.com/camilbinas/gude-agents/agent/execution/sqlite
 go 1.26.0
 
 require (
-	github.com/camilbinas/gude-agents v1.10.0
-	github.com/camilbinas/gude-agents/agent/execution v1.10.0
+	github.com/camilbinas/gude-agents v1.12.0
+	github.com/camilbinas/gude-agents/agent/execution v1.12.0
 	modernc.org/sqlite v1.37.1
 )
 

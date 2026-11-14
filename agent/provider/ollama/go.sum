@@ -1,9 +1,9 @@
-github.com/camilbinas/gude-agents v1.11.0 h1:2D9+t/T1j76/xfcHbEhddjzFcFrJAZRzS/NMKTMISos=
-github.com/camilbinas/gude-agents v1.11.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
-github.com/camilbinas/gude-agents/agent/provider/openai v1.11.0 h1:0o6skObATmM1YgYLOpsE/Ku3Or8+Al8Rd0l7InFb8KU=
-github.com/camilbinas/gude-agents/agent/provider/openai v1.11.0/go.mod h1:s2LVOuHBS+ApFVtTS+PXEMy5t6R8YVoXJxdoVl8baKI=
-github.com/camilbinas/gude-agents/agent/rag/openai v1.11.0 h1:KabnDjGNkDqBB05D87BVMuYymGLhecfmCLHZHryxvSw=
-github.com/camilbinas/gude-agents/agent/rag/openai v1.11.0/go.mod h1:no8A28n87Qce2hRzGCW98DviaTvho1xBBIOKt+ZSK3g=
+github.com/camilbinas/gude-agents v1.12.0 h1:+VXRsmSyqxvkEEX83JAno19kSQFjOvzcwZwco8QOWXY=
+github.com/camilbinas/gude-agents v1.12.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents/agent/provider/openai v1.12.0 h1:tdeC+819RB0MFi2W9cXQDFuZsuPxN9s/cdFJSL/qtEc=
+github.com/camilbinas/gude-agents/agent/provider/openai v1.12.0/go.mod h1:Jlcrjh3EkYlCnvafADC/wUKM5z1VI6yMd89S8nYByQM=
+github.com/camilbinas/gude-agents/agent/rag/openai v1.12.0 h1:3fGfkHEqbpTetkmqYKIZlOtLU9ZnGArG831KL72uNq8=
+github.com/camilbinas/gude-agents/agent/rag/openai v1.12.0/go.mod h1:kJltCJy3kMsxPSeOXTfNhgnGtWit7qpBQAlcugqjWzI=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/openai/openai-go/v3 v3.31.0 h1:3KxL3H+gw6vBkBW6dmcwhbFqP4kyMgmaWTsuRheyF8w=
