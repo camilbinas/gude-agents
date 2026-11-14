@@ -175,6 +175,20 @@ func TestStructuredRetry_ConfigurableCount(t *testing.T) {
 	if len(p.calls) != 3 {
 		t.Fatalf("want 3 attempts, got %d", len(p.calls))
 	}
+	seen := map[string]bool{}
+	for _, m := range p.calls[2].Messages {
+		for _, b := range m.Content {
+			if tu, ok := b.(ToolUseBlock); ok {
+				if seen[tu.ToolUseID] {
+					t.Fatalf("duplicate tool-use ID %q in retry feedback", tu.ToolUseID)
+				}
+				seen[tu.ToolUseID] = true
+			}
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("want 2 feedback tool uses before the third attempt, got %d", len(seen))
+	}
 }
 
 // --- native path ---

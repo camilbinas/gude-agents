@@ -119,7 +119,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 		if attempt >= attempts || !retryableStructuredError(err, &soErr) {
 			return Result{}, err
 		}
-		feedback = append(feedback, structuredFeedback(native, soErr, rawText)...)
+		feedback = append(feedback, structuredFeedback(native, soErr, rawText, attempt)...)
 	}
 }
 
@@ -140,7 +140,7 @@ func retryableStructuredError(err error, dst **StructuredOutputError) bool {
 // structuredFeedback builds the turns that report a failed attempt back to the
 // model. The tool path echoes the attempt's tool call and a tool_result error;
 // the native path uses a plain assistant/user exchange.
-func structuredFeedback(native bool, soErr *StructuredOutputError, rawText string) []Message {
+func structuredFeedback(native bool, soErr *StructuredOutputError, rawText string, attempt int) []Message {
 	msg := "The previous response did not produce valid structured output: " + soErr.Error() + ". Respond again, correcting the error."
 	if native {
 		return []Message{
@@ -148,7 +148,8 @@ func structuredFeedback(native bool, soErr *StructuredOutputError, rawText strin
 			{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}},
 		}
 	}
-	callID := "structured_output_retry"
+	// Providers reject duplicate tool-use IDs, so each failed attempt gets its own.
+	callID := fmt.Sprintf("structured_output_retry_%d", attempt)
 	var assistant ContentBlock = ToolUseBlock{ToolUseID: callID, Name: structuredOutputToolName, Input: json.RawMessage(rawText)}
 	if !json.Valid([]byte(rawText)) {
 		assistant = TextBlock{Text: rawText}
