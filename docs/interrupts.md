@@ -88,6 +88,21 @@ The Agent commits canonical conversation changes before recording `Paused` execu
 
 The Agent keeps no process-local pause state. If a run needs to pause (approval or human input) and either store is missing, it returns `agent.ErrPauseStorageRequired` instead of creating a pause that could not be resumed. Resuming without both stores returns the same error. The same rule applies to a child agent used through `AgentAsTool`: a child pause is not propagated to the parent, and a child without both stores cannot pause at all.
 
+## Snapshot and restore
+
+A pause normally lives in two stores. For a small setup that pauses in one process and resumes in another, `Snapshot` serializes a pause as one portable value and `Restore` loads it back:
+
+```go
+blob, err := a.Snapshot(ctx, interrupt) // []byte: the Execution plus the transcript it points at
+// ... hand blob to another process, a queue, a file ...
+in, err := a.Restore(ctx, blob)         // loads it into this Runtime's stores
+result, err := a.Resume(agent.NewContext(ctx), in, agent.Approve())
+```
+
+The blob bundles the paused `Execution` record with the canonical messages its cursor references, carries a `format` version, and is checksummed. `Restore` rejects a blob that is empty or of an unknown format (`agent.ErrSnapshotFormat`), whose checksum or cursor does not match or whose execution is not a resumable pause (`agent.ErrSnapshotIntegrity`), and a conversation that already exists with different history (`agent.ErrConversationConflict`). It writes create-only, so a duplicate ID conflicts rather than overwriting; `Snapshot`/`Restore` never weaken the CAS guarantees of a real store.
+
+For a single process without explicit stores, build the Runtime with `agent.WithImplicitPauseStores()`: it configures process-local in-memory stores so the agent can pause, snapshot and restore. State is lost on exit; configure durable stores when a pause must survive a restart. Without any pause stores, `Snapshot`/`Restore` return `agent.ErrSnapshotStoreRequired`.
+
 ### Frontend version safety
 
 A UI must submit a decision against the `ExecutionVersion` displayed with the pause. Never reload a newer pause and silently apply an answer that was reviewed for an older version. HTTP/API handlers should load the pause, compare the submitted version, return `409 Conflict` on mismatch, then call `Resume`; the execution CAS remains the final race-safe guard.
