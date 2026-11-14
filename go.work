@@ -9,6 +9,7 @@ use (
 	./agent/execution/dynamodb
 	./agent/execution/postgres
 	./agent/execution/redis
+	./agent/execution/sqlite
 	./agent/logging/debug
 	./agent/logging/slog
 	./agent/mcp
