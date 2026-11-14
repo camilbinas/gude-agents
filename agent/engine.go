@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -1572,6 +1573,9 @@ func (r *run) pendingInterrupt(outcomes []toolOutcome, calls []tool.Call) *Inter
 				}
 			}
 			in := *outcomes[i].humanInput
+			if in.Tool == "" {
+				in.Tool = calls[i].Name
+			}
 			return &Interrupt{Type: InterruptHumanInput, Input: &in}
 		}
 	}
@@ -1644,6 +1648,31 @@ func (r *run) exposeInterrupt(in *Interrupt, err error) (Result, error) {
 	return Result{StopReason: StopInterrupt, Interrupt: in}, err
 }
 
+// resolveTypedAnswer validates a RespondWith value against the pause schema,
+// then runs the pausing tool's resume handler to produce the message appended
+// to the transcript. Validation also runs in validateResume; repeating it here
+// keeps a bad typed answer from reaching a handler on the durable path.
+func (r *run) resolveTypedAnswer(c *Context, in *Interrupt, resp ResumeResponse) (string, error) {
+	if in.Input == nil || len(in.Input.Schema) == 0 {
+		return "", &ResumeValidationError{Cause: errors.New("human_input interrupt has no answer schema")}
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(in.Input.Schema, &schema); err != nil {
+		return "", &ResumeValidationError{Cause: fmt.Errorf("decode answer schema: %w", err)}
+	}
+	if err := ValidateToolInput(schema, resp.typed); err != nil {
+		return "", &ResumeValidationError{Cause: err}
+	}
+	_, available := r.a.visibleTools(c)
+	t, ok := available[in.Input.Tool]
+	if !ok || t.ResumeHandler() == nil {
+		// No handler available (e.g. tool not registered here): fall back to the
+		// raw JSON, so the run still continues deterministically.
+		return string(resp.typed), nil
+	}
+	return t.ResumeHandler()(c, resp.typed)
+}
+
 // resumeTurn continues an interrupted invocation (response already validated).
 func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
@@ -1685,6 +1714,12 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	switch in.Type {
 	case InterruptHumanInput:
 		msg := resp.text
+		if resp.kind == resumeRespondTyped {
+			msg, err = r.resolveTypedAnswer(c, in, resp)
+			if err != nil {
+				return Result{}, err
+			}
+		}
 		for _, g := range a.inputGuardrails {
 			gC, gf := r.h.onGuardrailStart(c, "input", msg)
 			msg, err = g(gC, msg)

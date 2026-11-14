@@ -46,15 +46,23 @@ type ApprovalCall struct {
 type InputInterrupt struct {
 	Reason   string `json:"reason"`
 	Question string `json:"question"`
+	// Tool is the name of the pausing tool; set for a NewHumanInput[R] pause so
+	// resume can dispatch the typed answer to its handler.
+	Tool string `json:"tool,omitempty"`
+	// Schema is the JSON schema of the typed answer R expected by a
+	// NewHumanInput[R] tool, so a UI can render a form. Empty for a free-text
+	// NewHumanInputTool pause.
+	Schema json.RawMessage `json:"schema,omitempty"`
 }
 
 // ResumeResponse is the human answer to an Interrupt. Build it with Approve,
-// Deny, Decide, or Respond.
+// Deny, Decide, Respond, or RespondWith.
 type ResumeResponse struct {
 	kind      resumeKind
 	decision  tool.Decision
 	decisions map[string]tool.Decision
 	text      string
+	typed     json.RawMessage
 }
 type resumeKind int
 
@@ -63,6 +71,7 @@ const (
 	resumeAll
 	resumeDecide
 	resumeRespond
+	resumeRespondTyped
 )
 
 func Approve() ResumeResponse { return ResumeResponse{kind: resumeAll, decision: tool.Allow()} }
@@ -77,6 +86,29 @@ func Decide(decisions map[string]tool.Decision) ResumeResponse {
 	return ResumeResponse{kind: resumeDecide, decisions: cp}
 }
 func Respond(text string) ResumeResponse { return ResumeResponse{kind: resumeRespond, text: text} }
+
+// RespondWith answers a human_input interrupt with a typed value. Resume
+// marshals v to JSON and validates it against the interrupt's Input.Schema
+// before the run continues; a schema-invalid value returns a
+// *ResumeValidationError and leaves the run paused. Use it with a
+// NewHumanInput[R] tool.
+func RespondWith(v any) ResumeResponse {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return ResumeResponse{kind: resumeRespondTyped, typed: nil, text: err.Error()}
+	}
+	return ResumeResponse{kind: resumeRespondTyped, typed: raw}
+}
+
+// ResumeValidationError reports that a RespondWith value failed validation
+// against the interrupt's answer schema. The run stays paused; fix the value
+// and call Resume again.
+type ResumeValidationError struct{ Cause error }
+
+func (e *ResumeValidationError) Error() string {
+	return "resume: typed answer failed schema validation: " + e.Cause.Error()
+}
+func (e *ResumeValidationError) Unwrap() error { return e.Cause }
 
 // ErrInterruptNotFound is retained as the public projection error returned
 // when a requested execution is absent or not currently paused.
@@ -153,16 +185,36 @@ func validateResume(in *Interrupt, r ResumeResponse) error {
 				}
 			}
 			return nil
-		case resumeRespond:
-			return fmt.Errorf("resume: Respond is only valid for human_input interrupts")
+		case resumeRespond, resumeRespondTyped:
+			return fmt.Errorf("resume: Respond/RespondWith are only valid for human_input interrupts")
 		default:
 			return fmt.Errorf("resume: empty response")
 		}
 	case InterruptHumanInput:
-		if r.kind != resumeRespond {
-			return fmt.Errorf("resume: human_input interrupts require Respond")
+		switch r.kind {
+		case resumeRespond:
+			if in.Input != nil && len(in.Input.Schema) != 0 {
+				return fmt.Errorf("resume: this human_input interrupt expects a typed answer; use RespondWith")
+			}
+			return nil
+		case resumeRespondTyped:
+			if in.Input == nil || len(in.Input.Schema) == 0 {
+				return fmt.Errorf("resume: this human_input interrupt expects free text; use Respond")
+			}
+			if r.typed == nil {
+				return &ResumeValidationError{Cause: fmt.Errorf("marshal typed answer: %s", r.text)}
+			}
+			var schema map[string]any
+			if err := json.Unmarshal(in.Input.Schema, &schema); err != nil {
+				return &ResumeValidationError{Cause: fmt.Errorf("decode answer schema: %w", err)}
+			}
+			if err := ValidateToolInput(schema, r.typed); err != nil {
+				return &ResumeValidationError{Cause: err}
+			}
+			return nil
+		default:
+			return fmt.Errorf("resume: human_input interrupts require Respond or RespondWith")
 		}
-		return nil
 	default:
 		return fmt.Errorf("resume: unknown interrupt type %q", in.Type)
 	}
@@ -197,4 +249,51 @@ func NewHumanInputTool(name, description string) tool.Tool {
 		c.call.setHumanInput(&InputInterrupt{Reason: p.Reason, Question: p.Question})
 		return humanInputPausedResult, nil
 	})
+}
+
+// NewHumanInput pauses a run to ask a human for a typed answer of type R, like
+// NewHumanInputTool but with a schema. The pause carries GenerateSchema[R] in
+// Interrupt.Input.Schema so a UI can render a form; resume the run with
+// RespondWith(R). On resume the typed value is validated against R's schema
+// and handler receives it, and handler's result becomes the tool's output.
+func NewHumanInput[R any](name, description string, handler func(ctx *Context, answer R) (string, error)) tool.Tool {
+	base := "Pause execution and ask a human for a typed answer. Use when you need a structured decision you cannot determine on your own."
+	if description != "" {
+		base += " " + description
+	}
+	promptSchema := map[string]any{"type": "object", "properties": map[string]any{"reason": map[string]any{"type": "string", "description": "Why you need human input"}, "question": map[string]any{"type": "string", "description": "The specific question or request for the human"}}, "required": []string{"reason", "question"}}
+	answerSchema := tool.GenerateSchema[R]()
+	answerSchemaRaw, _ := json.Marshal(answerSchema)
+
+	resume := func(ctx context.Context, raw json.RawMessage) (string, error) {
+		var answer R
+		if err := json.Unmarshal(raw, &answer); err != nil {
+			return "", fmt.Errorf("decode typed answer: %w", err)
+		}
+		c := FromContext(ctx)
+		if c == nil {
+			return "", fmt.Errorf("human input resume must run inside an agent context")
+		}
+		if handler == nil {
+			return string(raw), nil
+		}
+		return handler(c, answer)
+	}
+
+	pause := func(ctx context.Context, input json.RawMessage) (string, error) {
+		var p struct {
+			Reason   string `json:"reason"`
+			Question string `json:"question"`
+		}
+		if err := json.Unmarshal(input, &p); err != nil {
+			return "", fmt.Errorf("invalid human input request: %w", err)
+		}
+		c := FromContext(ctx)
+		if c == nil || c.call == nil {
+			return "", fmt.Errorf("human input tool must run inside an agent tool call")
+		}
+		c.call.setHumanInput(&InputInterrupt{Reason: p.Reason, Question: p.Question, Schema: cloneRaw(answerSchemaRaw)})
+		return humanInputPausedResult, nil
+	}
+	return tool.NewRaw(name, base, promptSchema, pause, tool.WithResumeHandler(answerSchema, resume))
 }

@@ -153,6 +153,27 @@ type Tool struct {
 	needsApproval bool
 	replaySafe    bool
 	rolePolicy    *rolePolicy
+
+	answerSchema map[string]any
+	resume       func(context.Context, json.RawMessage) (string, error)
+}
+
+// WithResumeHandler attaches a typed-answer schema and a resume adapter to a
+// tool. It is exported for agent adapters that build typed human-input tools;
+// applications use agent.NewHumanInput instead.
+func WithResumeHandler(answerSchema map[string]any, resume func(context.Context, json.RawMessage) (string, error)) Option {
+	return func(t *Tool) {
+		t.answerSchema = answerSchema
+		t.resume = resume
+	}
+}
+
+// AnswerSchema returns the typed-answer schema of a human-input tool, or nil.
+func (t Tool) AnswerSchema() map[string]any { return t.answerSchema }
+
+// ResumeHandler returns the resume adapter of a human-input tool, or nil.
+func (t Tool) ResumeHandler() func(context.Context, json.RawMessage) (string, error) {
+	return t.resume
 }
 
 // RequiresApproval marks a tool as requiring human approval before execution.
