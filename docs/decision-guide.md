@@ -19,7 +19,7 @@ Consume streams through `EventEnd` when the completed turn must persist. Breakin
 | Multi-turn transcript | `ConversationStore` with `Context.WithConversationID` |
 | User facts across conversations | `memory.Memory[T]` with identity/strict scope |
 | Searchable knowledge | `rag.Store` + `rag.Retriever` |
-| Cross-process paused runs | Durable `ConversationStore` + durable `ExecutionStore` (`agent/execution/postgres`, `redis`, or `dynamodb`) |
+| Cross-process paused runs | Durable `ConversationStore` + durable `ExecutionStore` (`agent/execution/sqlite`, `postgres`, `redis`, or `dynamodb`) |
 
 Conversation stores protect writes with revisions. Memory and RAG solve different problems and should not be substituted for transcript persistence.
 

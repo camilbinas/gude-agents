@@ -56,7 +56,7 @@ An interrupt is a projection of a paused `Execution`, not an independently persi
 conversations := conversation.NewInMemory()
 executions := execution.NewMemory()
 
-// Durable: pgexec "…/agent/execution/postgres", or the redis / dynamodb packages.
+// Durable: sqliteexec "…/agent/execution/sqlite", pgexec "…/agent/execution/postgres", or the redis / dynamodb packages.
 executions = pgexec.New(pool)
 
 a, err := agent.New(prov, instructions,
