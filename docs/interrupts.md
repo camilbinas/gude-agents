@@ -101,7 +101,16 @@ result, err := a.Resume(agent.NewContext(ctx), in, agent.Approve())
 
 The blob bundles the paused `Execution` record with the canonical messages its cursor references, carries a `format` version, and is checksummed. `Restore` rejects a blob that is empty or of an unknown format (`agent.ErrSnapshotFormat`), whose checksum or cursor does not match or whose execution is not a resumable pause (`agent.ErrSnapshotIntegrity`), and a conversation that already exists with different history (`agent.ErrConversationConflict`). It writes create-only, so a duplicate ID conflicts rather than overwriting; `Snapshot`/`Restore` never weaken the CAS guarantees of a real store.
 
-For a single process without explicit stores, build the Runtime with `agent.WithImplicitPauseStores()`: it configures process-local in-memory stores so the agent can pause, snapshot and restore. State is lost on exit; configure durable stores when a pause must survive a restart. Without any pause stores, `Snapshot`/`Restore` return `agent.ErrSnapshotStoreRequired`.
+In-memory stores are enough on both sides, because the blob carries the state:
+
+```go
+a, err := agent.Agent(provider, instructions,
+    agent.WithConversationStore(conversation.NewInMemory()),
+    agent.WithExecutionStore(execution.NewMemory()),
+)
+```
+
+Without both stores, `Snapshot` and `Restore` return `agent.ErrSnapshotStoreRequired`.
 
 ### Frontend version safety
 

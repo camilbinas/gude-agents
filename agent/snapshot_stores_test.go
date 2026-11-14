@@ -151,3 +151,13 @@ func cloneMessages(msgs []Message) []Message {
 	}
 	return cp
 }
+
+// withTestPauseStores gives a Runtime fresh in-memory conversation and
+// execution stores.
+func withTestPauseStores() Option {
+	return func(a *Runtime) error {
+		a.conversation = newSnapshotConvStore()
+		a.executionStore = newSnapshotExecStore()
+		return nil
+	}
+}

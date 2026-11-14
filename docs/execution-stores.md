@@ -80,7 +80,7 @@ a, err := agent.New(
 
 A pause that must survive a restart needs both halves to be durable: a durable `ConversationStore` for the transcript and a durable execution store for the paused state. A durable execution store with an in-memory conversation store loses the transcript the execution points at.
 
-For a small single-process setup that pauses in one process and resumes in another without configuring both stores, `Runtime.Snapshot` / `Runtime.Restore` bundle the execution record and the transcript it points at into one portable, versioned blob; `agent.WithImplicitPauseStores()` provides process-local in-memory stores for that path. See [Snapshot and restore](interrupts.md#snapshot-and-restore).
+To move a pause between processes without a shared durable store, `Runtime.Snapshot` / `Runtime.Restore` bundle the execution record and the transcript it points at into one versioned blob; in-memory stores are enough on both sides. See [Snapshot and restore](interrupts.md#snapshot-and-restore).
 
 The two stores commit independently. The engine appends messages first and then records the returned cursor in the execution, so a crash between them is repaired by `RecoverExecution` rather than rolled back. This is an ordering protocol, not a distributed transaction.
 

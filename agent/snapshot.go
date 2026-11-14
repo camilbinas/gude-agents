@@ -23,9 +23,8 @@ var ErrSnapshotFormat = errors.New("agent: unrecognized or unsupported snapshot 
 var ErrSnapshotIntegrity = errors.New("agent: snapshot integrity check failed")
 
 // ErrSnapshotStoreRequired is returned by Snapshot or Restore when the Runtime
-// has no pause stores. Configure them with WithConversationStore and
-// WithExecutionStore, or with WithImplicitPauseStores for a single process.
-var ErrSnapshotStoreRequired = errors.New("agent: Snapshot/Restore require both a ConversationStore and an ExecutionStore; use WithConversationStore and WithExecutionStore, or WithImplicitPauseStores")
+// has no ConversationStore or no ExecutionStore.
+var ErrSnapshotStoreRequired = errors.New("agent: Snapshot/Restore require both a ConversationStore and an ExecutionStore")
 
 // snapshotBlob is the self-describing envelope serialized by Snapshot. It
 // bundles the paused Execution record with the canonical conversation messages
@@ -98,9 +97,8 @@ func (a *Runtime) Snapshot(ctx context.Context, in *Interrupt) ([]byte, error) {
 // a conflict rather than overwriting, so Restore never weakens the CAS
 // guarantees of a real store.
 //
-// The destination stores need not be the ones that produced the blob; they need
-// only satisfy the same contracts. With WithImplicitPauseStores and no explicit
-// stores, Restore targets the Runtime's process-local in-memory stores.
+// The destination stores need not be the ones that produced the blob; in-memory
+// stores (conversation.NewInMemory, execution.NewMemory) are enough.
 func (a *Runtime) Restore(ctx context.Context, blob []byte) (*Interrupt, error) {
 	if a.conversation == nil || a.executionStore == nil {
 		return nil, ErrSnapshotStoreRequired

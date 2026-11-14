@@ -152,22 +152,6 @@ func WithExecutionStore(store ExecutionStore) Option {
 	}
 }
 
-// WithImplicitPauseStores configures process-local, in-memory conversation and
-// execution stores so a small single-process setup can pause, Snapshot and
-// Restore without wiring up explicit stores. State is lost when the process
-// exits; for durability configure real stores instead. It is rejected when a
-// ConversationStore or ExecutionStore is already configured.
-func WithImplicitPauseStores() Option {
-	return func(a *Runtime) error {
-		if a.conversation != nil || a.executionStore != nil {
-			return fmt.Errorf("WithImplicitPauseStores conflicts with a configured ConversationStore or ExecutionStore")
-		}
-		a.conversation = newSnapshotConvStore()
-		a.executionStore = newSnapshotExecStore()
-		return nil
-	}
-}
-
 // WithContextManager configures a model-context projection. It is applied after
 // canonical range loading and before every provider call; it never changes the
 // append-only conversation log. A ContextManager can use durable

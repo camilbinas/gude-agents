@@ -121,18 +121,17 @@ func TestSnapshotRestore_HumanInputRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSnapshotRestore_ImplicitStores exercises the single-process path where no
-// explicit stores are configured.
-func TestSnapshotRestore_ImplicitStores(t *testing.T) {
+// Two runtimes with separate in-memory stores: the blob is the only link.
+func TestSnapshotRestore_SeparateMemoryStores(t *testing.T) {
 	provider := newScriptedProvider(
 		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "tc-1", Name: "delete_order", Input: json.RawMessage(`{"order_id":"ORD-1"}`)}}},
 		&ModelResponse{Text: "done"},
 	)
-	src, err := New(provider, "helpful", WithImplicitPauseStores(), WithTools(deleteOrderTool()))
+	src, err := New(provider, "helpful", withTestPauseStores(), WithTools(deleteOrderTool()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := mustInterrupt(t, src, Background().WithConversationID("implicit"), "delete order 1")
+	in := mustInterrupt(t, src, Background().WithConversationID("separate"), "delete order 1")
 
 	blob, err := src.Snapshot(context.Background(), in)
 	if err != nil {
@@ -141,7 +140,7 @@ func TestSnapshotRestore_ImplicitStores(t *testing.T) {
 
 	dst, err := New(
 		newScriptedProvider(&ModelResponse{Text: "done"}),
-		"helpful", WithImplicitPauseStores(), WithTools(deleteOrderTool()),
+		"helpful", withTestPauseStores(), WithTools(deleteOrderTool()),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -169,17 +168,9 @@ func TestSnapshot_StoreRequired(t *testing.T) {
 	}
 }
 
-// TestWithImplicitPauseStores_Conflicts rejects combining implicit stores with
-// explicit ones.
-func TestWithImplicitPauseStores_Conflicts(t *testing.T) {
-	if _, err := New(newScriptedProvider(), "x", WithConversationStore(newTestMemoryStore()), WithImplicitPauseStores()); err == nil {
-		t.Fatal("WithImplicitPauseStores with a ConversationStore should fail")
-	}
-}
-
 // TestRestore_RejectsUnknownFormat verifies the format gate.
 func TestRestore_RejectsUnknownFormat(t *testing.T) {
-	dst, err := New(newScriptedProvider(), "x", WithImplicitPauseStores())
+	dst, err := New(newScriptedProvider(), "x", withTestPauseStores())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +197,7 @@ func TestRestore_RejectsTamperedChecksum(t *testing.T) {
 	if bytes.Equal(tampered, blob) {
 		t.Fatal("tamper did not change the blob")
 	}
-	dst, err := New(newScriptedProvider(), "x", WithImplicitPauseStores(), WithTools(deleteOrderTool()))
+	dst, err := New(newScriptedProvider(), "x", withTestPauseStores(), WithTools(deleteOrderTool()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +215,7 @@ func TestRestore_RejectsNonPause(t *testing.T) {
 	blob.Checksum = snapshotChecksum(blob)
 	raw, _ := json.Marshal(blob)
 
-	dst, err := New(newScriptedProvider(), "x", WithImplicitPauseStores())
+	dst, err := New(newScriptedProvider(), "x", withTestPauseStores())
 	if err != nil {
 		t.Fatal(err)
 	}
