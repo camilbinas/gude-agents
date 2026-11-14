@@ -28,10 +28,12 @@
 //	    agent.WithExecutionStore(executions),
 //	)
 //
-// The conversation and execution stores can share one database file. Import
-// this package with an alias when you also use the SQLite conversation store:
+// The conversation and execution stores can share one database file. Open sets
+// up both halves on one file and yields their agent options in one call:
 //
-//	sqliteexec "github.com/camilbinas/gude-agents/agent/execution/sqlite"
+//	stores, err := sqlite.Open("file:agent.db")
+//	defer stores.Close()
+//	a, err := agent.Agent(provider, instructions, stores.Options()...)
 package sqlite
 
 import (
@@ -40,7 +42,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/camilbinas/gude-agents/agent"
 	"github.com/camilbinas/gude-agents/agent/execution/internal/record"
@@ -64,7 +65,7 @@ func New(dsn string, opts ...Option) (*Store, error) {
 	if dsn == "" {
 		return nil, errors.New("execution/sqlite: dsn is required")
 	}
-	cfg := config{table: defaultTable, busyTimeout: 5 * time.Second}
+	cfg := config{table: defaultTable, busyTimeout: defaultBusyTimeout}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
