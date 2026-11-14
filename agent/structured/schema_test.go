@@ -89,6 +89,7 @@ func TestInvokeValidatesGuardrailRewrittenOutput(t *testing.T) {
 	provider.response.Usage = agent.TokenUsage{InputTokens: 4, OutputTokens: 2}
 	a, err := agent.New(provider, "sys",
 		agent.WithConversationStore(store),
+		agent.WithStructuredOutputRetries(0), // assert one provider call's usage
 		agent.WithOutputGuardrail(func(_ *agent.Context, _ string) (string, error) {
 			return `{"count":1}`, nil // drops the required "name"
 		}),
