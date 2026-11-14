@@ -48,6 +48,30 @@ result, err := a.Resume(ctx, interrupt, agent.Respond("Use account ACME-42"))
 
 Approval responses are valid only for approval interrupts; `Respond` is valid only for human-input interrupts. Use `ResumeStream` when the continued run must emit application events.
 
+## Typed human input
+
+`agent.NewHumanInput[R]` asks for a typed answer of type `R` instead of free text. The pause carries `R`'s JSON schema in `Interrupt.Input.Schema`, so a UI can render a form, and resume with `agent.RespondWith`:
+
+```go
+type Review struct {
+    Approved bool   `json:"approved" required:"true"`
+    Edited   string `json:"edited"`
+}
+
+askReview := agent.NewHumanInput("ask_review", "approve or edit the draft",
+    func(ctx *agent.Context, r Review) (string, error) {
+        if !r.Approved {
+            return "Human rejected the draft.", nil
+        }
+        return "Human approved: " + r.Edited, nil
+    })
+
+// ... run pauses with InterruptHumanInput; in.Input.Schema is R's schema ...
+result, err := a.Resume(ctx, in, agent.RespondWith(Review{Approved: true, Edited: "final"}))
+```
+
+`RespondWith` marshals the value and validates it against `in.Input.Schema` (the framework's [supported JSON Schema subset](structured-output.md)) before the run continues. A schema-invalid answer returns an `*agent.ResumeValidationError` and leaves the run paused, so the caller can fix the value and resume again. On a valid answer the handler receives the typed `R` and its result is appended to the transcript. The schema and the pending answer survive `ExecutionStore` persistence and `Snapshot`/`Restore`. Resume a typed pause with `RespondWith`, not `Respond`; the free-text `NewHumanInputTool` is unchanged and still resumes with `Respond`.
+
 ## Execution pauses
 An interrupt is a projection of a paused `Execution`, not an independently persisted record. There is one persistence model: configure an `ExecutionStore` together with a canonical `ConversationStore`. The package `agent/execution` provides the stores:
 
