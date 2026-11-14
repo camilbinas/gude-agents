@@ -156,7 +156,7 @@ func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	}
 }
 
-func TestEveryCatalogEntryIsReachableThroughANamedConstructor(t *testing.T) {
+func TestEveryCatalogEntryIsReachableThroughANamedConstructorOrCatalogOnly(t *testing.T) {
 	reached := map[string]bool{}
 	for _, m := range namedModels {
 		if _, ok := lookupProfile(m.id); ok {
@@ -168,8 +168,37 @@ func TestEveryCatalogEntryIsReachableThroughANamedConstructor(t *testing.T) {
 		}
 	}
 	for id := range catalog {
-		if !reached[id] {
-			t.Errorf("catalog entry %q is not used by any named constructor", id)
+		if reached[id] || catalogOnlyModels[id] {
+			continue
+		}
+		t.Errorf("catalog entry %q has no named constructor and is not listed in catalogOnlyModels", id)
+	}
+}
+
+// TestCatalogOnlyModelsAreCatalogOnly verifies each catalog-only ID is in the
+// catalog, is constructible through New, and has no named constructor.
+func TestCatalogOnlyModelsAreCatalogOnly(t *testing.T) {
+	named := map[string]bool{}
+	for _, m := range namedModels {
+		named[m.id] = true
+		if _, rest, ok := strings.Cut(m.id, "."); ok {
+			named[rest] = true
+		}
+	}
+	for id := range catalogOnlyModels {
+		if _, ok := catalog[id]; !ok {
+			t.Errorf("catalogOnlyModels lists %q, which is not in the catalog", id)
+		}
+		if named[id] {
+			t.Errorf("catalogOnlyModels lists %q, but a named constructor uses it", id)
+		}
+		p, err := New(id, WithAPIKey("test-key"))
+		if err != nil {
+			t.Errorf("New(%q) failed: %v", id, err)
+			continue
+		}
+		if p.Capabilities() == baselineCapabilities() {
+			t.Errorf("catalog-only %q reports only the baseline; its entry is not wired up", id)
 		}
 	}
 }
@@ -236,8 +265,94 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 	}
 	caps := p.Capabilities()
 	if caps.ContextWindowTokens != 1_000_000 || caps.MaxOutputTokens != 64_000 || caps.ToolUse != agent.Supported ||
-		caps.ToolChoice.Specific != agent.Supported || caps.NativeStructuredOutput != agent.Unsupported {
+		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported ||
+		caps.ToolChoice.Specific != agent.Supported || caps.NativeStructuredOutput != agent.Supported {
 		t.Fatalf("capabilities = %+v", caps)
+	}
+}
+
+// TestNativeStructuredOutputMatchesModelCards pins which catalog models report
+// native structured output as Supported. Flags mirror each model's Bedrock
+// model card: Claude, Nova, and the documented OpenAI/Qwen/Z.AI/xAI entries
+// list Structured outputs on bedrock-runtime; gpt-oss-120b, the undocumented
+// catalog-only gpt-5.x / gpt-6.1-terra, and the Kimi K3 entries do not, so they
+// keep the Unsupported baseline that leaves unknown models on the tool path.
+func TestNativeStructuredOutputMatchesModelCards(t *testing.T) {
+	supported := []string{
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"global.anthropic.claude-sonnet-4-6",
+		"global.anthropic.claude-sonnet-5-5",
+		"global.anthropic.claude-opus-5-5",
+		"global.anthropic.claude-fable-5",
+		"anthropic.claude-haiku-5-5",
+		"openai.gpt-oss-20b-1:0",
+		"global.openai.gpt-6-astra",
+		"us.openai.gpt-6.1-sol",
+		"qwen.qwen3-235b-a22b-2507-v1:0",
+		"zai.glm-5.3",
+		"global.xai.grok-4.6",
+		"xai.grok-4.7",
+	}
+	unsupported := []string{
+		"amazon.nova-micro-v1:0", // rejects outputConfig live
+		"amazon.nova-lite-v1:0",
+		"amazon.nova-pro-v1:0",
+		"global.amazon.nova-2-lite-v1:0",
+		"openai.gpt-oss-120b-1:0",
+		"openai.gpt-6.1-terra",
+		"openai.gpt-5.5",
+		"moonshotai.kimi-k3",
+		"moonshotai.kimi-k3.1",
+		"vendor.unknown-model-v1:0", // unknown models keep the baseline
+	}
+	for _, id := range supported {
+		p, err := New(id, WithAPIKey("test-key"))
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		if got := p.Capabilities().NativeStructuredOutput; got != agent.Supported {
+			t.Errorf("%s NativeStructuredOutput = %v, want Supported", id, got)
+		}
+	}
+	for _, id := range unsupported {
+		p, err := New(id, WithAPIKey("test-key"))
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		if got := p.Capabilities().NativeStructuredOutput; got != agent.Unsupported {
+			t.Errorf("%s NativeStructuredOutput = %v, want Unsupported", id, got)
+		}
+	}
+}
+
+// TestNon55ClaudeModelsSupportFullToolChoice pins the card-documented tool
+// support shared by every Claude model except the 5.5 pair.
+func TestNon55ClaudeModelsSupportFullToolChoice(t *testing.T) {
+	for _, id := range []string{
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"global.anthropic.claude-sonnet-4-6",
+		"global.anthropic.claude-sonnet-5",
+		"global.anthropic.claude-opus-4-5-20251101-v1:0",
+		"global.anthropic.claude-opus-4-6-v1",
+		"global.anthropic.claude-opus-4-7",
+		"global.anthropic.claude-opus-4-8",
+		"global.anthropic.claude-opus-5",
+		"global.anthropic.claude-fable-5",
+	} {
+		t.Run(id, func(t *testing.T) {
+			p, err := New(id, WithAPIKey("test-key"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			caps := p.Capabilities()
+			if caps.ToolUse != agent.Supported {
+				t.Fatalf("ToolUse = %v, want Supported", caps.ToolUse)
+			}
+			if caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported || caps.ToolChoice.Specific != agent.Supported {
+				t.Fatalf("ToolChoice = %+v, want all Supported", caps.ToolChoice)
+			}
+		})
 	}
 }
 
@@ -287,6 +402,9 @@ func TestFineGrainedOptionsCanResetCatalogFieldsToUnknown(t *testing.T) {
 		WithToolChoiceSpecific(agent.Unknown),
 		WithContextWindowTokens(0),
 		WithMaxOutputTokens(0),
+		// Sonnet 5.5 reports native structured output; reset it to the
+		// adapter baseline (Unsupported) along with the other fields.
+		WithNativeStructuredOutput(agent.Unsupported),
 	)
 	if err != nil {
 		t.Fatal(err)

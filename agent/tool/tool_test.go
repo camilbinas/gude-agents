@@ -192,17 +192,59 @@ func TestAnonymousEmbeddedField(t *testing.T) {
 	schema := GenerateSchema[WithAnonymousField]()
 	props := schema["properties"].(map[string]any)
 
-	// Embedded struct is promoted — its fields should appear at the top level
-	// or the embedded struct itself appears as a property depending on implementation.
-	// The current implementation treats anonymous fields as exported struct fields.
+	// encoding/json flattens untagged embedded structs, so the schema must too.
 	if _, hasName := props["name"]; !hasName {
 		t.Error("expected 'name' property")
 	}
+	if _, hasBase := props["Base"]; hasBase {
+		t.Error("embedded Base must be flattened, not nested")
+	}
+	if _, hasID := props["id"]; !hasID {
+		t.Fatalf("properties = %v, want promoted 'id'", props)
+	}
+	if req, _ := schema["required"].([]string); len(req) != 1 || req[0] != "id" {
+		t.Errorf("required = %v, want [id] from the embedded struct", schema["required"])
+	}
+	// A call that follows the schema must fill the embedded field.
+	var got WithAnonymousField
+	if err := json.Unmarshal([]byte(`{"id":"x","name":"n"}`), &got); err != nil || got.ID != "x" {
+		t.Fatalf("schema-shaped input did not fill Base.ID: %+v, %v", got, err)
+	}
+}
 
-	// The anonymous Base field is exported, so it should appear.
-	// It will be treated as a nested object named "Base" since there's no json tag.
-	if _, hasBase := props["Base"]; !hasBase {
-		t.Error("expected 'Base' property for anonymous embedded struct")
+type embeddedTagged struct {
+	Base `json:"base"`
+	Name string `json:"name"`
+}
+
+type embeddedPointer struct {
+	*Base
+	Name string `json:"name"`
+}
+
+type shadowing struct {
+	Base
+	ID string `json:"id" description:"outer wins"`
+}
+
+type selfEmbed struct {
+	*selfEmbed
+	Name string `json:"name"`
+}
+
+func TestEmbeddedFieldRules(t *testing.T) {
+	if _, ok := GenerateSchema[embeddedTagged]()["properties"].(map[string]any)["base"]; !ok {
+		t.Error("tagged embedded struct must stay a named property")
+	}
+	if len(GenerateSchema[embeddedPointer]()["properties"].(map[string]any)) < 2 {
+		t.Error("embedded pointer struct must be flattened")
+	}
+	if p, ok := GenerateSchema[shadowing]()["properties"].(map[string]any)["id"].(map[string]any); ok && p["description"] != "outer wins" {
+		t.Error("outer field must win over a promoted field with the same name")
+	}
+	props := GenerateSchema[selfEmbed]()["properties"].(map[string]any)
+	if _, ok := props["name"]; !ok || len(props) != 1 {
+		t.Errorf("self-embedding pointer: properties = %v, want only name", props)
 	}
 }
 

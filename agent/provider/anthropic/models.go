@@ -12,40 +12,77 @@ type modelProfile struct {
 // consults it before applying caller options, so New("claude-sonnet-5-5") and
 // ClaudeSonnet5_5() are identical.
 //
-// Entries hold only facts that are documented for the direct Anthropic API at
-// https://platform.claude.com/docs/en/models/<model>/overview and supported by
-// this adapter. A field that is not listed is intentionally Unknown. Numeric
-// limits are advisory metadata, not enforced limits.
+// Entries hold only facts documented for the direct Anthropic API at
+// https://platform.claude.com/docs/en/about-claude/models/overview and its
+// pricing and thinking pages, and supported by this adapter. The adapter sends
+// auto, any (Required) and tool (Specific) tool_choice, so each ToolChoice
+// field reflects what the model itself accepts. A field without a source stays
+// Unknown. Numeric limits are advisory metadata, not enforced limits.
 //
-// Tool-use support is recorded only for the models whose pages or the models
-// overview state it for the current lineup; legacy pages do not, so those
-// models report ToolUse as Unknown.
+// Some entries have no named constructor (see catalogOnlyModels in the test):
+// New(id) still supplies their metadata.
 var catalog = map[string]modelProfile{
-	"claude-haiku-4-5":  {capabilities: agent.ModelCapabilities{ContextWindowTokens: 200_000, MaxOutputTokens: 64_000}},
-	"claude-sonnet-4-5": {capabilities: agent.ModelCapabilities{ContextWindowTokens: 200_000, MaxOutputTokens: 64_000}},
-	"claude-sonnet-4-6": {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-sonnet-5":   {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-opus-4-5":   {capabilities: agent.ModelCapabilities{ContextWindowTokens: 200_000, MaxOutputTokens: 64_000}},
-	"claude-opus-4-6":   {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-opus-4-7":   {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-opus-4-8":   {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-opus-5":     {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-fable-5":    {capabilities: agent.ModelCapabilities{ContextWindowTokens: 1_000_000, MaxOutputTokens: 128_000}},
-	"claude-opus-5-5":   {capabilities: claude55Capabilities},
-	"claude-sonnet-5-5": {capabilities: claude55Capabilities},
+	// 200K context, 64K output; forced tool use accepted (any, tool).
+	"claude-haiku-4-5":  {capabilities: caps200kFullToolChoice},
+	"claude-sonnet-4-5": {capabilities: caps200kFullToolChoice},
+	"claude-opus-4-5":   {capabilities: caps200kFullToolChoice},
+	// 1M context, 128K output; forced tool use accepted (any, tool).
+	"claude-sonnet-4-6": {capabilities: caps1mFullToolChoice},
+	"claude-opus-4-6":   {capabilities: caps1mFullToolChoice},
+	"claude-sonnet-5":   {capabilities: caps1mFullToolChoice},
+	"claude-opus-4-7":   {capabilities: caps1mFullToolChoice},
+	"claude-opus-4-8":   {capabilities: caps1mFullToolChoice},
+	"claude-opus-5":     {capabilities: caps1mFullToolChoice},
+	"claude-fable-5":    {capabilities: caps1mFullToolChoice},
+	"claude-mythos-5":   {capabilities: caps1mFullToolChoice}, // same specs as claude-fable-5
+	"claude-haiku-5-5":  {capabilities: caps1mFullToolChoice},
+	// 1M context, 128K output; forced tool use returns 400 (auto only).
+	"claude-opus-5-5":   {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-sonnet-5-5": {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-fable-5-2":  {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-fable-5-1":  {capabilities: caps1mAutoOnlyToolChoice},
+	"claude-mythos-5-2": {capabilities: caps1mAutoOnlyToolChoice}, // same specs as claude-fable-5-2
+	"claude-mythos-5-1": {capabilities: caps1mAutoOnlyToolChoice}, // same specs as claude-fable-5-1
 }
 
-// claude55Capabilities are shared by the Claude 5.5 models: automatic tool
-// choice only, because forced and named tool choice are not supported.
-var claude55Capabilities = agent.ModelCapabilities{
-	ContextWindowTokens: 1_000_000,
-	MaxOutputTokens:     128_000,
-	ToolUse:             agent.Supported,
-	ToolChoice: agent.ToolChoiceCapabilities{
-		Auto:     agent.Supported,
-		Required: agent.Unsupported,
-		Specific: agent.Unsupported,
-	},
+// fullToolChoice is the mode set for models that accept auto, any and tool.
+var fullToolChoice = agent.ToolChoiceCapabilities{
+	Auto:     agent.Supported,
+	Required: agent.Supported,
+	Specific: agent.Supported,
+}
+
+// autoOnlyToolChoice is the mode set for models whose adaptive thinking rejects
+// forced tool use (any/tool) with a 400 error, leaving only auto.
+var autoOnlyToolChoice = agent.ToolChoiceCapabilities{
+	Auto:     agent.Supported,
+	Required: agent.Unsupported,
+	Specific: agent.Unsupported,
+}
+
+// All catalog Claude models accept output_config.format (checked live via Bedrock, 2026-11-13).
+var caps200kFullToolChoice = agent.ModelCapabilities{
+	ContextWindowTokens:    200_000,
+	MaxOutputTokens:        64_000,
+	ToolUse:                agent.Supported,
+	ToolChoice:             fullToolChoice,
+	NativeStructuredOutput: agent.Supported,
+}
+
+var caps1mFullToolChoice = agent.ModelCapabilities{
+	ContextWindowTokens:    1_000_000,
+	MaxOutputTokens:        128_000,
+	ToolUse:                agent.Supported,
+	ToolChoice:             fullToolChoice,
+	NativeStructuredOutput: agent.Supported,
+}
+
+var caps1mAutoOnlyToolChoice = agent.ModelCapabilities{
+	ContextWindowTokens:    1_000_000,
+	MaxOutputTokens:        128_000,
+	ToolUse:                agent.Supported,
+	ToolChoice:             autoOnlyToolChoice,
+	NativeStructuredOutput: agent.Supported,
 }
 
 // Named Claude models. Each delegates to New with its canonical model ID; the

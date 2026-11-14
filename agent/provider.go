@@ -83,6 +83,17 @@ type ModelRequest struct {
 	Tools           []tool.Spec
 	ToolChoice      *tool.Choice     // nil = provider default (auto)
 	InferenceConfig *InferenceConfig // nil = use provider defaults
+
+	// ResponseFormat asks for a text answer that matches a JSON schema, using
+	// the provider's native schema mode. The engine sets it only when the
+	// provider reports NativeStructuredOutput as Supported.
+	ResponseFormat *ResponseFormat
+}
+
+// ResponseFormat is a JSON schema the model's text answer must match.
+type ResponseFormat struct {
+	Name   string
+	Schema map[string]any
 }
 
 // ModelResponse is the result of a model call.

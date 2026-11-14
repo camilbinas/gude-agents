@@ -30,3 +30,24 @@ func TestVLLMReportsOnlyTheBaselineAndCallerOptions(t *testing.T) {
 		t.Fatalf("capabilities = %+v, want baseline plus overrides %+v", p.Capabilities(), want)
 	}
 }
+
+// vLLM's OpenAI-compatible server documents response_format json_schema, but
+// support is a property of the running server and model, not of a name vLLM
+// can recognize, so there is no catalog to mark Supported. The adapter default
+// keeps every model on the tool path until the operator opts in.
+func TestNativeStructuredOutputIsOptIn(t *testing.T) {
+	p, err := New("meta-llama/Llama-3.1-8B-Instruct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Capabilities().NativeStructuredOutput != agent.Unsupported {
+		t.Fatalf("default NativeStructuredOutput = %v, want Unsupported", p.Capabilities().NativeStructuredOutput)
+	}
+	opted, err := New("meta-llama/Llama-3.1-8B-Instruct", WithNativeStructuredOutput(agent.Supported))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opted.Capabilities().NativeStructuredOutput != agent.Supported {
+		t.Fatal("WithNativeStructuredOutput(Supported) must opt the server in")
+	}
+}

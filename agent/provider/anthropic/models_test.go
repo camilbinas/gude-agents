@@ -26,6 +26,17 @@ var namedModels = []struct {
 	{"ClaudeSonnet5_5", ClaudeSonnet5_5, "claude-sonnet-5-5"},
 }
 
+// catalogOnlyModels lists current IDs that have no named constructor; New(id)
+// supplies their catalog metadata.
+var catalogOnlyModels = []string{
+	"claude-haiku-5-5",
+	"claude-fable-5-2",
+	"claude-fable-5-1",
+	"claude-mythos-5-2",
+	"claude-mythos-5-1",
+	"claude-mythos-5",
+}
+
 func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	for _, m := range namedModels {
 		t.Run(m.name, func(t *testing.T) {
@@ -50,14 +61,23 @@ func TestNewWithKnownIDMatchesNamedConstructor(t *testing.T) {
 	}
 }
 
-func TestEveryCatalogEntryHasANamedConstructor(t *testing.T) {
-	named := map[string]bool{}
+func TestEveryCatalogEntryIsReachable(t *testing.T) {
+	reachable := map[string]bool{}
 	for _, m := range namedModels {
-		named[m.id] = true
+		reachable[m.id] = true
+	}
+	for _, id := range catalogOnlyModels {
+		reachable[id] = true
 	}
 	for id := range catalog {
-		if !named[id] {
-			t.Errorf("catalog entry %q has no named constructor", id)
+		if !reachable[id] {
+			t.Errorf("catalog entry %q has no named constructor and is not listed as catalog-only", id)
+		}
+	}
+	// catalogOnlyModels must be present in the catalog.
+	for _, id := range catalogOnlyModels {
+		if _, ok := catalog[id]; !ok {
+			t.Errorf("catalog-only model %q is missing from the catalog", id)
 		}
 	}
 }
@@ -72,8 +92,53 @@ func TestKnownModelReportsCatalogMetadata(t *testing.T) {
 		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Unsupported || caps.ToolChoice.Specific != agent.Unsupported {
 		t.Fatalf("capabilities = %+v", caps)
 	}
-	if caps.NativeStructuredOutput != agent.Unsupported {
-		t.Fatalf("adapter baseline lost: NativeStructuredOutput = %v", caps.NativeStructuredOutput)
+	if caps.NativeStructuredOutput != agent.Supported {
+		t.Fatalf("NativeStructuredOutput = %v, want Supported", caps.NativeStructuredOutput)
+	}
+}
+
+// Every catalog Claude model accepts output_config.format (checked live via
+// Bedrock on 2026-11-13), and unknown models keep the tool path.
+func TestCatalogNativeStructuredOutputFlags(t *testing.T) {
+	for id := range catalog {
+		p, err := New(id)
+		if err != nil {
+			t.Fatalf("New(%q): %v", id, err)
+		}
+		if got := p.Capabilities().NativeStructuredOutput; got != agent.Supported {
+			t.Errorf("%q NativeStructuredOutput = %v, want Supported", id, got)
+		}
+	}
+	p, err := New("claude-unknown-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Capabilities().NativeStructuredOutput; got != agent.Unsupported {
+		t.Errorf("unknown model NativeStructuredOutput = %v, want Unsupported", got)
+	}
+}
+
+func TestForcedToolChoiceModelReportsCatalogMetadata(t *testing.T) {
+	p, err := New("claude-sonnet-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps := p.Capabilities()
+	if caps.ContextWindowTokens != 1_000_000 || caps.MaxOutputTokens != 128_000 || caps.ToolUse != agent.Supported ||
+		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported || caps.ToolChoice.Specific != agent.Supported {
+		t.Fatalf("capabilities = %+v", caps)
+	}
+}
+
+func TestForcedToolChoiceSmallContextModelReportsCatalogMetadata(t *testing.T) {
+	p, err := New("claude-opus-4-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps := p.Capabilities()
+	if caps.ContextWindowTokens != 200_000 || caps.MaxOutputTokens != 64_000 || caps.ToolUse != agent.Supported ||
+		caps.ToolChoice.Auto != agent.Supported || caps.ToolChoice.Required != agent.Supported || caps.ToolChoice.Specific != agent.Supported {
+		t.Fatalf("capabilities = %+v", caps)
 	}
 }
 
@@ -125,6 +190,7 @@ func TestFineGrainedOptionsCanResetCatalogFieldsToUnknown(t *testing.T) {
 		WithToolChoiceSpecific(agent.Unknown),
 		WithContextWindowTokens(0),
 		WithMaxOutputTokens(0),
+		WithNativeStructuredOutput(agent.Unsupported),
 	)
 	if err != nil {
 		t.Fatal(err)

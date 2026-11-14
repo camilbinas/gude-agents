@@ -409,6 +409,14 @@ func (p *AnthropicProvider) buildParams(req agent.ModelRequest) (anthropicsdk.Me
 	if req.ToolChoice != nil {
 		input.ToolChoice = toAnthropicToolChoice(req.ToolChoice)
 	}
+	// Native JSON outputs: the schema is sent verbatim via output_config.format
+	// (type json_schema) and constrained at decode time; the model's JSON comes
+	// back as ordinary text. The Anthropic API has no schema name field.
+	if req.ResponseFormat != nil {
+		input.OutputConfig = anthropicsdk.OutputConfigParam{
+			Format: anthropicsdk.JSONOutputFormatParam{Type: "json_schema", Schema: req.ResponseFormat.Schema},
+		}
+	}
 	if budget := p.resolveThinkingBudget(); budget > 0 {
 		input.Thinking = anthropicsdk.ThinkingConfigParamOfEnabled(budget)
 		// Capability metadata may choose the implicit default, in which case

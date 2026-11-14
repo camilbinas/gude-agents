@@ -90,6 +90,12 @@ type options struct {
 	urlFetchTimeout        time.Duration
 	allowPrivateURLFetches bool
 	capabilities           agent.ModelCapabilities
+	httpClient             *http.Client // test seam for capturing requests
+}
+
+// withHTTPClient overrides the HTTP client the Bedrock SDK uses. Test-only.
+func withHTTPClient(c *http.Client) Option {
+	return func(o *options) { o.httpClient = c }
 }
 
 // WithRegion sets a custom AWS region for the Bedrock client.
@@ -347,6 +353,10 @@ func New(model string, opts ...Option) (*BedrockProvider, error) {
 			o.APIOptions = append(o.APIOptions, addBearerTokenMiddleware(token))
 		})
 	}
+	if o.httpClient != nil {
+		hc := o.httpClient
+		clientOpts = append(clientOpts, func(o *bedrockruntime.Options) { o.HTTPClient = hc })
+	}
 
 	return &BedrockProvider{
 		client:           bedrockruntime.NewFromConfig(cfg, clientOpts...),
@@ -418,6 +428,7 @@ func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, em
 		}
 		input.ToolConfig = tc
 	}
+	input.OutputConfig = toBedrockOutputConfig(req.ResponseFormat)
 	input.AdditionalModelRequestFields = p.buildAdditionalFields(req.InferenceConfig)
 
 	if p.guardrailID != "" {
@@ -1138,6 +1149,29 @@ func toToolConfig(specs []tool.Spec) *types.ToolConfiguration {
 		}
 	}
 	return &types.ToolConfiguration{Tools: tools}
+}
+
+// toBedrockOutputConfig maps a framework ResponseFormat to the Bedrock Converse
+// outputConfig.textFormat native structured-output field. Bedrock takes the
+// JSON schema as a string; a schema it cannot marshal yields no OutputConfig.
+func toBedrockOutputConfig(rf *agent.ResponseFormat) *types.OutputConfig {
+	if rf == nil {
+		return nil
+	}
+	schemaJSON, err := json.Marshal(rf.Schema)
+	if err != nil {
+		return nil
+	}
+	def := types.JsonSchemaDefinition{Schema: aws.String(string(schemaJSON))}
+	if rf.Name != "" {
+		def.Name = aws.String(rf.Name)
+	}
+	return &types.OutputConfig{
+		TextFormat: &types.OutputFormat{
+			Type:      types.OutputFormatTypeJsonSchema,
+			Structure: &types.OutputFormatStructureMemberJsonSchema{Value: def},
+		},
+	}
 }
 
 // toBedrockToolChoice maps a framework ToolChoice to the Bedrock SDK ToolChoice union type.

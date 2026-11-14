@@ -16,17 +16,26 @@ type modelProfile struct {
 // (https://ollama.com/library/<model>) lists the "tools" capability for the
 // model. Context windows are deliberately left Unknown: the window a running
 // server uses is its num_ctx setting, not the model's trained maximum, and
-// Gude cannot see it. Models that are not listed (qwen2.5, mistral,
-// mistral-nemo, gemma3, gemma4, phi4, qwen3.6, qwen3-coder and their tags) are
-// intentionally Unknown for every field: their library pages do not state
-// tool support in a form that was verified for this catalogue.
+// Gude cannot see it. ToolChoice modes stay Unknown: Ollama's OpenAI-compatible
+// endpoint accepts tool_choice, but neither the library pages nor the API docs
+// document which modes each model honors. gemma3 and phi4 are omitted: their
+// library pages show no "tools" tag (gemma3 carries only "vision").
 var catalog = map[string]modelProfile{
-	"llama3.2":    {capabilities: toolUse},
-	"llama3.2:1b": {capabilities: toolUse},
-	"llama3.2:3b": {capabilities: toolUse},
-	"qwen3.5":     {capabilities: toolUse},
-	"gpt-oss":     {capabilities: toolUse},
-	"gpt-oss:20b": {capabilities: toolUse},
+	"qwen2.5":      {capabilities: toolUse},
+	"qwen2.5:7b":   {capabilities: toolUse},
+	"qwen2.5:14b":  {capabilities: toolUse},
+	"qwen2.5:32b":  {capabilities: toolUse},
+	"llama3.2":     {capabilities: toolUse},
+	"llama3.2:1b":  {capabilities: toolUse},
+	"llama3.2:3b":  {capabilities: toolUse},
+	"mistral":      {capabilities: toolUse},
+	"mistral-nemo": {capabilities: toolUse},
+	"qwen3.6":      {capabilities: toolUse},
+	"qwen3.5":      {capabilities: toolUse},
+	"qwen3-coder":  {capabilities: toolUse},
+	"gemma4":       {capabilities: toolUse},
+	"gpt-oss":      {capabilities: toolUse},
+	"gpt-oss:20b":  {capabilities: toolUse},
 	// gpt-oss:120b is the same family and carries the same library tags.
 	"gpt-oss:120b": {capabilities: toolUse},
 }
