@@ -56,9 +56,6 @@ An interrupt is a projection of a paused `Execution`, not an independently persi
 conversations := conversation.NewInMemory()
 executions := execution.NewMemory()
 
-// Durable: sqliteexec "…/agent/execution/sqlite", pgexec "…/agent/execution/postgres", or the redis / dynamodb packages.
-executions = pgexec.New(pool)
-
 a, err := agent.New(prov, instructions,
     agent.WithConversationStore(conversations),
     agent.WithExecutionStore(executions),
@@ -66,6 +63,20 @@ a, err := agent.New(prov, instructions,
 interrupt, err := a.LoadInterrupt(ctx, executionID)
 result, err := a.Resume(agent.NewContext(ctx), interrupt, agent.Approve())
 ```
+
+For a pause that survives a restart with no server, `sqlite.Open` sets up both durable halves on one file:
+
+```go
+import sqlitestores "github.com/camilbinas/gude-agents/agent/execution/sqlite"
+
+stores, err := sqlitestores.Open("file:agent.db")
+if err != nil { ... }
+defer stores.Close()
+
+a, err := agent.Agent(prov, instructions, stores.Options()...)
+```
+
+Other durable backends (`pgexec`, `redis`, `dynamodb`) are wired per store; see [Execution stores](execution-stores.md).
 
 See [Execution stores](execution-stores.md) for the backends and their table or key layouts. Memory-backed stores lose the transcript and every paused execution when the process exits, are not shared between processes, and never evict. The agent never creates them on its own; pick them explicitly. A conversation store without an execution store is fine for ordinary runs that never pause.
 

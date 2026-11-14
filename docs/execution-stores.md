@@ -47,18 +47,19 @@ redisexec.New(client)                                // goredis.UniversalClient
 ddbexec.New(dynamoClient, ddbexec.WithTableName("t")) // *dynamodb.Client
 ```
 
-The smallest setup that survives a restart is SQLite for both halves, in one file:
+The smallest setup that survives a restart is SQLite for both halves, in one file. `sqlite.Open` sets up the conversation and execution stores together and `Options` yields both agent options:
 
 ```go
-import (
-    sqliteconv "github.com/camilbinas/gude-agents/agent/conversation/sqlite"
-    sqliteexec "github.com/camilbinas/gude-agents/agent/execution/sqlite"
-)
+import sqlitestores "github.com/camilbinas/gude-agents/agent/execution/sqlite"
 
-conversations, err := sqliteconv.New("file:agent.db")
-executions, err := sqliteexec.New("file:agent.db")
-defer executions.Close()
+stores, err := sqlitestores.Open("file:agent.db")
+if err != nil { ... }
+defer stores.Close()
+
+a, err := agent.Agent(provider, instructions, stores.Options()...)
 ```
+
+`stores.Conversations` and `stores.Executions` remain available if you need either store directly. To wire the two halves by hand instead, call `conversation/sqlite.New` and `execution/sqlite.New` on the same file.
 
 ## Memory
 
