@@ -112,9 +112,7 @@ func jsonToContentBlock(jcb jsonContentBlock) ContentBlock {
 	case "tool_result":
 		trb := ToolResultBlock{ToolUseID: jcb.ToolUse, Content: jcb.Content, IsError: jcb.IsError}
 		for _, img := range jcb.ToolResultImages {
-			trb.Images = append(trb.Images, ImageBlock{Source: ImageSource{
-				Data: img.Data, Base64: img.Base64, URL: img.URL, MIMEType: img.MIMEType,
-			}})
+			trb.Images = append(trb.Images, ImageBlock{Source: ImageSource(img)})
 		}
 		return trb
 	case "image":
