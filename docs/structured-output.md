@@ -46,6 +46,16 @@ Handle malformed or non-conforming model output as `*agent.StructuredOutputError
 
 Match on the exported `agent.Reason*` constants rather than the bare strings. The full set is `ReasonNilAgent`, `ReasonUnsupportedCapability`, `ReasonNoToolCall`, `ReasonWrongTool`, `ReasonSchemaValidation` and `ReasonDeserialize`.
 
+## Retries
+
+When the model fails to produce a valid typed response, Gude feeds the error back and tries again. This covers a missing or wrong tool call (`ReasonNoToolCall`, `ReasonWrongTool`) and output that fails schema validation or decoding (`ReasonSchemaValidation`, `ReasonDeserialize`). The default is one retry; set it with `WithStructuredOutputRetries(n)`, and `0` disables retries.
+
+```go
+a, _ := agent.Agent(provider, "sys", agent.WithStructuredOutputRetries(2)) // up to 3 attempts
+```
+
+On the schema-tool path the failed attempt is replayed as the tool call plus a `tool_result` carrying the error; on the native path it is replayed as the assistant answer plus a user turn with the error. Only the final successful answer is persisted to the conversation, never the failed attempts. Every attempt's token usage is counted toward `WithTokenBudget` and `Result.Usage`, output guardrails run on each attempt, and observers see each model call. When all attempts are exhausted the returned `*agent.StructuredOutputError` carries the last failure's reason.
+
 Schema validation uses `agent.ValidateToolInput`, which enforces a subset of JSON Schema, not the full specification. Enforced keywords: `type` (including unions such as `["string", "null"]`), `enum`, `required`, `properties`, and `items`, applied recursively. Other keywords (for example `minimum`, `maxLength`, `pattern`, `additionalProperties`, `oneOf`) are sent to the model as guidance but are not enforced. For schemas generated from `T`, Go decoding still rejects values whose types don't fit `T`, such as map values of the wrong type. Check any other constraints yourself after `Invoke` returns.
 
 Use pointer/optional fields when omission is valid and JSON tags for stable names. Keep schemas reasonably small and descriptions unambiguous.

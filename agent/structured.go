@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
@@ -65,12 +66,13 @@ func (a *Runtime) InvokeSchema(c *Context, userMessage string, schema map[string
 	})
 }
 
-// structuredTurn runs a single model call, either with the provider's native
-// schema mode or with a schema tool, applies output guardrails to the raw
-// JSON, decodes it with decode and only then persists the turn. Result.Text is
-// the guardrail-processed JSON.
+// structuredTurn runs the structured-output lifecycle: one model call, output
+// guardrails, schema validation and decode, retried up to a.structuredOutputRetries
+// times with the failure fed back to the model. Only the final successful
+// answer is persisted; usage, guardrails and observers apply to every attempt.
+// Result.Text is the guardrail-processed JSON.
 func (r *run) structuredTurn(userMessage string, schema map[string]any, native bool, toolChoice *tool.Choice, decode func([]byte) error) (Result, error) {
-	a, c, h := r.a, r.c, &r.h
+	a, c := r.a, r.c
 
 	messages, ragStart, err := r.prepareTurn(userMessage)
 	if err != nil {
@@ -90,12 +92,86 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 			InputSchema: schema,
 		}}
 	}
-	modelMessages, err := r.modelMessages(c, messages, ragStart, system, tools)
+	baseMessages, err := r.modelMessages(c, messages, ragStart, system, tools)
 	if err != nil {
 		return Result{}, fmt.Errorf("structured output: %w", err)
 	}
+
+	// feedback holds the failed-attempt turns appended across retries; the base
+	// conversation is never mutated, so only the final success is persisted.
+	var feedback []Message
+	attempts := a.structuredOutputRetries + 1
+	for attempt := 1; ; attempt++ {
+		rawText, meta, err := r.structuredAttempt(attempt, system, schema, tools, toolChoice, native, cfg, baseMessages, feedback, decode)
+		if err == nil {
+			if r.hasConversation() {
+				toSave := append(persisted(messages, ragStart), Message{
+					Role:    RoleAssistant,
+					Content: []ContentBlock{TextBlock{Text: rawText}},
+				})
+				if err := r.saveConversation(toSave, c.rt.totalUsage()); err != nil {
+					return Result{}, fmt.Errorf("structured output: %w", err)
+				}
+			}
+			return Result{Text: rawText, StopReason: StopEndTurn, Metadata: meta}, nil
+		}
+		var soErr *StructuredOutputError
+		if attempt >= attempts || !retryableStructuredError(err, &soErr) {
+			return Result{}, err
+		}
+		feedback = append(feedback, structuredFeedback(native, soErr, rawText, attempt)...)
+	}
+}
+
+// retryableStructuredError reports whether err is a StructuredOutputError whose
+// reason is one the model can correct by trying again, and binds it into *dst.
+func retryableStructuredError(err error, dst **StructuredOutputError) bool {
+	if !errors.As(err, dst) {
+		return false
+	}
+	switch (*dst).Reason {
+	case ReasonNoToolCall, ReasonWrongTool, ReasonSchemaValidation, ReasonDeserialize:
+		return true
+	default:
+		return false
+	}
+}
+
+// structuredFeedback builds the turns that report a failed attempt back to the
+// model. The tool path echoes the attempt's tool call and a tool_result error;
+// the native path uses a plain assistant/user exchange.
+func structuredFeedback(native bool, soErr *StructuredOutputError, rawText string, attempt int) []Message {
+	msg := "The previous response did not produce valid structured output: " + soErr.Error() + ". Respond again, correcting the error."
+	if native {
+		return []Message{
+			{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: rawText}}},
+			{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}},
+		}
+	}
+	// Providers reject duplicate tool-use IDs, so each failed attempt gets its own.
+	callID := fmt.Sprintf("structured_output_retry_%d", attempt)
+	var assistant ContentBlock = ToolUseBlock{ToolUseID: callID, Name: structuredOutputToolName, Input: json.RawMessage(rawText)}
+	if !json.Valid([]byte(rawText)) {
+		assistant = TextBlock{Text: rawText}
+	}
+	return []Message{
+		{Role: RoleAssistant, Content: []ContentBlock{assistant}},
+		{Role: RoleUser, Content: []ContentBlock{ToolResultBlock{ToolUseID: callID, Content: msg, IsError: true}}},
+	}
+}
+
+// structuredAttempt runs one model call plus guardrails, schema validation and
+// decode. On failure it returns the raw model text (for feedback) and the
+// error; on success it returns the guardrail-processed JSON and metadata.
+func (r *run) structuredAttempt(attempt int, system string, schema map[string]any, tools []tool.Spec, toolChoice *tool.Choice, native bool, cfg *InferenceConfig, baseMessages, feedback []Message, decode func([]byte) error) (string, map[string]any, error) {
+	a, c, h := r.a, r.c, &r.h
+
+	msgs := baseMessages
+	if len(feedback) > 0 {
+		msgs = append(append(make([]Message, 0, len(baseMessages)+len(feedback)), baseMessages...), feedback...)
+	}
 	modelReq := ModelRequest{
-		Messages:        modelMessages,
+		Messages:        msgs,
 		System:          system,
 		Tools:           tools,
 		ToolChoice:      toolChoice,
@@ -107,7 +183,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 
 	provC, provF := h.onModelStart(c, ModelCallRecord{
 		ModelID:         a.modelID(),
-		Iteration:       1,
+		Iteration:       attempt,
 		System:          modelReq.System,
 		MessageCount:    len(modelReq.Messages),
 		InferenceConfig: modelReq.InferenceConfig,
@@ -115,12 +191,12 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 	resp, err := a.callProvider(provC, modelReq, nil)
 	if err != nil {
 		provF.finish(err, TokenUsage{}, 0, "")
-		return Result{}, &ProviderError{Cause: err}
+		return "", nil, &ProviderError{Cause: err}
 	}
 	provF.finishResponse(resp, "")
 	cumulative := c.rt.addUsage(resp.Usage)
 	if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
-		return Result{}, ErrTokenBudgetExceeded
+		return "", nil, ErrTokenBudgetExceeded
 	}
 
 	var rawText string
@@ -128,7 +204,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 		rawText = resp.Text
 	} else {
 		if len(resp.ToolCalls) == 0 {
-			return Result{}, &StructuredOutputError{Reason: ReasonNoToolCall}
+			return resp.Text, nil, &StructuredOutputError{Reason: ReasonNoToolCall}
 		}
 		var found *tool.Call
 		for i := range resp.ToolCalls {
@@ -138,7 +214,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 			}
 		}
 		if found == nil {
-			return Result{}, &StructuredOutputError{Reason: ReasonWrongTool}
+			return string(resp.ToolCalls[0].Input), nil, &StructuredOutputError{Reason: ReasonWrongTool}
 		}
 		rawText = string(found.Input)
 	}
@@ -147,7 +223,7 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 		rawText, err = g(gC, rawText)
 		gf.finish(err, rawText)
 		if err != nil {
-			return Result{}, &GuardrailError{Direction: "output", Cause: err}
+			return rawText, nil, &GuardrailError{Direction: "output", Cause: err}
 		}
 	}
 	// Validate the final (guardrail-processed) JSON against the requested
@@ -158,25 +234,15 @@ func (r *run) structuredTurn(userMessage string, schema map[string]any, native b
 	// enforced. Syntactically invalid JSON is a decode failure, not a schema
 	// violation.
 	if !json.Valid([]byte(rawText)) {
-		return Result{}, &StructuredOutputError{Reason: ReasonDeserialize, Cause: fmt.Errorf("invalid JSON")}
+		return rawText, nil, &StructuredOutputError{Reason: ReasonDeserialize, Cause: fmt.Errorf("invalid JSON")}
 	}
 	if err := ValidateToolInput(schema, json.RawMessage(rawText)); err != nil {
-		return Result{}, &StructuredOutputError{Reason: ReasonSchemaValidation, Cause: err}
+		return rawText, nil, &StructuredOutputError{Reason: ReasonSchemaValidation, Cause: err}
 	}
 	if err := decode([]byte(rawText)); err != nil {
-		return Result{}, &StructuredOutputError{Reason: ReasonDeserialize, Cause: err}
+		return rawText, nil, &StructuredOutputError{Reason: ReasonDeserialize, Cause: err}
 	}
-
-	if r.hasConversation() {
-		toSave := append(persisted(messages, ragStart), Message{
-			Role:    RoleAssistant,
-			Content: []ContentBlock{TextBlock{Text: rawText}},
-		})
-		if err := r.saveConversation(toSave, c.rt.totalUsage()); err != nil {
-			return Result{}, fmt.Errorf("structured output: %w", err)
-		}
-	}
-	return Result{Text: rawText, StopReason: StopEndTurn, Metadata: resp.Metadata}, nil
+	return rawText, resp.Metadata, nil
 }
 
 // closedObjects returns a copy of schema where every object with properties

@@ -23,9 +23,10 @@ type Runtime struct {
 	instructions string
 	toolRegistry *tool.Registry
 
-	inferenceConfig *InferenceConfig
-	maxIterations   int
-	tokenBudget     int
+	inferenceConfig         *InferenceConfig
+	maxIterations           int
+	tokenBudget             int
+	structuredOutputRetries int
 
 	// toolExecution and maxConcurrentTools form the tool batch execution
 	// policy; see WithToolExecution and WithMaxConcurrentTools. Zero
@@ -69,10 +70,11 @@ func New(provider Provider, instructions string, opts ...Option) (*Runtime, erro
 		return nil, fmt.Errorf("provider is required")
 	}
 	a := &Runtime{
-		provider:      provider,
-		instructions:  instructions,
-		toolRegistry:  &tool.Registry{},
-		maxIterations: 10,
+		provider:                provider,
+		instructions:            instructions,
+		toolRegistry:            &tool.Registry{},
+		maxIterations:           10,
+		structuredOutputRetries: 1,
 	}
 	for _, opt := range opts {
 		if opt == nil {

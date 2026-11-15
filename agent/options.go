@@ -394,6 +394,21 @@ func WithMaxOutputTokens(n int) Option {
 	}
 }
 
+// WithStructuredOutputRetries sets how many extra attempts a structured-output
+// call makes after the model fails to produce a valid typed response. On each
+// retry the failure is fed back to the model. The default is 1; 0 disables
+// retries. Only the final successful answer is persisted; every attempt's
+// token usage, guardrails, and observers still apply.
+func WithStructuredOutputRetries(n int) Option {
+	return func(a *Runtime) error {
+		if n < 0 {
+			return fmt.Errorf("WithStructuredOutputRetries: n must be >= 0, got %d", n)
+		}
+		a.structuredOutputRetries = n
+		return nil
+	}
+}
+
 // observerCapabilityNames lists every observer capability interface, in the
 // order checked by supportsObserver. Used to build a self-documenting error
 // when a value implements none of them.
