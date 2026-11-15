@@ -78,6 +78,20 @@ The observer targets the OpenTelemetry GenAI semantic conventions (version pinne
 - `WithSpecSpanNames` opts into the spec span-name format `{operation} {model}` (for example `chat gpt-4o`). It is opt-in because renaming spans breaks dashboards, alerts, and tests; the default gude-agents span names (`agent.invoke`, `agent.provider.call`, `agent.tool.<name>`) are unchanged.
 - Non-content scalar attributes `agent.token_usage.total`, `agent.user_message_length`, `tool.input_length`, and `tool.output_length` are emitted by default (lengths/counts only, never the payload); `agent.error` is set on invocation failure.
 
+### Correlating logs with traces
+
+The `logging/slog` observer logs with the active invocation context, so a context-aware `slog.Handler` can read the OTel span from `tracing.WithTracing`. Wrap your handler with `tracing.SlogHandler` to stamp `trace_id` and `span_id` onto every record that carries a span, letting a log backend join logs to traces. Register tracing before the slog observer so the span-carrying context reaches it:
+
+```go
+h := tracing.SlogHandler(slog.NewJSONHandler(os.Stdout, nil))
+a, err := agent.Agent(prov, instructions,
+    tracing.WithTracing(tracerProvider),
+    agentslog.WithLogging(agentslog.WithHandler(h)),
+)
+```
+
+Records logged outside an active span are passed through unchanged (no `trace_id`/`span_id`). `SlogHandler` only adds the IDs; the core and `logging/slog` modules stay free of any OpenTelemetry dependency.
+
 ### Exporter setup and transport security
 
 `tracing.Setup` configures an OTLP gRPC exporter from `OTEL_EXPORTER_OTLP_ENDPOINT` (default `localhost:4317`). The export defaults to plaintext (insecure), matching the localhost default. To use TLS against a remote collector, set `OTEL_EXPORTER_OTLP_TRACES_INSECURE` / `OTEL_EXPORTER_OTLP_INSECURE` to `false`, or pass `tracing.WithInsecure(false)` (the option takes precedence over the environment).
