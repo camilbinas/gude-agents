@@ -12,6 +12,7 @@ package ollama
 
 import (
 	"os"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
 )
@@ -24,9 +25,6 @@ type Option = openai.Option
 
 // Provider options are re-exported from the shared OpenAI-compatible adapter.
 var (
-	// WithBaseURL overrides the Ollama server URL. By default, the URL is read
-	// from OLLAMA_HOST, falling back to http://localhost:11434.
-	WithBaseURL                = openai.WithBaseURL
 	WithCapabilities           = openai.WithCapabilities
 	WithContextWindowTokens    = openai.WithContextWindowTokens
 	WithMaxOutputTokens        = openai.WithMaxOutputTokens
@@ -38,6 +36,13 @@ var (
 	WithNativeStructuredOutput = openai.WithNativeStructuredOutput
 )
 
+// WithBaseURL overrides the Ollama server URL. By default, the URL is read from
+// OLLAMA_HOST, falling back to http://localhost:11434. The URL is normalized to
+// a single /v1 suffix, so a value with or without /v1 behaves the same.
+func WithBaseURL(url string) Option {
+	return openai.WithBaseURL(normalizeBaseURL(url))
+}
+
 // New creates a provider targeting a local Ollama server.
 // The model parameter is the Ollama model name (e.g. "llama3.2", "qwen2.5", "mistral").
 // Known names receive Gude's best-known capability metadata; any other name is
@@ -47,7 +52,7 @@ func New(model string, opts ...Option) (*Provider, error) {
 	if host == "" {
 		host = "http://localhost:11434"
 	}
-	base := []Option{openai.WithBaseURL(host + "/v1")}
+	base := []Option{openai.WithBaseURL(normalizeBaseURL(host))}
 	// Known models start from the catalog; caller options follow and win.
 	if profile, ok := catalog[model]; ok {
 		base = append(base, openai.WithCapabilities(profile.capabilities))
@@ -61,4 +66,13 @@ func Must(p *Provider, err error) *Provider {
 		panic("ollama: " + err.Error())
 	}
 	return p
+}
+
+// normalizeBaseURL trims trailing slashes and any existing /v1 suffix, then
+// appends a single /v1, so a host with or without /v1 yields one /v1.
+func normalizeBaseURL(host string) string {
+	s := strings.TrimRight(host, "/")
+	s = strings.TrimSuffix(s, "/v1")
+	s = strings.TrimRight(s, "/")
+	return s + "/v1"
 }
