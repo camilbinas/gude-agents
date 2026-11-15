@@ -100,7 +100,7 @@ func workTool(t *testing.T, p *Pool) tool.Tool {
 }
 
 func call(tl tool.Tool, ctx context.Context) error {
-	_, err := tl.Handler(ctx, json.RawMessage(`{}`))
+	_, err := tl.RichHandler(ctx, json.RawMessage(`{}`))
 	return err
 }
 

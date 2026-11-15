@@ -66,53 +66,50 @@ func TestToSchemaMap_JSONRoundTrip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extractText
+// toOutput
 // ---------------------------------------------------------------------------
 
-func TestExtractText_Empty(t *testing.T) {
-	result := extractText(nil)
-	if result != "" {
-		t.Errorf("expected empty string for nil content, got %q", result)
+func TestToOutput_Empty(t *testing.T) {
+	out := toOutput(nil)
+	if out.Text != "" {
+		t.Errorf("expected empty text for nil content, got %q", out.Text)
+	}
+	if len(out.Images) != 0 {
+		t.Errorf("expected no images for nil content, got %d", len(out.Images))
 	}
 }
 
-func TestExtractText_EmptySlice(t *testing.T) {
-	result := extractText([]sdkmcp.Content{})
-	if result != "" {
-		t.Errorf("expected empty string for empty content, got %q", result)
+func TestToOutput_EmptySlice(t *testing.T) {
+	out := toOutput([]sdkmcp.Content{})
+	if out.Text != "" {
+		t.Errorf("expected empty text for empty content, got %q", out.Text)
 	}
 }
 
-func TestExtractText_SingleTextBlock(t *testing.T) {
-	content := []sdkmcp.Content{
-		&sdkmcp.TextContent{Text: "hello world"},
-	}
-	result := extractText(content)
-	if result != "hello world" {
-		t.Errorf("expected %q, got %q", "hello world", result)
+func TestToOutput_SingleTextBlock(t *testing.T) {
+	out := toOutput([]sdkmcp.Content{&sdkmcp.TextContent{Text: "hello world"}})
+	if out.Text != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", out.Text)
 	}
 }
 
-func TestExtractText_MultipleTextBlocks(t *testing.T) {
-	content := []sdkmcp.Content{
+func TestToOutput_MultipleTextBlocks(t *testing.T) {
+	out := toOutput([]sdkmcp.Content{
 		&sdkmcp.TextContent{Text: "first"},
 		&sdkmcp.TextContent{Text: "second"},
-	}
-	result := extractText(content)
-	expected := "first\nsecond"
-	if result != expected {
-		t.Errorf("expected %q, got %q", expected, result)
+	})
+	if out.Text != "first\nsecond" {
+		t.Errorf("expected %q, got %q", "first\nsecond", out.Text)
 	}
 }
 
-func TestExtractText_EmptyTextBlockSkipped(t *testing.T) {
-	content := []sdkmcp.Content{
+func TestToOutput_EmptyTextBlockSkipped(t *testing.T) {
+	out := toOutput([]sdkmcp.Content{
 		&sdkmcp.TextContent{Text: ""},
 		&sdkmcp.TextContent{Text: "non-empty"},
-	}
-	result := extractText(content)
-	if result != "non-empty" {
-		t.Errorf("expected %q, got %q", "non-empty", result)
+	})
+	if out.Text != "non-empty" {
+		t.Errorf("expected %q, got %q", "non-empty", out.Text)
 	}
 }
 

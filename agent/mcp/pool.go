@@ -286,21 +286,20 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 	name := mcpTool.Name
 	description := mcpTool.Description
 
-	return tool.NewRaw(
+	return tool.NewRich(
 		name,
 		description,
-		schema,
-		func(ctx context.Context, input json.RawMessage) (string, error) {
+		func(ctx context.Context, input json.RawMessage) (*tool.Output, error) {
 			var args map[string]any
 			if len(input) > 0 {
 				if err := json.Unmarshal(input, &args); err != nil {
-					return "", fmt.Errorf("mcp tool %s: unmarshal input: %w", name, err)
+					return nil, fmt.Errorf("mcp tool %s: unmarshal input: %w", name, err)
 				}
 			}
 
 			session, err := p.acquire(ctx)
 			if err != nil {
-				return "", fmt.Errorf("mcp tool %s: acquire connection: %w", name, err)
+				return nil, fmt.Errorf("mcp tool %s: acquire connection: %w", name, err)
 			}
 			res, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
 				Name:      name,
@@ -312,17 +311,16 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 				p.discard(session)
 			}
 			if err != nil {
-				return "", fmt.Errorf("mcp tool %s: %w", name, err)
+				return nil, fmt.Errorf("mcp tool %s: %w", name, err)
 			}
 
-			text := extractText(res.Content)
-
+			out := toOutput(res.Content)
 			if res.IsError {
-				return text, fmt.Errorf("mcp tool %s returned error: %s", name, text)
+				return out, fmt.Errorf("mcp tool %s returned error: %s", name, out.Text)
 			}
-
-			return text, nil
+			return out, nil
 		},
+		tool.WithSchema(schema),
 	), nil
 }
 
