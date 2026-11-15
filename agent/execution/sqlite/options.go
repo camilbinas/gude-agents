@@ -2,7 +2,10 @@ package sqlite
 
 import "time"
 
-const defaultTable = "executions"
+const (
+	defaultTable       = "executions"
+	defaultBusyTimeout = 5 * time.Second
+)
 
 // Option configures a Store.
 type Option func(*config)
