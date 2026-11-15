@@ -219,7 +219,7 @@ func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error
 
 	// A rich tool so image blocks reach the model as images; text, embedded
 	// text resources and placeholders for non-carryable blocks go in Output.Text.
-	return tool.NewRich(
+	return withTextHandler(tool.NewRich(
 		exposedName,
 		description,
 		func(ctx context.Context, input json.RawMessage) (*tool.Output, error) {
@@ -245,7 +245,7 @@ func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error
 			return out, nil
 		},
 		tool.WithSchema(schema),
-	), nil
+	)), nil
 }
 
 // Close disconnects from the MCP server and terminates the subprocess.
@@ -335,4 +335,18 @@ func join(lines []string) string {
 		result += l
 	}
 	return result
+}
+
+// withTextHandler also sets the plain Handler, so adapters that read it still
+// get the text output.
+func withTextHandler(t tool.Tool) tool.Tool {
+	rich := t.RichHandler
+	t.Handler = func(ctx context.Context, raw json.RawMessage) (string, error) {
+		out, err := rich(ctx, raw)
+		if out == nil {
+			return "", err
+		}
+		return out.Text, err
+	}
+	return t
 }

@@ -118,3 +118,22 @@ func TestWrapTool_IsErrorPreservedOnRichPath(t *testing.T) {
 		t.Errorf("error = %v, want upstream text", err)
 	}
 }
+
+// Adapters that read the plain Handler still get the text, and errors.
+func TestWrapTool_PlainHandlerStillWorks(t *testing.T) {
+	tl := toolReturning(t, []sdkmcp.Content{
+		&sdkmcp.TextContent{Text: "hello"},
+		&sdkmcp.ImageContent{MIMEType: "image/png", Data: []byte("X")},
+	}, false)
+	if tl.Handler == nil {
+		t.Fatal("plain Handler must stay set")
+	}
+	text, err := tl.Handler(context.Background(), json.RawMessage(`{}`))
+	if err != nil || text != "hello" {
+		t.Fatalf("Handler = %q, %v", text, err)
+	}
+	bad := toolReturning(t, []sdkmcp.Content{&sdkmcp.TextContent{Text: "boom"}}, true)
+	if _, err := bad.Handler(context.Background(), json.RawMessage(`{}`)); err == nil {
+		t.Fatal("IsError must surface through the plain Handler")
+	}
+}

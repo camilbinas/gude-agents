@@ -286,7 +286,7 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 	name := mcpTool.Name
 	description := mcpTool.Description
 
-	return tool.NewRich(
+	return withTextHandler(tool.NewRich(
 		name,
 		description,
 		func(ctx context.Context, input json.RawMessage) (*tool.Output, error) {
@@ -321,7 +321,7 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 			return out, nil
 		},
 		tool.WithSchema(schema),
-	), nil
+	)), nil
 }
 
 // Close shuts down idle connections in the pool. It is safe to call multiple
