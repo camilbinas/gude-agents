@@ -48,6 +48,30 @@ result, err := a.Resume(ctx, interrupt, agent.Respond("Use account ACME-42"))
 
 Approval responses are valid only for approval interrupts; `Respond` is valid only for human-input interrupts. Use `ResumeStream` when the continued run must emit application events.
 
+## Typed human input
+
+`agent.NewHumanInput[R]` asks for a typed answer of type `R` instead of free text. The pause carries `R`'s JSON schema in `Interrupt.Input.Schema`, so a UI can render a form, and resume with `agent.RespondWith`:
+
+```go
+type Review struct {
+    Approved bool   `json:"approved" required:"true"`
+    Edited   string `json:"edited"`
+}
+
+askReview := agent.NewHumanInput("ask_review", "approve or edit the draft",
+    func(ctx *agent.Context, r Review) (string, error) {
+        if !r.Approved {
+            return "Human rejected the draft.", nil
+        }
+        return "Human approved: " + r.Edited, nil
+    })
+
+// ... run pauses with InterruptHumanInput; in.Input.Schema is R's schema ...
+result, err := a.Resume(ctx, in, agent.RespondWith(Review{Approved: true, Edited: "final"}))
+```
+
+`RespondWith` marshals the value and validates it against `in.Input.Schema` (the framework's [supported JSON Schema subset](structured-output.md)) before the run continues. A schema-invalid answer returns an `*agent.ResumeValidationError` and leaves the run paused, so the caller can fix the value and resume again. On a valid answer the handler receives the typed `R` and its result is appended to the transcript. The schema and the pending answer survive `ExecutionStore` persistence and `Snapshot`/`Restore`. Resume a typed pause with `RespondWith`, not `Respond`; the free-text `NewHumanInputTool` is unchanged and still resumes with `Respond`.
+
 ## Execution pauses
 An interrupt is a projection of a paused `Execution`, not an independently persisted record. There is one persistence model: configure an `ExecutionStore` together with a canonical `ConversationStore`. The package `agent/execution` provides the stores:
 
@@ -98,6 +122,30 @@ Before a durable resume executes any guardrail, tool handler, provider call, or 
 The Agent commits canonical conversation changes before recording `Paused` execution state. If the conversation commit fails, no pause is created. If the conversation commit succeeds but execution persistence fails, the error is surfaced and applications must not assume resume is available. This ordering is not a distributed transaction: the two stores commit independently.
 
 The Agent keeps no process-local pause state. If a run needs to pause (approval or human input) and either store is missing, it returns `agent.ErrPauseStorageRequired` instead of creating a pause that could not be resumed. Resuming without both stores returns the same error. The same rule applies to a child agent used through `AgentAsTool`: a child pause is not propagated to the parent, and a child without both stores cannot pause at all.
+
+## Snapshot and restore
+
+A pause normally lives in two stores. For a small setup that pauses in one process and resumes in another, `Snapshot` serializes a pause as one portable value and `Restore` loads it back:
+
+```go
+blob, err := a.Snapshot(ctx, interrupt) // []byte: the Execution plus the transcript it points at
+// ... hand blob to another process, a queue, a file ...
+in, err := a.Restore(ctx, blob)         // loads it into this Runtime's stores
+result, err := a.Resume(agent.NewContext(ctx), in, agent.Approve())
+```
+
+The blob bundles the paused `Execution` record with the canonical messages its cursor references, carries a `format` version, and is checksummed. `Restore` rejects a blob that is empty or of an unknown format (`agent.ErrSnapshotFormat`), whose checksum or cursor does not match or whose execution is not a resumable pause (`agent.ErrSnapshotIntegrity`), and a conversation that already exists with different history (`agent.ErrConversationConflict`). It writes create-only, so a duplicate ID conflicts rather than overwriting; `Snapshot`/`Restore` never weaken the CAS guarantees of a real store.
+
+In-memory stores are enough on both sides, because the blob carries the state:
+
+```go
+a, err := agent.Agent(provider, instructions,
+    agent.WithConversationStore(conversation.NewInMemory()),
+    agent.WithExecutionStore(execution.NewMemory()),
+)
+```
+
+Without both stores, `Snapshot` and `Restore` return `agent.ErrSnapshotStoreRequired`.
 
 ### Frontend version safety
 

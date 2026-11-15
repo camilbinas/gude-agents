@@ -261,6 +261,7 @@ func cloneExecution(in Execution) Execution {
 		}
 		if in.Pause.Input != nil {
 			input := *in.Pause.Input
+			input.Schema = cloneRaw(in.Pause.Input.Schema)
 			pause.Input = &input
 		}
 		out.Pause = &pause

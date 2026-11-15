@@ -81,6 +81,8 @@ a, err := agent.New(
 
 A pause that must survive a restart needs both halves to be durable: a durable `ConversationStore` for the transcript and a durable execution store for the paused state. A durable execution store with an in-memory conversation store loses the transcript the execution points at.
 
+To move a pause between processes without a shared durable store, `Runtime.Snapshot` / `Runtime.Restore` bundle the execution record and the transcript it points at into one versioned blob; in-memory stores are enough on both sides. See [Snapshot and restore](interrupts.md#snapshot-and-restore).
+
 The two stores commit independently. The engine appends messages first and then records the returned cursor in the execution, so a crash between them is repaired by `RecoverExecution` rather than rolled back. This is an ordering protocol, not a distributed transaction.
 
 A terminal non-success execution records why it ended. `Execution.FailureCode` is a bounded classification (`provider`, `guardrail`, `tool`, `max_iterations`, `token_budget`, `rate_limit`, `canceled`, `internal`) and `Execution.FailureMessage` is the truncated error text, so the durable record is inspectable after a crash without re-running anything. `canceled` is reserved for the invocation context itself being done (caller cancellation or a caller-set deadline); a provider-side `WithProviderTimeout` deadline is a `provider` failure, not a cancellation. Both fields are empty on a completed or still-running execution.
