@@ -1563,6 +1563,26 @@ func resultBlocks(outcomes []toolOutcome) []ContentBlock {
 // result takes precedence over concurrently pending approvals.
 func (r *run) pendingInterrupt(outcomes []toolOutcome, calls []tool.Call) *Interrupt {
 	for i := range outcomes {
+		if outcomes[i].nestedPause != nil {
+			for j := range outcomes {
+				if outcomes[j].kind == toolOutcomePendingApproval {
+					outcomes[j].kind = toolOutcomeDefinitive
+					outcomes[j].result.ToolUseID = calls[j].ToolUseID
+					outcomes[j].result.Content = "Not executed: the invocation paused for a nested sub-agent. Call the tool again if it is still needed."
+					outcomes[j].result.IsError = true
+				}
+			}
+			// The paused AgentAsTool call has no result yet: the child's final
+			// answer becomes the tool result only on resume. Exclude it from the
+			// committed batch so no placeholder ToolResult is written.
+			outcomes[i].kind = toolOutcomeDeferred
+			outcomes[i].result = ToolResultBlock{}
+			nested := outcomes[i].nestedPause
+			nested.CallID = calls[i].ToolUseID
+			return &Interrupt{Type: InterruptNested, Nested: nested}
+		}
+	}
+	for i := range outcomes {
 		if outcomes[i].humanInput != nil {
 			for j := range outcomes {
 				if outcomes[j].kind == toolOutcomePendingApproval {
@@ -1730,6 +1750,38 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		}
 		messages.appendCanonical(Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
 
+	case InterruptNested:
+		if in.Nested == nil || in.Nested.Child == nil {
+			return Result{}, fmt.Errorf("resume nested interrupt has no child")
+		}
+		if in.Nested.CallID == "" {
+			return Result{}, fmt.Errorf("resume nested interrupt has no call ID")
+		}
+		// Reset the paused AgentAsTool call from InFlight back to Ready so the
+		// durable boundary can be re-claimed cleanly on this resume.
+		if err := r.readyNestedCall(in.Nested.CallID); err != nil {
+			return Result{}, err
+		}
+		calls, err := nestedResumeBatch(messages.canonical, in.Nested.CallID)
+		if err != nil {
+			return Result{}, err
+		}
+		// Route this resume into the one AgentAsTool call so its handler resumes
+		// the child instead of invoking it fresh.
+		c.cfg.nestedResume = &nestedResumeDirective{callID: in.Nested.CallID, child: in.Nested.Child, response: resp}
+		_, available := a.visibleTools(c)
+		batch := r.coordinateToolBatch(c, calls, available, nil, &messages)
+		c.cfg.nestedResume = nil
+		if batch.err != nil {
+			return Result{}, batch.err
+		}
+		if err := c.Err(); err != nil {
+			return Result{}, err
+		}
+		if batch.interrupt != nil {
+			return r.interrupt(batch.interrupt, messages.canonical)
+		}
+
 	case InterruptApproval:
 		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
 			return Result{}, err
@@ -1759,6 +1811,54 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 }
 
 // approvalResumeBatch reconstructs the original model tool batch from the
+// nestedResumeBatch reconstructs the full model tool batch from the assistant
+// turn that contains the paused AgentAsTool call. prepareToolBatch filters out
+// the siblings already marked Completed, so only the nested call re-runs.
+func nestedResumeBatch(messages []Message, callID string) ([]tool.Call, error) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != RoleAssistant {
+			continue
+		}
+		var calls []tool.Call
+		found := false
+		for _, block := range messages[i].Content {
+			tu, ok := block.(ToolUseBlock)
+			if !ok {
+				continue
+			}
+			if tu.ToolUseID == callID {
+				found = true
+			}
+			calls = append(calls, tool.Call{ToolUseID: tu.ToolUseID, Name: tu.Name, Input: cloneRaw(tu.Input)})
+		}
+		if found {
+			return calls, nil
+		}
+	}
+	return nil, fmt.Errorf("resume nested interrupt call %q not found", callID)
+}
+
+// readyNestedCall resets a paused AgentAsTool call from InFlight to Ready so the
+// resume can re-claim its durable boundary. It is a no-op without a durable
+// execution or an active batch.
+func (r *run) readyNestedCall(callID string) error {
+	if !r.executionDurable {
+		return nil
+	}
+	return r.persistExecution(func(execution *Execution) error {
+		if execution.ToolBatch == nil {
+			return nil
+		}
+		for i := range execution.ToolBatch.Calls {
+			call := &execution.ToolBatch.Calls[i]
+			if call.CallID == callID && call.Status == ToolExecutionInFlight {
+				call.Status = ToolExecutionReady
+			}
+		}
+		return nil
+	})
+}
+
 // persisted assistant turn. Approval decisions apply only to pending calls;
 // deferred normal siblings execute after approval resumes.
 func approvalResumeBatch(messages []Message, approval *ApprovalInterrupt, resp ResumeResponse) ([]tool.Call, []*tool.Decision, error) {

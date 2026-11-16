@@ -42,6 +42,20 @@ type ExecutionPause struct {
 	Type     InterruptType      `json:"type"`
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`
 	Input    *InputInterrupt    `json:"input,omitempty"`
+	// Nested records a parent pause caused by a paused child reached through a
+	// WithPropagatePause AgentAsTool call. The child projection is re-loaded from
+	// the child stores on resume; this only stores the resume routing path.
+	Nested *NestedPause `json:"nested,omitempty"`
+}
+
+// NestedPause is the durable routing payload for a parent paused on a child.
+// It records the parent tool call and the child's projected interrupt so the
+// pause is self-contained across restart and Snapshot. On resume the child
+// interrupt is reloaded from the child stores and CAS-checked; Child is the
+// projection the caller answers and the routing identity for that reload.
+type NestedPause struct {
+	CallID string     `json:"call_id"`
+	Child  *Interrupt `json:"child"`
 }
 
 // ToolExecutionStatus describes the durable state of a call in the currently
@@ -263,6 +277,14 @@ func cloneExecution(in Execution) Execution {
 			input := *in.Pause.Input
 			input.Schema = cloneRaw(in.Pause.Input.Schema)
 			pause.Input = &input
+		}
+		if in.Pause.Nested != nil {
+			nested := *in.Pause.Nested
+			if in.Pause.Nested.Child != nil {
+				child := cloneInterrupt(in.Pause.Nested.Child)
+				nested.Child = child
+			}
+			pause.Nested = &nested
 		}
 		out.Pause = &pause
 	}

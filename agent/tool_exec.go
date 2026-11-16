@@ -23,11 +23,12 @@ const (
 
 // toolOutcome is the result of running one tool call through the pipeline.
 type toolOutcome struct {
-	kind       toolOutcomeKind
-	result     ToolResultBlock
-	widgets    []WidgetBlock
-	humanInput *InputInterrupt // set when the call requested human input
-	err        error           // terminal recovery/coordinator error; never model-visible
+	kind        toolOutcomeKind
+	result      ToolResultBlock
+	widgets     []WidgetBlock
+	humanInput  *InputInterrupt  // set when the call requested human input
+	nestedPause *NestedInterrupt // set when a propagate-pause child paused
+	err         error            // terminal recovery/coordinator error; never model-visible
 }
 
 // concurrentLimit reports how many tool handlers of one batch may run at the
@@ -306,6 +307,10 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	out.result.Images = append(out.result.Images, result.Images...)
 	out.result.IsError = result.IsError
 	out.humanInput = callRT.takeHumanInput()
+	if nested := callRT.takeNestedPause(); nested != nil {
+		nested.CallID = tc.ToolUseID
+		out.nestedPause = nested
+	}
 	var info *ErrorInfo
 	if result.IsError {
 		info = &ErrorInfo{Code: ErrorCodeTool, Message: result.Text}

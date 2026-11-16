@@ -20,7 +20,16 @@ Child execution receives a clone of the parent invocation context: cancellation,
 
 When a child has a `ConversationStore`, `AgentAsTool` automatically isolates it from the parent transcript. The child conversation ID is deterministically derived from the parent conversation ID, tool-call ID, wrapper tool name, and child agent identity. Normal callers should not manually invent a separate child ID. A persistent child therefore requires the parent invocation to have a conversation ID and to be inside a tool call.
 
-Child interrupts do not propagate through `AgentAsTool`. A child follows the same rule as any agent: pausing needs both a conversation store and an execution store, and a child without them fails with `agent.ErrPauseStorageRequired`, which the parent sees as a tool error. If a child that does have both stores pauses for approval or human input, the wrapper cancels the child execution and returns a tool error to the parent; child continuation is not supported through this adapter.
+By default child interrupts do not propagate through `AgentAsTool`. A child follows the same rule as any agent: pausing needs both a conversation store and an execution store, and a child without them fails with `agent.ErrPauseStorageRequired`, which the parent sees as a tool error. By default a child that does have both stores and pauses for approval or human input is canceled by the wrapper, which returns a tool error to the parent.
+
+Add `agent.WithPropagatePause()` to continue the child instead:
+
+```go
+reviewer := agent.AgentAsTool("reviewer", "reviews a draft", child,
+    agent.WithPropagatePause())
+```
+
+Now a child pause pauses the parent. The parent `Result` carries one `agent.InterruptNested` interrupt whose `Nested.Child` is the child's own approval or question; resume the parent with the normal `Approve`, `Deny`, `Decide`, `Respond`, or `RespondWith`, and the child continues from its pause with its answer as the tool result. This works across multiple levels and is durable across restart and `Snapshot`/`Restore`. See [Nested pauses through AgentAsTool](interrupts.md#nested-pauses-through-agentastool).
 
 Tool calls run in parallel by default, so independent specialist calls execute simultaneously. Use `agent.WithToolExecution(agent.ToolExecutionSequential)` when child operations are not independent and must run one at a time, or `agent.WithMaxConcurrentTools(n)` to bound how many children run at once.
 
