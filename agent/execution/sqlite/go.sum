@@ -1,9 +1,9 @@
-github.com/camilbinas/gude-agents v1.13.0 h1:0MbNDvHx68Bu2cw3GYQKYG2i6ARHs1RpI70eFuyBnt0=
-github.com/camilbinas/gude-agents v1.13.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
-github.com/camilbinas/gude-agents/agent/conversation/sqlite v1.13.0 h1:smxj3/NvYbr3BEMU9iW86dO4du5Xxpy+mEhA2+1KEno=
-github.com/camilbinas/gude-agents/agent/conversation/sqlite v1.13.0/go.mod h1:BXzR6lTyHYyLSgXmwaT8XJZZrc4xgpunhObC+OgFy0o=
-github.com/camilbinas/gude-agents/agent/execution v1.13.0 h1:9tCf+VPjT7qXJyF3AWhFCnqWQSHlVA9EyUhaud+PTmo=
-github.com/camilbinas/gude-agents/agent/execution v1.13.0/go.mod h1:yFGCKktPm/9kbvVJmJhYqh0gFqN5QV4tCjsUqcWWZNk=
+github.com/camilbinas/gude-agents v1.13.1 h1:xbH+UFPUorzkOO0O8fFkCt3ToG7yOZBoPYcI+Ly0Sio=
+github.com/camilbinas/gude-agents v1.13.1/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents/agent/conversation/sqlite v1.13.1 h1:kHmKgUPX8bePzkql2A7eDW4Rwlfck81RLpFFnapFeqA=
+github.com/camilbinas/gude-agents/agent/conversation/sqlite v1.13.1/go.mod h1:l2N4Eku1Ae8y3hVjeNMvOLi8NwhvLdaBknY91IY7eeE=
+github.com/camilbinas/gude-agents/agent/execution v1.13.1 h1:MqX3pikusgwMliU3Jc9p2DckXB832OjQ6G5LtqKo3mg=
+github.com/camilbinas/gude-agents/agent/execution v1.13.1/go.mod h1:94HCZpmc7/up+x76BpkKVLOfJucA0TGtxVLBYPAcaWA=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=
