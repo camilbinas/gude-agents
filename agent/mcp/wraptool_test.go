@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
 // inMemoryClient wires an MCP server to a Client over an in-memory transport.
@@ -70,12 +72,12 @@ func TestWrapTool_SchemaConversionAndPrefix(t *testing.T) {
 		t.Errorf("schema properties not preserved: %v", tl.Spec.InputSchema)
 	}
 
-	out, err := tl.Handler(context.Background(), json.RawMessage(`{"city":"paris"}`))
+	out, err := tl.RichHandler(context.Background(), json.RawMessage(`{"city":"paris"}`))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	if out != "sunny" {
-		t.Errorf("handler output = %q, want sunny", out)
+	if out.Text != "sunny" {
+		t.Errorf("handler output = %q, want sunny", out.Text)
 	}
 }
 
@@ -94,15 +96,15 @@ func TestWrapTool_IsErrorMapsToError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tools: %v", err)
 	}
-	out, err := tools[0].Handler(context.Background(), json.RawMessage(`{}`))
+	out, err := tools[0].RichHandler(context.Background(), json.RawMessage(`{}`))
 	if err == nil {
 		t.Fatal("expected IsError result to map to a Go error")
 	}
 	if !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "upstream exploded") {
 		t.Errorf("error = %v, want tool name + text", err)
 	}
-	if out != "upstream exploded" {
-		t.Errorf("returned text = %q, want the error content", out)
+	if out == nil || out.Text != "upstream exploded" {
+		t.Errorf("returned text = %v, want the error content", out)
 	}
 }
 
@@ -140,7 +142,7 @@ func TestWrapTool_ConcurrentCallTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tools: %v", err)
 	}
-	h := tools[0].Handler
+	h := tools[0].RichHandler
 
 	// A single session must tolerate concurrent CallTool; run under -race.
 	const n = 20
@@ -156,8 +158,8 @@ func TestWrapTool_ConcurrentCallTool(t *testing.T) {
 				errs <- err
 				return
 			}
-			if out != want {
-				errs <- errMismatch(out, want)
+			if out == nil || out.Text != want {
+				errs <- errMismatch(outText(out), want)
 			}
 		}()
 	}
@@ -173,4 +175,11 @@ type mismatchError struct{ got, want string }
 func (e mismatchError) Error() string { return "got " + e.got + ", want " + e.want }
 func errMismatch(got, want string) error {
 	return mismatchError{got: got, want: want}
+}
+
+func outText(o *tool.Output) string {
+	if o == nil {
+		return "<nil>"
+	}
+	return o.Text
 }

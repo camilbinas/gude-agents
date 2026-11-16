@@ -217,15 +217,16 @@ func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error
 	exposedName := prefix + mcpName
 	description := mcpTool.Description
 
-	return tool.NewRaw(
+	// A rich tool so image blocks reach the model as images; text, embedded
+	// text resources and placeholders for non-carryable blocks go in Output.Text.
+	return withTextHandler(tool.NewRich(
 		exposedName,
 		description,
-		schema,
-		func(ctx context.Context, input json.RawMessage) (string, error) {
+		func(ctx context.Context, input json.RawMessage) (*tool.Output, error) {
 			var args map[string]any
 			if len(input) > 0 {
 				if err := json.Unmarshal(input, &args); err != nil {
-					return "", fmt.Errorf("mcp tool %s: unmarshal input: %w", mcpName, err)
+					return nil, fmt.Errorf("mcp tool %s: unmarshal input: %w", mcpName, err)
 				}
 			}
 
@@ -234,18 +235,17 @@ func (c *Client) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error
 				Arguments: args,
 			})
 			if err != nil {
-				return "", fmt.Errorf("mcp tool %s: %w", mcpName, err)
+				return nil, fmt.Errorf("mcp tool %s: %w", mcpName, err)
 			}
 
-			text := extractText(res.Content)
-
+			out := toOutput(res.Content)
 			if res.IsError {
-				return text, fmt.Errorf("mcp tool %s returned error: %s", mcpName, text)
+				return out, fmt.Errorf("mcp tool %s returned error: %s", mcpName, out.Text)
 			}
-
-			return text, nil
+			return out, nil
 		},
-	), nil
+		tool.WithSchema(schema),
+	)), nil
 }
 
 // Close disconnects from the MCP server and terminates the subprocess.
@@ -274,16 +274,79 @@ func toSchemaMap(schema any) (map[string]any, error) {
 	return m, nil
 }
 
-// extractText pulls text content from MCP Content interface values.
-func extractText(content []sdkmcp.Content) string {
-	var result string
-	for _, c := range content {
-		if tc, ok := c.(*sdkmcp.TextContent); ok && tc.Text != "" {
-			if result != "" {
-				result += "\n"
-			}
-			result += tc.Text
+// toOutput converts MCP Content blocks into a tool.Output. Text and embedded
+// text resources become Text, images become Images, and audio, blobs and
+// resource links the SDK cannot carry become a text placeholder naming the
+// type and its URI/MIME so nothing disappears silently.
+func toOutput(content []sdkmcp.Content) *tool.Output {
+	out := &tool.Output{}
+	var lines []string
+	addText := func(s string) {
+		if s != "" {
+			lines = append(lines, s)
 		}
 	}
+	for _, c := range content {
+		switch v := c.(type) {
+		case *sdkmcp.TextContent:
+			addText(v.Text)
+		case *sdkmcp.ImageContent:
+			out.Images = append(out.Images, tool.Image{Data: v.Data, MIMEType: v.MIMEType})
+		case *sdkmcp.AudioContent:
+			addText(fmt.Sprintf("[audio content omitted: %s, %d bytes]", mimeOr(v.MIMEType, "audio"), len(v.Data)))
+		case *sdkmcp.EmbeddedResource:
+			addText(embeddedResourceText(v))
+		case *sdkmcp.ResourceLink:
+			addText(fmt.Sprintf("[resource link: %s (%s)]", v.URI, mimeOr(v.MIMEType, "unknown type")))
+		default:
+			addText(fmt.Sprintf("[unsupported content type: %T]", c))
+		}
+	}
+	out.Text = join(lines)
+	return out
+}
+
+// embeddedResourceText includes embedded text resources inline and leaves a
+// placeholder for binary blobs.
+func embeddedResourceText(e *sdkmcp.EmbeddedResource) string {
+	if e == nil || e.Resource == nil {
+		return "[embedded resource omitted]"
+	}
+	r := e.Resource
+	if r.Text != "" {
+		return r.Text
+	}
+	return fmt.Sprintf("[embedded resource omitted: %s (%s), %d bytes]", r.URI, mimeOr(r.MIMEType, "unknown type"), len(r.Blob))
+}
+
+func mimeOr(mime, fallback string) string {
+	if mime == "" {
+		return fallback
+	}
+	return mime
+}
+
+func join(lines []string) string {
+	result := ""
+	for _, l := range lines {
+		if result != "" {
+			result += "\n"
+		}
+		result += l
+	}
 	return result
+}
+
+// withTextHandler also sets the plain Handler, so adapters that read it still
+// get the text output.
+func withTextHandler(t tool.Tool) tool.Tool {
+	rich := t.RichHandler
+	t.Handler = func(ctx context.Context, raw json.RawMessage) (string, error) {
+		out, err := rich(ctx, raw)
+		if out == nil {
+			return "", err
+		}
+		return out.Text, err
+	}
+	return t
 }
