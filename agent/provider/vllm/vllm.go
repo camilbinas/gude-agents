@@ -11,6 +11,7 @@ package vllm
 
 import (
 	"os"
+	"strings"
 
 	"github.com/camilbinas/gude-agents/agent/provider/openai"
 )
@@ -23,9 +24,6 @@ type Option = openai.Option
 
 // Provider options are re-exported from the shared OpenAI-compatible adapter.
 var (
-	// WithBaseURL overrides the vLLM server URL. By default, the URL is read
-	// from VLLM_BASE_URL, falling back to http://localhost:8000/v1.
-	WithBaseURL                = openai.WithBaseURL
 	WithCapabilities           = openai.WithCapabilities
 	WithContextWindowTokens    = openai.WithContextWindowTokens
 	WithMaxOutputTokens        = openai.WithMaxOutputTokens
@@ -37,6 +35,13 @@ var (
 	WithNativeStructuredOutput = openai.WithNativeStructuredOutput
 )
 
+// WithBaseURL overrides the vLLM server URL. By default, the URL is read from
+// VLLM_BASE_URL, falling back to http://localhost:8000/v1. The URL is normalized
+// to a single /v1 suffix, so a value with or without /v1 behaves the same.
+func WithBaseURL(url string) Option {
+	return openai.WithBaseURL(normalizeBaseURL(url))
+}
+
 // New creates a provider targeting a vLLM server.
 // The model parameter is the HuggingFace model ID (e.g. "mistralai/Mistral-7B-Instruct-v0.2").
 func New(model string, opts ...Option) (*Provider, error) {
@@ -44,8 +49,17 @@ func New(model string, opts ...Option) (*Provider, error) {
 	if baseURL == "" {
 		baseURL = "http://localhost:8000/v1"
 	}
-	base := []Option{openai.WithBaseURL(baseURL)}
+	base := []Option{openai.WithBaseURL(normalizeBaseURL(baseURL))}
 	return openai.NewCompatible(model, append(base, opts...)...)
+}
+
+// normalizeBaseURL trims trailing slashes and any existing /v1 suffix, then
+// appends a single /v1, so a host with or without /v1 yields one /v1.
+func normalizeBaseURL(host string) string {
+	s := strings.TrimRight(host, "/")
+	s = strings.TrimSuffix(s, "/v1")
+	s = strings.TrimRight(s, "/")
+	return s + "/v1"
 }
 
 // Must is a helper that wraps a call to New and panics on error.
