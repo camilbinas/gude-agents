@@ -101,7 +101,7 @@ func TestProperty_OTELInvokeCounterCorrectness(t *testing.T) {
 			} else {
 				successCount++
 			}
-			_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+			_ = h.onInvoke(context.Background(), agent.InvokeRecord{
 				Phase: agent.End, Err: err,
 			})
 		}
@@ -183,7 +183,7 @@ func TestProperty_OTELProviderMetricsWithModelIDFallback(t *testing.T) {
 				CacheReadTokens:  cacheReadTokens,
 				CacheWriteTokens: cacheWriteTokens,
 			}
-			_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+			_ = h.onModel(context.Background(), agent.ModelCallRecord{
 				Phase: agent.End, ModelID: modelID, Usage: usage, Err: err,
 			})
 
@@ -262,7 +262,7 @@ func TestProperty_OTELToolCallCounterCorrectness(t *testing.T) {
 				err = errors.New("fail")
 				status = "error"
 			}
-			_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+			_ = h.onTool(context.Background(), agent.ToolCallRecord{
 				Phase: agent.End, Name: toolName, Err: err,
 			})
 
@@ -317,7 +317,7 @@ func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 			direction := rapid.SampledFrom([]string{"input", "output"}).Draw(rt, fmt.Sprintf("dir_%d", i))
 			blocked := rapid.Bool().Draw(rt, fmt.Sprintf("blocked_%d", i))
 
-			_ = h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+			_ = h.onGuardrail(context.Background(), agent.GuardrailRecord{
 				Phase: agent.End, Direction: direction, Blocked: blocked,
 			})
 
@@ -352,7 +352,7 @@ func TestProperty_OTELGuardrailBlockSelectivity(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestProperty_OTELIterationCounterMonotonicity verifies that for any
-// non-negative integer N, calling ObserveIteration with Start records exactly N times results in
+// non-negative integer N, calling onIteration with Start records exactly N times results in
 // the OTEL agent.iteration.total counter having value N.
 func TestProperty_OTELIterationCounterMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -361,7 +361,7 @@ func TestProperty_OTELIterationCounterMonotonicity(t *testing.T) {
 		n := rapid.IntRange(0, 100).Draw(rt, "n")
 
 		for range n {
-			_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+			_ = h.onIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 		}
 
 		got := collectCounter(reader, "agent.iteration.total", map[string]string{})

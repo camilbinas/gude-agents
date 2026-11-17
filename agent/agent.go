@@ -53,7 +53,7 @@ type Runtime struct {
 
 	providerTimeout time.Duration
 
-	observers []Observer
+	hooks []Hooks
 
 	// random is the entropy source for execution IDs. Nil means
 	// crypto/rand.Reader; tests substitute failing readers.

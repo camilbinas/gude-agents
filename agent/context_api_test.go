@@ -243,42 +243,44 @@ func TestContext_SatisfiesContextInterface(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Unified observer configuration
+// Unified hooks configuration
 // ---------------------------------------------------------------------------
 
-type contextTestInvokeObserver struct{ name string }
+type contextHooksKey struct{}
 
-func (o *contextTestInvokeObserver) ObserveInvoke(ctx context.Context, _ InvokeRecord) context.Context {
-	return context.WithValue(ctx, contextObserverKey{}, o.name)
+// namedHooks returns Hooks whose Invoke start stamps name into the context.
+func namedHooks(name string) Hooks {
+	return Hooks{Invoke: func(ctx context.Context, _ InvokeRecord) context.Context {
+		return context.WithValue(ctx, contextHooksKey{}, name)
+	}}
 }
 
-type contextObserverKey struct{}
+func TestContextWithHooks_ReplacesAgentHooks(t *testing.T) {
+	a := &Runtime{hooks: []Hooks{namedHooks("agent")}}
+	c := Background().WithHooks(namedHooks("invocation"))
 
-func TestContextWithObservers_ReplacesAgentObservers(t *testing.T) {
-	agentObserver := &contextTestInvokeObserver{name: "agent"}
-	invocationObserver := &contextTestInvokeObserver{name: "invocation"}
-	a := &Runtime{observers: []any{agentObserver}}
-	c := Background().WithObservers(invocationObserver)
-
-	h := a.hooks(c)
-	if len(h.observers) != 1 || h.observers[0] != invocationObserver {
-		t.Fatalf("invocation observers did not replace agent observers: %#v", h.observers)
+	h := a.dispatcher(c)
+	if len(h.hooks) != 1 {
+		t.Fatalf("hooks = %d, want 1", len(h.hooks))
+	}
+	ctx, _ := h.onInvokeStart(Background(), InvokeRecord{})
+	if got := ctx.Value(contextHooksKey{}); got != "invocation" {
+		t.Fatalf("active hooks = %v, want invocation", got)
 	}
 }
 
-func TestContextWithObservers_EmptyDisablesAgentObservers(t *testing.T) {
-	a := &Runtime{observers: []any{&contextTestInvokeObserver{name: "agent"}}}
-	h := a.hooks(Background().WithObservers())
-	if len(h.observers) != 0 {
-		t.Fatalf("expected no observers, got %d", len(h.observers))
+func TestContextWithHooks_EmptyDisablesAgentHooks(t *testing.T) {
+	a := &Runtime{hooks: []Hooks{namedHooks("agent")}}
+	h := a.dispatcher(Background().WithHooks())
+	if len(h.hooks) != 0 {
+		t.Fatalf("expected no hooks, got %d", len(h.hooks))
 	}
 }
 
-func TestContextClonePreservesObservers(t *testing.T) {
-	observer := &contextTestInvokeObserver{name: "invocation"}
-	cloned := Background().WithObservers(observer).Clone()
-	if !cloned.cfg.observersSet || len(cloned.cfg.observers) != 1 || cloned.cfg.observers[0] != observer {
-		t.Fatal("Clone did not preserve invocation observers")
+func TestContextClonePreservesHooks(t *testing.T) {
+	cloned := Background().WithHooks(namedHooks("invocation")).Clone()
+	if !cloned.cfg.hooksSet || len(cloned.cfg.hooks) != 1 {
+		t.Fatal("Clone did not preserve invocation hooks")
 	}
 }
 
@@ -365,35 +367,27 @@ func TestScope_ClonePropagatesScopes(t *testing.T) {
 	}
 }
 
-type observerOrderKey struct{}
+type hookOrderKey struct{}
 
-type orderedInvokeObserver struct {
-	name   string
-	events *[]string
+func orderedInvokeHooks(name string, events *[]string) Hooks {
+	return Hooks{Invoke: func(ctx context.Context, record InvokeRecord) context.Context {
+		seen, _ := ctx.Value(hookOrderKey{}).(string)
+		*events = append(*events, string(record.Phase)+":"+name+":"+seen)
+		return context.WithValue(ctx, hookOrderKey{}, name+"-"+string(record.Phase))
+	}}
 }
 
-func (o *orderedInvokeObserver) ObserveInvoke(ctx context.Context, record InvokeRecord) context.Context {
-	seen, _ := ctx.Value(observerOrderKey{}).(string)
-	*o.events = append(*o.events, string(record.Phase)+":"+o.name+":"+seen)
-	return context.WithValue(ctx, observerOrderKey{}, o.name+"-"+string(record.Phase))
-}
-
-type filteredToolObserver struct{ calls int }
-
-func (o *filteredToolObserver) ObserveTool(ctx context.Context, _ ToolCallRecord) context.Context {
-	o.calls++
-	return ctx
-}
-
-func TestObserverDispatcher_CapabilityFilteringAndContextOrder(t *testing.T) {
+func TestHooksDispatcher_NilFieldsSkippedAndContextOrder(t *testing.T) {
 	var events []string
-	first := &orderedInvokeObserver{name: "first", events: &events}
-	toolOnly := &filteredToolObserver{}
-	second := &orderedInvokeObserver{name: "second", events: &events}
-	h := hooks{observers: []any{first, toolOnly, second}}
+	toolCalls := 0
+	toolOnly := Hooks{Tool: func(ctx context.Context, _ ToolCallRecord) context.Context {
+		toolCalls++
+		return ctx
+	}}
+	h := hooks{hooks: []Hooks{orderedInvokeHooks("first", &events), toolOnly, orderedInvokeHooks("second", &events)}}
 
 	ctx, finish := h.onInvokeStart(Background(), InvokeRecord{AgentName: "test"})
-	if got := ctx.Value(observerOrderKey{}); got != "second-start" {
+	if got := ctx.Value(hookOrderKey{}); got != "second-start" {
 		t.Fatalf("threaded start context = %v, want second-start", got)
 	}
 	finish.finish(Result{Text: "final", StopReason: StopEndTurn}, nil)
@@ -412,36 +406,39 @@ func TestObserverDispatcher_CapabilityFilteringAndContextOrder(t *testing.T) {
 			t.Fatalf("events[%d] = %q, want %q", i, events[i], want[i])
 		}
 	}
-	if toolOnly.calls != 0 {
-		t.Fatalf("tool-only observer received invoke records: %d", toolOnly.calls)
+	if toolCalls != 0 {
+		t.Fatalf("tool-only hooks received invoke records: %d", toolCalls)
 	}
 }
 
-type streamIndependenceObserver struct {
+type streamIndependenceHooks struct {
 	mu          sync.Mutex
 	invokeCount int
 	modelCount  int
 }
 
-func (o *streamIndependenceObserver) ObserveInvoke(ctx context.Context, _ InvokeRecord) context.Context {
-	o.mu.Lock()
-	o.invokeCount++
-	o.mu.Unlock()
-	return ctx
+func (o *streamIndependenceHooks) hooks() Hooks {
+	return Hooks{
+		Invoke: func(ctx context.Context, _ InvokeRecord) context.Context {
+			o.mu.Lock()
+			o.invokeCount++
+			o.mu.Unlock()
+			return ctx
+		},
+		Model: func(ctx context.Context, _ ModelCallRecord) context.Context {
+			o.mu.Lock()
+			o.modelCount++
+			o.mu.Unlock()
+			return ctx
+		},
+	}
 }
 
-func (o *streamIndependenceObserver) ObserveModel(ctx context.Context, _ ModelCallRecord) context.Context {
-	o.mu.Lock()
-	o.modelCount++
-	o.mu.Unlock()
-	return ctx
-}
-
-func TestObserverDispatcher_DetailedStreamEventsAreIndependent(t *testing.T) {
+func TestHooksDispatcher_DetailedStreamEventsAreIndependent(t *testing.T) {
 	run := func(detailed bool) (invokeCount, modelCount, detailedEvents int) {
-		observer := &streamIndependenceObserver{}
+		rec := &streamIndependenceHooks{}
 		provider := newScriptedProvider(&ModelResponse{Text: "done"})
-		a, err := New(provider, "sys", WithObserver(observer))
+		a, err := New(provider, "sys", WithHooks(rec.hooks()))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -458,15 +455,15 @@ func TestObserverDispatcher_DetailedStreamEventsAreIndependent(t *testing.T) {
 				detailedEvents++
 			}
 		}
-		observer.mu.Lock()
-		defer observer.mu.Unlock()
-		return observer.invokeCount, observer.modelCount, detailedEvents
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return rec.invokeCount, rec.modelCount, detailedEvents
 	}
 
 	plainInvoke, plainModel, plainEvents := run(false)
 	detailInvoke, detailModel, detailEvents := run(true)
 	if plainInvoke != 2 || plainModel != 2 || detailInvoke != plainInvoke || detailModel != plainModel {
-		t.Fatalf("observer counts changed with detailed events: plain=(%d,%d), detailed=(%d,%d)", plainInvoke, plainModel, detailInvoke, detailModel)
+		t.Fatalf("hook counts changed with detailed events: plain=(%d,%d), detailed=(%d,%d)", plainInvoke, plainModel, detailInvoke, detailModel)
 	}
 	if plainEvents != 0 || detailEvents == 0 {
 		t.Fatalf("stream detail gating failed: plain=%d detailed=%d", plainEvents, detailEvents)
@@ -476,15 +473,14 @@ func TestObserverDispatcher_DetailedStreamEventsAreIndependent(t *testing.T) {
 func TestContextClone_DeepCopiesInvocationConfiguration(t *testing.T) {
 	temperature, topP := 0.2, 0.8
 	topK, maxTokens := 5, 123
-	firstObserver := &contextTestInvokeObserver{name: "first"}
-	secondObserver := &contextTestInvokeObserver{name: "second"}
+	firstHooks, secondHooks := namedHooks("first"), namedHooks("second")
 	original := Background().
 		WithScope("project", "p1").
 		WithPrincipal(Principal{ID: "user", Roles: []string{"admin"}, Attrs: map[string]string{"org": "one"}, Credentials: map[string]string{"token": "secret"}}).
 		WithImages([]ImageBlock{{Source: ImageSource{Data: []byte{1, 2}, MIMEType: "image/png"}}}).
 		WithDocuments([]DocumentBlock{{Source: DocumentSource{Data: []byte{3, 4}, MIMEType: "application/pdf"}}}).
 		WithInferenceConfig(&InferenceConfig{Temperature: &temperature, TopP: &topP, TopK: &topK, MaxTokens: &maxTokens, StopSequences: []string{"STOP"}}).
-		WithObservers(firstObserver, secondObserver)
+		WithHooks(firstHooks, secondHooks)
 	original.Set("parent", "value")
 	original = original.forInvocation(original, &invocationRuntime{}).forToolCall(&toolCallRuntime{id: "call"})
 
@@ -511,7 +507,7 @@ func TestContextClone_DeepCopiesInvocationConfiguration(t *testing.T) {
 	*clone.cfg.inferenceConfig.TopK = 99
 	*clone.cfg.inferenceConfig.MaxTokens = 456
 	clone.cfg.inferenceConfig.StopSequences[0] = "CHANGED"
-	clone.cfg.observers[0] = secondObserver
+	clone.cfg.hooks[0] = secondHooks
 
 	if got, _ := original.Scope("project"); got != "p1" {
 		t.Fatalf("original scope = %q", got)
@@ -527,8 +523,11 @@ func TestContextClone_DeepCopiesInvocationConfiguration(t *testing.T) {
 	if *inference.Temperature != 0.2 || *inference.TopP != 0.8 || *inference.TopK != 5 || *inference.MaxTokens != 123 || inference.StopSequences[0] != "STOP" {
 		t.Fatalf("original inference mutated: %#v", inference)
 	}
-	if original.cfg.observers[0] != firstObserver {
-		t.Fatal("original observer slice mutated")
+	if len(original.cfg.hooks) != 2 || original.cfg.hooks[0].Invoke == nil {
+		t.Fatal("original hooks slice missing entries")
+	}
+	if _, h := original.cfg.hooks[0].Invoke, original.cfg.hooks[0]; h.Invoke(Background(), InvokeRecord{}).Value(contextHooksKey{}) != "first" {
+		t.Fatal("original hooks slice mutated")
 	}
 
 	original.cfg.scopes["project"] = "p3"

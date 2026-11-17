@@ -69,7 +69,7 @@ func (a *Runtime) InvokeSchema(c *Context, userMessage string, schema map[string
 // structuredTurn runs the structured-output lifecycle: one model call, output
 // guardrails, schema validation and decode, retried up to a.structuredOutputRetries
 // times with the failure fed back to the model. Only the final successful
-// answer is persisted; usage, guardrails and observers apply to every attempt.
+// answer is persisted; usage, guardrails and hooks apply to every attempt.
 // Result.Text is the guardrail-processed JSON.
 func (r *run) structuredTurn(userMessage string, schema map[string]any, native bool, toolChoice *tool.Choice, decode func([]byte) error) (Result, error) {
 	a, c := r.a, r.c

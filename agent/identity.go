@@ -17,7 +17,7 @@ type Principal struct {
 	Attrs map[string]string
 	// Credentials holds opaque credential values (tokens, API keys, etc.) keyed
 	// by name. The json:"-" tag keeps them out of any marshaled audit or
-	// observer record so they are never logged or transmitted.
+	// hook record so they are never logged or transmitted.
 	Credentials map[string]string `json:"-"`
 }
 

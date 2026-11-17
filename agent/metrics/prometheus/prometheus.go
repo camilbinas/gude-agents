@@ -11,7 +11,7 @@ import (
 // llmBuckets defines histogram buckets tuned for LLM latencies.
 var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0}
 
-// Option configures the Prometheus metrics observer.
+// Option configures the Prometheus metrics hooks.
 type Option func(*prometheusHook)
 
 // otherToolName buckets tool names outside the allowlist (see WithToolNameAllowlist).
@@ -46,7 +46,7 @@ func WithRegisterer(r prometheus.Registerer) Option {
 	}
 }
 
-// prometheusHook implements the observer capabilities needed for Prometheus metrics.
+// prometheusHook implements the hooks needed for Prometheus metrics.
 type prometheusHook struct {
 	namespace         string
 	registerer        prometheus.Registerer
@@ -66,15 +66,6 @@ type prometheusHook struct {
 	imagesAttachedTotal  prometheus.Counter
 	docsAttachedTotal    prometheus.Counter
 }
-
-var (
-	_ agent.InvokeObserver     = (*prometheusHook)(nil)
-	_ agent.IterationObserver  = (*prometheusHook)(nil)
-	_ agent.ModelObserver      = (*prometheusHook)(nil)
-	_ agent.ToolObserver       = (*prometheusHook)(nil)
-	_ agent.GuardrailObserver  = (*prometheusHook)(nil)
-	_ agent.AttachmentObserver = (*prometheusHook)(nil)
-)
 
 // register creates and registers all 11 Prometheus metrics with the registerer.
 func (h *prometheusHook) register() {
@@ -158,8 +149,20 @@ func statusLabel(err error) string {
 	return "success"
 }
 
-// ObserveInvoke records invocation duration and status from a normalized end record.
-func (h *prometheusHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+// hooks returns the lifecycle hooks this adapter implements.
+func (h *prometheusHook) hooks() agent.Hooks {
+	return agent.Hooks{
+		Invoke:     h.onInvoke,
+		Iteration:  h.onIteration,
+		Model:      h.onModel,
+		Tool:       h.onTool,
+		Guardrail:  h.onGuardrail,
+		Attachment: h.onAttachment,
+	}
+}
+
+// onInvoke records invocation duration and status from a normalized end record.
+func (h *prometheusHook) onInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -168,14 +171,14 @@ func (h *prometheusHook) ObserveInvoke(ctx context.Context, record agent.InvokeR
 	return ctx
 }
 
-func (h *prometheusHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+func (h *prometheusHook) onIteration(ctx context.Context, record agent.IterationRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.iterationTotal.Inc()
 	}
 	return ctx
 }
 
-func (h *prometheusHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+func (h *prometheusHook) onModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -198,7 +201,7 @@ func (h *prometheusHook) ObserveModel(ctx context.Context, record agent.ModelCal
 	return ctx
 }
 
-func (h *prometheusHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+func (h *prometheusHook) onTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -219,14 +222,14 @@ func (h *prometheusHook) toolLabel(name string) string {
 	return otherToolName
 }
 
-func (h *prometheusHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+func (h *prometheusHook) onGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
 	if record.Phase == agent.End && record.Blocked {
 		h.guardrailBlockTotal.WithLabelValues(record.Direction).Inc()
 	}
 	return ctx
 }
 
-func (h *prometheusHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+func (h *prometheusHook) onAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -253,6 +256,6 @@ func WithMetrics(opts ...Option) agent.Option {
 			h.constLabels = prometheus.Labels{"agent_name": name}
 		}
 		h.register()
-		return agent.WithObserver(h)(a)
+		return agent.WithHooks(h.hooks())(a)
 	}
 }

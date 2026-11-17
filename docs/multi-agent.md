@@ -16,7 +16,7 @@ coordinator, err := agent.New(mainProvider, "Coordinate specialist work.",
 )
 ```
 
-Child execution receives a clone of the parent invocation context: cancellation, identity, scopes, principal, and configuration propagate, while the child gets an isolated invocation KV store. Its final `Result.Text` becomes the parent tool result. Configure persistence, retrieval, limits, and observers on each agent according to ownership.
+Child execution receives a clone of the parent invocation context: cancellation, identity, scopes, principal, and configuration propagate, while the child gets an isolated invocation KV store. Its final `Result.Text` becomes the parent tool result. Configure persistence, retrieval, limits, and hooks on each agent according to ownership.
 
 When a child has a `ConversationStore`, `AgentAsTool` automatically isolates it from the parent transcript. The child conversation ID is deterministically derived from the parent conversation ID, tool-call ID, wrapper tool name, and child agent identity. Normal callers should not manually invent a separate child ID. A persistent child therefore requires the parent invocation to have a conversation ID and to be inside a tool call.
 

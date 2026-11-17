@@ -1,6 +1,6 @@
 # Observability and audit
 
-Operational lifecycle observers are separate from application `Stream` events. Application events drive UI/SSE behavior; observers feed logs, metrics, traces, and security records whether the caller uses `Invoke`, `Stream`, structured output, or resume.
+Operational lifecycle hooks are separate from application `Stream` events. Application events drive UI/SSE behavior; hooks feed logs, metrics, traces, and security records whether the caller uses `Invoke`, `Stream`, structured output, or resume.
 
 ## Hooks
 
@@ -17,27 +17,13 @@ a, err := agent.Agent(prov, instructions, agent.WithHooks(agent.Hooks{
 }))
 ```
 
-Each function receives a `Start` and an `End` record. The context returned at `Start` is passed to `End`, so a span started at `Start` can be ended at `End`. `WithHooks` is repeatable and mixes with `WithObserver`; all run in registration order at start and reverse order at end. Keep state across events in a closure.
+Each function receives a `Start` and an `End` record. The context returned at `Start` is passed to `End`, so a span started at `Start` can be ended at `End`. `WithHooks` is repeatable; all registered hooks run in registration order at start and reverse order at end. Records carry `Phase` (`Start`/`End`), timestamps, duration, identifiers, outcome, and relevant usage/error fields. Hooks may run concurrently, so keep shared state behind a lock or in a closure you own.
 
-## Observer model
+`Hooks` has one field per lifecycle category: `Invoke`, `Iteration`, `Model`, `Tool`, `Guardrail`, `Conversation`, `Retrieval`, `Attachment`, `Limit`, `ToolLog`, and `Interrupt`. Unset fields are skipped.
 
-Observer adapters with methods also work. Register them at construction:
+`Context.WithHooks(...)` replaces the agent's hooks for one invocation; no arguments disable observation for that invocation.
 
-```go
-a, err := agent.New(prov, instructions,
-    agent.WithObserver(myObserver),
-)
-```
-
-Small capability interfaces include `InvokeObserver`, `IterationObserver`, `ModelObserver`, `ToolObserver`, `GuardrailObserver`, `ConversationObserver`, `RetrievalObserver`, `AttachmentObserver`, `LimitObserver`, `ToolLogObserver`, and `InterruptObserver`. Each receives standard `context.Context` plus a record with `Phase` (`Start`/`End`), timestamps, duration, identifiers, outcome, and relevant usage/error fields. Implement only needed capabilities; methods may run concurrently and can return a derived context for matching end records.
-
-`WithObserver` accepts `agent.Observer` (an alias for `any`, since Go cannot express "one of these interfaces" as a single type once the interfaces have methods) and rejects at construction any value implementing none of the capabilities above. Add a compile-time assertion per capability you implement so a typo'd method name fails to build instead of silently dropping that capability:
-
-```go
-var _ agent.ToolObserver = (*MyObserver)(nil)
-```
-
-Observers run in registration order at lifecycle start and reverse order at end. `Context.WithObservers(...)` replaces agent observers for one invocation; no arguments disable observation for that invocation.
+All built-in adapters (logging, metrics, tracing, audit) are `agent.Option` values that register `Hooks` for you, so they combine freely with your own `WithHooks`.
 
 ## Built-in logging
 
@@ -51,16 +37,16 @@ import (
 )
 
 // Local development: colored trace on stdout.
-a, err := agent.New(prov, instructions, agentdebug.WithLogging())
+a, err := agent.Agent(prov, instructions, agentdebug.WithLogging())
 
 // Capture a plain trace, for example in a test.
 var trace bytes.Buffer
-a, err = agent.New(prov, instructions,
+a, err = agent.Agent(prov, instructions,
     agentdebug.WithLogging(agentdebug.WithWriter(&trace), agentdebug.WithColor(false)),
 )
 
 // Production: structured logs.
-a, err = agent.New(prov, instructions, agentslog.WithLogging())
+a, err = agent.Agent(prov, instructions, agentslog.WithLogging())
 ```
 
 Choosing between them by environment is application code; the framework ships no environment switch.
@@ -77,7 +63,7 @@ Choosing between them by environment is application code; the framework ships no
 The `tool_name` label (Prometheus) / attribute (OTEL) is recorded verbatim by default. For a dynamic or user-supplied tool set — for example MCP tools registered at runtime — that is an unbounded-cardinality risk that can blow up Prometheus memory. Bound it with `WithToolNameAllowlist`, available on both backends: allowlisted names are recorded as-is, any other name is bucketed under `other`.
 
 ```go
-agent.New(prov, instructions,
+agent.Agent(prov, instructions,
     prometheusmetrics.WithMetrics(prometheusmetrics.WithToolNameAllowlist("search", "calculator")),
 )
 ```
@@ -88,16 +74,16 @@ agent.New(prov, instructions,
 
 ### GenAI semantic conventions
 
-The observer targets the OpenTelemetry GenAI semantic conventions (version pinned and documented as `tracing.SemconvGenAIVersion`; the GenAI conventions are published separately from the stable OTel semconv packages and are at Development stability, so the `gen_ai.*` keys are hand-pinned constants).
+The tracing hooks target the OpenTelemetry GenAI semantic conventions (version pinned and documented as `tracing.SemconvGenAIVersion`; the GenAI conventions are published separately from the stable OTel semconv packages and are at Development stability, so the `gen_ai.*` keys are hand-pinned constants).
 
 - `gen_ai.operation.name` (`invoke_agent` / `chat` / `execute_tool`) is emitted by default so GenAI-aware backends recognize the spans. Remap `RoleOperationName` in a custom scheme to change it.
-- Under `WithContentCapture`, the observer emits the structured `gen_ai.input.messages` / `gen_ai.output.messages` attributes (role + typed parts, JSON encoded) alongside the deprecated `gen_ai.prompt` / `gen_ai.completion` / `gen_ai.provider.response`. `WithoutLegacyContentAttributes` drops the deprecated pair and keeps only the structured attributes.
+- Under `WithContentCapture`, the tracing hooks emit the structured `gen_ai.input.messages` / `gen_ai.output.messages` attributes (role + typed parts, JSON encoded) alongside the deprecated `gen_ai.prompt` / `gen_ai.completion` / `gen_ai.provider.response`. `WithoutLegacyContentAttributes` drops the deprecated pair and keeps only the structured attributes.
 - `WithSpecSpanNames` opts into the spec span-name format `{operation} {model}` (for example `chat gpt-4o`). It is opt-in because renaming spans breaks dashboards, alerts, and tests; the default gude-agents span names (`agent.invoke`, `agent.provider.call`, `agent.tool.<name>`) are unchanged.
 - Non-content scalar attributes `agent.token_usage.total`, `agent.user_message_length`, `tool.input_length`, and `tool.output_length` are emitted by default (lengths/counts only, never the payload); `agent.error` is set on invocation failure.
 
 ### Correlating logs with traces
 
-The `logging/slog` observer logs with the active invocation context, so a context-aware `slog.Handler` can read the OTel span from `tracing.WithTracing`. Wrap your handler with `tracing.SlogHandler` to stamp `trace_id` and `span_id` onto every record that carries a span, letting a log backend join logs to traces. Register tracing before the slog observer so the span-carrying context reaches it:
+The `logging/slog` hooks log with the active invocation context, so a context-aware `slog.Handler` can read the OTel span from `tracing.WithTracing`. Wrap your handler with `tracing.SlogHandler` to stamp `trace_id` and `span_id` onto every record that carries a span, letting a log backend join logs to traces. Register tracing before the slog hooks so the span-carrying context reaches it:
 
 ```go
 h := tracing.SlogHandler(slog.NewJSONHandler(os.Stdout, nil))
@@ -124,7 +110,7 @@ type AuditSink interface {
     WriteAudit(context.Context, any)
 }
 
-a, err := agent.New(prov, instructions,
+a, err := agent.Agent(prov, instructions,
     agent.WithAudit(sink),
 )
 ```
@@ -134,7 +120,7 @@ a, err := agent.New(prov, instructions,
 The runnable examples intentionally do not duplicate a chatbot for every exporter. Configure one adapter on the same Agent:
 
 ```go
-a, err := agent.New(prov, instructions,
+a, err := agent.Agent(prov, instructions,
     agentslog.WithLogging(),
     tracing.WithTracing(tracerProvider),
     metricsotel.WithMetrics(meterProvider),

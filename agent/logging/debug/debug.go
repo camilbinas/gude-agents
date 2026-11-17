@@ -1,5 +1,5 @@
-// Package debug provides a human-readable colored logging observer for local
-// development. It implements the relevant agent observer capabilities with a
+// Package debug provides a human-readable colored logging adapter for local
+// development. It implements the relevant agent hooks with a
 // trace-style output designed to be readable while an agent is running.
 //
 // Not intended for production use — use agent/logging/slog with a JSON handler
@@ -124,25 +124,27 @@ func (h *debugHook) p(format string, args ...any) {
 	_, _ = io.WriteString(h.out, line)
 }
 
-// Compile-time interface checks.
-var (
-	_ agent.InvokeObserver       = (*debugHook)(nil)
-	_ agent.IterationObserver    = (*debugHook)(nil)
-	_ agent.ModelObserver        = (*debugHook)(nil)
-	_ agent.ToolObserver         = (*debugHook)(nil)
-	_ agent.GuardrailObserver    = (*debugHook)(nil)
-	_ agent.ConversationObserver = (*debugHook)(nil)
-	_ agent.RetrievalObserver    = (*debugHook)(nil)
-	_ agent.AttachmentObserver   = (*debugHook)(nil)
-	_ agent.LimitObserver        = (*debugHook)(nil)
-	_ agent.ToolLogObserver      = (*debugHook)(nil)
-)
-
 // ---------------------------------------------------------------------------
-// Observer methods — agent lifecycle
+// Hook methods — agent lifecycle
 // ---------------------------------------------------------------------------
 
-func (h *debugHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+// hooks returns the lifecycle hooks this adapter implements.
+func (h *debugHook) hooks() agent.Hooks {
+	return agent.Hooks{
+		Invoke:       h.onInvoke,
+		Iteration:    h.onIteration,
+		Model:        h.onModel,
+		Tool:         h.onTool,
+		ToolLog:      h.onToolLog,
+		Guardrail:    h.onGuardrail,
+		Conversation: h.onConversation,
+		Retrieval:    h.onRetrieval,
+		Attachment:   h.onAttachment,
+		Limit:        h.onLimit,
+	}
+}
+
+func (h *debugHook) onInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
 	switch record.Phase {
 	case agent.Start:
 		name := record.AgentName
@@ -170,7 +172,7 @@ func (h *debugHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord
 	return ctx
 }
 
-func (h *debugHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+func (h *debugHook) onIteration(ctx context.Context, record agent.IterationRecord) context.Context {
 	switch record.Phase {
 	case agent.Start:
 		h.p("\n%s◉ iteration %d%s\n", h.c.cyan, record.Iteration, h.c.reset)
@@ -184,7 +186,7 @@ func (h *debugHook) ObserveIteration(ctx context.Context, record agent.Iteration
 	return ctx
 }
 
-func (h *debugHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+func (h *debugHook) onModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -203,7 +205,7 @@ func (h *debugHook) ObserveModel(ctx context.Context, record agent.ModelCallReco
 	return ctx
 }
 
-func (h *debugHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+func (h *debugHook) onTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
 	switch record.Phase {
 	case agent.Start:
 		h.p("    %s⚙ %s%s …\n", h.c.cyan, record.Name, h.c.reset)
@@ -217,12 +219,12 @@ func (h *debugHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord
 	return ctx
 }
 
-func (h *debugHook) ObserveToolLog(ctx context.Context, record agent.ToolLogRecord) context.Context {
+func (h *debugHook) onToolLog(ctx context.Context, record agent.ToolLogRecord) context.Context {
 	h.p("      %s→ %s%s\n", h.c.dim, record.Message, h.c.reset)
 	return ctx
 }
 
-func (h *debugHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+func (h *debugHook) onGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -236,7 +238,7 @@ func (h *debugHook) ObserveGuardrail(ctx context.Context, record agent.Guardrail
 	return ctx
 }
 
-func (h *debugHook) ObserveConversation(ctx context.Context, record agent.ConversationRecord) context.Context {
+func (h *debugHook) onConversation(ctx context.Context, record agent.ConversationRecord) context.Context {
 	switch record.Phase {
 	case agent.Start:
 		h.p("%s⟳ conversation %s %s", h.c.dim, record.Operation, h.c.reset)
@@ -250,7 +252,7 @@ func (h *debugHook) ObserveConversation(ctx context.Context, record agent.Conver
 	return ctx
 }
 
-func (h *debugHook) ObserveRetrieval(ctx context.Context, record agent.RetrievalRecord) context.Context {
+func (h *debugHook) onRetrieval(ctx context.Context, record agent.RetrievalRecord) context.Context {
 	switch record.Phase {
 	case agent.Start:
 		h.p("%s⟳ retriever%s", h.c.dim, h.c.reset)
@@ -264,7 +266,7 @@ func (h *debugHook) ObserveRetrieval(ctx context.Context, record agent.Retrieval
 	return ctx
 }
 
-func (h *debugHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+func (h *debugHook) onAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -277,7 +279,7 @@ func (h *debugHook) ObserveAttachment(ctx context.Context, record agent.Attachme
 	return ctx
 }
 
-func (h *debugHook) ObserveLimit(ctx context.Context, record agent.LimitRecord) context.Context {
+func (h *debugHook) onLimit(ctx context.Context, record agent.LimitRecord) context.Context {
 	if record.Phase == agent.End && record.Name == "max_iterations" {
 		h.p("    %s⚠ max iterations (%d) exceeded%s\n", h.c.yellow, record.Limit, h.c.reset)
 	}
@@ -289,7 +291,7 @@ func (h *debugHook) ObserveLimit(ctx context.Context, record agent.LimitRecord) 
 // ---------------------------------------------------------------------------
 
 // WithLogging returns an agent.Option that installs the human-readable debug
-// logging observer. Defaults: stdout with ANSI colors. An invalid option, such
+// logging hooks. Defaults: stdout with ANSI colors. An invalid option, such
 // as a nil writer, makes agent.New return an error.
 func WithLogging(opts ...Option) agent.Option {
 	cfg := config{out: os.Stdout, color: true}
@@ -301,7 +303,7 @@ func WithLogging(opts ...Option) agent.Option {
 			return func(*agent.Runtime) error { return err }
 		}
 	}
-	return agent.WithObserver(newDebugHook(cfg.out, cfg.color))
+	return agent.WithHooks(newDebugHook(cfg.out, cfg.color).hooks())
 }
 
 // ---------------------------------------------------------------------------

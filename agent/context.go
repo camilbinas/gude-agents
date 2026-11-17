@@ -54,8 +54,8 @@ type invocationConfig struct {
 	principal        *Principal
 	instructions     string
 	detailedEvents   bool
-	observers        []Observer
-	observersSet     bool
+	hooks            []Hooks
+	hooksSet         bool
 	// nestedResume routes a parent resume into a specific AgentAsTool call so
 	// the handler resumes its paused child instead of invoking it fresh. It is
 	// set only on the resume turn of an InterruptNested pause.
@@ -360,11 +360,11 @@ func (c *Context) WithDetailedEvents() *Context {
 	return c
 }
 
-// WithObservers replaces the Runtime's observers for this invocation. Passing no
-// observers disables observation for the invocation.
-func (c *Context) WithObservers(observers ...Observer) *Context {
-	c.cfg.observers = append([]Observer(nil), observers...)
-	c.cfg.observersSet = true
+// WithHooks replaces the Runtime's hooks for this invocation. Passing no
+// hooks disables observation for the invocation.
+func (c *Context) WithHooks(hooks ...Hooks) *Context {
+	c.cfg.hooks = append([]Hooks(nil), hooks...)
+	c.cfg.hooksSet = true
 	return c
 }
 
@@ -413,7 +413,7 @@ func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
 		inference.StopSequences = append([]string(nil), inference.StopSequences...)
 		clone.inferenceConfig = &inference
 	}
-	clone.observers = append([]Observer(nil), cfg.observers...)
+	clone.hooks = append([]Hooks(nil), cfg.hooks...)
 	// A clone is an independent sub-invocation, never a continuation of the
 	// parent's execution. Call WithExecutionID after Clone when an external
 	// protocol needs to supply a specific child identity.

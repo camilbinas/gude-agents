@@ -6,7 +6,7 @@ import (
 )
 
 // Logger allows tools to emit messages during execution. The agent injects it
-// when a ToolLogObserver is configured; callers can retrieve it with LoggerFrom.
+// when Hooks.ToolLog is set; callers can retrieve it with LoggerFrom.
 type Logger interface {
 	// Log emits a message from within a tool execution.
 	Log(msg string)

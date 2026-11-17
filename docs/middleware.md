@@ -41,4 +41,4 @@ a, err := agent.New(prov, instructions, agent.WithMiddleware(Timing))
 
 Middlewares are applied in registration order; the first is outermost. They may inspect or replace `ToolCall` and `ToolResult`, but should preserve `call.ID` for correlation. Respect cancellation and avoid storing invocation state globally.
 
-Authorization, schema validation, guards, and approval happen before the middleware/handler portion of the pipeline. Built-in lifecycle observers are usually better for telemetry because they also cover model, conversation, retrieval, and interrupt operations. See [Observability](observability.md).
+Authorization, schema validation, guards, and approval happen before the middleware/handler portion of the pipeline. Built-in lifecycle hooks are usually better for telemetry because they also cover model, conversation, retrieval, and interrupt operations. See [Observability](observability.md).

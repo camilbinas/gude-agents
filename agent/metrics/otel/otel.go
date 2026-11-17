@@ -18,7 +18,7 @@ var llmBuckets = []float64{0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.
 // otherToolName buckets tool names outside the allowlist (see WithToolNameAllowlist).
 const otherToolName = "other"
 
-// otelHook implements the observer capabilities needed for OpenTelemetry metrics.
+// otelHook implements the hooks needed for OpenTelemetry metrics.
 type otelHook struct {
 	meter             metric.Meter
 	meterName         string
@@ -37,15 +37,6 @@ type otelHook struct {
 	imagesAttachedTotal  metric.Int64Counter
 	docsAttachedTotal    metric.Int64Counter
 }
-
-var (
-	_ agent.InvokeObserver     = (*otelHook)(nil)
-	_ agent.IterationObserver  = (*otelHook)(nil)
-	_ agent.ModelObserver      = (*otelHook)(nil)
-	_ agent.ToolObserver       = (*otelHook)(nil)
-	_ agent.GuardrailObserver  = (*otelHook)(nil)
-	_ agent.AttachmentObserver = (*otelHook)(nil)
-)
 
 func (h *otelHook) register() error {
 	var err error
@@ -132,7 +123,19 @@ func statusAttr(err error) attribute.KeyValue {
 	return attribute.String("status", "success")
 }
 
-func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+// hooks returns the lifecycle hooks this adapter implements.
+func (h *otelHook) hooks() agent.Hooks {
+	return agent.Hooks{
+		Invoke:     h.onInvoke,
+		Iteration:  h.onIteration,
+		Model:      h.onModel,
+		Tool:       h.onTool,
+		Guardrail:  h.onGuardrail,
+		Attachment: h.onAttachment,
+	}
+}
+
+func (h *otelHook) onInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -141,14 +144,14 @@ func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord)
 	return ctx
 }
 
-func (h *otelHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+func (h *otelHook) onIteration(ctx context.Context, record agent.IterationRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.iterationTotal.Add(ctx, 1, metric.WithAttributes(h.baseAttrs()...))
 	}
 	return ctx
 }
 
-func (h *otelHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+func (h *otelHook) onModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -177,7 +180,7 @@ func (h *otelHook) ObserveModel(ctx context.Context, record agent.ModelCallRecor
 	return ctx
 }
 
-func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+func (h *otelHook) onTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -189,7 +192,7 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 	return ctx
 }
 
-func (h *otelHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+func (h *otelHook) onGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
 	if record.Phase == agent.End && record.Blocked {
 		h.guardrailBlockTotal.Add(ctx, 1,
 			metric.WithAttributes(append(h.baseAttrs(), attribute.String("direction", record.Direction))...))
@@ -197,7 +200,7 @@ func (h *otelHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailR
 	return ctx
 }
 
-func (h *otelHook) ObserveAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
+func (h *otelHook) onAttachment(ctx context.Context, record agent.AttachmentRecord) context.Context {
 	if record.Phase != agent.End {
 		return ctx
 	}
@@ -230,7 +233,7 @@ func (h *otelHook) toolLabel(name string) string {
 	return otherToolName
 }
 
-// Option configures the OTEL metrics observer.
+// Option configures the OTEL metrics hooks.
 type Option func(*otelHook)
 
 // WithNamespace sets the meter instrumentation scope name.
@@ -272,6 +275,6 @@ func WithMetrics(mp metric.MeterProvider, opts ...Option) agent.Option {
 			return err
 		}
 		h.agentName = a.Name()
-		return agent.WithObserver(h)(a)
+		return agent.WithHooks(h.hooks())(a)
 	}
 }

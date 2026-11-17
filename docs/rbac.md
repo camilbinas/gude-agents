@@ -29,7 +29,7 @@ refund := tool.New("refund", "Refund an order", refundHandler,
 )
 ```
 
-Role policy and attribute conditions run in the canonical tool pipeline before guards, approval, middleware, and the handler. A denied tool becomes a tool result for the model and is visible to observers/audit.
+Role policy and attribute conditions run in the canonical tool pipeline before guards, approval, middleware, and the handler. A denied tool becomes a tool result for the model and is visible to hooks/audit.
 
 ### Tool visibility is not authorization
 

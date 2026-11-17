@@ -28,7 +28,7 @@ When a ConversationStore is configured, every invocation requires a non-empty Co
 
 `agent.RAGAgent(prov, instructions, retriever, opts...)` is the retrieval-specific constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
 
-Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecution`, `WithMaxConcurrentTools`, `WithProviderTimeout`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithStructuredOutputRetries`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithRateLimitKey`, `WithMiddleware`, guardrails, `WithToolVisibility`, and `WithObserver`. The iteration default is 10.
+Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecution`, `WithMaxConcurrentTools`, `WithProviderTimeout`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithStructuredOutputRetries`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithRateLimitKey`, `WithMiddleware`, guardrails, `WithToolVisibility`, and `WithHooks`. The iteration default is 10.
 
 ## Inspecting a Runtime
 
@@ -125,7 +125,7 @@ type Result struct {
 
 `ToolEvent.Duration` and lifecycle durations serialize as `duration_ms`. `EventEnd.Result` is identical to the result `Invoke` would return. On failure, the iterator yields the Go error and `EventEnd.Error` contains transport-friendly code and message data.
 
-`ctx.WithDetailedEvents()` additionally enables iteration/model lifecycle events. These application stream events are not operational observers; see [Observability](observability.md).
+`ctx.WithDetailedEvents()` additionally enables iteration/model lifecycle events. These application stream events are not operational hooks; see [Observability](observability.md).
 
 ## Messages and provider calls
 

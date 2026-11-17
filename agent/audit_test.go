@@ -41,16 +41,6 @@ func TestWithAudit_RejectsNilSink(t *testing.T) {
 	}
 }
 
-func TestWithObserver_RequiresCapability(t *testing.T) {
-	if _, err := New(mockProvider{}, "sys", WithObserver(struct{}{})); err == nil {
-		t.Fatal("expected observer capability validation error")
-	}
-	var observer *recordingInvokeObserver
-	if _, err := New(mockProvider{}, "sys", WithObserver(observer)); err == nil {
-		t.Fatal("expected typed-nil observer validation error")
-	}
-}
-
 func TestDenialReasonConstants(t *testing.T) {
 	got := []string{DenialReasonRolePolicy, DenialReasonAttrCondition, DenialReasonGuard, DenialReasonToolApprovalDenied}
 	want := []string{"role_policy", "attr_condition", "guard", "tool_approval_denied"}
@@ -207,32 +197,22 @@ func TestAudit_InterruptRecordsAndApprovalRedaction(t *testing.T) {
 	})
 }
 
-type recordingInvokeObserver struct {
-	mu      sync.Mutex
-	records []InvokeRecord
-}
-
-func (o *recordingInvokeObserver) ObserveInvoke(ctx context.Context, record InvokeRecord) context.Context {
-	o.mu.Lock()
-	o.records = append(o.records, record)
-	o.mu.Unlock()
-	return ctx
-}
-
-type concurrentToolObserver struct {
+type concurrentToolRecorder struct {
 	mu      sync.Mutex
 	records []ToolCallRecord
 }
 
-func (o *concurrentToolObserver) ObserveTool(ctx context.Context, record ToolCallRecord) context.Context {
-	o.mu.Lock()
-	o.records = append(o.records, record)
-	o.mu.Unlock()
-	return ctx
+func (o *concurrentToolRecorder) hooks() Hooks {
+	return Hooks{Tool: func(ctx context.Context, record ToolCallRecord) context.Context {
+		o.mu.Lock()
+		o.records = append(o.records, record)
+		o.mu.Unlock()
+		return ctx
+	}}
 }
 
-func TestToolObserver_ConcurrentCallsAreComplete(t *testing.T) {
-	observer := &concurrentToolObserver{}
+func TestToolHooks_ConcurrentCallsAreComplete(t *testing.T) {
+	rec := &concurrentToolRecorder{}
 	calls := []tool.Call{
 		{ToolUseID: "one", Name: "echo", Input: json.RawMessage(`{"n":1}`)},
 		{ToolUseID: "two", Name: "echo", Input: json.RawMessage(`{"n":2}`)},
@@ -247,20 +227,20 @@ func TestToolObserver_ConcurrentCallsAreComplete(t *testing.T) {
 			return "ok", nil
 		},
 	)
-	a, err := New(provider, "sys", WithTools(echo), WithObserver(observer))
+	a, err := New(provider, "sys", WithTools(echo), WithHooks(rec.hooks()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Invoke(Background().WithConversationID("parallel"), "go"); err != nil {
 		t.Fatal(err)
 	}
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	if len(observer.records) != 4 {
-		t.Fatalf("got %d tool records, want two starts and two ends", len(observer.records))
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.records) != 4 {
+		t.Fatalf("got %d tool records, want two starts and two ends", len(rec.records))
 	}
 	ends := map[string]ToolCallRecord{}
-	for _, record := range observer.records {
+	for _, record := range rec.records {
 		if record.Phase == End {
 			ends[record.CallID] = record
 		}

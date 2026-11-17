@@ -37,5 +37,5 @@ func NewHandler(opts ...Option) (agent.Option, http.Handler) {
 	}
 	hook.register()
 
-	return agent.WithObserver(hook), hook.Handler()
+	return agent.WithHooks(hook.hooks()), hook.Handler()
 }

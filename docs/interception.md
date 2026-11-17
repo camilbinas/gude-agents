@@ -6,7 +6,7 @@ matches yours:
 
 | Intent | Mechanism | Type / option | Where it runs |
 | --- | --- | --- | --- |
-| **See** what happens (logging, metrics, tracing) without changing it | Observer | `WithObserver`, `ToolObserver` and the other capability interfaces (`observer.go`) | Wraps the whole call, start and end; never alters input, result or the allow/deny decision |
+| **See** what happens (logging, metrics, tracing) without changing it | Hooks | `WithHooks`, `Hooks.Tool` and the other lifecycle fields (`hooks_api.go`) | Wraps the whole call, start and end; never alters input, result or the allow/deny decision |
 | **Transform** the call or its result (retry, cache, rewrite input/output, inject behavior) | Middleware | `WithMiddleware`, `Middleware` / `ToolHandlerFunc` (`middleware.go`) | Wraps the handler; outermost middleware first |
 | **Hide** a tool from the model | Tool visibility | `WithToolVisibility`, `ToolVisibility`; `RoleVisibility` / `WithRoleEnforcement`, `RequirePrincipalVisibility` / `WithRequirePrincipal` (`tool_visibility.go`, `identity.go`) | Before each provider call; a hidden tool is left out of the tool list and the loop's execution map |
 | **Authorize** by principal role/attribute | Role & attribute policy | `tool.AllowRoles` / `tool.DenyRoles` / `tool.AllowWhen` on the tool, enforced via `RoleVisibility` and re-checked at execution | At execution (the security boundary); also shapes visibility when `RoleVisibility` is installed |
@@ -45,19 +45,19 @@ short-circuits the rest:
 6. **Middleware + handler** — the handler is wrapped by the configured
    middleware chain (outermost first) and executed.
 
-Observers (including the built-in audit observer, `WithAudit`) wrap this whole
+Hooks (including the built-in audit hooks, `WithAudit`) wrap this whole
 pipeline through the lifecycle hooks: they are notified at start and end and
 receive the denial reason, but they do not participate in the decision.
 
 ### Quick guidance
 
-- Logging a tool call? Use a `ToolObserver`, not middleware.
+- Logging a tool call? Use `Hooks.Tool`, not middleware.
 - Caching or retrying a call, or rewriting its input/output? Use middleware.
 - Keeping a tool out of the model's reach for a given principal? Use
   `WithToolVisibility` (or `WithRoleEnforcement`) — and remember the same
   policy is enforced again at execution.
 - Enforcing "only admins may call this"? Declare roles on the tool
   (`tool.AllowRoles`) and install `WithRoleEnforcement`; do not try to deny
-  inside an Observer — Observers cannot block a call.
+  inside a hook — hooks cannot block a call.
 - Blocking on arbitrary input logic? Use a `tool.Guard`.
 - Needing a human in the loop? Use `tool.RequiresApproval`.

@@ -408,7 +408,7 @@ func TestParallelBatchCancelledBeforeDispatchRunsNoHandler(t *testing.T) {
 
 	base := NewContext(ctx)
 	inv := base.forInvocation(ctx, &invocationRuntime{})
-	r := &run{a: a, c: inv, h: a.hooks(inv), execution: &Execution{ID: "x"}}
+	r := &run{a: a, c: inv, h: a.dispatcher(inv), execution: &Execution{ID: "x"}}
 
 	_, available := a.visibleTools(inv)
 	outcomes := r.executeBatch(inv, batchOf(names...), available, nil)

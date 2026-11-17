@@ -249,7 +249,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 
 	// 7. Middleware + handler selection.
 	// The event payload intentionally does not expose the idempotency key;
-	// observers receive it through ToolCallRecord instead.
+	// hooks receive it through ToolCallRecord instead.
 	emitStart()
 	inner := func(hc context.Context, call ToolCall) (ToolResult, error) {
 		switch {
@@ -301,7 +301,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 		return out
 	}
 
-	// 8. Observer completion and result conversion.
+	// 8. Hook completion and result conversion.
 	tf.finish(nil, result.Text, result.IsError, true, "")
 	out.result.Content = result.Text
 	out.result.Images = append(out.result.Images, result.Images...)

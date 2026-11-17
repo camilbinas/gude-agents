@@ -13,7 +13,7 @@ type AuditSink interface {
 	WriteAudit(context.Context, any)
 }
 
-// AuditOption configures the internal audit observer.
+// AuditOption configures the internal audit hooks.
 type AuditOption func(*auditOptions)
 
 type auditOptions struct {
@@ -26,8 +26,8 @@ func WithAuditContent() AuditOption {
 	return func(options *auditOptions) { options.captureContent = true }
 }
 
-// WithAudit registers an internal invoke/tool/interrupt observer that writes
-// stable records to sink.
+// WithAudit registers invoke, tool and interrupt hooks that write stable
+// records to sink.
 func WithAudit(sink AuditSink, options ...AuditOption) Option {
 	return func(a *Runtime) error {
 		if sink == nil || (reflect.ValueOf(sink).Kind() == reflect.Ptr && reflect.ValueOf(sink).IsNil()) {
@@ -39,7 +39,7 @@ func WithAudit(sink AuditSink, options ...AuditOption) Option {
 				option(&cfg)
 			}
 		}
-		a.observers = append(a.observers, &auditObserver{sink: sink, captureContent: cfg.captureContent})
+		a.hooks = append(a.hooks, (&auditHooks{sink: sink, captureContent: cfg.captureContent}).hooks())
 		return nil
 	}
 }
@@ -161,12 +161,16 @@ const (
 	DenialReasonToolApprovalDenied = "tool_approval_denied"
 )
 
-type auditObserver struct {
+type auditHooks struct {
 	sink           AuditSink
 	captureContent bool
 }
 
-func (o *auditObserver) ObserveInvoke(ctx context.Context, record InvokeRecord) context.Context {
+func (o *auditHooks) hooks() Hooks {
+	return Hooks{Invoke: o.invoke, Tool: o.tool, Interrupt: o.interrupt}
+}
+
+func (o *auditHooks) invoke(ctx context.Context, record InvokeRecord) context.Context {
 	event := AuditEventInvokeStart
 	if record.Phase == End {
 		event = AuditEventInvokeEnd
@@ -183,7 +187,7 @@ func (o *auditObserver) ObserveInvoke(ctx context.Context, record InvokeRecord) 
 	return ctx
 }
 
-func (o *auditObserver) ObserveTool(ctx context.Context, record ToolCallRecord) context.Context {
+func (o *auditHooks) tool(ctx context.Context, record ToolCallRecord) context.Context {
 	if record.Phase != End {
 		return ctx
 	}
@@ -200,7 +204,7 @@ func (o *auditObserver) ObserveTool(ctx context.Context, record ToolCallRecord) 
 	return ctx
 }
 
-func (o *auditObserver) ObserveInterrupt(ctx context.Context, record InterruptRecord) context.Context {
+func (o *auditHooks) interrupt(ctx context.Context, record InterruptRecord) context.Context {
 	if record.Phase != End {
 		return ctx
 	}
