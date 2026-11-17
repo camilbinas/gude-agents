@@ -12,28 +12,11 @@ import (
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
 
-// AgentAsToolOption configures an AgentAsTool wrapper.
-type AgentAsToolOption func(*agentAsToolConfig)
-
-type agentAsToolConfig struct {
-	noPropagate bool
-}
-
-// WithoutPausePropagation cancels a child pause and returns it to the parent
-// as a tool error, instead of pausing the parent.
-func WithoutPausePropagation() AgentAsToolOption {
-	return func(c *agentAsToolConfig) { c.noPropagate = true }
-}
-
 // AgentAsTool wraps a child Runtime as a tool.Tool that a parent Runtime can invoke.
 // When the child pauses and the parent has both pause stores, the parent pauses
 // too; resume the parent and the child continues. Otherwise the child pause is
 // canceled and the parent sees a tool error.
-func AgentAsTool(name, description string, child *Runtime, opts ...AgentAsToolOption) tool.Tool {
-	var cfg agentAsToolConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
+func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 	return tool.NewRaw(
 		name,
 		description,
@@ -78,7 +61,7 @@ func AgentAsTool(name, description string, child *Runtime, opts ...AgentAsToolOp
 
 			res, err := child.Invoke(childCtx, args.Message)
 			if res.StopReason == StopInterrupt && res.Interrupt != nil {
-				return handleChildPause(ctx, name, child, parent, cfg, res.Interrupt, err)
+				return handleChildPause(ctx, name, child, parent, res.Interrupt, err)
 			}
 			if err != nil {
 				return "", fmt.Errorf("child agent %q: %w", name, err)
@@ -103,8 +86,8 @@ func (c *Context) nestedResumeFor(toolName string) *nestedResumeDirective {
 
 // handleChildPause pauses the parent when it can, else cancels the child pause
 // and fails the tool call.
-func handleChildPause(ctx context.Context, name string, child *Runtime, parent *Context, cfg agentAsToolConfig, in *Interrupt, invokeErr error) (string, error) {
-	if !cfg.noPropagate && parent.cfg.canPause && parent.call != nil {
+func handleChildPause(ctx context.Context, name string, child *Runtime, parent *Context, in *Interrupt, invokeErr error) (string, error) {
+	if parent.cfg.canPause && parent.call != nil {
 		// The child pause is durable in the child stores. Hand the parent engine
 		// the child projection; the parent pauses with an InterruptNested.
 		parent.call.setNestedPause(&NestedInterrupt{Child: cloneInterrupt(in)})

@@ -347,30 +347,6 @@ func TestAgentAsTool_NestedPauseKeepsBatchSiblingResults(t *testing.T) {
 	}
 }
 
-// WithoutPausePropagation keeps the old behavior: the child pause is canceled
-// and the parent sees a tool error.
-func TestAgentAsTool_WithoutPausePropagationCancels(t *testing.T) {
-	convs, execs := newMultiConvStore(), newTestExecutionStore()
-	var childCalls int
-	child := newApprovalChild(t, convs, execs, &childCalls)
-	parentProvider := newCapturingProvider(
-		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}},
-		&ModelResponse{Text: "recovered"},
-	)
-	parent, err := New(parentProvider, "parent", WithConversationStore(convs), WithExecutionStore(execs),
-		WithTools(AgentAsTool("child", "child", child, WithoutPausePropagation())))
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := parent.Invoke(Background().WithConversationID("parent"), "go")
-	if err != nil || res.Text != "recovered" {
-		t.Fatalf("parent result = %+v, %v", res, err)
-	}
-	if got := childToolResultText(t, parentProvider); !strings.Contains(got, "interrupts cannot propagate through AgentAsTool") {
-		t.Fatalf("child tool result = %q", got)
-	}
-}
-
 // TestAgentAsTool_GrandchildPausePropagatesUp verifies the same mechanism
 // works across two levels: a grandchild pause bubbles up through the child to
 // the top parent, and a single Approve resumes the whole chain.

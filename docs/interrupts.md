@@ -125,12 +125,7 @@ The Agent keeps no process-local pause state. If a run needs to pause (approval 
 
 ## Nested pauses through AgentAsTool
 
-When a child agent used through `AgentAsTool` pauses, the parent pauses too, so a human answers the child's approval or question by resuming the parent. This needs both stores on the parent and on the child. If the parent has no pause stores, the child pause is canceled and the parent sees a tool error. To always get that tool error, add `agent.WithoutPausePropagation()`:
-
-```go
-reviewer := agent.AgentAsTool("reviewer", "reviews a draft", child,
-    agent.WithoutPausePropagation())
-```
+When a child agent used through `AgentAsTool` pauses, the parent pauses too, so a human answers the child's approval or question by resuming the parent. This needs both stores on the parent and on the child. If the parent has no pause stores, the child pause is canceled and the parent sees a tool error.
 
 When the child pauses, the parent's `Result` carries one `agent.InterruptNested` interrupt. Its `Nested` field holds the child's own projection and the parent tool call ID:
 

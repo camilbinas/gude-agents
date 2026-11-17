@@ -24,12 +24,7 @@ A child follows the same rule as any agent: pausing needs both a conversation st
 
 When a child with both stores pauses, and the parent has both stores too, the parent pauses. The parent `Result` carries one `agent.InterruptNested` interrupt whose `Nested.Child` is the child's own approval or question; resume the parent with the normal `Approve`, `Deny`, `Decide`, `Respond`, or `RespondWith`, and the child continues from its pause with its answer as the tool result. This works across multiple levels and is durable across restart and `Snapshot`/`Restore`. See [Nested pauses through AgentAsTool](interrupts.md#nested-pauses-through-agentastool).
 
-If the parent has no pause stores, the child pause is canceled and returned as a tool error. Add `agent.WithoutPausePropagation()` to always get that tool error:
-
-```go
-reviewer := agent.AgentAsTool("reviewer", "reviews a draft", child,
-    agent.WithoutPausePropagation())
-```
+If the parent has no pause stores, the child pause is canceled and returned as a tool error.
 
 Tool calls run in parallel by default, so independent specialist calls execute simultaneously. Use `agent.WithToolExecution(agent.ToolExecutionSequential)` when child operations are not independent and must run one at a time, or `agent.WithMaxConcurrentTools(n)` to bound how many children run at once.
 
