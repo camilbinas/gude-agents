@@ -43,7 +43,7 @@ type ExecutionPause struct {
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`
 	Input    *InputInterrupt    `json:"input,omitempty"`
 	// Nested records a parent pause caused by a paused child reached through a
-	// WithPropagatePause AgentAsTool call. The child projection is re-loaded from
+	// paused AgentAsTool call. The child projection is re-loaded from
 	// the child stores on resume; this only stores the resume routing path.
 	Nested *NestedPause `json:"nested,omitempty"`
 }

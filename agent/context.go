@@ -60,6 +60,8 @@ type invocationConfig struct {
 	// the handler resumes its paused child instead of invoking it fresh. It is
 	// set only on the resume turn of an InterruptNested pause.
 	nestedResume *nestedResumeDirective
+	// canPause is true while the running invocation has both pause stores.
+	canPause bool
 }
 
 // nestedResumeDirective carries the child interrupt and the caller's response
@@ -420,6 +422,7 @@ func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
 	clone.executionResume = false
 	clone.executionVersion = 0
 	clone.nestedResume = nil
+	clone.canPause = false
 	return clone
 }
 

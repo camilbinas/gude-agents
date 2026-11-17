@@ -95,7 +95,7 @@ func newPropagatingParent(t *testing.T, convs ConversationStore, execs Execution
 		&ModelResponse{Text: "parent done"},
 	)
 	parent, err := New(parentProvider, "parent", WithConversationStore(convs), WithExecutionStore(execs),
-		WithTools(AgentAsTool("child", "child", child, WithPropagatePause())))
+		WithTools(AgentAsTool("child", "child", child)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestAgentAsTool_NestedPauseSurvivesRestart(t *testing.T) {
 	child2 := newApprovalChild(t, convs, execs, &restartCalls)
 	parent2Provider := newCapturingProvider(&ModelResponse{Text: "parent done after restart"})
 	parent2, err := New(parent2Provider, "parent", WithConversationStore(convs), WithExecutionStore(execs),
-		WithTools(AgentAsTool("child", "child", child2, WithPropagatePause())))
+		WithTools(AgentAsTool("child", "child", child2)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestAgentAsTool_NestedPauseKeepsBatchSiblingResults(t *testing.T) {
 		&ModelResponse{Text: "parent done"},
 	)
 	parent, err := New(parentProvider, "parent", WithConversationStore(convs), WithExecutionStore(execs),
-		WithTools(normal, AgentAsTool("child", "child", child, WithPropagatePause())))
+		WithTools(normal, AgentAsTool("child", "child", child)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,10 +347,9 @@ func TestAgentAsTool_NestedPauseKeepsBatchSiblingResults(t *testing.T) {
 	}
 }
 
-// TestAgentAsTool_DefaultPauseStillCanceled verifies that WITHOUT
-// WithPropagatePause the pre-existing behavior is unchanged: a child pause is
-// canceled and the parent sees the tool error.
-func TestAgentAsTool_DefaultPauseStillCanceled(t *testing.T) {
+// WithoutPausePropagation keeps the old behavior: the child pause is canceled
+// and the parent sees a tool error.
+func TestAgentAsTool_WithoutPausePropagationCancels(t *testing.T) {
 	convs, execs := newMultiConvStore(), newTestExecutionStore()
 	var childCalls int
 	child := newApprovalChild(t, convs, execs, &childCalls)
@@ -359,7 +358,7 @@ func TestAgentAsTool_DefaultPauseStillCanceled(t *testing.T) {
 		&ModelResponse{Text: "recovered"},
 	)
 	parent, err := New(parentProvider, "parent", WithConversationStore(convs), WithExecutionStore(execs),
-		WithTools(AgentAsTool("child", "child", child)))
+		WithTools(AgentAsTool("child", "child", child, WithoutPausePropagation())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +385,7 @@ func TestAgentAsTool_GrandchildPausePropagatesUp(t *testing.T) {
 		&ModelResponse{Text: "middle answer"},
 	)
 	middle, err := New(middleProvider, "middle", WithConversationStore(convs), WithExecutionStore(execs),
-		WithTools(AgentAsTool("grand", "grand", grandchild, WithPropagatePause())))
+		WithTools(AgentAsTool("grand", "grand", grandchild)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +446,7 @@ func TestAgentAsTool_NestedPauseSnapshotRestore(t *testing.T) {
 	child2 := newApprovalChild(t, convs2, execs2, &restoreCalls)
 	parent2Provider := newCapturingProvider(&ModelResponse{Text: "parent restored done"})
 	parent2, err := New(parent2Provider, "parent", WithConversationStore(convs2), WithExecutionStore(execs2),
-		WithTools(AgentAsTool("child", "child", child2, WithPropagatePause())))
+		WithTools(AgentAsTool("child", "child", child2)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,5 +487,29 @@ func TestAgentAsTool_NestedPauseSnapshotRestore(t *testing.T) {
 	}
 	if restoreCalls != 1 {
 		t.Fatalf("restored child approval ran %d times, want 1", restoreCalls)
+	}
+}
+
+// A parent without an ExecutionStore cannot pause, so a child pause is still
+// canceled and returned as a tool error, and the parent run finishes.
+func TestAgentAsTool_ParentWithoutStoresFallsBack(t *testing.T) {
+	convs, execs := newMultiConvStore(), newTestExecutionStore()
+	var childCalls int
+	child := newApprovalChild(t, convs, execs, &childCalls)
+	parentProvider := newCapturingProvider(
+		&ModelResponse{ToolCalls: []tool.Call{{ToolUseID: "delegate", Name: "child", Input: json.RawMessage(`{"message":"go"}`)}}},
+		&ModelResponse{Text: "recovered"},
+	)
+	parent, err := New(parentProvider, "parent", WithConversationStore(convs),
+		WithTools(AgentAsTool("child", "child", child)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := parent.Invoke(Background().WithConversationID("parent"), "go")
+	if err != nil || res.Text != "recovered" {
+		t.Fatalf("parent result = %+v, %v", res, err)
+	}
+	if got := childToolResultText(t, parentProvider); !strings.Contains(got, "interrupts cannot propagate through AgentAsTool") {
+		t.Fatalf("child tool result = %q", got)
 	}
 }

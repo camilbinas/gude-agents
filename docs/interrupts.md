@@ -121,15 +121,15 @@ Before a durable resume executes any guardrail, tool handler, provider call, or 
 
 The Agent commits canonical conversation changes before recording `Paused` execution state. If the conversation commit fails, no pause is created. If the conversation commit succeeds but execution persistence fails, the error is surfaced and applications must not assume resume is available. This ordering is not a distributed transaction: the two stores commit independently.
 
-The Agent keeps no process-local pause state. If a run needs to pause (approval or human input) and either store is missing, it returns `agent.ErrPauseStorageRequired` instead of creating a pause that could not be resumed. Resuming without both stores returns the same error. A child agent used through `AgentAsTool` follows the same storage rule, and the default is unchanged: a child pause is not propagated to the parent, the child execution is canceled, and the parent sees a tool error.
+The Agent keeps no process-local pause state. If a run needs to pause (approval or human input) and either store is missing, it returns `agent.ErrPauseStorageRequired` instead of creating a pause that could not be resumed. Resuming without both stores returns the same error. A child agent used through `AgentAsTool` follows the same storage rule.
 
 ## Nested pauses through AgentAsTool
 
-`AgentAsTool` can instead propagate a child pause up to the parent, so a human answers the child's approval or question by resuming the parent. Opt in with `agent.WithPropagatePause()`:
+When a child agent used through `AgentAsTool` pauses, the parent pauses too, so a human answers the child's approval or question by resuming the parent. This needs both stores on the parent and on the child. If the parent has no pause stores, the child pause is canceled and the parent sees a tool error. To always get that tool error, add `agent.WithoutPausePropagation()`:
 
 ```go
 reviewer := agent.AgentAsTool("reviewer", "reviews a draft", child,
-    agent.WithPropagatePause())
+    agent.WithoutPausePropagation())
 ```
 
 When the child pauses, the parent's `Result` carries one `agent.InterruptNested` interrupt. Its `Nested` field holds the child's own projection and the parent tool call ID:

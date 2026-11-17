@@ -287,6 +287,7 @@ func (a *Runtime) lifecycle(c *Context, convID, userMessage string, body func(r 
 			// is never persisted and a run on this path cannot pause.
 			r.execution = &Execution{ID: c.cfg.executionID}
 		}
+		c.cfg.canPause = r.executionDurable && r.hasConversation()
 		res, err := body(r)
 		res.ExecutionID = c.cfg.executionID
 		if finishErr := r.finalizeExecution(res, err); finishErr != nil {

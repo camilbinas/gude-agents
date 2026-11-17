@@ -16,7 +16,7 @@ const (
 	InterruptApproval   InterruptType = "approval"
 	InterruptHumanInput InterruptType = "human_input"
 	// InterruptNested is a parent pause caused by a paused child reached through
-	// a WithPropagatePause AgentAsTool call. Its Nested field carries the child
+	// a paused AgentAsTool call. Its Nested field carries the child
 	// projection and the path (parent call -> child execution) for resume.
 	InterruptNested InterruptType = "nested"
 )
