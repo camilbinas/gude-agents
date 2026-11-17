@@ -1,7 +1,7 @@
-github.com/camilbinas/gude-agents v1.13.3 h1:JH1x/DBg8uu96KHUbaTP/A5SpqFpsuYVUhmLFFOLShI=
-github.com/camilbinas/gude-agents v1.13.3/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
-github.com/camilbinas/gude-agents/agent/execution v1.13.3 h1:rw3X73nO/voSD+ESVP7FhbU8bkI7bt1kxFApipeMWIY=
-github.com/camilbinas/gude-agents/agent/execution v1.13.3/go.mod h1:zdqpjDzpK2VAXjCdZzRUv6tLkUZE8CY/lsz9oMLRdnU=
+github.com/camilbinas/gude-agents v1.14.0 h1:mmQ5KSIixxiYDwjxoqbY1XWx2zv0d5IiBPEoqC1/VC4=
+github.com/camilbinas/gude-agents v1.14.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents/agent/execution v1.14.0 h1:/bDm11shPY9mJWB8eRZ5a3Gmkye3QrY6mDoOmeRypLw=
+github.com/camilbinas/gude-agents/agent/execution v1.14.0/go.mod h1:6wk4jRzVlR92+CLnig1SrD2pUiGeYTXd5BZObfFjkHI=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
