@@ -56,6 +56,20 @@ type invocationConfig struct {
 	detailedEvents   bool
 	observers        []Observer
 	observersSet     bool
+	// nestedResume routes a parent resume into a specific AgentAsTool call so
+	// the handler resumes its paused child instead of invoking it fresh. It is
+	// set only on the resume turn of an InterruptNested pause.
+	nestedResume *nestedResumeDirective
+	// canPause is true while the running invocation has both pause stores.
+	canPause bool
+}
+
+// nestedResumeDirective carries the child interrupt and the caller's response
+// for the one AgentAsTool call whose child is being resumed.
+type nestedResumeDirective struct {
+	callID   string
+	child    *Interrupt
+	response ResumeResponse
 }
 
 // kvStore is the user key/value store shared by an invocation and its tool calls.
@@ -102,9 +116,10 @@ type toolCallRuntime struct {
 	idempotencyKey string
 	recoveryReplay bool
 
-	mu         sync.Mutex
-	widgets    []WidgetBlock
-	humanInput *InputInterrupt
+	mu          sync.Mutex
+	widgets     []WidgetBlock
+	humanInput  *InputInterrupt
+	nestedPause *NestedInterrupt
 }
 
 func (r *toolCallRuntime) appendWidget(w WidgetBlock) {
@@ -132,6 +147,20 @@ func (r *toolCallRuntime) takeHumanInput() *InputInterrupt {
 	defer r.mu.Unlock()
 	in := r.humanInput
 	r.humanInput = nil
+	return in
+}
+
+func (r *toolCallRuntime) setNestedPause(in *NestedInterrupt) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nestedPause = in
+}
+
+func (r *toolCallRuntime) takeNestedPause() *NestedInterrupt {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	in := r.nestedPause
+	r.nestedPause = nil
 	return in
 }
 
@@ -392,6 +421,8 @@ func cloneInvocationConfig(cfg invocationConfig) invocationConfig {
 	clone.executionIDSet = false
 	clone.executionResume = false
 	clone.executionVersion = 0
+	clone.nestedResume = nil
+	clone.canPause = false
 	return clone
 }
 

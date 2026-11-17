@@ -15,6 +15,10 @@ type InterruptType string
 const (
 	InterruptApproval   InterruptType = "approval"
 	InterruptHumanInput InterruptType = "human_input"
+	// InterruptNested is a parent pause caused by a paused child reached through
+	// a paused AgentAsTool call. Its Nested field carries the child
+	// projection and the path (parent call -> child execution) for resume.
+	InterruptNested InterruptType = "nested"
 )
 
 // Interrupt is a public projection of a paused Execution. It references
@@ -33,6 +37,16 @@ type Interrupt struct {
 
 	Approval *ApprovalInterrupt `json:"approval,omitempty"`
 	Input    *InputInterrupt    `json:"input,omitempty"`
+	Nested   *NestedInterrupt   `json:"nested,omitempty"`
+}
+
+// NestedInterrupt carries a child pause surfaced through an AgentAsTool call.
+// Child is the child's own projection (approval or human_input) that the caller
+// answers; CallID is the parent tool call whose child paused, so Resume routes
+// the parent's response to the right child execution.
+type NestedInterrupt struct {
+	CallID string     `json:"call_id"`
+	Child  *Interrupt `json:"child"`
 }
 
 type ApprovalInterrupt struct {
@@ -140,6 +154,9 @@ func interruptFromExecution(execution Execution) *Interrupt {
 		in.Type = execution.Pause.Type
 		in.Approval = execution.Pause.Approval
 		in.Input = execution.Pause.Input
+		if execution.Pause.Nested != nil {
+			in.Nested = &NestedInterrupt{CallID: execution.Pause.Nested.CallID, Child: execution.Pause.Nested.Child}
+		}
 	}
 	return in
 }
@@ -148,7 +165,38 @@ func pauseFromInterrupt(in *Interrupt) *ExecutionPause {
 	if in == nil {
 		return nil
 	}
-	return cloneExecution(Execution{Pause: &ExecutionPause{Type: in.Type, Approval: in.Approval, Input: in.Input}}).Pause
+	pause := &ExecutionPause{Type: in.Type, Approval: in.Approval, Input: in.Input}
+	if in.Nested != nil {
+		pause.Nested = &NestedPause{CallID: in.Nested.CallID, Child: in.Nested.Child}
+	}
+	return cloneExecution(Execution{Pause: pause}).Pause
+}
+
+// cloneInterrupt deep-copies an Interrupt, including a nested child chain.
+func cloneInterrupt(in *Interrupt) *Interrupt {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.Approval != nil {
+		approval := *in.Approval
+		approval.Calls = append([]ApprovalCall(nil), in.Approval.Calls...)
+		for i := range approval.Calls {
+			approval.Calls[i].Input = cloneRaw(approval.Calls[i].Input)
+		}
+		out.Approval = &approval
+	}
+	if in.Input != nil {
+		input := *in.Input
+		input.Schema = cloneRaw(in.Input.Schema)
+		out.Input = &input
+	}
+	if in.Nested != nil {
+		nested := *in.Nested
+		nested.Child = cloneInterrupt(in.Nested.Child)
+		out.Nested = &nested
+	}
+	return &out
 }
 
 func validateResume(in *Interrupt, r ResumeResponse) error {
@@ -215,6 +263,15 @@ func validateResume(in *Interrupt, r ResumeResponse) error {
 		default:
 			return fmt.Errorf("resume: human_input interrupts require Respond or RespondWith")
 		}
+	case InterruptNested:
+		if in.Nested == nil || in.Nested.Child == nil {
+			return fmt.Errorf("resume: nested interrupt has no child")
+		}
+		if in.Nested.CallID == "" {
+			return fmt.Errorf("resume: nested interrupt has no call ID")
+		}
+		// The caller answers the child's own pause; validate against it.
+		return validateResume(in.Nested.Child, r)
 	default:
 		return fmt.Errorf("resume: unknown interrupt type %q", in.Type)
 	}

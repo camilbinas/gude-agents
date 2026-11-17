@@ -13,6 +13,9 @@ import (
 )
 
 // AgentAsTool wraps a child Runtime as a tool.Tool that a parent Runtime can invoke.
+// When the child pauses and the parent has both pause stores, the parent pauses
+// too; resume the parent and the child continues. Otherwise the child pause is
+// canceled and the parent sees a tool error.
 func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 	return tool.NewRaw(
 		name,
@@ -39,25 +42,26 @@ func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 			if parent == nil {
 				parent = NewContext(ctx)
 			}
+
+			// Parent resume routed to this exact call: resume the paused child
+			// instead of invoking it fresh.
+			if directive := parent.nestedResumeFor(name); directive != nil {
+				return resumeChild(ctx, name, child, parent, directive)
+			}
+
 			childCtx := parent.Clone()
+			childConvID := ""
 			if child.conversation != nil {
 				if parent.ConversationID() == "" || parent.call == nil || parent.call.id == "" {
 					return "", fmt.Errorf("child agent %q requires a parent conversation and tool call ID", name)
 				}
-				childCtx.WithConversationID(childConversationID(parent.ConversationID(), parent.call.id, name, child.Name()))
+				childConvID = childConversationID(parent.ConversationID(), parent.call.id, name, child.Name())
+				childCtx.WithConversationID(childConvID)
 			}
 
 			res, err := child.Invoke(childCtx, args.Message)
 			if res.StopReason == StopInterrupt && res.Interrupt != nil {
-				cleanupErr := consumeChildExecution(ctx, child, res.Interrupt)
-				pauseErr := fmt.Errorf("child agent %q paused with a %s interrupt; interrupts cannot propagate through AgentAsTool", name, res.Interrupt.Type)
-				if cleanupErr != nil {
-					pauseErr = errors.Join(pauseErr, cleanupErr)
-				}
-				if err != nil {
-					return "", fmt.Errorf("child agent %q: %w", name, errors.Join(err, pauseErr))
-				}
-				return "", pauseErr
+				return handleChildPause(ctx, name, child, parent, res.Interrupt, err)
 			}
 			if err != nil {
 				return "", fmt.Errorf("child agent %q: %w", name, err)
@@ -66,6 +70,65 @@ func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 		},
 	)
 }
+
+// nestedResumeFor returns the resume directive routed to the AgentAsTool call
+// named toolName, or nil. It matches by the parent tool call ID so a batch with
+// several sub-agent calls resumes only the one that paused.
+func (c *Context) nestedResumeFor(toolName string) *nestedResumeDirective {
+	if c == nil || c.cfg.nestedResume == nil || c.call == nil {
+		return nil
+	}
+	if c.cfg.nestedResume.callID != c.call.id {
+		return nil
+	}
+	return c.cfg.nestedResume
+}
+
+// handleChildPause pauses the parent when it can, else cancels the child pause
+// and fails the tool call.
+func handleChildPause(ctx context.Context, name string, child *Runtime, parent *Context, in *Interrupt, invokeErr error) (string, error) {
+	if parent.cfg.canPause && parent.call != nil {
+		// The child pause is durable in the child stores. Hand the parent engine
+		// the child projection; the parent pauses with an InterruptNested.
+		parent.call.setNestedPause(&NestedInterrupt{Child: cloneInterrupt(in)})
+		return nestedPausedResult, invokeErr
+	}
+	cleanupErr := consumeChildExecution(ctx, child, in)
+	pauseErr := fmt.Errorf("child agent %q paused with a %s interrupt; interrupts cannot propagate through AgentAsTool", name, in.Type)
+	if cleanupErr != nil {
+		pauseErr = errors.Join(pauseErr, cleanupErr)
+	}
+	if invokeErr != nil {
+		return "", fmt.Errorf("child agent %q: %w", name, errors.Join(invokeErr, pauseErr))
+	}
+	return "", pauseErr
+}
+
+// resumeChild resumes a paused child with the parent caller's response. A fresh
+// child pause pauses the parent again (grandchild or re-pause); a final answer
+// becomes the tool result.
+func resumeChild(ctx context.Context, name string, child *Runtime, parent *Context, directive *nestedResumeDirective) (string, error) {
+	if child.executionStore == nil || child.conversation == nil {
+		return "", fmt.Errorf("child agent %q: %w", name, ErrPauseStorageRequired)
+	}
+	childCtx := parent.Clone().WithConversationID(directive.child.ConversationID)
+	res, err := child.Resume(childCtx, directive.child, directive.response)
+	if res.StopReason == StopInterrupt && res.Interrupt != nil {
+		// Re-pause (same child paused again, e.g. a second question, or a
+		// grandchild bubbled up): pause the parent once more.
+		parent.call.setNestedPause(&NestedInterrupt{Child: cloneInterrupt(res.Interrupt)})
+		return nestedPausedResult, err
+	}
+	if err != nil {
+		return "", fmt.Errorf("child agent %q: %w", name, err)
+	}
+	return res.Text, nil
+}
+
+// nestedPausedResult is the sentinel handler output for a propagate-pause child
+// that paused. The engine never commits it: the paused call is excluded from
+// the batch and the child's real answer becomes the tool result on resume.
+const nestedPausedResult = "Paused — waiting for a nested sub-agent."
 
 func childConversationID(parentConversationID, toolCallID, toolName, childName string) string {
 	h := sha256.New()
