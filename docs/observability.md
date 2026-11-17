@@ -2,9 +2,26 @@
 
 Operational lifecycle observers are separate from application `Stream` events. Application events drive UI/SSE behavior; observers feed logs, metrics, traces, and security records whether the caller uses `Invoke`, `Stream`, structured output, or resume.
 
+## Hooks
+
+The simplest way to observe an agent is `agent.Hooks`: a struct of functions, one per lifecycle event. Set only the fields you need. A misspelled field is a compile error.
+
+```go
+a, err := agent.Agent(prov, instructions, agent.WithHooks(agent.Hooks{
+    Tool: func(ctx context.Context, r agent.ToolCallRecord) context.Context {
+        if r.Phase == agent.End {
+            log.Printf("tool %s took %s err=%v", r.Name, r.Duration, r.Err)
+        }
+        return ctx
+    },
+}))
+```
+
+Each function receives a `Start` and an `End` record. The context returned at `Start` is passed to `End`, so a span started at `Start` can be ended at `End`. `WithHooks` is repeatable and mixes with `WithObserver`; all run in registration order at start and reverse order at end. Keep state across events in a closure.
+
 ## Observer model
 
-Register repeatable adapters at construction:
+Observer adapters with methods also work. Register them at construction:
 
 ```go
 a, err := agent.New(prov, instructions,

@@ -319,6 +319,12 @@ func (h *hooks) onInterrupt(c *Context, in *Interrupt) context.Context {
 
 func (h *hooks) hasToolLogObserver() bool {
 	for _, candidate := range h.observers {
+		if hk, ok := candidate.(hooksObserver); ok {
+			if hk.h.ToolLog != nil {
+				return true
+			}
+			continue
+		}
 		if _, ok := candidate.(ToolLogObserver); ok {
 			return true
 		}
