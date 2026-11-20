@@ -178,3 +178,10 @@ func TestWithMaxResults_Clamp(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorSnippetBounded(t *testing.T) {
+	got := errorSnippet([]byte(strings.Repeat("x\n", 5000)))
+	if len([]rune(got)) > maxErrorSnippetRunes+1 || strings.Contains(got, "\n") {
+		t.Fatalf("len=%d", len(got))
+	}
+}
