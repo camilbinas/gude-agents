@@ -178,9 +178,9 @@ func TestToolsConfig_IncludeEmpty(t *testing.T) {
 	if err := IncludeTools()(cfg); err != nil {
 		t.Fatal(err)
 	}
-	// Empty include list is a no-op — all tools are allowed.
-	if !cfg.allow("read_file") {
-		t.Error("expected all tools to be allowed with empty include list (no-op)")
+	// Empty include list fails closed — no tools are allowed.
+	if cfg.allow("read_file") {
+		t.Error("expected no tools to be allowed with empty include list")
 	}
 }
 

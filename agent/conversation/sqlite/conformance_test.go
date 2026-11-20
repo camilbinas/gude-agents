@@ -65,3 +65,14 @@ func TestAppendIsVisibleToIndependentSQLiteHandle(t *testing.T) {
 		t.Fatalf("writer observed %+v, %v", final, err)
 	}
 }
+
+// A file-backed store is required: every connection to ":memory:" is a
+// separate database, which would hide the concurrent access under test.
+func TestSnapshotConsistencySQLite(t *testing.T) {
+	store, err := sqlite.New(filepath.Join(t.TempDir(), "snapshots.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	conformance.RunSnapshotConsistency(t, store)
+}

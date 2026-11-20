@@ -199,7 +199,10 @@ func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]
 		return []string{}, nil
 	}
 
+	// Validate and encode everything first, then write all hashes in one
+	// MULTI/EXEC so a failure cannot leave the batch partially stored.
 	ids := make([]string, len(docs))
+	pipe := s.client.TxPipeline()
 	for i, doc := range docs {
 		if err := s.validateEmbedding(embeddings[i]); err != nil {
 			return nil, fmt.Errorf("redis vectorstore: upsert: document %d: %w", i, err)
@@ -213,18 +216,15 @@ func (s *Store) Upsert(ctx context.Context, docs []rag.Document, embeddings [][]
 		if id == "" {
 			id = uuid.New().String()
 		}
-		key := s.documentKey(id)
 		ids[i] = id
-		embeddingBytes := float64sToFloat32Bytes(embeddings[i])
-
-		err = s.client.HSet(ctx, key, map[string]interface{}{
+		pipe.HSet(ctx, s.documentKey(id), map[string]interface{}{
 			"content":   doc.Content,
 			"metadata":  string(metaJSON),
-			"embedding": embeddingBytes,
-		}).Err()
-		if err != nil {
-			return nil, fmt.Errorf("redis vectorstore: upsert: %w", err)
-		}
+			"embedding": float64sToFloat32Bytes(embeddings[i]),
+		})
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("redis vectorstore: upsert: %w", err)
 	}
 
 	return ids, nil
@@ -447,27 +447,30 @@ func (s *Store) Find(ctx context.Context, ids ...string) ([]rag.Document, error)
 // containing a double quote, colon, or backslash.
 var ErrUnsafeFilterValue = fmt.Errorf("redis vectorstore: unsafe filter key/value")
 
+const (
+	deleteByMetadataPageSize    = 1000
+	deleteByMetadataDeleteBatch = 1000
+)
+
 // DeleteByMetadata deletes all documents whose metadata contains all key-value
-// pairs in the filter (AND semantics). Uses FT.SEARCH to find matching documents,
-// then DEL to remove them. Returns an error if the filter is empty.
+// pairs in the filter (AND semantics). Returns an error if the filter is empty.
 //
-// Experimental: matching is approximate substring matching over the JSON-encoded
-// metadata TEXT field, so it can over-match; filter keys/values containing a
-// double quote, colon, or backslash are rejected with ErrUnsafeFilterValue.
+// FT.SEARCH over the metadata TEXT field only selects candidates, because TEXT
+// matching is tokenized and can over-match. Every candidate page is read (not
+// capped), its stored metadata is decoded, and a document is deleted only when
+// the decoded metadata contains every filter pair exactly. Filter keys/values
+// containing a double quote, colon, or backslash are rejected with
+// ErrUnsafeFilterValue.
 func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) error {
 	if len(filter) == 0 {
 		return fmt.Errorf("vectorstore: filter must not be empty")
 	}
 
-	// Build a FT.SEARCH query that matches all filter k/v pairs in the metadata
-	// TEXT field. Since metadata is stored as a JSON string (e.g. {"source":"readme.md"}),
-	// we search for each "key":"value" substring in the field.
 	var clauses []string
 	for k, v := range filter {
 		if !safeFilterComponent(k) || !safeFilterComponent(v) {
 			return fmt.Errorf("%w: key %q value %q (contains \" : or \\); delete by ID instead", ErrUnsafeFilterValue, k, v)
 		}
-		// Escape special RediSearch characters in the search term.
 		term := escapeRedisSearchTerm(fmt.Sprintf(`"%s":"%s"`, k, v))
 		clauses = append(clauses, fmt.Sprintf("@metadata:(%s)", term))
 	}
@@ -475,28 +478,107 @@ func (s *Store) DeleteByMetadata(ctx context.Context, filter map[string]string) 
 	sort.Strings(clauses)
 	query := strings.Join(clauses, " ")
 
-	// Use a large LIMIT to get all matching documents.
-	res, err := s.client.Do(ctx, "FT.SEARCH", s.indexName,
-		query,
-		"NOCONTENT",
-		"LIMIT", "0", "10000",
-		"DIALECT", "2",
-	).Result()
-	if err != nil {
-		return fmt.Errorf("redis vectorstore: delete by metadata: search: %w", err)
+	// Collect every match before deleting: deletions shift result offsets.
+	var keys []string
+	for offset := 0; ; offset += deleteByMetadataPageSize {
+		res, err := s.client.Do(ctx, "FT.SEARCH", s.indexName,
+			query,
+			"RETURN", "1", "metadata",
+			"LIMIT", strconv.Itoa(offset), strconv.Itoa(deleteByMetadataPageSize),
+			"DIALECT", "2",
+		).Result()
+		if err != nil {
+			return fmt.Errorf("redis vectorstore: delete by metadata: search: %w", err)
+		}
+		hits := parseSearchMetadata(res)
+		for _, hit := range hits {
+			if metadataMatches(hit.metadata, filter) {
+				keys = append(keys, hit.key)
+			}
+		}
+		if len(hits) < deleteByMetadataPageSize {
+			break
+		}
 	}
 
-	// Parse keys from the search results (handle both RESP2 and RESP3 formats).
-	keys := s.parseSearchKeys(res)
-	if len(keys) == 0 {
-		return nil
-	}
-
-	// Delete all matching keys.
-	if err := s.client.Del(ctx, keys...).Err(); err != nil {
-		return fmt.Errorf("redis vectorstore: delete by metadata: del: %w", err)
+	for start := 0; start < len(keys); start += deleteByMetadataDeleteBatch {
+		end := min(start+deleteByMetadataDeleteBatch, len(keys))
+		if err := s.client.Del(ctx, keys[start:end]...).Err(); err != nil {
+			return fmt.Errorf("redis vectorstore: delete by metadata: del: %w", err)
+		}
 	}
 	return nil
+}
+
+// metadataMatches reports whether the JSON metadata contains every filter pair
+// with exactly equal values. Metadata that does not decode never matches.
+func metadataMatches(metadataJSON string, filter map[string]string) bool {
+	metadata, err := decodeMetadata(metadataJSON)
+	if err != nil {
+		return false
+	}
+	for k, v := range filter {
+		got, ok := metadata[k]
+		if !ok || got != v {
+			return false
+		}
+	}
+	return true
+}
+
+type searchHit struct {
+	key      string
+	metadata string
+}
+
+// parseSearchMetadata extracts document keys and their returned metadata field
+// from an FT.SEARCH ... RETURN 1 metadata response (RESP2 or RESP3).
+func parseSearchMetadata(res interface{}) []searchHit {
+	str := func(v interface{}) string { s, _ := v.(string); return s }
+	var hits []searchHit
+	switch v := res.(type) {
+	case map[interface{}]interface{}:
+		items, _ := v["results"].([]interface{})
+		for _, item := range items {
+			doc, ok := item.(map[interface{}]interface{})
+			if !ok {
+				continue
+			}
+			attrs, _ := doc["extra_attributes"].(map[interface{}]interface{})
+			if key := str(doc["id"]); key != "" {
+				hits = append(hits, searchHit{key: key, metadata: str(attrs["metadata"])})
+			}
+		}
+	case map[string]interface{}:
+		items, _ := v["results"].([]interface{})
+		for _, item := range items {
+			doc, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			attrs, _ := doc["extra_attributes"].(map[string]interface{})
+			if key := str(doc["id"]); key != "" {
+				hits = append(hits, searchHit{key: key, metadata: str(attrs["metadata"])})
+			}
+		}
+	case []interface{}:
+		// [total, key1, [field, value, ...], key2, [...], ...]
+		for i := 1; i+1 < len(v); i += 2 {
+			key := str(v[i])
+			fields, _ := v[i+1].([]interface{})
+			if key == "" {
+				continue
+			}
+			hit := searchHit{key: key}
+			for j := 0; j+1 < len(fields); j += 2 {
+				if str(fields[j]) == "metadata" {
+					hit.metadata = str(fields[j+1])
+				}
+			}
+			hits = append(hits, hit)
+		}
+	}
+	return hits
 }
 
 // safeFilterComponent reports whether a filter key/value is free of double
@@ -514,63 +596,6 @@ func escapeRedisSearchTerm(s string) string {
 		result = strings.ReplaceAll(result, ch, `\`+ch)
 	}
 	return result
-}
-
-// parseSearchKeys extracts document keys from an FT.SEARCH NOCONTENT response.
-// Handles both RESP2 (flat array) and RESP3 (map) formats.
-func (s *Store) parseSearchKeys(res interface{}) []string {
-	switch v := res.(type) {
-	case map[interface{}]interface{}:
-		return s.parseSearchKeysRESP3(v)
-	case []interface{}:
-		return s.parseSearchKeysRESP2(v)
-	default:
-		return nil
-	}
-}
-
-// parseSearchKeysRESP3 extracts keys from a RESP3 map response.
-// Format: {"total_results": N, "results": [{"id": "key1"}, {"id": "key2"}, ...]}
-func (s *Store) parseSearchKeysRESP3(m map[interface{}]interface{}) []string {
-	resultsRaw, ok := m["results"]
-	if !ok {
-		return nil
-	}
-	items, ok := resultsRaw.([]interface{})
-	if !ok || len(items) == 0 {
-		return nil
-	}
-
-	var keys []string
-	for _, item := range items {
-		entry, ok := item.(map[interface{}]interface{})
-		if !ok {
-			continue
-		}
-		key, _ := entry["id"].(string)
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	return keys
-}
-
-// parseSearchKeysRESP2 extracts keys from a RESP2 flat array response.
-// NOCONTENT format: [total, key1, key2, ...]
-func (s *Store) parseSearchKeysRESP2(results []interface{}) []string {
-	if len(results) < 2 {
-		return nil
-	}
-
-	var keys []string
-	// With NOCONTENT, the format is [total, key1, key2, ...] (no field arrays).
-	for i := 1; i < len(results); i++ {
-		key, ok := results[i].(string)
-		if ok && key != "" {
-			keys = append(keys, key)
-		}
-	}
-	return keys
 }
 
 // Delete removes documents by their logical IDs.

@@ -334,7 +334,7 @@ func runParallel(s *eventSink, n, limit int, fn func(i int)) {
 				if i >= n {
 					return
 				}
-				fn(i)
+				callIsolated(fn, i)
 			}
 		})
 	}
@@ -356,4 +356,12 @@ func runParallel(s *eventSink, n, limit int, fn func(i int)) {
 			return
 		}
 	}
+}
+
+// callIsolated runs fn(i) and swallows a panic so one worker cannot take down
+// the process or leave the batch waiting. Callers that need the failure
+// recorded must recover inside fn.
+func callIsolated(fn func(int), i int) {
+	defer func() { _ = recover() }()
+	fn(i)
 }

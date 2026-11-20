@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -424,5 +425,39 @@ func TestToolEnd_IncludesDuration(t *testing.T) {
 		t.Error("missing attribute duration_ms")
 	} else if v.Float64() != 123.0 {
 		t.Errorf("duration_ms: expected 123, got %v", v.Float64())
+	}
+}
+
+func errorAttr(r slog.Record) string {
+	var out string
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			out = a.Value.String()
+			return false
+		}
+		return true
+	})
+	return out
+}
+
+func TestErrorText_GatedAndTruncated(t *testing.T) {
+	secret := errors.New("GET https://api.example.com/?key=SECRETKEY failed")
+	ctx := context.Background()
+
+	ch := &captureHandler{}
+	h := newSlogHook([]Option{WithHandler(ch)})
+	h.onTool(ctx, agent.ToolCallRecord{Phase: agent.End, Name: "t", Err: secret})
+	got := errorAttr(ch.getRecords()[0])
+	if got != "*errors.errorString" {
+		t.Fatalf("without content logging want type only, got %q", got)
+	}
+
+	ch = &captureHandler{}
+	h = newSlogHook([]Option{WithHandler(ch), WithContentLogging()})
+	long := errors.New(strings.Repeat("é", 5000))
+	h.onTool(ctx, agent.ToolCallRecord{Phase: agent.End, Name: "t", Err: long})
+	got = errorAttr(ch.getRecords()[0])
+	if n := len([]rune(got)); n != maxLoggedRunes+1 {
+		t.Fatalf("want truncated to %d runes, got %d", maxLoggedRunes+1, n)
 	}
 }

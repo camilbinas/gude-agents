@@ -81,3 +81,31 @@ func TestDeleteCascadesAcrossPooledConnections(t *testing.T) {
 		t.Fatalf("orphaned message rows after Delete: %d", remaining)
 	}
 }
+
+func TestMigratedLegacyConversationIsListed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy0.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY, messages TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at DATETIME)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO conversations(conversation_id,messages,revision) VALUES('c','[{"role":"user","content":[{"type":"text","text":"legacy"}]}]',0)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	store, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ids, err := store.List(context.Background())
+	if err != nil || len(ids) != 1 || ids[0] != "c" {
+		t.Fatalf("ids=%v err=%v", ids, err)
+	}
+	snap, err := store.Load(context.Background(), "c")
+	if err != nil || snap.Revision != 1 || snap.LastSequence != 1 {
+		t.Fatalf("snapshot=%+v err=%v", snap, err)
+	}
+}

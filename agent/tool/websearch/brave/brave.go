@@ -153,8 +153,8 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("brave API returned %d: %s", resp.StatusCode, string(respBody))
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		return "", fmt.Errorf("brave API returned %d: %s", resp.StatusCode, errorSnippet(respBody))
 	}
 
 	var result struct {
@@ -166,7 +166,7 @@ func search(ctx context.Context, client *http.Client, apiKey, query string, maxR
 			} `json:"results"`
 		} `json:"web"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
@@ -194,4 +194,20 @@ func truncateRunes(s string, maxChars int) string {
 		return s
 	}
 	return string(runes[:maxChars]) + "…"
+}
+
+const (
+	// maxErrorBodyBytes bounds how much of an error response is read.
+	maxErrorBodyBytes = 4 * 1024
+	// maxResponseBytes bounds how much of a successful response is decoded.
+	maxResponseBytes = 2 * 1024 * 1024
+	// maxErrorSnippetRunes bounds how much of an error body is echoed.
+	maxErrorSnippetRunes = 200
+)
+
+// errorSnippet returns a short single-line excerpt of an error body so a
+// hostile or verbose upstream cannot flood errors and logs.
+func errorSnippet(b []byte) string {
+	s := strings.Join(strings.Fields(strings.ToValidUTF8(string(b), "")), " ")
+	return truncateRunes(s, maxErrorSnippetRunes)
 }

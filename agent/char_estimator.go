@@ -41,6 +41,8 @@ func (CharEstimator) EstimateTokens(_ context.Context, req ModelRequest) (int, e
 				total += len(b.ToolUseID) + len(b.Name) + len(b.Input)
 			case ToolResultBlock:
 				total += len(b.ToolUseID) + len(b.Content)
+			case ThinkingBlock:
+				total += len(b.Text) + len(b.Signature) + len(b.RedactedData)
 			}
 		}
 	}

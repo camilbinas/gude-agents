@@ -2,6 +2,7 @@ package slog
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -23,6 +24,31 @@ func (h *slogHook) log(ctx context.Context, level slog.Level, msg string, attrs 
 		return
 	}
 	h.logger.LogAttrs(ctx, level, msg, attrs...)
+}
+
+// maxLoggedRunes bounds any externally influenced string written to the log.
+const maxLoggedRunes = 500
+
+// errAttr renders err for logging. Error text can embed URLs, credentials,
+// provider response bodies or user content, so the text is only logged (and
+// truncated) when content logging is enabled; otherwise only the error's Go
+// type is logged.
+func (h *slogHook) errAttr(err error) slog.Attr {
+	if !h.content {
+		return slog.String("error", fmt.Sprintf("%T", err))
+	}
+	return slog.String("error", truncateRunes(err.Error(), maxLoggedRunes))
+}
+
+func truncateRunes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +95,7 @@ func (h *slogHook) onInvoke(ctx context.Context, record agent.InvokeRecord) cont
 		}
 		if record.Err != nil {
 			level = slog.LevelError
-			attrs = append(attrs, slog.String("error", record.Err.Error()))
+			attrs = append(attrs, h.errAttr(record.Err))
 		}
 		h.log(ctx, level, "invoke.end", attrs...)
 		if h.content && record.Err == nil && record.Response != "" {
@@ -118,7 +144,7 @@ func (h *slogHook) onModel(ctx context.Context, record agent.ModelCallRecord) co
 		}
 		if record.Err != nil {
 			level = slog.LevelError
-			attrs = append(attrs, slog.String("error", record.Err.Error()))
+			attrs = append(attrs, h.errAttr(record.Err))
 		}
 		h.log(ctx, level, "provider_call.end", attrs...)
 	}
@@ -139,7 +165,7 @@ func (h *slogHook) onTool(ctx context.Context, record agent.ToolCallRecord) cont
 		}
 		if record.Err != nil {
 			level = slog.LevelError
-			attrs = append(attrs, slog.String("error", record.Err.Error()))
+			attrs = append(attrs, h.errAttr(record.Err))
 		}
 		h.log(ctx, level, "tool.end", attrs...)
 	}
@@ -149,7 +175,7 @@ func (h *slogHook) onTool(ctx context.Context, record agent.ToolCallRecord) cont
 func (h *slogHook) onToolLog(ctx context.Context, record agent.ToolLogRecord) context.Context {
 	h.log(ctx, slog.LevelDebug, "tool.log",
 		slog.String("tool.name", record.Name),
-		slog.String("message", record.Message),
+		slog.String("message", truncateRunes(record.Message, maxLoggedRunes)),
 	)
 	return ctx
 }
@@ -168,7 +194,7 @@ func (h *slogHook) onGuardrail(ctx context.Context, record agent.GuardrailRecord
 	}
 	if record.Err != nil {
 		level = slog.LevelError
-		attrs = append(attrs, slog.String("error", record.Err.Error()))
+		attrs = append(attrs, h.errAttr(record.Err))
 	}
 	h.log(ctx, level, "guardrail.complete", attrs...)
 	return ctx
@@ -191,7 +217,7 @@ func (h *slogHook) onConversation(ctx context.Context, record agent.Conversation
 		}
 		if record.Err != nil {
 			level = slog.LevelError
-			attrs = append(attrs, slog.String("error", record.Err.Error()))
+			attrs = append(attrs, h.errAttr(record.Err))
 		}
 		h.log(ctx, level, "memory.end", attrs...)
 	}
@@ -214,7 +240,7 @@ func (h *slogHook) onRetrieval(ctx context.Context, record agent.RetrievalRecord
 		}
 		if record.Err != nil {
 			level = slog.LevelError
-			attrs = append(attrs, slog.String("error", record.Err.Error()))
+			attrs = append(attrs, h.errAttr(record.Err))
 		}
 		h.log(ctx, level, "retriever.end", attrs...)
 	}

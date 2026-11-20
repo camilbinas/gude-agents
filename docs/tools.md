@@ -190,3 +190,17 @@ This mechanism intentionally does not add provider-response replay, AgentAsTool 
 ### Operational limits
 
 The execution CAS serializes durable state transitions such as manual resolution claims; it does **not** stop a handler that has already started in another process, establish distributed ownership, or provide exactly-once external execution. If competing workers lose the durable Ready-to-InFlight claim, they return a coordination/conflict error and never append a synthetic ToolResult; the winning worker or a later recovery owns completion. Replay-safe tools must make their downstream operation idempotent with the supplied key. Unsafe `InFlight` calls require explicit reconciliation. Conversation and execution storage must both provide their documented CAS/durability behavior; if an append commits but its acknowledgement or a later execution save is lost, recovery validates the active ToolUse suffix and finishes the bounded pending state without adding another result.
+
+## Tool timeouts and result size
+
+Both limits are off by default.
+
+- `WithToolTimeout(d)` puts a deadline of `d` on every tool handler call. Middleware and the handler see it on their context. A handler that honors its context returns and the call becomes a `ToolError` result (`error.code` `tool`). A handler that ignores its context is not interrupted, so check `ctx.Done()` in long-running handlers.
+- `WithToolTimeoutFor(name, d)` overrides the timeout for one tool. `0` disables the timeout for that tool even when `WithToolTimeout` is set. The override lives on the agent because `tool.Tool` has no timeout field.
+- `WithMaxToolResultBytes(n)` caps the text of each tool result and tool error message at `n` bytes. Longer text is cut at a UTF-8 boundary and followed by `\n[truncated: K bytes omitted]`, where `K` is the number of bytes dropped. Hooks, events, the conversation and the model all see the truncated text.
+
+A panic inside a tool handler (or its middleware) is recovered and reported the same way as a returned error: the call gets a `ToolError` result, Tool hooks still receive their End record, and sibling calls are unaffected.
+
+## Hook semantics
+
+Each hook's End function receives the context that same hook returned at Start. A nil return keeps the incoming context, and a returned context that does not derive from the incoming one still inherits its cancellation. A panic in a hook is recovered and ignored, so the remaining hooks' End functions still run. `LimitRecord.Name` is `max_iterations`, `token_budget` or `rate_limit` (`LimitMaxIterations`, `LimitTokenBudget`, `LimitRateLimit`). `RecoverExecution` and `ReconcileToolExecution` emit Invoke Start/End around their Tool hooks.

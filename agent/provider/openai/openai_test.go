@@ -936,8 +936,8 @@ func TestStream_AccumulatesTextToolCallsUsageAndEvents(t *testing.T) {
 	if call.ToolUseID != "call_123" || call.Name != "lookup" || string(call.Input) != `{"q":"go"}` {
 		t.Fatalf("ToolCalls[0] = %#v, want preserved ID, name, and arguments", call)
 	}
-	if resp.Usage.InputTokens != 100 || resp.Usage.OutputTokens != 20 || resp.Usage.CacheReadTokens != 60 || resp.Usage.CacheWriteTokens != 0 {
-		t.Fatalf("Usage = %#v, want input=100 output=20 cache-read=60 cache-write=0", resp.Usage)
+	if resp.Usage.InputTokens != 40 || resp.Usage.OutputTokens != 20 || resp.Usage.CacheReadTokens != 60 || resp.Usage.CacheWriteTokens != 0 {
+		t.Fatalf("Usage = %#v, want input=40 (cached excluded) output=20 cache-read=60 cache-write=0", resp.Usage)
 	}
 }
 

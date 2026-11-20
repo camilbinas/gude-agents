@@ -180,8 +180,31 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 		placeholders(len(args)),
 	)
 
-	if _, err := s.pool.Exec(ctx, query, args...); err != nil {
+	// With an explicit primary key, Remember is an upsert. The conflicting row
+	// is only replaced when it belongs to the same identifier; a primary key
+	// owned by another identifier is never overwritten.
+	upsert := s.schema.PKIndex >= 0 && s.schema.IdentifierIdx >= 0 && !isZeroPK(value, s.schema)
+	if upsert {
+		pkCol := s.schema.Columns[s.schema.PKIndex].Column
+		identCol := s.schema.Columns[s.schema.IdentifierIdx].Column
+		var sets []string
+		for i, col := range s.schema.Columns {
+			if i == s.schema.PKIndex || i == s.schema.IdentifierIdx || col.NoInput {
+				continue
+			}
+			sets = append(sets, fmt.Sprintf("%s = EXCLUDED.%s", col.Column, col.Column))
+		}
+		sets = append(sets, fmt.Sprintf("%s = EXCLUDED.%s", s.embeddingCol, s.embeddingCol))
+		query += fmt.Sprintf(" ON CONFLICT (%s) DO UPDATE SET %s WHERE %s.%s = EXCLUDED.%s",
+			pkCol, strings.Join(sets, ", "), s.tableName, identCol, identCol)
+	}
+
+	tag, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
 		return fmt.Errorf("postgres: insert: %w", err)
+	}
+	if upsert && tag.RowsAffected() == 0 {
+		return fmt.Errorf("postgres: primary key %q belongs to another identifier", s.extractPK(value))
 	}
 
 	return nil
@@ -264,6 +287,15 @@ func (s *Store[T]) extractPK(value T) string {
 	}
 	col := s.schema.Columns[s.schema.PKIndex]
 	return fmt.Sprintf("%v", v.Field(col.FieldIndex).Interface())
+}
+
+// isZeroPK reports whether the primary-key field is unset.
+func isZeroPK[T any](value T, schema *tableSchema) bool {
+	v := reflect.ValueOf(value)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v.Field(schema.Columns[schema.PKIndex].FieldIndex).IsZero()
 }
 
 // extractInsertValues extracts column names and values for INSERT, skipping
@@ -383,7 +415,8 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 	}
 
 	for i, col := range s.schema.Columns {
-		if i == s.schema.PKIndex || i == s.schema.IdentifierIdx {
+		// NoInput columns are system-managed; never overwrite them with zero values.
+		if i == s.schema.PKIndex || i == s.schema.IdentifierIdx || col.NoInput {
 			continue
 		}
 		field := v.Field(col.FieldIndex)
@@ -463,10 +496,9 @@ func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
 	return nil
 }
 
-// Close closes the underlying connection pool.
-func (s *Store[T]) Close() {
-	s.pool.Close()
-}
+// Close is a no-op: the pool is supplied by the caller, who owns its
+// lifecycle. It is kept so existing callers keep compiling.
+func (s *Store[T]) Close() {}
 
 // setIdentifierField sets the identifier-tagged field on a struct value.
 func setIdentifierField[T any](value *T, schema *tableSchema, id string) {

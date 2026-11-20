@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -55,6 +56,17 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 			d = decisions[i]
 		}
 		t, ok := available[calls[i].Name]
+		// A panic outside the handler (guard, hooks, event consumers) must not
+		// crash a worker or lose the call's result.
+		defer func() {
+			if rec := recover(); rec != nil {
+				outcomes[i] = toolOutcome{kind: toolOutcomeDefinitive, result: ToolResultBlock{
+					ToolUseID: calls[i].ToolUseID,
+					Content:   (&ToolError{ToolName: calls[i].Name, Cause: fmt.Errorf("panic: %v", rec)}).Error(),
+					IsError:   true,
+				}}
+			}
+		}()
 		outcomes[i] = r.executeCall(c, calls[i], t, ok, d, async)
 	}
 	run := func(indices []int) {
@@ -277,7 +289,12 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 	handler := ChainMiddleware(inner, a.middlewares...)
 	handlerContext := toolC.withContext(tool.WithExecutionMetadata(toolC.Context, key, recoveryReplay))
-	result, err := handler(handlerContext, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
+	if d := a.toolTimeoutFor(tc.Name); d > 0 {
+		tctx, cancelTimeout := context.WithTimeout(handlerContext.Context, d)
+		defer cancelTimeout()
+		handlerContext = handlerContext.withContext(tctx)
+	}
+	result, err := callHandlerIsolated(handler, handlerContext, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
 	dur := time.Since(begin)
 
 	// 7. Widgets.
@@ -295,13 +312,14 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 			return out
 		}
 		tf.finish(err, "", true, true, "")
-		out.result.Content = (&ToolError{ToolName: tc.Name, Cause: err}).Error()
+		out.result.Content = a.limitToolResult((&ToolError{ToolName: tc.Name, Cause: err}).Error())
 		out.result.IsError = true
 		emitEnd("", &ErrorInfo{Code: ErrorCodeTool, Message: out.result.Content}, dur)
 		return out
 	}
 
 	// 8. Hook completion and result conversion.
+	result.Text = a.limitToolResult(result.Text)
 	tf.finish(nil, result.Text, result.IsError, true, "")
 	out.result.Content = result.Text
 	out.result.Images = append(out.result.Images, result.Images...)
@@ -317,4 +335,38 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 	emitEnd(result.Text, info, dur)
 	return out
+}
+
+// callHandlerIsolated runs the middleware+handler chain and converts a panic
+// into an ordinary error, so the call finishes with a ToolError result and its
+// End hooks and events still fire.
+func callHandlerIsolated(h ToolHandlerFunc, ctx context.Context, call ToolCall) (result ToolResult, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			result, err = ToolResult{}, fmt.Errorf("tool panicked: %v", rec)
+		}
+	}()
+	return h(ctx, call)
+}
+
+// toolTimeoutFor returns the handler timeout for the named tool, 0 for none.
+func (a *Runtime) toolTimeoutFor(name string) time.Duration {
+	if d, ok := a.toolTimeouts[name]; ok {
+		return d
+	}
+	return a.toolTimeout
+}
+
+// limitToolResult truncates s to WithMaxToolResultBytes at a UTF-8 boundary
+// and appends a marker saying how much was omitted.
+func (a *Runtime) limitToolResult(s string) string {
+	n := a.maxToolResultBytes
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\n[truncated: %d bytes omitted]", s[:cut], len(s)-cut)
 }

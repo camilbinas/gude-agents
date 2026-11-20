@@ -28,6 +28,29 @@ type Conversation struct {
 	cfg  *pgConfig
 }
 
+// lockMetadata locks the metadata row of id and returns its cursor. When the
+// row does not exist it is created empty (revision 0) with ON CONFLICT DO
+// NOTHING and then locked with a second SELECT ... FOR UPDATE, which waits for
+// a concurrent creator and observes the row it committed. found reports whether
+// the row existed before this call.
+func (m *Conversation) lockMetadata(ctx context.Context, tx pgx.Tx, id string) (rev, last uint64, found bool, err error) {
+	q := fmt.Sprintf(`SELECT %s,last_sequence FROM %s WHERE %s=$1 FOR UPDATE`, m.cfg.colRevision, m.cfg.tableName, m.cfg.colID)
+	err = tx.QueryRow(ctx, q, id).Scan(&rev, &last)
+	if err == nil {
+		return rev, last, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, false, err
+	}
+	if _, err = tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s(%s,%s,last_sequence,context_state,context_state_revision,%s) VALUES ($1,0,0,'{}'::jsonb,0,NOW()) ON CONFLICT (%s) DO NOTHING`, m.cfg.tableName, m.cfg.colID, m.cfg.colRevision, m.cfg.colUpdatedAt, m.cfg.colID), id); err != nil {
+		return 0, 0, false, fmt.Errorf("create metadata: %w", err)
+	}
+	if err = tx.QueryRow(ctx, q, id).Scan(&rev, &last); err != nil {
+		return 0, 0, false, err
+	}
+	return rev, last, false, nil
+}
+
 func New(pool *pgxpool.Pool, opts ...Option) (*Conversation, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("postgres conversation: pool is required")
@@ -47,9 +70,10 @@ func New(pool *pgxpool.Pool, opts ...Option) (*Conversation, error) {
 	cfg.colMessages = pgx.Identifier{cfg.colMessages}.Sanitize()
 	cfg.colRevision = pgx.Identifier{cfg.colRevision}.Sanitize()
 	cfg.colUpdatedAt = pgx.Identifier{cfg.colUpdatedAt}.Sanitize()
-	// The caller still owns legacy metadata-table creation. These additive DDL
-	// statements migrate it to metadata+append-only message rows.
+	// The metadata table is created when missing; these additive DDL
+	// statements migrate an existing legacy table to metadata+append-only message rows.
 	for _, sql := range []string{
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (%s TEXT PRIMARY KEY, %s JSONB NOT NULL DEFAULT '[]'::jsonb, %s TIMESTAMPTZ NOT NULL DEFAULT NOW())`, cfg.tableName, cfg.colID, cfg.colMessages, cfg.colUpdatedAt),
 		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s BIGINT NOT NULL DEFAULT 0`, cfg.tableName, cfg.colRevision),
 		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS last_sequence BIGINT NOT NULL DEFAULT 0`, cfg.tableName),
 		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS context_state JSONB NOT NULL DEFAULT '{}'::jsonb`, cfg.tableName),
@@ -107,7 +131,7 @@ func (m *Conversation) migrateLegacy(ctx context.Context) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = $1 WHERE %s = $2`, m.cfg.tableName, m.cfg.colID), len(row.msgs), row.id); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = $1, %s = GREATEST(%s, 1) WHERE %s = $2`, m.cfg.tableName, m.cfg.colRevision, m.cfg.colRevision, m.cfg.colID), len(row.msgs), row.id); err != nil {
 			return fmt.Errorf("postgres conversation: update legacy metadata: %w", err)
 		}
 	}
@@ -131,40 +155,46 @@ func (m *Conversation) insertMessage(ctx context.Context, tx pgx.Tx, id string, 
 func (m *Conversation) Load(ctx context.Context, id string) (agent.ConversationSnapshot, error) {
 	return m.LoadAfter(ctx, id, 0)
 }
+
+// LoadAfter reads the cursor and the message range in one SELECT. PostgreSQL
+// gives a single statement one MVCC snapshot, so a concurrent Append (which
+// commits its messages and metadata update together) is either entirely
+// visible or entirely absent and the messages always match the returned
+// cursor. The LEFT JOIN keeps the metadata row when the requested tail is
+// empty and yields no rows only for a conversation that does not exist.
 func (m *Conversation) LoadAfter(ctx context.Context, id string, after uint64) (agent.ConversationSnapshot, error) {
-	var rev, last uint64
-	err := m.pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s,last_sequence FROM %s WHERE %s=$1`, m.cfg.colRevision, m.cfg.tableName, m.cfg.colID), id).Scan(&rev, &last)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
-	}
+	rows, err := m.pool.Query(ctx, fmt.Sprintf(
+		`SELECT c.%s, c.last_sequence, m.sequence, m.message
+		 FROM %s AS c LEFT JOIN %s AS m ON m.conversation_id = c.%s AND m.sequence > $2
+		 WHERE c.%s = $1 ORDER BY m.sequence`,
+		m.cfg.colRevision, m.cfg.tableName, m.cfg.messageTable, m.cfg.colID, m.cfg.colID), id, after)
 	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: load metadata: %w", err)
-	}
-	rows, err := m.pool.Query(ctx, fmt.Sprintf(`SELECT sequence,message FROM %s WHERE conversation_id=$1 AND sequence>$2 ORDER BY sequence`, m.cfg.messageTable), id, after)
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: load range: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: load: %w", err)
 	}
 	defer rows.Close()
-	msgs := make([]agent.Message, 0)
+	snapshot := agent.ConversationSnapshot{Messages: make([]agent.Message, 0)}
 	for rows.Next() {
-		var seq uint64
+		var seq *int64
 		var raw []byte
-		if err := rows.Scan(&seq, &raw); err != nil {
+		if err := rows.Scan(&snapshot.Revision, &snapshot.LastSequence, &seq, &raw); err != nil {
 			return agent.ConversationSnapshot{}, err
+		}
+		if seq == nil {
+			continue // metadata row without messages in the requested range
 		}
 		one, err := conversation.UnmarshalMessages(raw)
 		if err != nil || len(one) != 1 {
 			if err == nil {
 				err = errors.New("expected one message")
 			}
-			return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: decode message %d: %w", seq, err)
+			return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: decode message %d: %w", *seq, err)
 		}
-		msgs = append(msgs, one[0])
+		snapshot.Messages = append(snapshot.Messages, one[0])
 	}
 	if err := rows.Err(); err != nil {
 		return agent.ConversationSnapshot{}, err
 	}
-	return agent.ConversationSnapshot{Messages: msgs, Revision: rev, LastSequence: last}, nil
+	return snapshot, nil
 }
 
 func (m *Conversation) Append(ctx context.Context, id string, msgs []agent.Message, expected uint64) (agent.ConversationCursor, error) {
@@ -173,12 +203,11 @@ func (m *Conversation) Append(ctx context.Context, id string, msgs []agent.Messa
 		return agent.ConversationCursor{}, fmt.Errorf("postgres conversation: begin append: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	// Check the revision without creating a row first, so a stale expected
+	// revision or an empty append never leaves metadata behind.
 	var rev, last uint64
-	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s,last_sequence FROM %s WHERE %s=$1 FOR UPDATE`, m.cfg.colRevision, m.cfg.tableName, m.cfg.colID), id).Scan(&rev, &last)
-	missing := errors.Is(err, pgx.ErrNoRows)
-	if missing {
-		rev, last = 0, 0
-	} else if err != nil {
+	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s,last_sequence FROM %s WHERE %s=$1`, m.cfg.colRevision, m.cfg.tableName, m.cfg.colID), id).Scan(&rev, &last)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return agent.ConversationCursor{}, fmt.Errorf("postgres conversation: append metadata: %w", err)
 	}
 	if rev != expected {
@@ -190,10 +219,14 @@ func (m *Conversation) Append(ctx context.Context, id string, msgs []agent.Messa
 		}
 		return agent.ConversationCursor{Revision: rev, LastSequence: last}, nil
 	}
-	if missing {
-		if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s(%s,%s,last_sequence,context_state,context_state_revision,%s) VALUES ($1,0,0,'{}'::jsonb,0,NOW()) ON CONFLICT (%s) DO NOTHING`, m.cfg.tableName, m.cfg.colID, m.cfg.colRevision, m.cfg.colUpdatedAt, m.cfg.colID), id); err != nil {
-			return agent.ConversationCursor{}, fmt.Errorf("postgres conversation: create metadata: %w", err)
-		}
+	// Lock (creating if needed) and re-check: a concurrent writer may have
+	// created or advanced the row since the unlocked read above.
+	rev, last, _, err = m.lockMetadata(ctx, tx, id)
+	if err != nil {
+		return agent.ConversationCursor{}, fmt.Errorf("postgres conversation: append metadata: %w", err)
+	}
+	if rev != expected {
+		return agent.ConversationCursor{}, fmt.Errorf("postgres conversation: append %q: %w", id, agent.ErrConversationConflict)
 	}
 	for i, msg := range msgs {
 		if err := m.insertMessage(ctx, tx, id, last+uint64(i)+1, msg); err != nil {
@@ -244,12 +277,11 @@ func (m *Conversation) SaveContextState(ctx context.Context, id, key string, dat
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
+	if _, _, _, err = m.lockMetadata(ctx, tx, id); err != nil {
+		return 0, fmt.Errorf("postgres conversation: save context state: %w", err)
+	}
 	var raw []byte
-	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT context_state FROM %s WHERE %s=$1 FOR UPDATE`, m.cfg.tableName, m.cfg.colID), id).Scan(&raw)
-	missing := errors.Is(err, pgx.ErrNoRows)
-	if missing {
-		raw = []byte("{}")
-	} else if err != nil {
+	if err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT context_state FROM %s WHERE %s=$1`, m.cfg.tableName, m.cfg.colID), id).Scan(&raw); err != nil {
 		return 0, err
 	}
 	var states stateEnvelope
@@ -267,11 +299,7 @@ func (m *Conversation) SaveContextState(ctx context.Context, id, key string, dat
 	v.Data = append(json.RawMessage(nil), data...)
 	states[key] = v
 	encoded, _ := json.Marshal(states)
-	if missing {
-		_, err = tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s(%s,%s,last_sequence,context_state,context_state_revision,%s) VALUES($1,0,0,$2,1,NOW()) ON CONFLICT (%s) DO UPDATE SET context_state=EXCLUDED.context_state,context_state_revision=%s.context_state_revision+1`, m.cfg.tableName, m.cfg.colID, m.cfg.colRevision, m.cfg.colUpdatedAt, m.cfg.colID, m.cfg.tableName), id, encoded)
-	} else {
-		_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET context_state=$1,context_state_revision=context_state_revision+1 WHERE %s=$2`, m.cfg.tableName, m.cfg.colID), encoded, id)
-	}
+	_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET context_state=$1,context_state_revision=context_state_revision+1 WHERE %s=$2`, m.cfg.tableName, m.cfg.colID), encoded, id)
 	if err != nil {
 		return 0, fmt.Errorf("postgres conversation: save context state: %w", err)
 	}
@@ -302,4 +330,6 @@ func (m *Conversation) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
-func (m *Conversation) Close() error { m.pool.Close(); return nil }
+
+// Close is a no-op: the pool is supplied by the caller, who owns its lifecycle.
+func (m *Conversation) Close() error { return nil }

@@ -93,8 +93,9 @@ func assertDecodedEntry(t *testing.T, entries []memory.Entry[redisDecodeEntry]) 
 		t.Fatalf("entries = %#v, want one", entries)
 	}
 	got := entries[0]
-	if got.ID != "mem:doc-1" {
-		t.Fatalf("ID = %q, want mem:doc-1", got.ID)
+	// Entry.ID is the logical primary key, not the Redis document key.
+	if got.ID != "pk-1" {
+		t.Fatalf("ID = %q, want pk-1", got.ID)
 	}
 	if got.Score != 0.75 {
 		t.Fatalf("Score = %v, want 0.75 (1 - distance)", got.Score)

@@ -1,6 +1,9 @@
 package agent
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // conversationLocks serializes invocations and execution recovery that target
 // the same conversation within one Runtime. It is an in-process guard only: the
@@ -16,7 +19,7 @@ type conversationLocks struct {
 // conversationLock is one conversation's mutex plus a ref count guarded by
 // conversationLocks.mu.
 type conversationLock struct {
-	mu   sync.Mutex
+	held chan struct{} // capacity 1: a send acquires, a receive releases
 	refs int
 }
 
@@ -27,25 +30,43 @@ type convLockHandle struct {
 	lock  *conversationLock
 }
 
-// acquire locks the mutex for conversationID and records a reference so it is
-// not evicted while held; the returned handle must be released exactly once.
+// acquire locks conversationID without a cancellation bound.
 func (l *conversationLocks) acquire(conversationID string) convLockHandle {
+	h, _ := l.acquireCtx(context.Background(), conversationID)
+	return h
+}
+
+// acquireCtx locks conversationID, giving up with ctx's error when ctx ends
+// while waiting. It records a reference so the entry is not evicted while held
+// or awaited; a successful handle must be released exactly once.
+func (l *conversationLocks) acquireCtx(ctx context.Context, conversationID string) (convLockHandle, error) {
 	l.mu.Lock()
 	if l.locks == nil {
 		l.locks = make(map[string]*conversationLock)
 	}
 	entry, ok := l.locks[conversationID]
 	if !ok {
-		entry = &conversationLock{}
+		entry = &conversationLock{held: make(chan struct{}, 1)}
 		l.locks[conversationID] = entry
 	}
 	// Count this waiter under the map lock so a concurrent release cannot evict
-	// the entry before we Lock it below.
+	// the entry before we acquire it below.
 	entry.refs++
 	l.mu.Unlock()
 
-	entry.mu.Lock()
-	return convLockHandle{locks: l, key: conversationID, lock: entry}
+	h := convLockHandle{locks: l, key: conversationID, lock: entry}
+	select {
+	case entry.held <- struct{}{}:
+		return h, nil
+	default:
+	}
+	select {
+	case entry.held <- struct{}{}:
+		return h, nil
+	case <-ctx.Done():
+		h.drop()
+		return convLockHandle{}, ctx.Err()
+	}
 }
 
 // release unlocks the conversation mutex and drops the reference, evicting the
@@ -54,7 +75,12 @@ func (h convLockHandle) release() {
 	if h.lock == nil {
 		return
 	}
-	h.lock.mu.Unlock()
+	<-h.lock.held
+	h.drop()
+}
+
+// drop releases the reference taken by acquireCtx, evicting an idle entry.
+func (h convLockHandle) drop() {
 	h.locks.mu.Lock()
 	h.lock.refs--
 	if h.lock.refs == 0 {

@@ -30,6 +30,8 @@ type Pool struct {
 	command string
 	args    []string
 	env     []string
+	inherit bool
+	limits  outputLimits
 
 	// connect starts one session. It is startSession in production; tests
 	// substitute fakes.
@@ -55,10 +57,48 @@ type PoolOption func(*poolConfig) error
 
 type poolConfig struct {
 	env     []string
+	inherit bool
 	maxSize int
+	limits  outputLimits
 }
 
-// WithPoolEnv sets environment variables for all MCP server subprocesses.
+// WithPoolInheritEnv makes pooled subprocesses inherit the full parent
+// environment, including secrets. By default only an allowlist is inherited.
+func WithPoolInheritEnv() PoolOption {
+	return func(c *poolConfig) error {
+		c.inherit = true
+		return nil
+	}
+}
+
+// WithPoolMaxOutputBytes caps the text returned by one pooled tool call
+// (default DefaultMaxOutputBytes). n must be >= 1.
+func WithPoolMaxOutputBytes(n int) PoolOption {
+	return func(c *poolConfig) error {
+		if n < 1 {
+			return fmt.Errorf("mcp pool: max output bytes must be >= 1, got %d", n)
+		}
+		c.limits.maxBytes = n
+		return nil
+	}
+}
+
+// WithPoolImageLimits caps images per call and bytes per image. Values <= 0
+// keep the defaults.
+func WithPoolImageLimits(maxImages, maxImageBytes int) PoolOption {
+	return func(c *poolConfig) error {
+		if maxImages > 0 {
+			c.limits.maxImages = maxImages
+		}
+		if maxImageBytes > 0 {
+			c.limits.maxImageBytes = maxImageBytes
+		}
+		return nil
+	}
+}
+
+// WithPoolEnv sets environment variables for all MCP server subprocesses. They
+// are added to an allowlisted subset of the parent environment; see WithEnv.
 func WithPoolEnv(env ...string) PoolOption {
 	return func(c *poolConfig) error {
 		c.env = append(c.env, env...)
@@ -85,7 +125,7 @@ func WithPoolSize(n int) PoolOption {
 // Use Pool.Tools to get tool.Tool values that automatically use the pool
 // for every call. Use Pool.Close to shut down all connections.
 func NewPool(ctx context.Context, command string, args []string, opts ...PoolOption) (*Pool, error) {
-	cfg := &poolConfig{maxSize: 5}
+	cfg := &poolConfig{maxSize: 5, limits: defaultLimits()}
 	for _, opt := range opts {
 		if err := opt(cfg); err != nil {
 			return nil, err
@@ -96,6 +136,8 @@ func NewPool(ctx context.Context, command string, args []string, opts ...PoolOpt
 		command:  command,
 		args:     args,
 		env:      cfg.env,
+		inherit:  cfg.inherit,
+		limits:   cfg.limits,
 		maxSize:  cfg.maxSize,
 		sessions: make(chan poolSession, cfg.maxSize),
 	}
@@ -130,9 +172,7 @@ func NewPool(ctx context.Context, command string, args []string, opts ...PoolOpt
 // startSession creates a new MCP server subprocess and connects to it.
 func (p *Pool) startSession(ctx context.Context) (*sdkmcp.ClientSession, error) {
 	cmd := exec.Command(p.command, p.args...)
-	if len(p.env) > 0 {
-		cmd.Env = append(cmd.Environ(), p.env...)
-	}
+	cmd.Env = subprocessEnv(p.inherit, p.env)
 
 	client := sdkmcp.NewClient(
 		&sdkmcp.Implementation{Name: "gude-agents-pool", Version: "v1.0.0"},
@@ -263,21 +303,36 @@ func reusable(err error) bool {
 // Each tool call acquires a connection, executes the MCP call, and returns
 // the connection to the pool. Multiple goroutines can safely call these
 // tools concurrently.
-func (p *Pool) Tools() ([]tool.Tool, error) {
+//
+// IncludeTools, ExcludeTools and WithToolPrefix are supported with the same
+// fail-closed semantics as Client.Tools.
+func (p *Pool) Tools(opts ...ToolsOption) ([]tool.Tool, error) {
+	cfg, err := newToolsConfig(opts)
+	if err != nil {
+		return nil, err
+	}
 	tools := make([]tool.Tool, 0, len(p.toolDefs))
+	seen := make(map[string]struct{}, len(p.toolDefs))
 	for _, t := range p.toolDefs {
-		wrapped, err := p.wrapTool(t)
+		seen[t.Name] = struct{}{}
+		if !cfg.allow(t.Name) {
+			continue
+		}
+		wrapped, err := p.wrapTool(t, cfg.prefix)
 		if err != nil {
 			return nil, fmt.Errorf("mcp pool wrap tool %q: %w", t.Name, err)
 		}
 		tools = append(tools, wrapped)
+	}
+	if err := cfg.checkKnown(seen); err != nil {
+		return nil, err
 	}
 	return tools, nil
 }
 
 // wrapTool converts an MCP tool definition into a tool.Tool whose handler
 // acquires a pooled connection for each call.
-func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
+func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool, prefix string) (tool.Tool, error) {
 	schema, err := toSchemaMap(mcpTool.InputSchema)
 	if err != nil {
 		return tool.Tool{}, fmt.Errorf("convert schema: %w", err)
@@ -287,7 +342,7 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 	description := mcpTool.Description
 
 	return withTextHandler(tool.NewRich(
-		name,
+		prefix+name,
 		description,
 		func(ctx context.Context, input json.RawMessage) (*tool.Output, error) {
 			var args map[string]any
@@ -314,9 +369,9 @@ func (p *Pool) wrapTool(mcpTool *sdkmcp.Tool) (tool.Tool, error) {
 				return nil, fmt.Errorf("mcp tool %s: %w", name, err)
 			}
 
-			out := toOutput(res.Content)
+			out := toOutputLimited(res.Content, p.limits)
 			if res.IsError {
-				return out, fmt.Errorf("mcp tool %s returned error: %s", name, out.Text)
+				return out, fmt.Errorf("mcp tool %s returned error: %s", name, truncateText(out.Text, maxErrorTextBytes))
 			}
 			return out, nil
 		},

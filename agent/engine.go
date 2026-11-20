@@ -155,6 +155,9 @@ type run struct {
 	recovering       bool
 	iteration        int
 	persistedCount   int // canonical messages present when this run loaded history
+	// unclaimedResume is true while a resumed execution is still Paused in the
+	// store: claimResume has not yet moved it to Running.
+	unclaimedResume bool
 }
 
 func (r *run) detailed() bool { return r.c.cfg.detailedEvents }
@@ -211,15 +214,12 @@ func (a *Runtime) execute(c *Context, spec invocationSpec) (Result, error) {
 		if err := validateResume(in, spec.response); err != nil {
 			return Result{}, err
 		}
-		execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
-		claimed, err := a.executionStore.Save(c, execution, execution.Version)
-		if err != nil {
-			return Result{}, fmt.Errorf("claim execution for resume: %w", err)
-		}
-		in.ExecutionVersion = claimed.Version
+		// The Paused -> Running claim is deferred until the pre-work checks of
+		// resumeTurn pass (see run.claimResume), so a transient failure before
+		// any work leaves the pause and the human answer intact.
 		canonical = in
 		c.cfg.executionResume = true
-		c.cfg.executionVersion = claimed.Version
+		c.cfg.executionVersion = execution.Version
 		spec.resume = canonical
 		// Resume always uses the canonical paused conversation identity before
 		// lifecycle hooks, tools, guardrails, rate limiting, and provider work.
@@ -247,32 +247,40 @@ func (a *Runtime) lifecycle(c *Context, convID, userMessage string, body func(r 
 	h := a.dispatcher(c)
 	c, invoke := h.onInvokeStart(c, a.invokeRecord(convID, userMessage, c))
 
-	if c.cfg.executionID == "" {
-		if c.cfg.executionIDSet {
-			return Result{}, fmt.Errorf("execution ID must not be empty")
-		}
-		id, err := newExecutionID(a.random)
-		if err != nil {
-			return Result{}, err
-		}
-		c.cfg.executionID = id
-	}
 	r := &run{a: a, c: c, h: h, convID: convID}
 	res, err := func() (Result, error) {
+		// Everything after Invoke Start runs inside this closure so that
+		// Invoke End always fires, including for early failures.
+		if c.cfg.executionID == "" {
+			if c.cfg.executionIDSet {
+				return Result{}, fmt.Errorf("execution ID must not be empty")
+			}
+			id, err := newExecutionID(a.random)
+			if err != nil {
+				return Result{}, err
+			}
+			c.cfg.executionID = id
+		}
 		if err := a.requireConversationID(convID); err != nil {
 			return Result{}, err
 		}
 		if a.conversation != nil && convID != "" {
-			h := a.conversationLocks.acquire(convID)
+			h, err := a.conversationLocks.acquireCtx(c, convID)
+			if err != nil {
+				return Result{}, err
+			}
 			defer h.release()
 		}
 		if a.executionStore != nil {
 			if c.cfg.executionResume {
 				execution, err := a.executionStore.Load(c, c.cfg.executionID)
 				if err != nil {
-					return Result{}, fmt.Errorf("load running execution: %w", err)
+					return Result{}, fmt.Errorf("load paused execution: %w", err)
 				}
-				r.execution, r.executionDurable = &execution, true
+				if execution.Status != ExecutionPaused || execution.Pause == nil || execution.Version != c.cfg.executionVersion {
+					return Result{}, fmt.Errorf("resume execution %q: %w", execution.ID, ErrExecutionConflict)
+				}
+				r.execution, r.executionDurable, r.unclaimedResume = &execution, true, true
 				r.iteration = execution.Iteration
 				c.rt.seedUsage(execution.Usage)
 			} else {
@@ -310,6 +318,11 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	// it after an interrupted persistence path or an uncertain side effect:
 	// RecoverExecution/ReconcileToolExecution must retain ownership of it.
 	if !r.executionDurable || r.execution == nil || res.StopReason == StopInterrupt || r.execution.ToolBatch != nil {
+		return nil
+	}
+	if r.unclaimedResume {
+		// The resume failed before it claimed the pause. The execution is still
+		// Paused with its payload, so the caller can retry the same Resume.
 		return nil
 	}
 	execution := *r.execution
@@ -566,6 +579,9 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			provF.finish(err, TokenUsage{}, 0, "")
 			r.emitLifecycle(EventModelEnd, LifecycleEvent{Iteration: iteration, StopReason: StopReasonError, Duration: time.Since(modelStart)})
 			endIteration(0, false, err)
+			if errors.Is(err, ErrRateLimitExceeded) {
+				h.onLimit(c, LimitRateLimit, 0, err)
+			}
 			if cerr := c.Err(); cerr != nil && errors.Is(err, cerr) {
 				return Result{}, cerr
 			}
@@ -588,6 +604,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			return Result{}, err
 		}
 		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
+			h.onLimit(c, LimitTokenBudget, a.tokenBudget, ErrTokenBudgetExceeded)
 			endIteration(0, false, ErrTokenBudgetExceeded)
 			return Result{}, ErrTokenBudgetExceeded
 		}
@@ -605,8 +622,13 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 					endIteration(0, false, err)
 					return Result{}, err
 				}
+				// Signed thinking must lead the assistant turn, so it rides with
+				// the text turn when there is one, otherwise with the tool use.
+				thinking := resp.Thinking
 				if resp.Text != "" {
-					messages.appendCanonical(Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
+					content := append(resp.ThinkingContent(), TextBlock{Text: resp.Text})
+					thinking = nil
+					messages.appendCanonical(Message{Role: RoleAssistant, Content: content})
 					if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 						endIteration(0, false, err)
 						return Result{}, err
@@ -616,7 +638,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 					endIteration(0, false, err)
 					return Result{}, err
 				}
-				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls})
+				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls, Thinking: thinking})
 				messages.appendCanonical(assistant)
 				if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
@@ -684,13 +706,15 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 	}
 
 	limitErr := &MaxIterationsError{Limit: a.maxIterations}
-	h.onLimit(c, "max_iterations", a.maxIterations, limitErr)
+	h.onLimit(c, LimitMaxIterations, a.maxIterations, limitErr)
 	r.emitLifecycle(EventMaxIterations, LifecycleEvent{Limit: a.maxIterations})
 	return Result{}, limitErr
 }
 
 func toolUseMessage(resp *ModelResponse) Message {
-	content := make([]ContentBlock, 0, len(resp.ToolCalls)+1)
+	thinking := resp.ThinkingContent()
+	content := make([]ContentBlock, 0, len(thinking)+len(resp.ToolCalls)+1)
+	content = append(content, thinking...)
 	if resp.Text != "" {
 		content = append(content, TextBlock{Text: resp.Text})
 	}
@@ -701,11 +725,10 @@ func toolUseMessage(resp *ModelResponse) Message {
 }
 
 func toolUseMessageWithWidgets(resp *ModelResponse, outcomes []toolOutcome) Message {
-	message := toolUseMessage(resp)
-	content := make([]ContentBlock, 0, len(message.Content))
+	content := append(make([]ContentBlock, 0, len(resp.ToolCalls)*2+1), resp.ThinkingContent()...)
 	for i, tc := range resp.ToolCalls {
 		if i == 0 && resp.Text != "" {
-			content = append(content, message.Content[0])
+			content = append(content, TextBlock{Text: resp.Text})
 		}
 		content = append(content, ToolUseBlock{ToolUseID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
 		for _, widget := range outcomes[i].widgets {
@@ -740,12 +763,28 @@ func (r *run) persistExecution(change func(*Execution) error) error {
 	if err := change(&next); err != nil {
 		return err
 	}
-	updated, err := r.a.executionStore.Save(r.c, next, next.Version)
+	// Detached and bounded: a transition records work that already happened
+	// (a claimed handler boundary, committed results), so it must not be lost
+	// because the invocation context was cancelled in the meantime.
+	ctx, cancel := detachedContext(r.c)
+	defer cancel()
+	updated, err := r.a.executionStore.Save(ctx, next, next.Version)
 	if err != nil {
 		return err
 	}
 	r.execution = &updated
 	return nil
+}
+
+// detachedPersistTimeout bounds persistence that must outlive cancellation of
+// the invocation context.
+const detachedPersistTimeout = 5 * time.Second
+
+// detachedContext returns a context that keeps c's values but not its
+// cancellation, bounded by detachedPersistTimeout.
+func detachedContext(c *Context) (*Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Context), detachedPersistTimeout)
+	return c.withContext(ctx), cancel
 }
 
 func (r *run) persistRuntimeProgress() error {
@@ -961,7 +1000,9 @@ func (r *run) commitToolResults(messages []Message, outcomes []toolOutcome) erro
 	if len(completed) == 0 {
 		return nil
 	}
-	if err := r.saveConversation(messages, r.c.rt.totalUsage()); err != nil {
+	// Results of handlers that already finished are committed even when the
+	// invocation was cancelled meanwhile; dropping them would strand the batch.
+	if err := r.saveConversationWith(r.c, true, messages, r.c.rt.totalUsage()); err != nil {
 		return err
 	}
 	return r.removeToolCalls(completed)
@@ -1004,7 +1045,7 @@ func (r *run) removeToolCalls(completed map[string]struct{}) error {
 // without replaying the model. It returns the
 // updated execution. An unsafe call found InFlight without a canonical result
 // returns ToolExecutionUncertainError before any handler runs.
-func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution, error) {
+func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (_ Execution, retErr error) {
 	if ctx == nil {
 		return Execution{}, ErrNilContext
 	}
@@ -1047,7 +1088,12 @@ func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution,
 	base := ctx.Clone()
 	base.WithConversationID(execution.ConversationID).WithExecutionID(execution.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
-	r := &run{a: a, c: base, h: a.dispatcher(base), execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
+	// Recovery runs tool hooks, so it gets the same Invoke Start/End framing
+	// as any other invocation.
+	hs := a.dispatcher(base)
+	base, invoke := hs.onInvokeStart(base, a.invokeRecord(execution.ConversationID, "", base))
+	defer func() { invoke.finish(Result{ExecutionID: execution.ID}, retErr) }()
+	r := &run{a: a, c: base, h: hs, execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
 
 	after := execution.LastSequence
 	if execution.ToolBatch.ToolUseLastSequence > 0 {
@@ -1418,7 +1464,7 @@ func (r *run) pauseRecoveredExecution(in *Interrupt) error {
 // Experimental: this manual path and the ToolResolution* API may change in a
 // minor release; prefer RecoverExecution and use this only for a non-replay-safe
 // call whose outcome a human has confirmed against the external system.
-func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (Execution, error) {
+func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (_ Execution, retErr error) {
 	if a.executionStore == nil || a.conversation == nil {
 		return Execution{}, ErrNoExecutionStore
 	}
@@ -1464,7 +1510,10 @@ func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, execu
 	}
 	base := ctx.Clone().WithConversationID(claimed.ConversationID).WithExecutionID(claimed.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
-	r := &run{a: a, c: base, h: a.dispatcher(base), execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
+	hs := a.dispatcher(base)
+	base, invoke := hs.onInvokeStart(base, a.invokeRecord(claimed.ConversationID, "", base))
+	defer func() { invoke.finish(Result{ExecutionID: claimed.ID}, retErr) }()
+	r := &run{a: a, c: base, h: hs, execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
 	if claimed.ToolBatch.ToolUseLastSequence == 0 {
 		return cloneExecution(claimed), recoveryUnsupported("reconcile has no persisted ToolUse cursor to load results after")
 	}
@@ -1694,6 +1743,26 @@ func (r *run) resolveTypedAnswer(c *Context, in *Interrupt, resp ResumeResponse)
 	return t.ResumeHandler()(c, resp.typed)
 }
 
+// claimResume atomically moves a paused execution to Running. It runs after
+// every check that can fail without side effects, so a transient error does
+// not consume the pause. It is a no-op when the run is not a resume or the
+// claim already happened.
+func (r *run) claimResume(in *Interrupt) error {
+	if !r.unclaimedResume {
+		return nil
+	}
+	execution := cloneExecution(*r.execution)
+	execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
+	claimed, err := r.a.executionStore.Save(r.c, execution, execution.Version)
+	if err != nil {
+		return fmt.Errorf("claim execution for resume: %w", err)
+	}
+	r.execution, r.unclaimedResume = &claimed, false
+	in.ExecutionVersion = claimed.Version
+	r.c.cfg.executionVersion = claimed.Version
+	return nil
+}
+
 // resumeTurn continues an interrupted invocation (response already validated).
 func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
@@ -1749,6 +1818,9 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 				return Result{}, &GuardrailError{Direction: "input", Cause: err}
 			}
 		}
+		if err := r.claimResume(in); err != nil {
+			return Result{}, err
+		}
 		messages.appendCanonical(Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
 
 	case InterruptNested:
@@ -1758,13 +1830,16 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		if in.Nested.CallID == "" {
 			return Result{}, fmt.Errorf("resume nested interrupt has no call ID")
 		}
+		calls, err := nestedResumeBatch(messages.canonical, in.Nested.CallID)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := r.claimResume(in); err != nil {
+			return Result{}, err
+		}
 		// Reset the paused AgentAsTool call from InFlight back to Ready so the
 		// durable boundary can be re-claimed cleanly on this resume.
 		if err := r.readyNestedCall(in.Nested.CallID); err != nil {
-			return Result{}, err
-		}
-		calls, err := nestedResumeBatch(messages.canonical, in.Nested.CallID)
-		if err != nil {
 			return Result{}, err
 		}
 		// Route this resume into the one AgentAsTool call so its handler resumes
@@ -1784,11 +1859,14 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		}
 
 	case InterruptApproval:
-		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
-			return Result{}, err
-		}
 		calls, fallbackDecisions, err := approvalResumeBatch(messages.canonical, in.Approval, resp)
 		if err != nil {
+			return Result{}, err
+		}
+		if err := r.claimResume(in); err != nil {
+			return Result{}, err
+		}
+		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
 			return Result{}, err
 		}
 		decisions := r.persistedApprovalDecisions(calls)
@@ -1808,6 +1886,9 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		}
 	}
 
+	if err := r.claimResume(in); err != nil {
+		return Result{}, err
+	}
 	return r.loopTurn(messages, cfg)
 }
 
@@ -1945,7 +2026,18 @@ func stripToolBlocks(msgs []Message) []Message {
 // log. Append is committed when it returns, so a nil error means the delta is
 // visible to subsequent reads of the same store.
 func (r *run) saveConversation(messages []Message, cumulative TokenUsage) error {
-	a, c, h := r.a, r.c, &r.h
+	return r.saveConversationWith(r.c, false, messages, cumulative)
+}
+
+// saveConversationWith is saveConversation with an explicit parent context;
+// detached runs the append on a bounded context that ignores cancellation.
+func (r *run) saveConversationWith(c *Context, detached bool, messages []Message, cumulative TokenUsage) error {
+	a, h := r.a, &r.h
+	if detached {
+		var cancel context.CancelFunc
+		c, cancel = detachedContext(c)
+		defer cancel()
+	}
 	if !r.hasConversation() {
 		return nil
 	}

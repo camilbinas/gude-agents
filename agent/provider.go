@@ -52,8 +52,14 @@ func (ToolUseBlock) contentBlock()    {}
 func (ToolResultBlock) contentBlock() {}
 
 // TokenUsage records token consumption for a single Provider call.
+//
+// The fields are disjoint across all providers: InputTokens counts only the
+// prompt tokens that were neither read from nor written to the prompt cache,
+// so the full prompt size is InputTokens + CacheReadTokens + CacheWriteTokens.
+// Providers whose API reports a cache-inclusive prompt count (OpenAI) subtract
+// the cached part before filling InputTokens.
 type TokenUsage struct {
-	InputTokens      int
+	InputTokens      int // uncached prompt tokens (excludes cache reads and writes)
 	OutputTokens     int
 	CacheReadTokens  int // tokens served from the prompt cache (0 if not applicable)
 	CacheWriteTokens int // tokens written to the prompt cache (0 if not applicable)
@@ -102,6 +108,12 @@ type ModelResponse struct {
 	ToolCalls []tool.Call
 	Usage     TokenUsage
 	Metadata  map[string]any // optional provider-specific extras (e.g. "thinking")
+
+	// Thinking holds the extended-thinking blocks of the response with their
+	// signatures, in model order. The assistant message of a tool-use turn must
+	// start with these (see ThinkingContent) or Anthropic and Bedrock reject
+	// the follow-up request. Metadata["thinking"] keeps the concatenated text.
+	Thinking []ThinkingBlock
 
 	// StopReason is the provider's reason for ending the response, normalized
 	// to a ModelStop* value. Empty when the provider did not report one.

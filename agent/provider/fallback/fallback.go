@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync/atomic"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -97,6 +98,7 @@ var _ agent.CapabilityProvider = (*Provider)(nil)
 // Stream tries each provider in order, returning the first success. It advances
 // to the next provider only if the failed one emitted no event, ctx is still
 // live, and the error is not classified non-retryable (see isNonRetryable).
+// Auth (401/403) and not-found (404) errors count as fallback-eligible.
 func (p *Provider) Stream(ctx context.Context, req agent.ModelRequest, emit func(agent.ModelEvent)) (*agent.ModelResponse, error) {
 	var lastErr error
 	for i, provider := range p.chain {
@@ -142,9 +144,24 @@ func isNonRetryable(err error) bool {
 	if errors.As(err, &pe) {
 		// Non-retryable only when classified: a StatusCode is set and Retryable
 		// is false. A bare ProviderError is treated as unclassified.
-		if pe.StatusCode != 0 && !pe.Retryable {
+		//
+		// Auth (401/403) and not-found (404) failures are specific to one
+		// provider's credentials, quota or model name, so another provider in
+		// the chain can still succeed; those are fallback-eligible.
+		if pe.StatusCode != 0 && !pe.Retryable && !fallbackEligibleStatus(pe.StatusCode) {
 			return true
 		}
+	}
+	return false
+}
+
+// fallbackEligibleStatus reports non-retryable HTTP statuses that are still
+// worth trying on the next provider because they describe the failed provider
+// (bad key, missing permission, unknown model) rather than the request.
+func fallbackEligibleStatus(code int) bool {
+	switch code {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
 	}
 	return false
 }

@@ -38,6 +38,9 @@ type jsonContentBlock struct {
 
 	WidgetType    string          `json:"widget_type,omitempty"`
 	WidgetPayload json.RawMessage `json:"widget_payload,omitempty"`
+
+	ThinkingSignature string `json:"thinking_signature,omitempty"`
+	ThinkingRedacted  string `json:"thinking_redacted,omitempty"`
 }
 
 type jsonImageSource struct {
@@ -98,6 +101,8 @@ func contentBlockToJSON(cb ContentBlock) jsonContentBlock {
 		}
 	case WidgetBlock:
 		return jsonContentBlock{Type: "widget", WidgetType: b.Type, WidgetPayload: b.Payload}
+	case ThinkingBlock:
+		return jsonContentBlock{Type: "thinking", Text: b.Text, ThinkingSignature: b.Signature, ThinkingRedacted: b.RedactedData}
 	default:
 		return jsonContentBlock{Type: "unknown"}
 	}
@@ -126,6 +131,8 @@ func jsonToContentBlock(jcb jsonContentBlock) ContentBlock {
 		}}
 	case "widget":
 		return WidgetBlock{Type: jcb.WidgetType, Payload: jcb.WidgetPayload}
+	case "thinking":
+		return ThinkingBlock{Text: jcb.Text, Signature: jcb.ThinkingSignature, RedactedData: jcb.ThinkingRedacted}
 	default:
 		return TextBlock{}
 	}

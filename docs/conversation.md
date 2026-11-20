@@ -23,7 +23,7 @@ type ConversationStore interface {
 
 Sequences begin at 1, are contiguous, and are assigned by the store. `Revision` and `LastSequence` are deliberately different: appending three messages advances the revision once and the sequence three times. `Append` is atomic: a stale revision returns `agent.ErrConversationConflict` and writes no messages. An empty append is a checked no-op.
 
-`Load` returns the complete transcript for exports, audits, debugging and `agent.ForkConversation`. Runtime calls should use `LoadAfter` so a context strategy can avoid loading history already represented by a durable summary. A range read past the end returns no messages but still reports current revision and last sequence.
+`Load` returns the complete transcript for exports, audits, debugging and `agent.ForkConversation`. Runtime calls should use `LoadAfter` so a context strategy can avoid loading history already represented by a durable summary. A range read past the end returns no messages but still reports current revision and last sequence. Each snapshot is internally consistent: the messages are exactly the sequences in `(afterSequence, LastSequence]` of the returned cursor, even while appends run concurrently. A full read returns exactly `LastSequence` messages.
 
 ## Derived context state
 

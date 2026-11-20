@@ -136,7 +136,7 @@ func (m *Conversation) migrateLegacy(ctx context.Context) error {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = ? WHERE conversation_id = ?`, m.tableName), len(msgs), id); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = ?, revision = MAX(revision, 1) WHERE conversation_id = ?`, m.tableName), len(msgs), id); err != nil {
 			return fmt.Errorf("sqlite conversation: migrate metadata: %w", err)
 		}
 	}
@@ -164,40 +164,44 @@ func (m *Conversation) Load(ctx context.Context, id string) (agent.ConversationS
 	return m.LoadAfter(ctx, id, 0)
 }
 
+// LoadAfter reads the cursor and the message range in one SELECT. SQLite
+// evaluates a single statement against one database snapshot (a read
+// transaction in WAL mode), so a concurrent Append is either entirely visible
+// or entirely absent and the messages always match the returned cursor. The
+// LEFT JOIN keeps the metadata row when the requested tail is empty and yields
+// no rows only for a conversation that does not exist.
 func (m *Conversation) LoadAfter(ctx context.Context, id string, after uint64) (agent.ConversationSnapshot, error) {
-	var revision, last uint64
-	err := m.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT revision, last_sequence FROM %s WHERE conversation_id = ?`, m.tableName), id).Scan(&revision, &last)
-	if errors.Is(err, sql.ErrNoRows) {
-		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
-	}
+	rows, err := m.db.QueryContext(ctx, fmt.Sprintf(
+		`SELECT c.revision, c.last_sequence, m.sequence, m.message
+		 FROM %s AS c LEFT JOIN %s AS m ON m.conversation_id = c.conversation_id AND m.sequence > ?
+		 WHERE c.conversation_id = ? ORDER BY m.sequence`, m.tableName, m.messagesName), after, id)
 	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: load metadata: %w", err)
-	}
-	rows, err := m.db.QueryContext(ctx, fmt.Sprintf(`SELECT sequence, message FROM %s WHERE conversation_id = ? AND sequence > ? ORDER BY sequence`, m.messagesName), id, after)
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: load range: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: load: %w", err)
 	}
 	defer rows.Close()
-	messages := make([]agent.Message, 0)
+	snapshot := agent.ConversationSnapshot{Messages: make([]agent.Message, 0)}
 	for rows.Next() {
-		var seq uint64
-		var raw string
-		if err := rows.Scan(&seq, &raw); err != nil {
+		var seq sql.NullInt64
+		var raw sql.NullString
+		if err := rows.Scan(&snapshot.Revision, &snapshot.LastSequence, &seq, &raw); err != nil {
 			return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: scan message: %w", err)
 		}
-		decoded, err := conversation.UnmarshalMessages([]byte(raw))
+		if !seq.Valid {
+			continue // metadata row without messages in the requested range
+		}
+		decoded, err := conversation.UnmarshalMessages([]byte(raw.String))
 		if err != nil || len(decoded) != 1 {
 			if err == nil {
 				err = errors.New("expected one message")
 			}
-			return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: decode message %d: %w", seq, err)
+			return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: decode message %d: %w", seq.Int64, err)
 		}
-		messages = append(messages, decoded[0])
+		snapshot.Messages = append(snapshot.Messages, decoded[0])
 	}
 	if err := rows.Err(); err != nil {
 		return agent.ConversationSnapshot{}, fmt.Errorf("sqlite conversation: range rows: %w", err)
 	}
-	return agent.ConversationSnapshot{Messages: messages, Revision: revision, LastSequence: last}, nil
+	return snapshot, nil
 }
 
 func (m *Conversation) Append(ctx context.Context, id string, messages []agent.Message, expected uint64) (agent.ConversationCursor, error) {

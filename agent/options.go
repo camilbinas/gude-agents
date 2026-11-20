@@ -310,6 +310,54 @@ func WithProviderTimeout(d time.Duration) Option {
 	}
 }
 
+// WithToolTimeout bounds every tool handler call to d. The handler's context
+// (and the context seen by middleware) carries the deadline; a handler that
+// honors its context returns, and the call becomes a ToolError result. A
+// handler that ignores its context is not interrupted. 0 means no timeout
+// (default). Use WithToolTimeoutFor to override it for individual tools.
+func WithToolTimeout(d time.Duration) Option {
+	return func(a *Runtime) error {
+		if d < 0 {
+			return fmt.Errorf("tool timeout must be non-negative, got %s", d)
+		}
+		a.toolTimeout = d
+		return nil
+	}
+}
+
+// WithToolTimeoutFor overrides the tool timeout for the tool called name. A
+// value of 0 disables the timeout for that tool even when WithToolTimeout is
+// set. Repeatable; the last value for a name wins.
+func WithToolTimeoutFor(name string, d time.Duration) Option {
+	return func(a *Runtime) error {
+		if name == "" {
+			return fmt.Errorf("WithToolTimeoutFor: tool name must not be empty")
+		}
+		if d < 0 {
+			return fmt.Errorf("tool timeout for %q must be non-negative, got %s", name, d)
+		}
+		if a.toolTimeouts == nil {
+			a.toolTimeouts = make(map[string]time.Duration)
+		}
+		a.toolTimeouts[name] = d
+		return nil
+	}
+}
+
+// WithMaxToolResultBytes caps the text of each tool result (and tool error
+// message) at n bytes before it reaches hooks, events, the conversation and
+// the model. Longer text is cut at a UTF-8 boundary and followed by a marker
+// naming how many bytes were omitted. 0 means no limit (default).
+func WithMaxToolResultBytes(n int) Option {
+	return func(a *Runtime) error {
+		if n < 0 {
+			return fmt.Errorf("max tool result bytes must be >= 0, got %d", n)
+		}
+		a.maxToolResultBytes = n
+		return nil
+	}
+}
+
 // WithTemperature sets the temperature inference parameter on the agent.
 // Temperature controls randomness of LLM output. Valid range: [0.0, 1.0].
 func WithTemperature(v float64) Option {

@@ -47,3 +47,7 @@ func TestAppendConcurrentCASOneWinner(t *testing.T) {
 func TestContextStateConformanceInMemory(t *testing.T) {
 	conformance.RunContextState(t, conv.NewInMemory())
 }
+
+func TestSnapshotConsistencyInMemory(t *testing.T) {
+	conformance.RunSnapshotConsistency(t, conv.NewInMemory())
+}

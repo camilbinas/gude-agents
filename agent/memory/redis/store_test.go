@@ -165,31 +165,48 @@ func TestRememberNamespacesKeysByIdentifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].ID != firstKey {
-		t.Fatalf("Recall entries = %#v, want storage ID %q", entries, firstKey)
+	if len(entries) != 1 || entries[0].ID != pk {
+		t.Fatalf("Recall entries = %#v, want logical ID %q", entries, pk)
 	}
 
-	// Recall returns physical Redis keys as Entry.ID; Update and Forget consume
-	// that returned ID unchanged, so the namespaced key remains the mutation target.
-	if err := store.Update(context.Background(), "tenant/a", entries[0].ID, redisTestEntry{ID: pk, Content: "updated"}); err != nil {
+	// Entry.ID is the logical primary key; Update and Forget map it to the
+	// namespaced Redis key internally.
+	if err := store.Update(context.Background(), "tenant/a", entries[0].ID, redisTestEntry{Content: "updated"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.hsets) != 3 || client.hsets[2] != entries[0].ID {
-		t.Fatalf("Update writes = %v, want recalled ID %q", client.hsets, entries[0].ID)
+	if len(client.hsets) != 3 || client.hsets[2] != firstKey {
+		t.Fatalf("Update writes = %v, want key %q", client.hsets, firstKey)
 	}
 	if err := store.Forget(context.Background(), "tenant/a", entries[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.dels) != 1 || len(client.dels[0]) != 1 || client.dels[0][0] != entries[0].ID {
-		t.Fatalf("Forget deleted %v, want [%q]", client.dels, entries[0].ID)
+	if len(client.dels) != 1 || len(client.dels[0]) != 1 || client.dels[0][0] != firstKey {
+		t.Fatalf("Forget deleted %v, want [%q]", client.dels, firstKey)
+	}
+}
+
+func TestRememberUpsertsByPrimaryKey(t *testing.T) {
+	client := &fakeRedisClient{}
+	store := newTestRedisStore(t, client)
+	for _, content := range []string{"one", "two"} {
+		if err := store.Remember(context.Background(), "t", redisTestEntry{ID: "pk", Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(client.hashes) != 1 {
+		t.Fatalf("want one hash, got %d", len(client.hashes))
+	}
+	if got := client.hashes[store.entryKey("t", "pk")]["content"]; got != "two" {
+		t.Fatalf("content = %q, want two", got)
 	}
 }
 
 func TestUpdateRejectsForeignTenantEntry(t *testing.T) {
+	store := newTestRedisStore(t, nil)
 	client := &fakeRedisClient{hashes: map[string]map[string]string{
-		"entry-1": {"tenant": "tenant-b"},
+		store.entryKey("tenant-a", "entry-1"): {"tenant": "tenant-b"},
 	}}
-	store := newTestRedisStore(t, client)
+	store.client = client
 
 	err := store.Update(context.Background(), "tenant-a", "entry-1", redisTestEntry{Content: "replacement"})
 	if err == nil {
@@ -201,10 +218,11 @@ func TestUpdateRejectsForeignTenantEntry(t *testing.T) {
 }
 
 func TestForgetRejectsForeignTenantEntry(t *testing.T) {
+	store := newTestRedisStore(t, nil)
 	client := &fakeRedisClient{hashes: map[string]map[string]string{
-		"entry-1": {"tenant": "tenant-b"},
+		store.entryKey("tenant-a", "entry-1"): {"tenant": "tenant-b"},
 	}}
-	store := newTestRedisStore(t, client)
+	store.client = client
 
 	err := store.Forget(context.Background(), "tenant-a", "entry-1")
 	if err == nil {

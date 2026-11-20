@@ -49,7 +49,7 @@ func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 				return resumeChild(ctx, name, child, parent, directive)
 			}
 
-			childCtx := parent.Clone()
+			childCtx := childContext(ctx, parent)
 			childConvID := ""
 			if child.conversation != nil {
 				if parent.ConversationID() == "" || parent.call == nil || parent.call.id == "" {
@@ -69,6 +69,17 @@ func AgentAsTool(name, description string, child *Runtime) tool.Tool {
 			return res.Text, nil
 		},
 	)
+}
+
+// childContext derives the invocation Context for a child agent. It carries the
+// tool handler's ctx, so deadlines and cancellation added by middleware apply
+// to the child, and drops the parent's per-invocation hooks so the child's own
+// Runtime hooks (or WithHooks on its own Context) decide what it reports.
+func childContext(ctx context.Context, parent *Context) *Context {
+	child := parent.Clone()
+	child.Context = ctx
+	child.cfg.hooks, child.cfg.hooksSet = nil, false
+	return child
 }
 
 // nestedResumeFor returns the resume directive routed to the AgentAsTool call
@@ -111,7 +122,7 @@ func resumeChild(ctx context.Context, name string, child *Runtime, parent *Conte
 	if child.executionStore == nil || child.conversation == nil {
 		return "", fmt.Errorf("child agent %q: %w", name, ErrPauseStorageRequired)
 	}
-	childCtx := parent.Clone().WithConversationID(directive.child.ConversationID)
+	childCtx := childContext(ctx, parent).WithConversationID(directive.child.ConversationID)
 	res, err := child.Resume(childCtx, directive.child, directive.response)
 	if res.StopReason == StopInterrupt && res.Interrupt != nil {
 		// Re-pause (same child paused again, e.g. a second question, or a

@@ -396,7 +396,7 @@ func TestHooksDispatcher_NilFieldsSkippedAndContextOrder(t *testing.T) {
 		"start:first:",
 		"start:second:first-start",
 		"end:second:second-start",
-		"end:first:second-end",
+		"end:first:first-start",
 	}
 	if len(events) != len(want) {
 		t.Fatalf("events = %#v, want %#v", events, want)

@@ -439,3 +439,27 @@ func TestStore_RecallQueryErrors(t *testing.T) {
 		t.Fatalf("order error = %v, want ErrUnsupportedOrder", err)
 	}
 }
+
+func TestStore_RememberUpsertsByPrimaryKey(t *testing.T) {
+	store, err := NewStore[testEntry](newMockEmbedder(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.Remember(ctx, "u", testEntry{ID: "pk", Content: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remember(ctx, "u", testEntry{ID: "pk", Content: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remember(ctx, "other", testEntry{ID: "pk", Content: "third"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Recall(ctx, "u", RecallQuery{Text: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "pk" || got[0].Value.Content != "second" {
+		t.Fatalf("recall = %+v, want one entry pk/second", got)
+	}
+}

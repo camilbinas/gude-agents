@@ -393,10 +393,9 @@ func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	return nil
 }
 
-// Close closes the underlying connection pool.
-func (s *Store) Close() {
-	s.pool.Close()
-}
+// Close is a no-op: the pool is supplied by the caller, who owns its
+// lifecycle. It is kept so existing callers keep compiling.
+func (s *Store) Close() {}
 
 // float64sToFloat32 converts []float64 to []float32.
 func float64sToFloat32(v []float64) []float32 {

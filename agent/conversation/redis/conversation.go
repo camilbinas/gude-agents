@@ -120,52 +120,80 @@ func marshalOne(message agent.Message) (string, error) {
 func (m *Conversation) Load(ctx context.Context, id string) (agent.ConversationSnapshot, error) {
 	return m.LoadAfter(ctx, id, 0)
 }
+
+// loadScript reads the cursor and the requested message range in one atomic
+// step, so the returned messages always belong to the returned revision and
+// last_sequence. A concurrent Append, Delete, or TTL expiry therefore happens
+// entirely before or entirely after the read. Both keys share one hash slot.
+// It returns {} for a conversation without metadata, otherwise
+// {revision, last_sequence, message...} with the message payloads in sequence
+// order. Counters stay strings so uint64 values never pass through a Lua number.
+var loadScript = goredis.NewScript(`
+local meta=KEYS[1]
+local stream=KEYS[2]
+local start=ARGV[1]
+local m=redis.call('HMGET',meta,'revision','last_sequence')
+if not m[1] and not m[2] then return {} end
+local out={m[1] or '0', m[2] or '0'}
+local entries=redis.call('XRANGE',stream,start,'+')
+for _,e in ipairs(entries) do
+  local fields=e[2]
+  local value=false
+  for i=1,#fields,2 do
+    if fields[i]=='message' then value=fields[i+1] end
+  end
+  if not value then return redis.error_reply('stream message '..e[1]..' missing') end
+  out[#out+1]=value
+end
+return out
+`)
+
 func (m *Conversation) LoadAfter(ctx context.Context, id string, after uint64) (agent.ConversationSnapshot, error) {
-	meta, err := m.client.HMGet(ctx, m.metaKey(id), "revision", "last_sequence").Result()
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: load metadata: %w", err)
-	}
-	if meta[0] == nil && meta[1] == nil {
-		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
-	}
-	parse := func(v any) (uint64, error) {
-		if v == nil {
-			return 0, nil
-		}
-		return strconv.ParseUint(fmt.Sprint(v), 10, 64)
-	}
-	rev, err := parse(meta[0])
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: revision: %w", err)
-	}
-	last, err := parse(meta[1])
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: last sequence: %w", err)
-	}
 	start := "-"
 	if after > 0 {
 		start = "(" + strconv.FormatUint(after, 10) + "-0"
 	}
-	entries, err := m.client.XRange(ctx, m.streamKey(id), start, "+").Result()
-	if errors.Is(err, goredis.Nil) {
-		entries = nil
-		err = nil
-	}
+	reply, err := loadScript.Run(ctx, m.client, []string{m.metaKey(id), m.streamKey(id)}, start).Slice()
 	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: load range: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: load: %w", err)
 	}
-	messages := make([]agent.Message, 0, len(entries))
-	for _, e := range entries {
-		raw, ok := e.Values["message"].(string)
+	if len(reply) == 0 {
+		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
+	}
+	if len(reply) < 2 {
+		return agent.ConversationSnapshot{}, errors.New("redis conversation: malformed load response")
+	}
+	rev, err := strconv.ParseUint(fmt.Sprint(reply[0]), 10, 64)
+	if err != nil {
+		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: revision: %w", err)
+	}
+	last, err := strconv.ParseUint(fmt.Sprint(reply[1]), 10, 64)
+	if err != nil {
+		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: last sequence: %w", err)
+	}
+	payloads := reply[2:]
+	// The script read is atomic, so a count mismatch means the stream itself
+	// lost entries (for example Redis evicted it under memory pressure). Fail
+	// instead of returning history that contradicts its cursor.
+	want := uint64(0)
+	if last > after {
+		want = last - after
+	}
+	if uint64(len(payloads)) != want {
+		return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: %q has %d messages after sequence %d, cursor last sequence %d implies %d", id, len(payloads), after, last, want)
+	}
+	messages := make([]agent.Message, 0, len(payloads))
+	for i, payload := range payloads {
+		raw, ok := payload.(string)
 		if !ok {
-			return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: stream message %s missing", e.ID)
+			return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: stream message %d is not a string", after+uint64(i)+1)
 		}
 		one, err := conversation.UnmarshalMessages([]byte(raw))
 		if err != nil || len(one) != 1 {
 			if err == nil {
 				err = errors.New("expected one message")
 			}
-			return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: decode %s: %w", e.ID, err)
+			return agent.ConversationSnapshot{}, fmt.Errorf("redis conversation: decode message %d: %w", after+uint64(i)+1, err)
 		}
 		messages = append(messages, one[0])
 	}
