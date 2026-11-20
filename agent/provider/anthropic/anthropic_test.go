@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/camilbinas/gude-agents/agent"
@@ -809,5 +812,109 @@ func TestStream_ResponseFormat_RequestAndText(t *testing.T) {
 	}
 	if _, present := gotBody["tool_choice"]; present {
 		t.Errorf("request sent tool_choice alongside structured output: %#v", gotBody["tool_choice"])
+	}
+}
+
+func TestStream_CapturesThinkingSignatureAndRedacted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseBody([][2]string{
+			{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"m","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0}}}`},
+			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-"}}`},
+			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"123"}}`},
+			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+			{"content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"ENCRYPTED"}}`},
+			{"content_block_stop", `{"type":"content_block_stop","index":1}`},
+			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":3,"input_tokens":6,"cache_read_input_tokens":2}}`},
+			{"message_stop", `{"type":"message_stop"}`},
+		}))
+	}))
+	defer srv.Close()
+
+	resp, err := newTestProvider(srv.URL).Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agent.ThinkingBlock{{Text: "hmm", Signature: "sig-123"}, {RedactedData: "ENCRYPTED"}}
+	if len(resp.Thinking) != 2 || resp.Thinking[0] != want[0] || resp.Thinking[1] != want[1] {
+		t.Fatalf("Thinking = %#v, want %#v", resp.Thinking, want)
+	}
+	if resp.Metadata["thinking"] != "hmm" {
+		t.Errorf("Metadata[thinking] = %#v", resp.Metadata["thinking"])
+	}
+	if resp.Usage.InputTokens != 6 || resp.Usage.CacheReadTokens != 2 || resp.Usage.OutputTokens != 3 {
+		t.Errorf("Usage = %#v", resp.Usage)
+	}
+}
+
+func TestToAnthropicContentBlocks_ThinkingFirstAndSerialised(t *testing.T) {
+	blocks := mustContentBlocks(t, []agent.ContentBlock{
+		agent.ThinkingBlock{Text: "why", Signature: "sig"},
+		agent.ThinkingBlock{RedactedData: "red"},
+		agent.ThinkingBlock{Text: "unsigned"},
+		agent.ToolUseBlock{ToolUseID: "t1", Name: "f", Input: []byte(`{}`)},
+	}, agent.RoleAssistant, false)
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks, want 3 (unsigned dropped)", len(blocks))
+	}
+	data, err := json.Marshal(blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	i1 := strings.Index(s, `"type":"thinking"`)
+	i2 := strings.Index(s, `"type":"redacted_thinking"`)
+	i3 := strings.Index(s, `"type":"tool_use"`)
+	if !(i1 >= 0 && i1 < i2 && i2 < i3) || !strings.Contains(s, `"signature":"sig"`) || !strings.Contains(s, `"data":"red"`) {
+		t.Errorf("unexpected payload: %s", s)
+	}
+	// User-role messages never carry thinking.
+	if got := mustContentBlocks(t, []agent.ContentBlock{agent.ThinkingBlock{Text: "x", Signature: "y"}}, agent.RoleUser, false); len(got) != 0 {
+		t.Errorf("user role kept thinking: %d", len(got))
+	}
+}
+
+type closeTracker struct {
+	io.ReadCloser
+	closed *atomic.Bool
+}
+
+func (c closeTracker) Close() error { c.closed.Store(true); return c.ReadCloser.Close() }
+
+type trackingTransport struct{ closed atomic.Bool }
+
+func (tt *trackingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil {
+		resp.Body = closeTracker{resp.Body, &tt.closed}
+	}
+	return resp, err
+}
+
+func TestStream_ClosesResponseBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseBody([][2]string{
+			{"message_start", `{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"m","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`},
+			{"message_stop", `{"type":"message_stop"}`},
+		}))
+	}))
+	defer srv.Close()
+	tt := &trackingTransport{}
+	p := &AnthropicProvider{
+		client: anthropicsdk.NewClient(option.WithAPIKey("k"), option.WithBaseURL(srv.URL), option.WithHTTPClient(&http.Client{Transport: tt})),
+		model:  "m", maxTokens: ptr(10),
+	}
+	if _, err := p.Stream(context.Background(), agent.ModelRequest{
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.ContentBlock{agent.TextBlock{Text: "hi"}}}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.closed.Load() {
+		t.Fatal("response body was not closed")
 	}
 }

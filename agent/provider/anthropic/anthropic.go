@@ -243,10 +243,11 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 		return nil, &agent.ProviderError{Cause: err}
 	}
 	stream := p.client.Messages.NewStreaming(ctx, input)
+	defer stream.Close()
 
 	resp := &agent.ModelResponse{}
 	var currentToolID, currentToolName, currentToolInput string
-	var currentThinking string
+	var currentThinking, currentSignature string
 	var inThinkingBlock bool
 
 	for stream.Next() {
@@ -263,6 +264,11 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 			case "thinking":
 				inThinkingBlock = true
 				currentThinking = ""
+				currentSignature = ev.ContentBlock.Signature
+			case "redacted_thinking":
+				// Redacted blocks arrive complete in the start event and must be
+				// replayed verbatim.
+				resp.Thinking = append(resp.Thinking, agent.ThinkingBlock{RedactedData: ev.ContentBlock.Data})
 			}
 
 		case "content_block_delta":
@@ -280,6 +286,8 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 				if emit != nil {
 					emit(agent.ModelEvent{Type: agent.ModelEventThinking, Text: ev.Delta.Thinking})
 				}
+			case "signature_delta":
+				currentSignature += ev.Delta.Signature
 			}
 
 		case "content_block_stop":
@@ -303,8 +311,10 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 				}
 				existing, _ := resp.Metadata["thinking"].(string)
 				resp.Metadata["thinking"] = existing + currentThinking
+				resp.Thinking = append(resp.Thinking, agent.ThinkingBlock{Text: currentThinking, Signature: currentSignature})
 				inThinkingBlock = false
 				currentThinking = ""
+				currentSignature = ""
 			}
 
 		case "message_start":
@@ -316,6 +326,17 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req agent.ModelRequest, 
 		case "message_delta":
 			ev := event.AsMessageDelta()
 			resp.Usage.OutputTokens = int(ev.Usage.OutputTokens)
+			// message_delta usage is cumulative; input and cache counters are
+			// only present on some responses, so only overwrite with non-zero.
+			if v := int(ev.Usage.InputTokens); v > 0 {
+				resp.Usage.InputTokens = v
+			}
+			if v := int(ev.Usage.CacheReadInputTokens); v > 0 {
+				resp.Usage.CacheReadTokens = v
+			}
+			if v := int(ev.Usage.CacheCreationInputTokens); v > 0 {
+				resp.Usage.CacheWriteTokens = v
+			}
 			if raw := string(ev.Delta.StopReason); raw != "" {
 				resp.RawStopReason = raw
 				resp.StopReason = normalizeStopReason(ev.Delta.StopReason)
@@ -621,6 +642,17 @@ func toAnthropicContentBlocks(blocks []agent.ContentBlock, role agent.Role, cach
 		switch v := b.(type) {
 		case agent.TextBlock:
 			out = append(out, anthropicsdk.NewTextBlock(v.Text))
+		case agent.ThinkingBlock:
+			// Thinking blocks only exist on assistant turns and must come first;
+			// the engine places them there. Unsigned blocks are rejected by the API.
+			if role != agent.RoleAssistant || !v.Replayable() {
+				continue
+			}
+			if v.Redacted() {
+				out = append(out, anthropicsdk.NewRedactedThinkingBlock(v.RedactedData))
+			} else {
+				out = append(out, anthropicsdk.NewThinkingBlock(v.Signature, v.Text))
+			}
 		case agent.ToolUseBlock:
 			var input any = map[string]any{}
 			if len(v.Input) > 0 {
