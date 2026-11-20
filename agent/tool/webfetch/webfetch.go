@@ -36,6 +36,7 @@ const (
 	defaultMaxBytes     = 32 * 1024 // 32 KB
 	defaultMaxRedirects = 3
 	defaultMaxChars     = 4000
+	defaultDialTimeout  = 5 * time.Second
 )
 
 // Option configures the fetch tool.
@@ -59,26 +60,45 @@ type config struct {
 	blocked func(net.IP) bool
 }
 
-// WithTimeout sets the HTTP request timeout. Default: 15s.
+// WithTimeout sets the HTTP request timeout. Default: 15s. A value <= 0 keeps
+// the default so a request can never run without a deadline.
 func WithTimeout(d time.Duration) Option {
-	return func(c *config) { c.timeout = d }
+	return func(c *config) {
+		if d > 0 {
+			c.timeout = d
+		}
+	}
 }
 
 // WithMaxBytes sets the maximum response body size in bytes. Default: 32KB.
+// A value <= 0 keeps the default.
 func WithMaxBytes(n int64) Option {
-	return func(c *config) { c.maxBytes = n }
+	return func(c *config) {
+		if n > 0 {
+			c.maxBytes = n
+		}
+	}
 }
 
 // WithMaxRedirects sets the maximum number of redirects to follow. Default: 3.
+// A negative value keeps the default; 0 disables redirects.
 func WithMaxRedirects(n int) Option {
-	return func(c *config) { c.maxRedirects = n }
+	return func(c *config) {
+		if n >= 0 {
+			c.maxRedirects = n
+		}
+	}
 }
 
 // WithMaxChars sets the maximum number of characters in the returned text.
 // Content beyond this limit is truncated with a "[truncated]" marker.
-// Default: 4000.
+// Default: 4000. A value <= 0 keeps the default.
 func WithMaxChars(n int) Option {
-	return func(c *config) { c.maxChars = n }
+	return func(c *config) {
+		if n > 0 {
+			c.maxChars = n
+		}
+	}
 }
 
 // WithClient sets a custom HTTP client. When set, timeout and redirect
@@ -151,7 +171,7 @@ func New(opts ...Option) tool.Tool {
 				return "", err
 			}
 			log := tool.LoggerFrom(ctx)
-			log.Logf("fetching %s", req.URL)
+			log.Logf("fetching %s", redactURL(req.URL))
 			result, err := fetchPage(ctx, client, req.URL, maxBytes, maxChars, format)
 			if err != nil {
 				return "", err
@@ -278,8 +298,12 @@ func newGuardedClient(cfg *config) *http.Client {
 	if blocked == nil {
 		blocked = isBlockedIP
 	}
+	dialTimeout := defaultDialTimeout
+	if cfg.timeout > 0 && cfg.timeout < dialTimeout {
+		dialTimeout = cfg.timeout
+	}
 	dialer := &net.Dialer{
-		Timeout: cfg.timeout,
+		Timeout: dialTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
 			host, _, err := net.SplitHostPort(address)
 			if err != nil {
@@ -299,6 +323,7 @@ func newGuardedClient(cfg *config) *http.Client {
 		MaxIdleConns:          10,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: cfg.timeout,
 		ExpectContinueTimeout: time.Second,
 	}
 	maxRedirects := cfg.maxRedirects
@@ -312,20 +337,89 @@ func newGuardedClient(cfg *config) *http.Client {
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return fmt.Errorf("redirect to unsupported scheme %q", req.URL.Scheme)
 			}
+			if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme == "http" {
+				return errors.New("redirect from https to http refused")
+			}
 			return nil
 		},
 	}
 }
 
-// cgnat is the RFC 6598 shared address space, used for carrier-grade NAT and
-// by some cloud providers for internal services.
-var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+// blockedNets lists non-public ranges that net.IP helpers do not cover.
+var blockedNets = mustCIDRs(
+	"0.0.0.0/8",       // "this" network
+	"100.64.0.0/10",   // RFC 6598 CGNAT / shared address space
+	"192.0.0.0/24",    // IETF protocol assignments
+	"192.0.2.0/24",    // TEST-NET-1
+	"192.88.99.0/24",  // deprecated 6to4 relay anycast
+	"198.18.0.0/15",   // benchmarking
+	"198.51.100.0/24", // TEST-NET-2
+	"203.0.113.0/24",  // TEST-NET-3
+	"240.0.0.0/4",     // reserved + broadcast
+	"::/96",           // deprecated IPv4-compatible
+	"64:ff9b:1::/48",  // local-use NAT64
+	"100::/64",        // discard prefix
+	"2001::/32",       // Teredo
+	"2001:db8::/32",   // documentation
+	"fec0::/10",       // deprecated site-local
+)
 
-// isBlockedIP reports whether ip is not a public unicast address.
+var (
+	nat64Net  = mustCIDRs("64:ff9b::/96")[0]
+	sixToFour = mustCIDRs("2002::/16")[0]
+)
+
+func mustCIDRs(cidrs ...string) []*net.IPNet {
+	out := make([]*net.IPNet, len(cidrs))
+	for i, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic(err)
+		}
+		out[i] = n
+	}
+	return out
+}
+
+// isBlockedIP reports whether ip is not a public unicast address. IPv4-mapped
+// IPv6 addresses are unmapped first, and addresses that embed an IPv4 address
+// (NAT64 64:ff9b::/96, 6to4 2002::/16) are blocked when the embedded address
+// is blocked.
 func isBlockedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	} else if len(ip) != net.IPv6len {
+		return true // malformed
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || cgnat.Contains(ip)
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
+		return true
+	}
+	for _, n := range blockedNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	if len(ip) == net.IPv6len {
+		switch {
+		case nat64Net.Contains(ip):
+			return isBlockedIP(net.IP(ip[12:16]))
+		case sixToFour.Contains(ip):
+			return isBlockedIP(net.IP(ip[2:6]))
+		}
+	}
+	return false
+}
+
+// redactURL returns scheme://host only, dropping path, query and userinfo,
+// which may carry tokens.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<invalid url>"
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // isPrivateURL is a fast pre-flight rejection of private IP literals. It is
