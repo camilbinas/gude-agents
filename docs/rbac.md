@@ -1,6 +1,6 @@
 # Identity and authorization
 
-Authorization uses `agent.Principal`, independent from memory identity and strict data scopes.
+Authorization uses `agent.Principal`, independent from identity and strict data scopes.
 
 ```go
 principal := agent.Principal{
@@ -63,6 +63,6 @@ Your application establishes authentication at its request boundary and attaches
 
 Resume and recovery authorize against the `Principal` on the current caller context. Applications that need a caller to retain authority across those boundaries must authenticate that caller again and supply the appropriate `Principal`; the framework intentionally does not infer or restore one from persisted execution state.
 
-`Identity` partitions long-term memory. A named `Scope` partitions tenant/account data and never falls back. `ConversationID` selects transcript history. Keep all four explicit at request boundaries.
+`Identity` names the stable subject for application-owned per-user data. A named `Scope` partitions tenant/account data and never falls back. `ConversationID` selects transcript history. Keep all four explicit at request boundaries.
 
 For stable security records, configure `agent.WithAudit`; content is redacted unless explicitly enabled. See [Observability](observability.md) and [Interrupts](interrupts.md).

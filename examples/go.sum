@@ -80,10 +80,6 @@ github.com/camilbinas/gude-agents/agent/logging/slog v0.81.0 h1:nh8MVSzOVjuQ41CR
 github.com/camilbinas/gude-agents/agent/logging/slog v0.81.0/go.mod h1:ilPOsfez6ziFx8SpOpu9IubyIV19py99J4/OJNknuoQ=
 github.com/camilbinas/gude-agents/agent/mcp v0.81.0 h1:xABHtevjxbvpjyRFy3eIdFGsuRZ5mifrALxZoREQkIw=
 github.com/camilbinas/gude-agents/agent/mcp v0.81.0/go.mod h1:w/bX0AQfu6xuFOUNgBo9EGd0MfEg9Zm3MUTpBQWOqTw=
-github.com/camilbinas/gude-agents/agent/memory/postgres v0.81.0 h1:bgpRwgOFjv07ccVRXP5aw0bD0RLdSF5+CkpCO2wxR7Y=
-github.com/camilbinas/gude-agents/agent/memory/postgres v0.81.0/go.mod h1:7HQVNM5VsNTEP1DHEWo7gcD6k/p2xSElK6qnaIZ0M6A=
-github.com/camilbinas/gude-agents/agent/memory/redis v0.81.0 h1:pVjbJjfPfI86PUkLl+8b44+FzVicExEuTiyrjIZbBaA=
-github.com/camilbinas/gude-agents/agent/memory/redis v0.81.0/go.mod h1:HgLrPSJ33WfP3gUvYSXH0Fxx9+Dq7E2iGhqeg9cQAfE=
 github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.81.0 h1:i40g2Wx/YeQZSqAeXf6t3Pan2bHBDu3y3X/SGISkyes=
 github.com/camilbinas/gude-agents/agent/metrics/cloudwatch v0.81.0/go.mod h1:Q4qw94RFTqjci+6bKQ9vZMbO+nLihYUMngD42n9ecE8=
 github.com/camilbinas/gude-agents/agent/metrics/otel v0.81.0 h1:uthgW/9yqPCgx6FuHJel6X8Eidpt4jIIioDLi07gFDs=

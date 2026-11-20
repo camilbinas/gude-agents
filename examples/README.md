@@ -14,13 +14,12 @@ The top-level examples are a learning path, not an adapter matrix. Each director
 ## Build larger agents
 
 7. [`rag`](rag/) — ingest documents into an in-memory vector store and create a RAGAgent.
-8. [`memory`](memory/) — use identity-scoped typed long-term memory.
-9. [`multi-agent`](multi-agent/) — delegate from an orchestrator to in-process specialists through `AgentAsTool`.
-10. [`mcp`](mcp/) — discover Streamable HTTP MCP tools and add them to an agent.
+8. [`multi-agent`](multi-agent/) — delegate from an orchestrator to in-process specialists through `AgentAsTool`.
+9. [`mcp`](mcp/) — discover Streamable HTTP MCP tools and add them to an agent.
 
 ## Deploy and interoperate
 
-11. [`http-server`](http-server/) — expose one long-lived `*agent.Runtime` over `net/http` with SSE and interrupt resume.
-12. [`multimodal`](multimodal/) — attach local or URL-backed images and documents.
+10. [`http-server`](http-server/) — expose one long-lived `*agent.Runtime` over `net/http` with SSE and interrupt resume.
+11. [`multimodal`](multimodal/) — attach local or URL-backed images and documents.
 
 Most examples use Bedrock and therefore require ordinary AWS credentials. The canonical workflow examples use in-memory state or local in-process servers where possible. See [`../docs/README.md`](../docs/README.md) for provider, backend, observability, security, and adapter-specific configuration.

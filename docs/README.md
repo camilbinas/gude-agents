@@ -26,7 +26,7 @@ result, err := a.Invoke(ctx, "What changed?")
 - [Tool interception model](interception.md) — choose between Hooks, Middleware, visibility, RBAC/ABAC, Guard and approval
 - [Interrupts and resume](interrupts.md)
 - [Conversation persistence](conversation.md)
-- [RAG](rag.md) and [long-term memory](memory.md)
+- [RAG](rag.md)
 - [Guardrails](guardrails.md) and [RBAC](rbac.md)
 - [Structured output](structured-output.md)
 - [Multi-agent composition](multi-agent.md)

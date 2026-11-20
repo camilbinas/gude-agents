@@ -12,6 +12,12 @@ See [rate limiting](rate-limiting.md), the [support matrix](support-matrix.md), 
 
 These are deliberate breaking scope reductions made before the production v1 release. Each removed feature had no coherent durability or qualification story, and none is replaced by a shim, alias, or fallback. The packages and symbols no longer exist.
 
+### Long-term memory
+
+Removed `agent/memory`, `agent/memory/postgres` and `agent/memory/redis`, the memory tools (`NewRememberTool`, `NewRecallTool`, `NewUpdateTool`, `NewForgetTool`) and `docs/memory.md`.
+
+Long-term memory is out of the stable surface until it has a design worth freezing. Applications that need per-user facts can build them on `rag.Store` or their own store, keyed by `agent.IdentityFrom` or `agent.ScopeFrom`. Published v1.17.0 and earlier tags of the memory modules stay on the Go module proxy.
+
 ### Gemini provider and Gemini RAG embedder
 
 Removed `agent/provider/gemini` and `agent/rag/gemini`, along with their registry entry, model definitions, estimator, and documentation.
