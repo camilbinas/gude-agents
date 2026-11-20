@@ -136,7 +136,7 @@ func (m *Conversation) migrateLegacy(ctx context.Context) error {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = ? WHERE conversation_id = ?`, m.tableName), len(msgs), id); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET last_sequence = ?, revision = MAX(revision, 1) WHERE conversation_id = ?`, m.tableName), len(msgs), id); err != nil {
 			return fmt.Errorf("sqlite conversation: migrate metadata: %w", err)
 		}
 	}
