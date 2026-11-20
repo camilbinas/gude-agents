@@ -1,7 +1,7 @@
-github.com/camilbinas/gude-agents v1.17.0 h1:CaKlP5r8NNppNsaBcA4NEbuLPHwU8yCiCatwROA+woE=
-github.com/camilbinas/gude-agents v1.17.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
-github.com/camilbinas/gude-agents/agent/tracing v1.17.0 h1:Y+FjKKATU/8O/SBLCxA53xXSOL2uFZ+PHV+8r7b+vdE=
-github.com/camilbinas/gude-agents/agent/tracing v1.17.0/go.mod h1:/Uan53GL3f6gT+XpSQ05+2YZ/8UcloXzgfVlRN2EWeM=
+github.com/camilbinas/gude-agents v1.18.0 h1:jobSKTV44DXzh6ibPISuqiPgoX5ATgZt3iC9nohYUtI=
+github.com/camilbinas/gude-agents v1.18.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents/agent/tracing v1.18.0 h1:U0AjPS4qDwMOq1P5aYdF6W8HT0Pq/MvdIac5yd0yTcg=
+github.com/camilbinas/gude-agents/agent/tracing v1.18.0/go.mod h1:YxO8g3e8EeRxx8eDtBULQcz0IJyKtixh5XtQmeyo3gg=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

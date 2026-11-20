@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.1
-	github.com/camilbinas/gude-agents v1.17.0
+	github.com/camilbinas/gude-agents v1.18.0
 )
 
 require (
