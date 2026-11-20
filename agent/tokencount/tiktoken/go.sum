@@ -1,5 +1,5 @@
-github.com/camilbinas/gude-agents v1.15.0 h1:OVMBdfryGjrpvra1D3wBTYvZ00h/Ax8DlF0dIrcRHN8=
-github.com/camilbinas/gude-agents v1.15.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents v1.16.0 h1:AomUeBFAH7gpSr3gSqTLUVD12CyDbBVX2ZIb3zG8LXs=
+github.com/camilbinas/gude-agents v1.16.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.10.0 h1:+/GIL799phkJqYW+3YbOd8LCcbHzT0Pbo8zl70MHsq0=

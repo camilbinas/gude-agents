@@ -12,9 +12,9 @@ github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.21 h1:FTg
 github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.21/go.mod h1:92xP4VIS1yO3eF2NPBaHGF4cmyZow8TmFzSaz1nNgzo=
 github.com/aws/smithy-go v1.25.1 h1:J8ERsGSU7d+aCmdQur5Txg6bVoYelvQJgtZehD12GkI=
 github.com/aws/smithy-go v1.25.1/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
-github.com/camilbinas/gude-agents v1.15.0 h1:OVMBdfryGjrpvra1D3wBTYvZ00h/Ax8DlF0dIrcRHN8=
-github.com/camilbinas/gude-agents v1.15.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
-github.com/camilbinas/gude-agents/agent/execution v1.15.0 h1:8gXdDlPethEImNzOkua5hsDbnUa0h4YFpp0A8eMSh9g=
-github.com/camilbinas/gude-agents/agent/execution v1.15.0/go.mod h1:3KwiZrHRjnqKwiHSCLbDDANCcefXgBYU3iyKrKLeCD4=
+github.com/camilbinas/gude-agents v1.16.0 h1:AomUeBFAH7gpSr3gSqTLUVD12CyDbBVX2ZIb3zG8LXs=
+github.com/camilbinas/gude-agents v1.16.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents/agent/execution v1.16.0 h1:y4hAyiIRjiUFTBgR6fpoL9kJEvhpGll2i+hjl/iBHd0=
+github.com/camilbinas/gude-agents/agent/execution v1.16.0/go.mod h1:dGk3RvZaq3WFeHv75cKAeYHA6EabWCuBSXOZ77LxHQ0=
 pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=
 pgregory.net/rapid v1.2.0/go.mod h1:PY5XlDGj0+V1FCq0o192FdRhpKHGTRIWBgqjDBTrq04=

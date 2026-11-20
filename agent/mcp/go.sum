@@ -1,5 +1,5 @@
-github.com/camilbinas/gude-agents v1.15.0 h1:OVMBdfryGjrpvra1D3wBTYvZ00h/Ax8DlF0dIrcRHN8=
-github.com/camilbinas/gude-agents v1.15.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
+github.com/camilbinas/gude-agents v1.16.0 h1:AomUeBFAH7gpSr3gSqTLUVD12CyDbBVX2ZIb3zG8LXs=
+github.com/camilbinas/gude-agents v1.16.0/go.mod h1:VQ0zEwqVOGyih1NJMG2wxO/ghy8Biw7W/0FdV8wU5no=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
