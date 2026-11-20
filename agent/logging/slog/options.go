@@ -17,7 +17,8 @@ func WithHandler(h slog.Handler) Option {
 
 // WithContentLogging enables logging of user and model content: the final
 // response text ("response.text" entry) and the retrieval query
-// ("retriever.start" entry). It is off by default so that enabling the
+// ("retriever.start" entry), plus the text of error values (truncated to 500
+// runes; without it only the error's Go type is logged). It is off by default so that enabling the
 // hooks for timing and token logs never ships prompts or answers to a log
 // pipeline. This mirrors tracing.WithContentCapture.
 //
