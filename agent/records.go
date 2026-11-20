@@ -131,6 +131,17 @@ type AttachmentRecord struct {
 	Duration      time.Duration
 }
 
+// Names reported in LimitRecord.Name.
+const (
+	// LimitMaxIterations: the iteration limit was reached; Limit is WithMaxIterations.
+	LimitMaxIterations = "max_iterations"
+	// LimitTokenBudget: cumulative usage exceeded WithTokenBudget; Limit is the budget.
+	LimitTokenBudget = "token_budget"
+	// LimitRateLimit: the rate limiter rejected a provider attempt (Err wraps
+	// ErrRateLimitExceeded); Limit is 0.
+	LimitRateLimit = "rate_limit"
+)
+
 // LimitRecord describes a lifecycle limit being reached.
 type LimitRecord struct {
 	Phase     Phase

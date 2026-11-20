@@ -191,11 +191,15 @@ func (r *run) structuredAttempt(attempt int, system string, schema map[string]an
 	resp, err := a.callProvider(provC, modelReq, nil)
 	if err != nil {
 		provF.finish(err, TokenUsage{}, 0, "")
+		if errors.Is(err, ErrRateLimitExceeded) {
+			h.onLimit(c, LimitRateLimit, 0, err)
+		}
 		return "", nil, &ProviderError{Cause: err}
 	}
 	provF.finishResponse(resp, "")
 	cumulative := c.rt.addUsage(resp.Usage)
 	if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
+		h.onLimit(c, LimitTokenBudget, a.tokenBudget, ErrTokenBudgetExceeded)
 		return "", nil, ErrTokenBudgetExceeded
 	}
 
