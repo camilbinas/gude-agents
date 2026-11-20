@@ -55,6 +55,17 @@ func (r *run) executeBatch(c *Context, calls []tool.Call, available map[string]t
 			d = decisions[i]
 		}
 		t, ok := available[calls[i].Name]
+		// A panic outside the handler (guard, hooks, event consumers) must not
+		// crash a worker or lose the call's result.
+		defer func() {
+			if rec := recover(); rec != nil {
+				outcomes[i] = toolOutcome{kind: toolOutcomeDefinitive, result: ToolResultBlock{
+					ToolUseID: calls[i].ToolUseID,
+					Content:   (&ToolError{ToolName: calls[i].Name, Cause: fmt.Errorf("panic: %v", rec)}).Error(),
+					IsError:   true,
+				}}
+			}
+		}()
 		outcomes[i] = r.executeCall(c, calls[i], t, ok, d, async)
 	}
 	run := func(indices []int) {
@@ -277,7 +288,7 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 	handler := ChainMiddleware(inner, a.middlewares...)
 	handlerContext := toolC.withContext(tool.WithExecutionMetadata(toolC.Context, key, recoveryReplay))
-	result, err := handler(handlerContext, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
+	result, err := callHandlerIsolated(handler, handlerContext, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
 	dur := time.Since(begin)
 
 	// 7. Widgets.
@@ -317,4 +328,16 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 	emitEnd(result.Text, info, dur)
 	return out
+}
+
+// callHandlerIsolated runs the middleware+handler chain and converts a panic
+// into an ordinary error, so the call finishes with a ToolError result and its
+// End hooks and events still fire.
+func callHandlerIsolated(h ToolHandlerFunc, ctx context.Context, call ToolCall) (result ToolResult, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			result, err = ToolResult{}, fmt.Errorf("tool panicked: %v", rec)
+		}
+	}()
+	return h(ctx, call)
 }

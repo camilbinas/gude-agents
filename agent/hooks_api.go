@@ -4,7 +4,14 @@ import "context"
 
 // Hooks observes the agent lifecycle with plain functions. Set only the fields
 // you need; a misspelled field is a compile error. Each function gets a Start
-// and an End record; the context it returns at Start is passed to End.
+// and an End record. The context a hook returns at Start is passed to that
+// same hook at End (other hooks' contexts are not), and also threads into the
+// hooks registered after it and into the work being observed. A nil return
+// keeps the incoming context. A returned context that does not derive from the
+// incoming one still inherits its cancellation and deadline.
+//
+// A panic inside a hook is recovered and ignored: it never fails the
+// invocation and never prevents other hooks' End functions from running.
 type Hooks struct {
 	Invoke       func(context.Context, InvokeRecord) context.Context
 	Iteration    func(context.Context, IterationRecord) context.Context
