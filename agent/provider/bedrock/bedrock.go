@@ -216,7 +216,20 @@ func safeURLFetchDialContext(policy urlFetchPolicy) func(context.Context, string
 		if err != nil {
 			return nil, err
 		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+		// Every resolved address has passed the policy; try them in order so a
+		// dead first record (e.g. unreachable IPv6) does not fail the fetch.
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		return nil, lastErr
 	}
 }
 
@@ -446,10 +459,10 @@ func (p *BedrockProvider) Stream(ctx context.Context, req agent.ModelRequest, em
 	resp := &agent.ModelResponse{}
 	state := streamState{}
 	stream := out.GetStream()
+	defer stream.Close()
 	for event := range stream.Events() {
 		applyStreamEvent(resp, &state, event, emit)
 	}
-	stream.Close()
 	if err := stream.Err(); err != nil {
 		return nil, classifyError(err)
 	}
@@ -495,6 +508,8 @@ type streamState struct {
 	toolID    string
 	toolInput string
 	reasoning string
+	signature string
+	redacted  []byte
 }
 
 func applyStreamEvent(resp *agent.ModelResponse, state *streamState, event types.ConverseStreamOutput, emit func(agent.ModelEvent)) {
@@ -516,11 +531,16 @@ func applyStreamEvent(resp *agent.ModelResponse, state *streamState, event types
 		case *types.ContentBlockDeltaMemberToolUse:
 			state.toolInput += aws.ToString(delta.Value.Input)
 		case *types.ContentBlockDeltaMemberReasoningContent:
-			if text, ok := delta.Value.(*types.ReasoningContentBlockDeltaMemberText); ok {
-				state.reasoning += text.Value
+			switch rc := delta.Value.(type) {
+			case *types.ReasoningContentBlockDeltaMemberText:
+				state.reasoning += rc.Value
 				if emit != nil {
-					emit(agent.ModelEvent{Type: agent.ModelEventThinking, Text: text.Value})
+					emit(agent.ModelEvent{Type: agent.ModelEventThinking, Text: rc.Value})
 				}
+			case *types.ReasoningContentBlockDeltaMemberSignature:
+				state.signature += rc.Value
+			case *types.ReasoningContentBlockDeltaMemberRedactedContent:
+				state.redacted = append(state.redacted, rc.Value...)
 			}
 		}
 
@@ -545,8 +565,13 @@ func applyStreamEvent(resp *agent.ModelResponse, state *streamState, event types
 			}
 			existing, _ := resp.Metadata["thinking"].(string)
 			resp.Metadata["thinking"] = existing + state.reasoning
-			state.reasoning = ""
 		}
+		if len(state.redacted) > 0 {
+			resp.Thinking = append(resp.Thinking, agent.ThinkingBlock{RedactedData: base64.StdEncoding.EncodeToString(state.redacted)})
+		} else if state.reasoning != "" || state.signature != "" {
+			resp.Thinking = append(resp.Thinking, agent.ThinkingBlock{Text: state.reasoning, Signature: state.signature})
+		}
+		state.reasoning, state.signature, state.redacted = "", "", nil
 
 	case *types.ConverseStreamOutputMemberMessageStop:
 		if raw := string(ev.Value.StopReason); raw != "" {
@@ -788,6 +813,28 @@ func toBedrockContentBlocksWithFetcher(ctx context.Context, fetchClient *http.Cl
 				continue
 			}
 			out = append(out, &types.ContentBlockMemberText{Value: v.Text})
+
+		case agent.ThinkingBlock:
+			// Only signed or redacted blocks are accepted by the API. They
+			// precede tool_use in the engine's assistant message.
+			if !v.Replayable() {
+				continue
+			}
+			if v.Redacted() {
+				raw, err := base64.StdEncoding.DecodeString(v.RedactedData)
+				if err != nil {
+					continue
+				}
+				out = append(out, &types.ContentBlockMemberReasoningContent{
+					Value: &types.ReasoningContentBlockMemberRedactedContent{Value: raw},
+				})
+			} else {
+				out = append(out, &types.ContentBlockMemberReasoningContent{
+					Value: &types.ReasoningContentBlockMemberReasoningText{Value: types.ReasoningTextBlock{
+						Text: aws.String(v.Text), Signature: aws.String(v.Signature),
+					}},
+				})
+			}
 
 		case agent.ToolUseBlock:
 			// Bedrock requires Input to be non-nil, even for tools with no parameters.
@@ -1087,7 +1134,23 @@ func resolveURLFetchHost(ctx context.Context, host string, policy urlFetchPolicy
 	return ips, nil
 }
 
+// urlFetchBlockedPrefixes are ranges that are never valid public media hosts:
+// "this network", carrier-grade NAT (shared address space), and IPv6 transition
+// ranges that can embed or tunnel to an arbitrary IPv4 address.
+var urlFetchBlockedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("64:ff9b::/96"), // NAT64
+	netip.MustParsePrefix("2002::/16"),    // 6to4
+}
+
 func validateURLFetchIP(addr netip.Addr, policy urlFetchPolicy) error {
+	addr = addr.Unmap().WithZone("")
+	for _, prefix := range urlFetchBlockedPrefixes {
+		if prefix.Contains(addr) {
+			return fmt.Errorf("IP address %s in reserved range %s is not allowed", addr, prefix)
+		}
+	}
 	switch {
 	case addr == urlFetchMetadataIPv4 || addr == urlFetchMetadataIPv6:
 		return fmt.Errorf("metadata IP address %s is not allowed", addr)
