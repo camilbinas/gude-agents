@@ -219,19 +219,25 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 		return err
 	}
 
+	// Resolve the logical primary key (generated when empty) and write it back
+	// into the value so the stored fields and Entry.ID agree.
+	pk, err := s.extractPK(value)
+	if err != nil {
+		return err
+	}
+	s.setPK(&value, pk)
+
 	// Build HASH fields.
 	fields, err := s.buildHashFields(value)
 	if err != nil {
 		return err
 	}
 	fields["embedding"] = float64sToFloat32Bytes(embedding)
+	fields[pkHashField] = pk
 
 	// Namespace the physical key by identifier so equal primary keys from
-	// different identifiers cannot overwrite each other.
-	pk, err := s.extractPK(value)
-	if err != nil {
-		return err
-	}
+	// different identifiers cannot overwrite each other. HSET replaces every
+	// field, so Remember with an existing key is an upsert.
 	key := s.entryKey(identifier, pk)
 
 	if err := s.client.HSet(ctx, key, fields).Err(); err != nil {
@@ -310,7 +316,7 @@ func (s *Store[T]) Recall(ctx context.Context, identifier string, query memory.R
 	return results, nil
 }
 
-// Update replaces an existing entry by its Redis key, re-embedding the content.
+// Update replaces an existing entry by its logical primary key (Entry.ID), re-embedding the content.
 func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) error {
 	if identifier == "" {
 		return errors.New("redis: identifier must not be empty")
@@ -319,7 +325,8 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 		return errors.New("redis: id must not be empty")
 	}
 
-	owned, err := s.entryOwnedBy(ctx, identifier, id)
+	key := s.entryKey(identifier, id)
+	owned, err := s.entryOwnedBy(ctx, identifier, key)
 	if err != nil {
 		return err
 	}
@@ -328,6 +335,7 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 	}
 
 	setRedisIdentifier(&value, s.schema, identifier)
+	s.setPK(&value, id)
 
 	content := s.extractContent(value)
 	if content == "" {
@@ -347,17 +355,18 @@ func (s *Store[T]) Update(ctx context.Context, identifier, id string, value T) e
 		return err
 	}
 	fields["embedding"] = float64sToFloat32Bytes(embedding)
+	fields[pkHashField] = id
 
-	if err := s.client.HSet(ctx, id, fields).Err(); err != nil {
+	if err := s.client.HSet(ctx, key, fields).Err(); err != nil {
 		return fmt.Errorf("redis: hset: %w", err)
 	}
 
 	return nil
 }
 
-func (s *Store[T]) entryOwnedBy(ctx context.Context, identifier, id string) (bool, error) {
+func (s *Store[T]) entryOwnedBy(ctx context.Context, identifier, key string) (bool, error) {
 	identField := s.schema.Fields[s.schema.IdentifierIdx].HashField
-	storedIdentifier, err := s.client.HGet(ctx, id, identField).Result()
+	storedIdentifier, err := s.client.HGet(ctx, key, identField).Result()
 	if errors.Is(err, goredis.Nil) {
 		return false, nil
 	}
@@ -420,7 +429,7 @@ func collectPagedKeys(pageSize int, fetch func(offset, limit int) ([]string, err
 	}
 }
 
-// Forget removes a single entry by its Redis key.
+// Forget removes a single entry by its logical primary key (Entry.ID).
 func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
 	if identifier == "" {
 		return errors.New("redis: identifier must not be empty")
@@ -428,14 +437,15 @@ func (s *Store[T]) Forget(ctx context.Context, identifier, id string) error {
 	if id == "" {
 		return errors.New("redis: id must not be empty")
 	}
-	owned, err := s.entryOwnedBy(ctx, identifier, id)
+	key := s.entryKey(identifier, id)
+	owned, err := s.entryOwnedBy(ctx, identifier, key)
 	if err != nil {
 		return err
 	}
 	if !owned {
 		return fmt.Errorf("redis: entry %q not found", id)
 	}
-	if err := s.client.Del(ctx, id).Err(); err != nil {
+	if err := s.client.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("redis: forget: %w", err)
 	}
 	return nil
@@ -908,8 +918,25 @@ func (s *Store[T]) extractPK(value T) (string, error) {
 	return id.String(), nil
 }
 
+// pkHashField stores the logical primary key in the entry HASH so Recall can
+// return it as Entry.ID independent of the namespaced Redis key.
+const pkHashField = "_pk"
+
+// setPK writes pk into the primary-key struct field when the schema has a
+// string one, keeping the stored value consistent with its logical ID.
+func (s *Store[T]) setPK(value *T, pk string) {
+	if s.schema.PKIdx < 0 {
+		return
+	}
+	f := s.schema.Fields[s.schema.PKIdx]
+	field := reflect.ValueOf(value).Elem().Field(f.FieldIndex)
+	if field.CanSet() && field.Kind() == reflect.String {
+		field.SetString(pk)
+	}
+}
+
 // entryKey builds a type-prefixed Redis key with a delimiter-safe identifier
-// component. The key remains the storage ID returned by Recall.
+// component. The logical primary key, not this key, is the ID returned by Recall.
 func (s *Store[T]) entryKey(identifier, pk string) string {
 	encodedIdentifier := base64.RawURLEncoding.EncodeToString([]byte(identifier))
 	return s.keyPrefix + "id:" + encodedIdentifier + ":" + pk
@@ -1386,7 +1413,18 @@ func (s *Store[T]) scanEntry(key string, attrs map[string]any) (memory.Entry[T],
 	}
 
 	// Convert cosine distance to similarity.
-	return memory.Entry[T]{ID: key, Value: result, Score: 1 - distance}, nil
+	id := key
+	if s.schema.PKIdx >= 0 {
+		if pk := fmt.Sprint(rv.Field(s.schema.Fields[s.schema.PKIdx].FieldIndex).Interface()); pk != "" {
+			id = pk
+		}
+	}
+	if raw, ok := attrs[pkHashField]; ok {
+		if pk, ok := redisScalarString(raw); ok && pk != "" {
+			id = pk
+		}
+	}
+	return memory.Entry[T]{ID: id, Value: result, Score: 1 - distance}, nil
 }
 
 var timeType = reflect.TypeOf(time.Time{})

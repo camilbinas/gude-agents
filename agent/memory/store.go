@@ -89,9 +89,15 @@ func (s *Store[T]) Remember(ctx context.Context, identifier string, value T) err
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[identifier] = append(s.entries[identifier], memEntry[T]{
-		id: id, value: value, embedding: embedding,
-	})
+	entry := memEntry[T]{id: id, value: value, embedding: embedding}
+	// Remember with an existing primary key replaces the entry (upsert).
+	for i, e := range s.entries[identifier] {
+		if e.id == id {
+			s.entries[identifier][i] = entry
+			return nil
+		}
+	}
+	s.entries[identifier] = append(s.entries[identifier], entry)
 	return nil
 }
 
