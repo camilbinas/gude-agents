@@ -5,8 +5,8 @@ go 1.26.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1
-	github.com/camilbinas/gude-agents v1.16.0
-	github.com/camilbinas/gude-agents/agent/execution v1.16.0
+	github.com/camilbinas/gude-agents v1.17.0
+	github.com/camilbinas/gude-agents/agent/execution v1.17.0
 )
 
 require (
