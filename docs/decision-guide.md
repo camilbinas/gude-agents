@@ -27,7 +27,7 @@ Conversation stores protect writes with revisions. Memory and RAG solve differen
 
 Use `WithTools` for a fixed set and `WithToolRegistry` for a dynamic, concurrency-safe set. Prefer `tool.NewSimple` for no-input tools and typed `tool.New` otherwise; use `NewRaw` (positional schema) only when raw JSON is required, and `NewRich` for images.
 
-Use tool options for schema, guard, role policy, and approval. Use middleware for cross-cutting execution behavior and observers for telemetry.
+Use tool options for schema, guard, role policy, and approval. Use middleware for cross-cutting execution behavior and hooks for telemetry.
 
 ## Composition
 
@@ -35,4 +35,4 @@ Use `agent.AgentAsTool` for in-process parent/child delegation and MCP for exter
 
 ## Providers and operations
 
-Choose a provider by deployment and model needs; the agent depends only on `Provider.Stream`. Use application `Event` streams for product behavior and operational observers for logs, metrics, traces, and audit. See [Providers](providers.md) and [Observability](observability.md).
+Choose a provider by deployment and model needs; the agent depends only on `Provider.Stream`. Use application `Event` streams for product behavior and operational hooks for logs, metrics, traces, and audit. See [Providers](providers.md) and [Observability](observability.md).

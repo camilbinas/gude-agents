@@ -80,7 +80,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "invoke.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveInvoke(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onInvoke(ctx, record) },
 		}
 	case 1: // InvokeEnd
 		err := genError(t, prefix)
@@ -98,7 +98,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "invoke.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveInvoke(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onInvoke(ctx, record) },
 			err:           err,
 		}
 	case 2: // IterationStart
@@ -107,7 +107,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "iteration.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveIteration(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onIteration(ctx, record) },
 		}
 	case 3: // ModelStart
 		record := agent.ModelCallRecord{Phase: agent.Start, ModelID: genString(t, prefix+"_modelID")}
@@ -115,7 +115,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "provider_call.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveModel(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onModel(ctx, record) },
 		}
 	case 4: // ModelEnd
 		err := genError(t, prefix)
@@ -134,7 +134,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "provider_call.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveModel(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onModel(ctx, record) },
 			err:           err,
 		}
 	case 5: // ToolStart
@@ -143,7 +143,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "tool.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveTool(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onTool(ctx, record) },
 		}
 	case 6: // ToolEnd
 		err := genError(t, prefix)
@@ -161,7 +161,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "tool.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveTool(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onTool(ctx, record) },
 			err:           err,
 		}
 	case 7: // GuardrailComplete
@@ -183,7 +183,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "guardrail.complete",
 			category:      "guardrail",
 			expectedLevel: lvl,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveGuardrail(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onGuardrail(ctx, record) },
 			err:           err,
 		}
 	case 8: // ConversationStart
@@ -196,7 +196,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "memory.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveConversation(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onConversation(ctx, record) },
 		}
 	case 9: // ConversationEnd
 		err := genError(t, prefix)
@@ -216,7 +216,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "memory.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveConversation(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onConversation(ctx, record) },
 			err:           err,
 		}
 	case 10: // RetrievalStart
@@ -225,7 +225,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "retriever.start",
 			category:      "start",
 			expectedLevel: slog.LevelDebug,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveRetrieval(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onRetrieval(ctx, record) },
 		}
 	case 11: // RetrievalEnd
 		err := genError(t, prefix)
@@ -243,7 +243,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "retriever.end",
 			category:      "end",
 			expectedLevel: lvl,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveRetrieval(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onRetrieval(ctx, record) },
 			err:           err,
 		}
 	default: // MaxIterationsExceeded
@@ -256,7 +256,7 @@ func genLifecycleEvent(t *rapid.T, idx int) lifecycleEvent {
 			name:          "max_iterations_exceeded",
 			category:      "warn",
 			expectedLevel: slog.LevelWarn,
-			fire:          func(ctx context.Context, h *slogHook) { h.ObserveLimit(ctx, record) },
+			fire:          func(ctx context.Context, h *slogHook) { h.onLimit(ctx, record) },
 		}
 	}
 }
@@ -371,7 +371,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			agentName := genString(rt, "agentName")
 			modelID := genString(rt, "modelID")
 			convID := genString(rt, "convID")
-			h.ObserveInvoke(ctx, agent.InvokeRecord{
+			h.onInvoke(ctx, agent.InvokeRecord{
 				Phase: agent.Start, AgentName: agentName, ModelID: modelID,
 				ConversationID: convID, MaxIterations: rapid.IntRange(1, 100).Draw(rt, "maxIter"),
 			})
@@ -383,7 +383,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 
 		case 1: // InvokeEnd
 			err := genError(rt, "err")
-			h.ObserveInvoke(ctx, agent.InvokeRecord{Phase: agent.End, Err: err, Usage: genTokenUsage(rt, "usage"), Duration: genDuration(rt, "dur")})
+			h.onInvoke(ctx, agent.InvokeRecord{Phase: agent.End, Err: err, Usage: genTokenUsage(rt, "usage"), Duration: genDuration(rt, "dur")})
 			attrs := onlyRecordAttrs(rt, ch)
 			requireAttrExists(rt, attrs, "duration_ms")
 			requireAttrExists(rt, attrs, "input_tokens")
@@ -394,12 +394,12 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 
 		case 2: // ModelStart
 			modelID := genString(rt, "modelID")
-			h.ObserveModel(ctx, agent.ModelCallRecord{Phase: agent.Start, ModelID: modelID})
+			h.onModel(ctx, agent.ModelCallRecord{Phase: agent.Start, ModelID: modelID})
 			requireAttr(rt, onlyRecordAttrs(rt, ch), "model.id", modelID)
 
 		case 3: // ModelEnd
 			err := genError(rt, "err")
-			h.ObserveModel(ctx, agent.ModelCallRecord{
+			h.onModel(ctx, agent.ModelCallRecord{
 				Phase: agent.End, Err: err, Usage: genTokenUsage(rt, "usage"),
 				ToolCallCount: rapid.IntRange(0, 20).Draw(rt, "toolCount"), Duration: genDuration(rt, "dur"),
 			})
@@ -413,13 +413,13 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 
 		case 4: // ToolStart
 			toolName := genString(rt, "toolName")
-			h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.Start, Name: toolName})
+			h.onTool(ctx, agent.ToolCallRecord{Phase: agent.Start, Name: toolName})
 			requireAttr(rt, onlyRecordAttrs(rt, ch), "tool.name", toolName)
 
 		case 5: // ToolEnd
 			toolName := genString(rt, "toolName")
 			err := genError(rt, "err")
-			h.ObserveTool(ctx, agent.ToolCallRecord{Phase: agent.End, Name: toolName, Err: err, Duration: genDuration(rt, "dur")})
+			h.onTool(ctx, agent.ToolCallRecord{Phase: agent.End, Name: toolName, Err: err, Duration: genDuration(rt, "dur")})
 			attrs := onlyRecordAttrs(rt, ch)
 			requireAttr(rt, attrs, "tool.name", toolName)
 			requireAttrExists(rt, attrs, "duration_ms")
@@ -430,7 +430,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 		case 6: // GuardrailComplete
 			direction := rapid.SampledFrom([]string{"input", "output"}).Draw(rt, "dir")
 			err := genError(rt, "err")
-			h.ObserveGuardrail(ctx, agent.GuardrailRecord{Phase: agent.End, Direction: direction, Blocked: rapid.Bool().Draw(rt, "blocked"), Err: err})
+			h.onGuardrail(ctx, agent.GuardrailRecord{Phase: agent.End, Direction: direction, Blocked: rapid.Bool().Draw(rt, "blocked"), Err: err})
 			attrs := onlyRecordAttrs(rt, ch)
 			requireAttr(rt, attrs, "direction", direction)
 			requireAttrExists(rt, attrs, "blocked")
@@ -441,7 +441,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 		case 7: // ConversationStart
 			op := rapid.SampledFrom([]string{"load", "save"}).Draw(rt, "op")
 			convID := genString(rt, "convID")
-			h.ObserveConversation(ctx, agent.ConversationRecord{Phase: agent.Start, Operation: op, ConversationID: convID})
+			h.onConversation(ctx, agent.ConversationRecord{Phase: agent.Start, Operation: op, ConversationID: convID})
 			attrs := onlyRecordAttrs(rt, ch)
 			requireAttr(rt, attrs, "operation", op)
 			requireAttr(rt, attrs, "conversation_id", convID)
@@ -450,7 +450,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			op := rapid.SampledFrom([]string{"load", "save"}).Draw(rt, "op")
 			convID := genString(rt, "convID")
 			err := genError(rt, "err")
-			h.ObserveConversation(ctx, agent.ConversationRecord{
+			h.onConversation(ctx, agent.ConversationRecord{
 				Phase: agent.End, Operation: op, ConversationID: convID, Err: err,
 				MessageCount: rapid.IntRange(0, 100).Draw(rt, "msgCount"), Duration: genDuration(rt, "dur"),
 			})
@@ -464,12 +464,12 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			}
 
 		case 9: // MaxIterationsExceeded
-			h.ObserveLimit(ctx, agent.LimitRecord{Phase: agent.End, Name: "max_iterations", Limit: rapid.IntRange(1, 100).Draw(rt, "limit")})
+			h.onLimit(ctx, agent.LimitRecord{Phase: agent.End, Name: "max_iterations", Limit: rapid.IntRange(1, 100).Draw(rt, "limit")})
 			requireAttrExists(rt, onlyRecordAttrs(rt, ch), "limit")
 
 		case 10: // RetrievalEnd
 			err := genError(rt, "err")
-			h.ObserveRetrieval(ctx, agent.RetrievalRecord{
+			h.onRetrieval(ctx, agent.RetrievalRecord{
 				Phase: agent.End, Err: err, DocumentCount: rapid.IntRange(0, 100).Draw(rt, "docCount"), Duration: genDuration(rt, "dur"),
 			})
 			attrs := onlyRecordAttrs(rt, ch)
@@ -480,7 +480,7 @@ func TestProperty_3_StructuredAttributePresence(t *testing.T) {
 			}
 
 		default: // IterationStart
-			h.ObserveIteration(ctx, agent.IterationRecord{Phase: agent.Start, Iteration: rapid.IntRange(1, 100).Draw(rt, "iter")})
+			h.onIteration(ctx, agent.IterationRecord{Phase: agent.Start, Iteration: rapid.IntRange(1, 100).Draw(rt, "iter")})
 			requireAttrExists(rt, onlyRecordAttrs(rt, ch), "iteration")
 		}
 	})

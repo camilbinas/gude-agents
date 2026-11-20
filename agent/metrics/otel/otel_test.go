@@ -30,8 +30,8 @@ func findMetric(rm metricdata.ResourceMetrics, name string) *metricdata.Metrics 
 // Unit Tests
 // ---------------------------------------------------------------------------
 
-// TestWithMetrics_RegistersObserver verifies WithMetrics installs a working observer.
-func TestWithMetrics_RegistersObserver(t *testing.T) {
+// TestWithMetrics_RegistersHooks verifies WithMetrics installs working hooks.
+func TestWithMetrics_RegistersHooks(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer mp.Shutdown(context.Background())
@@ -50,7 +50,7 @@ func TestWithMetrics_RegistersObserver(t *testing.T) {
 		t.Fatalf("failed to collect metrics: %v", err)
 	}
 	if findMetric(rm, "agent.invoke.total") == nil {
-		t.Fatal("expected observer to record agent.invoke.total")
+		t.Fatal("expected hooks to record agent.invoke.total")
 	}
 }
 
@@ -66,7 +66,7 @@ func TestWithMetrics_CustomMeterProvider(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Trigger an invocation through the registered observer.
+	// Trigger an invocation through the registered hooks.
 	if _, err := a.Invoke(agent.Background(), "hello"); err != nil {
 		t.Fatalf("invoke error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestWithMetrics_WithNamespace(t *testing.T) {
 	if err := h.register(); err != nil {
 		t.Fatalf("register error: %v", err)
 	}
-	_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = h.onIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
 	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("failed to collect metrics: %v", err)
@@ -201,14 +201,14 @@ func TestDurationRecording(t *testing.T) {
 	if err := h.register(); err != nil {
 		t.Fatalf("register error: %v", err)
 	}
-	_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+	_ = h.onModel(context.Background(), agent.ModelCallRecord{
 		Phase: agent.End, ModelID: "test-model", Duration: 3,
 		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
-	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+	_ = h.onTool(context.Background(), agent.ToolCallRecord{
 		Phase: agent.End, Name: "my-tool", Duration: 4,
 	})
-	_ = h.ObserveAttachment(context.Background(), agent.AttachmentRecord{
+	_ = h.onAttachment(context.Background(), agent.AttachmentRecord{
 		Phase: agent.End, ImageCount: 2, DocumentCount: 3,
 	})
 
@@ -300,7 +300,7 @@ func TestToolNameAllowlist(t *testing.T) {
 	}
 
 	for _, name := range []string{"search", "mcp_dynamic_1", "mcp_dynamic_2"} {
-		_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: name})
+		_ = h.onTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: name})
 	}
 
 	if got := toolCountForName(t, reader, "search"); got != 1 {
@@ -324,7 +324,7 @@ func TestToolNameNoAllowlistVerbatim(t *testing.T) {
 	if err := h.register(); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: "mcp_dynamic_1"})
+	_ = h.onTool(context.Background(), agent.ToolCallRecord{Phase: agent.End, Name: "mcp_dynamic_1"})
 
 	if got := toolCountForName(t, reader, "mcp_dynamic_1"); got != 1 {
 		t.Errorf("verbatim count = %d, want 1", got)

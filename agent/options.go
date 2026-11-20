@@ -2,8 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
 	"time"
 
 	"github.com/camilbinas/gude-agents/agent/rag"
@@ -398,7 +396,7 @@ func WithMaxOutputTokens(n int) Option {
 // call makes after the model fails to produce a valid typed response. On each
 // retry the failure is fed back to the model. The default is 1; 0 disables
 // retries. Only the final successful answer is persisted; every attempt's
-// token usage, guardrails, and observers still apply.
+// token usage, guardrails, and hooks still apply.
 func WithStructuredOutputRetries(n int) Option {
 	return func(a *Runtime) error {
 		if n < 0 {
@@ -406,54 +404,5 @@ func WithStructuredOutputRetries(n int) Option {
 		}
 		a.structuredOutputRetries = n
 		return nil
-	}
-}
-
-// observerCapabilityNames lists every observer capability interface, in the
-// order checked by supportsObserver. Used to build a self-documenting error
-// when a value implements none of them.
-var observerCapabilityNames = []string{
-	"InvokeObserver", "IterationObserver", "ModelObserver", "ToolObserver",
-	"GuardrailObserver", "ConversationObserver", "RetrievalObserver",
-	"AttachmentObserver", "LimitObserver", "ToolLogObserver", "InterruptObserver",
-}
-
-// WithObserver registers one observer adapter. observer must implement at
-// least one observer capability interface (see Observer); it is repeatable,
-// and observers are called in registration order at lifecycle start and
-// reverse order at end.
-func WithObserver(observer Observer) Option {
-	return func(a *Runtime) error {
-		if !supportsObserver(observer) {
-			return fmt.Errorf("WithObserver: %s implements none of %s",
-				describeObserverType(observer), strings.Join(observerCapabilityNames, ", "))
-		}
-		a.observers = append(a.observers, observer)
-		return nil
-	}
-}
-
-func describeObserverType(observer any) string {
-	if observer == nil {
-		return "nil"
-	}
-	return reflect.TypeOf(observer).String()
-}
-
-func supportsObserver(observer any) bool {
-	if observer == nil {
-		return false
-	}
-	value := reflect.ValueOf(observer)
-	if (value.Kind() == reflect.Ptr || value.Kind() == reflect.Map || value.Kind() == reflect.Slice || value.Kind() == reflect.Func || value.Kind() == reflect.Interface) && value.IsNil() {
-		return false
-	}
-	switch observer.(type) {
-	case InvokeObserver, IterationObserver, ModelObserver, ToolObserver,
-		GuardrailObserver, ConversationObserver, RetrievalObserver,
-		AttachmentObserver, LimitObserver, ToolLogObserver, InterruptObserver:
-		return true
-	default:
-		return false
 	}
 }

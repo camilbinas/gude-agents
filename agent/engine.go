@@ -241,10 +241,10 @@ func (a *Runtime) execute(c *Context, spec invocationSpec) (Result, error) {
 	})
 }
 
-// lifecycle wraps an invocation body with the unified observer dispatcher. It
+// lifecycle wraps an invocation body with the hook dispatcher. It
 // is shared by every entry point, including structured output.
 func (a *Runtime) lifecycle(c *Context, convID, userMessage string, body func(r *run) (Result, error)) (Result, error) {
-	h := a.hooks(c)
+	h := a.dispatcher(c)
 	c, invoke := h.onInvokeStart(c, a.invokeRecord(convID, userMessage, c))
 
 	if c.cfg.executionID == "" {
@@ -1047,7 +1047,7 @@ func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution,
 	base := ctx.Clone()
 	base.WithConversationID(execution.ConversationID).WithExecutionID(execution.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
-	r := &run{a: a, c: base, h: a.hooks(base), execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
+	r := &run{a: a, c: base, h: a.dispatcher(base), execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
 
 	after := execution.LastSequence
 	if execution.ToolBatch.ToolUseLastSequence > 0 {
@@ -1464,7 +1464,7 @@ func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, execu
 	}
 	base := ctx.Clone().WithConversationID(claimed.ConversationID).WithExecutionID(claimed.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
-	r := &run{a: a, c: base, h: a.hooks(base), execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
+	r := &run{a: a, c: base, h: a.dispatcher(base), execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
 	if claimed.ToolBatch.ToolUseLastSequence == 0 {
 		return cloneExecution(claimed), recoveryUnsupported("reconcile has no persisted ToolUse cursor to load results after")
 	}
@@ -2019,13 +2019,13 @@ func (a *Runtime) callProvider(c *Context, req ModelRequest, emit func(ModelEven
 	return nil, err
 }
 
-// hooks returns the unified observer dispatcher for this invocation.
-func (a *Runtime) hooks(c *Context) hooks {
-	observers := a.observers
-	if c != nil && c.cfg.observersSet {
-		observers = c.cfg.observers
+// dispatcher returns the lifecycle hook dispatcher for this invocation.
+func (a *Runtime) dispatcher(c *Context) hooks {
+	hs := a.hooks
+	if c != nil && c.cfg.hooksSet {
+		hs = c.cfg.hooks
 	}
-	return hooks{observers: append([]Observer(nil), observers...)}
+	return hooks{hooks: append([]Hooks(nil), hs...)}
 }
 
 // modelID returns the provider's model ID, or empty string.

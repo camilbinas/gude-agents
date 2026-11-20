@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"time"
 )
@@ -169,65 +168,3 @@ type InterruptRecord struct {
 	Timestamp      time.Time
 	Duration       time.Duration
 }
-
-// Observer capability interfaces are intentionally small. Implement only the
-// lifecycle categories an adapter needs. Methods may be called concurrently.
-// Returning nil preserves the input context.
-type InvokeObserver interface {
-	ObserveInvoke(context.Context, InvokeRecord) context.Context
-}
-
-type IterationObserver interface {
-	ObserveIteration(context.Context, IterationRecord) context.Context
-}
-
-type ModelObserver interface {
-	ObserveModel(context.Context, ModelCallRecord) context.Context
-}
-
-type ToolObserver interface {
-	ObserveTool(context.Context, ToolCallRecord) context.Context
-}
-
-type GuardrailObserver interface {
-	ObserveGuardrail(context.Context, GuardrailRecord) context.Context
-}
-
-type ConversationObserver interface {
-	ObserveConversation(context.Context, ConversationRecord) context.Context
-}
-
-type RetrievalObserver interface {
-	ObserveRetrieval(context.Context, RetrievalRecord) context.Context
-}
-
-type AttachmentObserver interface {
-	ObserveAttachment(context.Context, AttachmentRecord) context.Context
-}
-
-type LimitObserver interface {
-	ObserveLimit(context.Context, LimitRecord) context.Context
-}
-
-type ToolLogObserver interface {
-	ObserveToolLog(context.Context, ToolLogRecord) context.Context
-}
-
-type InterruptObserver interface {
-	ObserveInterrupt(context.Context, InterruptRecord) context.Context
-}
-
-// Observer is any value implementing at least one observer capability
-// interface: InvokeObserver, IterationObserver, ModelObserver, ToolObserver,
-// GuardrailObserver, ConversationObserver, RetrievalObserver,
-// AttachmentObserver, LimitObserver, ToolLogObserver, or InterruptObserver.
-//
-// Go cannot express "one of these interfaces" as a single static type when
-// the interfaces have methods, so Observer is an alias for any and the
-// capability check happens at registration time in WithObserver. Implement
-// only the capabilities an adapter needs, and add a compile-time assertion
-// per implemented capability so a typo'd method name fails to build instead
-// of silently dropping that capability:
-//
-//	var _ agent.ToolObserver = (*MyObserver)(nil)
-type Observer = any

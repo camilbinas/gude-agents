@@ -303,7 +303,7 @@ func TestProperty_ToolSpanNaming(t *testing.T) {
 // Property 5: Tracing span name consistency (memory-package-rename)
 // ---------------------------------------------------------------------------
 
-// For any memory operation string ("load" or "save"), the tracing observer SHALL
+// For any memory operation string ("load" or "save"), the tracing hooks SHALL
 // produce a span name of the form "agent.conversation.{operation}".
 func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -316,12 +316,12 @@ func TestProperty_TracingSpanNameConsistency(t *testing.T) {
 		observer := newOtelHook(tp.Tracer(instrumentationName))
 
 		ctx := context.Background()
-		ctx = observer.ObserveConversation(ctx, agent.ConversationRecord{
+		ctx = observer.onConversation(ctx, agent.ConversationRecord{
 			Phase:          agent.Start,
 			Operation:      operation,
 			ConversationID: conversationID,
 		})
-		observer.ObserveConversation(ctx, agent.ConversationRecord{
+		observer.onConversation(ctx, agent.ConversationRecord{
 			Phase:          agent.End,
 			Operation:      operation,
 			ConversationID: conversationID,

@@ -17,11 +17,11 @@ ctx := agent.NewContext(request.Context()).
 
 `With…` methods mutate and return the same pointer for chaining. Finish configuring a context before passing it to `Invoke`, `Stream`, `TextStream`, or `Resume`. `Clone` creates an independently configurable copy.
 
-Available configuration includes conversation ID, identity, named scopes, principal, images, documents, inference settings, instruction override, detailed stream events, and per-invocation observers. `WithObservers()` with no arguments disables operational observation for that invocation.
+Available configuration includes conversation ID, identity, named scopes, principal, images, documents, inference settings, instruction override, detailed stream events, and per-invocation hooks. `WithHooks()` with no arguments disables operational hooks for that invocation.
 
 ## Standard context interoperability
 
-Tools, middleware, stores, providers, and observers accept `context.Context`. Use the package helpers to recover agent data safely:
+Tools, middleware, stores, providers, and hooks accept `context.Context`. Use the package helpers to recover agent data safely:
 
 ```go
 func handle(ctx context.Context) error {

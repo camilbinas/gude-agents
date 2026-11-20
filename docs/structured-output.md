@@ -34,7 +34,7 @@ type Result[T any] struct {
 }
 ```
 
-The schema is generated from `T`. Structured invocation reuses the normal agent lifecycle: conversation CAS locking and persistence, RAG context, guardrails, provider timeout, token limits, rate limiting, and operational observers. When the Agent has a conversation store, a non-empty conversation ID is required; without one the call returns an error matching `agent.ErrConversationIDRequired` before the provider runs.
+The schema is generated from `T`. Structured invocation reuses the normal agent lifecycle: conversation CAS locking and persistence, RAG context, guardrails, provider timeout, token limits, rate limiting, and operational hooks. When the Agent has a conversation store, a non-empty conversation ID is required; without one the call returns an error matching `agent.ErrConversationIDRequired` before the provider runs.
 
 Token usage is accumulated before output decoding. If cumulative usage is greater than `WithTokenBudget`, invocation returns `agent.ErrTokenBudgetExceeded` before output guardrails, decoding, or conversation persistence. Usage exactly equal to the budget is allowed. On any error, the generic result still carries the underlying `Run`, including usage accumulated before the failure; callers should inspect both values when accounting matters.
 
@@ -54,7 +54,7 @@ When the model fails to produce a valid typed response, Gude feeds the error bac
 a, _ := agent.Agent(provider, "sys", agent.WithStructuredOutputRetries(2)) // up to 3 attempts
 ```
 
-On the schema-tool path the failed attempt is replayed as the tool call plus a `tool_result` carrying the error; on the native path it is replayed as the assistant answer plus a user turn with the error. Only the final successful answer is persisted to the conversation, never the failed attempts. Every attempt's token usage is counted toward `WithTokenBudget` and `Result.Usage`, output guardrails run on each attempt, and observers see each model call. When all attempts are exhausted the returned `*agent.StructuredOutputError` carries the last failure's reason.
+On the schema-tool path the failed attempt is replayed as the tool call plus a `tool_result` carrying the error; on the native path it is replayed as the assistant answer plus a user turn with the error. Only the final successful answer is persisted to the conversation, never the failed attempts. Every attempt's token usage is counted toward `WithTokenBudget` and `Result.Usage`, output guardrails run on each attempt, and hooks see each model call. When all attempts are exhausted the returned `*agent.StructuredOutputError` carries the last failure's reason.
 
 Schema validation uses `agent.ValidateToolInput`, which enforces a subset of JSON Schema, not the full specification. Enforced keywords: `type` (including unions such as `["string", "null"]`), `enum`, `required`, `properties`, and `items`, applied recursively. Other keywords (for example `minimum`, `maxLength`, `pattern`, `additionalProperties`, `oneOf`) are sent to the model as guidance but are not enforced. For schemas generated from `T`, Go decoding still rejects values whose types don't fit `T`, such as map values of the wrong type. Check any other constraints yourself after `Invoke` returns.
 

@@ -23,8 +23,8 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// recordingObserver verifies that independent observers coexist with metrics.
-type recordingObserver struct {
+// recordingHooks verifies that independent hooks coexist with metrics.
+type recordingHooks struct {
 	mu              sync.Mutex
 	invokeCalled    bool
 	iterationCalled bool
@@ -33,7 +33,7 @@ type recordingObserver struct {
 	guardrailCalled bool
 }
 
-func (h *recordingObserver) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+func (h *recordingHooks) onInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.mu.Lock()
 		h.invokeCalled = true
@@ -42,7 +42,7 @@ func (h *recordingObserver) ObserveInvoke(ctx context.Context, record agent.Invo
 	return ctx
 }
 
-func (h *recordingObserver) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+func (h *recordingHooks) onIteration(ctx context.Context, record agent.IterationRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.mu.Lock()
 		h.iterationCalled = true
@@ -51,7 +51,7 @@ func (h *recordingObserver) ObserveIteration(ctx context.Context, record agent.I
 	return ctx
 }
 
-func (h *recordingObserver) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+func (h *recordingHooks) onModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.mu.Lock()
 		h.providerCalled = true
@@ -60,7 +60,7 @@ func (h *recordingObserver) ObserveModel(ctx context.Context, record agent.Model
 	return ctx
 }
 
-func (h *recordingObserver) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+func (h *recordingHooks) onTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.mu.Lock()
 		h.toolCalled = true
@@ -69,7 +69,7 @@ func (h *recordingObserver) ObserveTool(ctx context.Context, record agent.ToolCa
 	return ctx
 }
 
-func (h *recordingObserver) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+func (h *recordingHooks) onGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
 	if record.Phase == agent.Start {
 		h.mu.Lock()
 		h.guardrailCalled = true
@@ -78,12 +78,19 @@ func (h *recordingObserver) ObserveGuardrail(ctx context.Context, record agent.G
 	return ctx
 }
 
+func (h *recordingHooks) hooks() agent.Hooks {
+	return agent.Hooks{
+		Invoke: h.onInvoke, Iteration: h.onIteration, Model: h.onModel,
+		Tool: h.onTool, Guardrail: h.onGuardrail,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Unit Tests
 // ---------------------------------------------------------------------------
 
-// TestWithMetrics_RegistersObserver verifies that WithMetrics installs a working observer.
-func TestWithMetrics_RegistersObserver(t *testing.T) {
+// TestWithMetrics_RegistersHooks verifies that WithMetrics installs working hooks.
+func TestWithMetrics_RegistersHooks(t *testing.T) {
 	reg := prom.NewRegistry()
 	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
@@ -159,25 +166,25 @@ func TestHandler_ServesMetrics(t *testing.T) {
 	h.register()
 
 	// Exercise every hook method so all metric families appear in the output.
-	_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+	_ = h.onInvoke(context.Background(), agent.InvokeRecord{
 		Phase: agent.End, Duration: time.Second,
 	})
 
-	_ = h.ObserveIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
+	_ = h.onIteration(context.Background(), agent.IterationRecord{Phase: agent.Start})
 
-	_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+	_ = h.onModel(context.Background(), agent.ModelCallRecord{
 		Phase: agent.End, ModelID: "test-model", Duration: time.Second,
 		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
 
-	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+	_ = h.onTool(context.Background(), agent.ToolCallRecord{
 		Phase: agent.End, Name: "my-tool", Duration: time.Second,
 	})
 
-	_ = h.ObserveGuardrail(context.Background(), agent.GuardrailRecord{
+	_ = h.onGuardrail(context.Background(), agent.GuardrailRecord{
 		Phase: agent.End, Direction: "input", Blocked: true,
 	})
-	_ = h.ObserveAttachment(context.Background(), agent.AttachmentRecord{
+	_ = h.onAttachment(context.Background(), agent.AttachmentRecord{
 		Phase: agent.End, ImageCount: 2, DocumentCount: 3,
 	})
 
@@ -243,16 +250,16 @@ func TestDurationRecording(t *testing.T) {
 	h.register()
 
 	// Exercise all duration-recording hooks.
-	_ = h.ObserveInvoke(context.Background(), agent.InvokeRecord{
+	_ = h.onInvoke(context.Background(), agent.InvokeRecord{
 		Phase: agent.End, Duration: 2 * time.Second,
 	})
 
-	_ = h.ObserveModel(context.Background(), agent.ModelCallRecord{
+	_ = h.onModel(context.Background(), agent.ModelCallRecord{
 		Phase: agent.End, ModelID: "test-model", Duration: 3 * time.Second,
 		Usage: agent.TokenUsage{InputTokens: 10, OutputTokens: 5},
 	})
 
-	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+	_ = h.onTool(context.Background(), agent.ToolCallRecord{
 		Phase: agent.End, Name: "my-tool", Duration: 4 * time.Second,
 	})
 
@@ -296,8 +303,8 @@ func TestDurationRecording(t *testing.T) {
 	}
 }
 
-// TestNoObserverNoPanic verifies invocation works without metrics observers.
-func TestNoObserverNoPanic(t *testing.T) {
+// TestNoHooksNoPanic verifies invocation works without metrics hooks.
+func TestNoHooksNoPanic(t *testing.T) {
 	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
 	a, err := agent.New(prov, "sys")
@@ -320,11 +327,11 @@ func TestCoexistenceWithTracing(t *testing.T) {
 	reg := prom.NewRegistry()
 	prov := testutil.NewMockProvider(testutil.WithResponses(&agent.ModelResponse{Text: "hello"}))
 
-	observer := &recordingObserver{}
+	rec := &recordingHooks{}
 
 	a, err := agent.New(prov, "sys",
 		WithMetrics(WithRegisterer(reg)),
-		agent.WithObserver(observer),
+		agent.WithHooks(rec.hooks()),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -336,19 +343,19 @@ func TestCoexistenceWithTracing(t *testing.T) {
 	}
 
 	// Verify tracing hook received callbacks.
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	if !observer.invokeCalled {
-		t.Error("expected observer.OnInvokeStart to be called")
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if !rec.invokeCalled {
+		t.Error("expected hooks.OnInvokeStart to be called")
 	}
-	if !observer.iterationCalled {
-		t.Error("expected observer.OnIterationStart to be called")
+	if !rec.iterationCalled {
+		t.Error("expected hooks.OnIterationStart to be called")
 	}
-	if !observer.providerCalled {
-		t.Error("expected observer.OnProviderCallStart to be called")
+	if !rec.providerCalled {
+		t.Error("expected hooks.OnProviderCallStart to be called")
 	}
 
-	// Verify metrics observer also received callbacks by checking the registry.
+	// Verify metrics hooks also received callbacks by checking the registry.
 	families, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -370,7 +377,7 @@ func TestCoexistenceWithTracing(t *testing.T) {
 
 	for name, found := range metricsFound {
 		if !found {
-			t.Errorf("expected metric %q to have been incremented (metrics observer active alongside tracing hook)", name)
+			t.Errorf("expected metric %q to have been incremented (metrics hooks active alongside tracing hook)", name)
 		}
 	}
 }
@@ -387,10 +394,10 @@ func getCounterValue(m *dto.Metric) float64 {
 // Integration Tests
 // ---------------------------------------------------------------------------
 
-// TestAgentLoop_MetricsObserverCalled runs a full agent loop with a mock provider
+// TestAgentLoop_MetricsHooksCalled runs a full agent loop with a mock provider
 // that returns a tool call followed by a text response, and verifies all
 // Prometheus metrics are recorded at the correct lifecycle points.
-func TestAgentLoop_MetricsObserverCalled(t *testing.T) {
+func TestAgentLoop_MetricsHooksCalled(t *testing.T) {
 	reg := prom.NewRegistry()
 
 	// Mock provider: first response triggers a tool call, second is the final text.
@@ -518,7 +525,7 @@ func TestAgentLoop_MetricsObserverCalled(t *testing.T) {
 }
 
 // TestAgentLoop_BothHooksActive verifies that both the tracing hook and the
-// metrics observer fire independently during a full agent loop.
+// metrics hooks fire independently during a full agent loop.
 func TestAgentLoop_BothHooksActive(t *testing.T) {
 	reg := prom.NewRegistry()
 
@@ -545,12 +552,12 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 		},
 	)
 
-	observer := &recordingObserver{}
+	rec := &recordingHooks{}
 
 	a, err := agent.New(prov, "sys",
 		agent.WithTools(myTool),
 		WithMetrics(WithRegisterer(reg)),
-		agent.WithObserver(observer),
+		agent.WithHooks(rec.hooks()),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error creating agent: %v", err)
@@ -565,23 +572,23 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	}
 
 	// Verify tracing hook received all expected callbacks.
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
 
-	if !observer.invokeCalled {
-		t.Error("expected observer.OnInvokeStart to be called")
+	if !rec.invokeCalled {
+		t.Error("expected hooks.OnInvokeStart to be called")
 	}
-	if !observer.iterationCalled {
-		t.Error("expected observer.OnIterationStart to be called")
+	if !rec.iterationCalled {
+		t.Error("expected hooks.OnIterationStart to be called")
 	}
-	if !observer.providerCalled {
-		t.Error("expected observer.OnProviderCallStart to be called")
+	if !rec.providerCalled {
+		t.Error("expected hooks.OnProviderCallStart to be called")
 	}
-	if !observer.toolCalled {
-		t.Error("expected observer.OnToolStart to be called")
+	if !rec.toolCalled {
+		t.Error("expected hooks.OnToolStart to be called")
 	}
 
-	// Verify metrics observer also recorded data by checking the registry.
+	// Verify metrics hooks also recorded data by checking the registry.
 	families, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -604,7 +611,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	for _, name := range expectedCounters {
 		f, ok := familyMap[name]
 		if !ok {
-			t.Errorf("metric %q not found — metrics observer may not have fired", name)
+			t.Errorf("metric %q not found — metrics hooks may not have fired", name)
 			continue
 		}
 		var total float64
@@ -614,7 +621,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 			}
 		}
 		if total <= 0 {
-			t.Errorf("metric %q has value %v — expected > 0 (metrics observer should have incremented it)", name, total)
+			t.Errorf("metric %q has value %v — expected > 0 (metrics hooks should have incremented it)", name, total)
 		}
 	}
 
@@ -628,7 +635,7 @@ func TestAgentLoop_BothHooksActive(t *testing.T) {
 	for _, name := range expectedHistograms {
 		f, ok := familyMap[name]
 		if !ok {
-			t.Errorf("histogram %q not found — metrics observer may not have fired", name)
+			t.Errorf("histogram %q not found — metrics hooks may not have fired", name)
 			continue
 		}
 		var totalCount uint64
@@ -650,7 +657,7 @@ func TestToolNameAllowlist(t *testing.T) {
 	h.register()
 
 	for _, name := range []string{"search", "calculator", "mcp_dynamic_1", "mcp_dynamic_2"} {
-		_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+		_ = h.onTool(context.Background(), agent.ToolCallRecord{
 			Phase: agent.End, Name: name, Duration: time.Second,
 		})
 	}
@@ -682,7 +689,7 @@ func TestToolNameNoAllowlistVerbatim(t *testing.T) {
 	h := &prometheusHook{registerer: reg, gatherer: reg}
 	h.register()
 
-	_ = h.ObserveTool(context.Background(), agent.ToolCallRecord{
+	_ = h.onTool(context.Background(), agent.ToolCallRecord{
 		Phase: agent.End, Name: "mcp_dynamic_1", Duration: time.Second,
 	})
 	if got := gatherCounter(reg, "agent_tool_call_total", map[string]string{

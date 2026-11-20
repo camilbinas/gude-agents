@@ -119,7 +119,7 @@ See [Middleware](middleware.md), [RBAC](rbac.md), and [Interrupts](interrupts.md
 
 ## Policy and observability
 
-Constructor choice is independent from policy: `WithToolVisibility` controls which tools the model is offered, RBAC/ABAC controls who may execute them, `WithGuard` enforces runtime business rules, `RequiresApproval` pauses for human authorization, and input/output guardrails control content. Observers and audit record what happened. See [RBAC](rbac.md), [Interrupts](interrupts.md), [Guardrails](guardrails.md), and [Observability](observability.md).
+Constructor choice is independent from policy: `WithToolVisibility` controls which tools the model is offered, RBAC/ABAC controls who may execute them, `WithGuard` enforces runtime business rules, `RequiresApproval` pauses for human authorization, and input/output guardrails control content. Hooks and audit record what happened. See [RBAC](rbac.md), [Interrupts](interrupts.md), [Guardrails](guardrails.md), and [Observability](observability.md).
 
 The runnable constructor workflow is [`examples/tools`](../examples/tools/). MCP, web-search, rich-image, and policy variations are documented in their respective feature pages rather than duplicated as standalone applications.
 

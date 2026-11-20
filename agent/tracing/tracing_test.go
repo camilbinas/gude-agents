@@ -197,7 +197,7 @@ func dummyTool(name, desc string) tool.Tool {
 
 // 7.1 WithTracing option wiring
 
-func TestWithTracing_NonNilProvider_SetsObserver(t *testing.T) {
+func TestWithTracing_NonNilProvider_SetsHooks(t *testing.T) {
 	exp, tp := newTestTracerProvider()
 	defer tp.Shutdown(context.Background())
 

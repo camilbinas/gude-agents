@@ -68,26 +68,19 @@ func TestWithHooks_StartContextReachesEnd(t *testing.T) {
 	}
 }
 
-type orderObserver struct{ log *[]string }
-
-func (o orderObserver) ObserveTool(ctx context.Context, r ToolCallRecord) context.Context {
-	*o.log = append(*o.log, "observer-"+string(r.Phase))
-	return ctx
-}
-
-func TestWithHooks_MixesWithObserversInOrder(t *testing.T) {
+func TestWithHooks_MultipleRunInOrder(t *testing.T) {
 	var log []string
-	a := hooksTestAgent(t,
-		WithHooks(Hooks{Tool: func(ctx context.Context, r ToolCallRecord) context.Context {
-			log = append(log, "hooks-"+string(r.Phase))
+	rec := func(name string) Hooks {
+		return Hooks{Tool: func(ctx context.Context, r ToolCallRecord) context.Context {
+			log = append(log, name+"-"+string(r.Phase))
 			return ctx
-		}}),
-		WithObserver(orderObserver{&log}),
-	)
+		}}
+	}
+	a := hooksTestAgent(t, WithHooks(rec("a")), WithHooks(rec("b")))
 	if _, err := a.Invoke(Background(), "go"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"hooks-start", "observer-start", "observer-end", "hooks-end"}
+	want := []string{"a-start", "b-start", "b-end", "a-end"}
 	if len(log) != len(want) {
 		t.Fatalf("order = %v, want %v", log, want)
 	}
@@ -99,10 +92,10 @@ func TestWithHooks_MixesWithObserversInOrder(t *testing.T) {
 }
 
 func TestWithHooks_ToolLogOnlyWhenSet(t *testing.T) {
-	if (&hooks{observers: []Observer{hooksObserver{Hooks{Tool: func(ctx context.Context, _ ToolCallRecord) context.Context { return ctx }}}}}).hasToolLogObserver() {
+	if (&hooks{hooks: []Hooks{{Tool: func(ctx context.Context, _ ToolCallRecord) context.Context { return ctx }}}}).hasToolLogHook() {
 		t.Fatal("Hooks without ToolLog must not enable tool logging")
 	}
-	if !(&hooks{observers: []Observer{hooksObserver{Hooks{ToolLog: func(ctx context.Context, _ ToolLogRecord) context.Context { return ctx }}}}}).hasToolLogObserver() {
+	if !(&hooks{hooks: []Hooks{{ToolLog: func(ctx context.Context, _ ToolLogRecord) context.Context { return ctx }}}}).hasToolLogHook() {
 		t.Fatal("Hooks with ToolLog must enable tool logging")
 	}
 }

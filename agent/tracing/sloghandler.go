@@ -16,8 +16,8 @@ type slogTraceHandler struct {
 // SlogHandler wraps inner so that every record carrying an active OTel span in
 // its context gains trace_id and span_id attributes, correlating logs with the
 // spans from WithTracing. Use it with logging/slog.WithHandler; the slog
-// observer already logs with the span-carrying context, so pass this handler
-// and register tracing before the slog observer.
+// hook already logs with the span-carrying context, so pass this handler
+// and register tracing before the slog hooks.
 func SlogHandler(inner slog.Handler) slog.Handler {
 	if inner == nil {
 		inner = slog.Default().Handler()

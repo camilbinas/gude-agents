@@ -32,7 +32,7 @@ import (
 
 const instrumentationName = "github.com/camilbinas/gude-agents"
 
-// TracingOption configures the tracing observer behavior.
+// TracingOption configures the tracing hooks behavior.
 type TracingOption func(*otelHook)
 
 // WithContentCapture enables recording of prompts, responses, tool inputs/outputs,
@@ -78,7 +78,7 @@ func WithSpecSpanNames() TracingOption {
 	}
 }
 
-// otelHook implements the tracing-related observer capabilities with
+// otelHook implements the tracing-related hooks with
 // OpenTelemetry spans.
 type otelHook struct {
 	tracer            trace.Tracer
@@ -105,17 +105,6 @@ func newOtelHook(tracer trace.Tracer, opts ...TracingOption) *otelHook {
 	return h
 }
 
-var (
-	_ agent.InvokeObserver       = (*otelHook)(nil)
-	_ agent.IterationObserver    = (*otelHook)(nil)
-	_ agent.ModelObserver        = (*otelHook)(nil)
-	_ agent.ToolObserver         = (*otelHook)(nil)
-	_ agent.GuardrailObserver    = (*otelHook)(nil)
-	_ agent.ConversationObserver = (*otelHook)(nil)
-	_ agent.RetrievalObserver    = (*otelHook)(nil)
-	_ agent.LimitObserver        = (*otelHook)(nil)
-)
-
 // WithTracing returns an agent.Option that enables OpenTelemetry tracing.
 // If tp is nil, the global TracerProvider is used.
 func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
@@ -125,7 +114,7 @@ func WithTracing(tp trace.TracerProvider, opts ...TracingOption) agent.Option {
 		}
 		h := newOtelHook(nil, opts...)
 		h.tracer = tp.Tracer(h.resolvedScopeName())
-		return agent.WithObserver(h)(a)
+		return agent.WithHooks(h.hooks())(a)
 	}
 }
 
@@ -258,8 +247,22 @@ func (h *otelHook) setInferenceAttributes(span trace.Span, cfg *agent.InferenceC
 	}
 }
 
-// ObserveInvoke traces a complete agent invocation.
-func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
+// hooks returns the lifecycle hooks this adapter implements.
+func (h *otelHook) hooks() agent.Hooks {
+	return agent.Hooks{
+		Invoke:       h.onInvoke,
+		Iteration:    h.onIteration,
+		Model:        h.onModel,
+		Tool:         h.onTool,
+		Guardrail:    h.onGuardrail,
+		Conversation: h.onConversation,
+		Retrieval:    h.onRetrieval,
+		Limit:        h.onLimit,
+	}
+}
+
+// onInvoke traces a complete agent invocation.
+func (h *otelHook) onInvoke(ctx context.Context, record agent.InvokeRecord) context.Context {
 	const capability = "invoke"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, h.spanName("agent.invoke", OperationInvokeAgent, record.ModelID), record.Timestamp)
@@ -338,8 +341,8 @@ func (h *otelHook) ObserveInvoke(ctx context.Context, record agent.InvokeRecord)
 	return ctx
 }
 
-// ObserveIteration traces one model/tool loop iteration.
-func (h *otelHook) ObserveIteration(ctx context.Context, record agent.IterationRecord) context.Context {
+// onIteration traces one model/tool loop iteration.
+func (h *otelHook) onIteration(ctx context.Context, record agent.IterationRecord) context.Context {
 	const capability = "iteration"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, "agent.iteration", record.Timestamp)
@@ -363,8 +366,8 @@ func (h *otelHook) ObserveIteration(ctx context.Context, record agent.IterationR
 	return ctx
 }
 
-// ObserveModel traces one logical provider call.
-func (h *otelHook) ObserveModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
+// onModel traces one logical provider call.
+func (h *otelHook) onModel(ctx context.Context, record agent.ModelCallRecord) context.Context {
 	const capability = "model"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, h.spanName("agent.provider.call", OperationChat, record.ModelID), record.Timestamp)
@@ -413,8 +416,8 @@ func (h *otelHook) ObserveModel(ctx context.Context, record agent.ModelCallRecor
 	return ctx
 }
 
-// ObserveTool traces one attempted tool call.
-func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
+// onTool traces one attempted tool call.
+func (h *otelHook) onTool(ctx context.Context, record agent.ToolCallRecord) context.Context {
 	const capability = "tool"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, h.spanName(fmt.Sprintf("agent.tool.%s", record.Name), OperationExecuteTool, record.Name), record.Timestamp)
@@ -457,8 +460,8 @@ func (h *otelHook) ObserveTool(ctx context.Context, record agent.ToolCallRecord)
 	return ctx
 }
 
-// ObserveGuardrail traces one input or output guardrail evaluation.
-func (h *otelHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
+// onGuardrail traces one input or output guardrail evaluation.
+func (h *otelHook) onGuardrail(ctx context.Context, record agent.GuardrailRecord) context.Context {
 	const capability = "guardrail"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, fmt.Sprintf("agent.guardrail.%s", record.Direction), record.Timestamp)
@@ -484,8 +487,8 @@ func (h *otelHook) ObserveGuardrail(ctx context.Context, record agent.GuardrailR
 	return ctx
 }
 
-// ObserveConversation traces one conversation-store operation.
-func (h *otelHook) ObserveConversation(ctx context.Context, record agent.ConversationRecord) context.Context {
+// onConversation traces one conversation-store operation.
+func (h *otelHook) onConversation(ctx context.Context, record agent.ConversationRecord) context.Context {
 	const capability = "conversation"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, fmt.Sprintf("agent.conversation.%s", record.Operation), record.Timestamp)
@@ -505,8 +508,8 @@ func (h *otelHook) ObserveConversation(ctx context.Context, record agent.Convers
 	return ctx
 }
 
-// ObserveRetrieval traces one retrieval operation.
-func (h *otelHook) ObserveRetrieval(ctx context.Context, record agent.RetrievalRecord) context.Context {
+// onRetrieval traces one retrieval operation.
+func (h *otelHook) onRetrieval(ctx context.Context, record agent.RetrievalRecord) context.Context {
 	const capability = "retrieval"
 	if record.Phase == agent.Start {
 		ctx, span := h.startSpan(ctx, capability, "agent.retriever.retrieve", record.Timestamp)
@@ -532,8 +535,8 @@ func (h *otelHook) ObserveRetrieval(ctx context.Context, record agent.RetrievalR
 	return ctx
 }
 
-// ObserveLimit records max-iteration exhaustion on the active invocation span.
-func (h *otelHook) ObserveLimit(ctx context.Context, record agent.LimitRecord) context.Context {
+// onLimit records max-iteration exhaustion on the active invocation span.
+func (h *otelHook) onLimit(ctx context.Context, record agent.LimitRecord) context.Context {
 	if record.Phase != agent.End || record.Name != "max_iterations" {
 		return ctx
 	}
