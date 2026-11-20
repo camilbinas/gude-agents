@@ -131,40 +131,46 @@ func (m *Conversation) insertMessage(ctx context.Context, tx pgx.Tx, id string, 
 func (m *Conversation) Load(ctx context.Context, id string) (agent.ConversationSnapshot, error) {
 	return m.LoadAfter(ctx, id, 0)
 }
+
+// LoadAfter reads the cursor and the message range in one SELECT. PostgreSQL
+// gives a single statement one MVCC snapshot, so a concurrent Append (which
+// commits its messages and metadata update together) is either entirely
+// visible or entirely absent and the messages always match the returned
+// cursor. The LEFT JOIN keeps the metadata row when the requested tail is
+// empty and yields no rows only for a conversation that does not exist.
 func (m *Conversation) LoadAfter(ctx context.Context, id string, after uint64) (agent.ConversationSnapshot, error) {
-	var rev, last uint64
-	err := m.pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s,last_sequence FROM %s WHERE %s=$1`, m.cfg.colRevision, m.cfg.tableName, m.cfg.colID), id).Scan(&rev, &last)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return agent.ConversationSnapshot{Messages: []agent.Message{}}, nil
-	}
+	rows, err := m.pool.Query(ctx, fmt.Sprintf(
+		`SELECT c.%s, c.last_sequence, m.sequence, m.message
+		 FROM %s AS c LEFT JOIN %s AS m ON m.conversation_id = c.%s AND m.sequence > $2
+		 WHERE c.%s = $1 ORDER BY m.sequence`,
+		m.cfg.colRevision, m.cfg.tableName, m.cfg.messageTable, m.cfg.colID, m.cfg.colID), id, after)
 	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: load metadata: %w", err)
-	}
-	rows, err := m.pool.Query(ctx, fmt.Sprintf(`SELECT sequence,message FROM %s WHERE conversation_id=$1 AND sequence>$2 ORDER BY sequence`, m.cfg.messageTable), id, after)
-	if err != nil {
-		return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: load range: %w", err)
+		return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: load: %w", err)
 	}
 	defer rows.Close()
-	msgs := make([]agent.Message, 0)
+	snapshot := agent.ConversationSnapshot{Messages: make([]agent.Message, 0)}
 	for rows.Next() {
-		var seq uint64
+		var seq *int64
 		var raw []byte
-		if err := rows.Scan(&seq, &raw); err != nil {
+		if err := rows.Scan(&snapshot.Revision, &snapshot.LastSequence, &seq, &raw); err != nil {
 			return agent.ConversationSnapshot{}, err
+		}
+		if seq == nil {
+			continue // metadata row without messages in the requested range
 		}
 		one, err := conversation.UnmarshalMessages(raw)
 		if err != nil || len(one) != 1 {
 			if err == nil {
 				err = errors.New("expected one message")
 			}
-			return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: decode message %d: %w", seq, err)
+			return agent.ConversationSnapshot{}, fmt.Errorf("postgres conversation: decode message %d: %w", *seq, err)
 		}
-		msgs = append(msgs, one[0])
+		snapshot.Messages = append(snapshot.Messages, one[0])
 	}
 	if err := rows.Err(); err != nil {
 		return agent.ConversationSnapshot{}, err
 	}
-	return agent.ConversationSnapshot{Messages: msgs, Revision: rev, LastSequence: last}, nil
+	return snapshot, nil
 }
 
 func (m *Conversation) Append(ctx context.Context, id string, msgs []agent.Message, expected uint64) (agent.ConversationCursor, error) {
