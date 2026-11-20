@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/camilbinas/gude-agents/agent/tool"
 )
@@ -288,6 +289,11 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 	}
 	handler := ChainMiddleware(inner, a.middlewares...)
 	handlerContext := toolC.withContext(tool.WithExecutionMetadata(toolC.Context, key, recoveryReplay))
+	if d := a.toolTimeoutFor(tc.Name); d > 0 {
+		tctx, cancelTimeout := context.WithTimeout(handlerContext.Context, d)
+		defer cancelTimeout()
+		handlerContext = handlerContext.withContext(tctx)
+	}
 	result, err := callHandlerIsolated(handler, handlerContext, ToolCall{ID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
 	dur := time.Since(begin)
 
@@ -306,13 +312,14 @@ func (r *run) executeCall(parent *Context, tc tool.Call, t tool.Tool, found bool
 			return out
 		}
 		tf.finish(err, "", true, true, "")
-		out.result.Content = (&ToolError{ToolName: tc.Name, Cause: err}).Error()
+		out.result.Content = a.limitToolResult((&ToolError{ToolName: tc.Name, Cause: err}).Error())
 		out.result.IsError = true
 		emitEnd("", &ErrorInfo{Code: ErrorCodeTool, Message: out.result.Content}, dur)
 		return out
 	}
 
 	// 8. Hook completion and result conversion.
+	result.Text = a.limitToolResult(result.Text)
 	tf.finish(nil, result.Text, result.IsError, true, "")
 	out.result.Content = result.Text
 	out.result.Images = append(out.result.Images, result.Images...)
@@ -340,4 +347,26 @@ func callHandlerIsolated(h ToolHandlerFunc, ctx context.Context, call ToolCall) 
 		}
 	}()
 	return h(ctx, call)
+}
+
+// toolTimeoutFor returns the handler timeout for the named tool, 0 for none.
+func (a *Runtime) toolTimeoutFor(name string) time.Duration {
+	if d, ok := a.toolTimeouts[name]; ok {
+		return d
+	}
+	return a.toolTimeout
+}
+
+// limitToolResult truncates s to WithMaxToolResultBytes at a UTF-8 boundary
+// and appends a marker saying how much was omitted.
+func (a *Runtime) limitToolResult(s string) string {
+	n := a.maxToolResultBytes
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\n[truncated: %d bytes omitted]", s[:cut], len(s)-cut)
 }

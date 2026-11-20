@@ -53,6 +53,12 @@ type Runtime struct {
 
 	providerTimeout time.Duration
 
+	// toolTimeout bounds each tool handler call; toolTimeouts overrides it per
+	// tool name. maxToolResultBytes truncates result text. Zero disables each.
+	toolTimeout        time.Duration
+	toolTimeouts       map[string]time.Duration
+	maxToolResultBytes int
+
 	hooks []Hooks
 
 	// random is the entropy source for execution IDs. Nil means

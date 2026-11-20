@@ -28,7 +28,7 @@ When a ConversationStore is configured, every invocation requires a non-empty Co
 
 `agent.RAGAgent(prov, instructions, retriever, opts...)` is the retrieval-specific constructor: it requires a non-nil retriever (`agent.ErrRetrieverRequired` otherwise) and is otherwise identical to `agent.New` with `agent.WithRetriever(retriever)`. See [RAG](rag.md).
 
-Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecution`, `WithMaxConcurrentTools`, `WithProviderTimeout`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithStructuredOutputRetries`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithRateLimitKey`, `WithMiddleware`, guardrails, `WithToolVisibility`, and `WithHooks`. The iteration default is 10.
+Common options include `WithToolRegistry`, `WithMaxIterations`, `WithToolExecution`, `WithMaxConcurrentTools`, `WithProviderTimeout`, `WithToolTimeout`, `WithToolTimeoutFor`, `WithMaxToolResultBytes`, `WithMaxOutputTokens`, `WithTemperature`, `WithTopP`, `WithTopK`, `WithStopSequences`, `WithTokenBudget`, `WithStructuredOutputRetries`, `WithRetriever`, `WithContextFormatter`, `WithNormalization`, `WithoutNormalization`, `WithExecutionStore`, `WithRateLimiter`, `WithRateLimitKey`, `WithMiddleware`, guardrails, `WithToolVisibility`, and `WithHooks`. The iteration default is 10.
 
 ## Inspecting a Runtime
 
