@@ -598,63 +598,6 @@ func escapeRedisSearchTerm(s string) string {
 	return result
 }
 
-// parseSearchKeys extracts document keys from an FT.SEARCH NOCONTENT response.
-// Handles both RESP2 (flat array) and RESP3 (map) formats.
-func (s *Store) parseSearchKeys(res interface{}) []string {
-	switch v := res.(type) {
-	case map[interface{}]interface{}:
-		return s.parseSearchKeysRESP3(v)
-	case []interface{}:
-		return s.parseSearchKeysRESP2(v)
-	default:
-		return nil
-	}
-}
-
-// parseSearchKeysRESP3 extracts keys from a RESP3 map response.
-// Format: {"total_results": N, "results": [{"id": "key1"}, {"id": "key2"}, ...]}
-func (s *Store) parseSearchKeysRESP3(m map[interface{}]interface{}) []string {
-	resultsRaw, ok := m["results"]
-	if !ok {
-		return nil
-	}
-	items, ok := resultsRaw.([]interface{})
-	if !ok || len(items) == 0 {
-		return nil
-	}
-
-	var keys []string
-	for _, item := range items {
-		entry, ok := item.(map[interface{}]interface{})
-		if !ok {
-			continue
-		}
-		key, _ := entry["id"].(string)
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	return keys
-}
-
-// parseSearchKeysRESP2 extracts keys from a RESP2 flat array response.
-// NOCONTENT format: [total, key1, key2, ...]
-func (s *Store) parseSearchKeysRESP2(results []interface{}) []string {
-	if len(results) < 2 {
-		return nil
-	}
-
-	var keys []string
-	// With NOCONTENT, the format is [total, key1, key2, ...] (no field arrays).
-	for i := 1; i < len(results); i++ {
-		key, ok := results[i].(string)
-		if ok && key != "" {
-			keys = append(keys, key)
-		}
-	}
-	return keys
-}
-
 // Delete removes documents by their logical IDs.
 func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
