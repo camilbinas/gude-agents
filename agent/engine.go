@@ -579,6 +579,9 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			provF.finish(err, TokenUsage{}, 0, "")
 			r.emitLifecycle(EventModelEnd, LifecycleEvent{Iteration: iteration, StopReason: StopReasonError, Duration: time.Since(modelStart)})
 			endIteration(0, false, err)
+			if errors.Is(err, ErrRateLimitExceeded) {
+				h.onLimit(c, LimitRateLimit, 0, err)
+			}
 			if cerr := c.Err(); cerr != nil && errors.Is(err, cerr) {
 				return Result{}, cerr
 			}
@@ -601,6 +604,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 			return Result{}, err
 		}
 		if a.tokenBudget > 0 && cumulative.Total() > a.tokenBudget {
+			h.onLimit(c, LimitTokenBudget, a.tokenBudget, ErrTokenBudgetExceeded)
 			endIteration(0, false, ErrTokenBudgetExceeded)
 			return Result{}, ErrTokenBudgetExceeded
 		}
@@ -697,7 +701,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 	}
 
 	limitErr := &MaxIterationsError{Limit: a.maxIterations}
-	h.onLimit(c, "max_iterations", a.maxIterations, limitErr)
+	h.onLimit(c, LimitMaxIterations, a.maxIterations, limitErr)
 	r.emitLifecycle(EventMaxIterations, LifecycleEvent{Limit: a.maxIterations})
 	return Result{}, limitErr
 }
@@ -753,12 +757,28 @@ func (r *run) persistExecution(change func(*Execution) error) error {
 	if err := change(&next); err != nil {
 		return err
 	}
-	updated, err := r.a.executionStore.Save(r.c, next, next.Version)
+	// Detached and bounded: a transition records work that already happened
+	// (a claimed handler boundary, committed results), so it must not be lost
+	// because the invocation context was cancelled in the meantime.
+	ctx, cancel := detachedContext(r.c)
+	defer cancel()
+	updated, err := r.a.executionStore.Save(ctx, next, next.Version)
 	if err != nil {
 		return err
 	}
 	r.execution = &updated
 	return nil
+}
+
+// detachedPersistTimeout bounds persistence that must outlive cancellation of
+// the invocation context.
+const detachedPersistTimeout = 5 * time.Second
+
+// detachedContext returns a context that keeps c's values but not its
+// cancellation, bounded by detachedPersistTimeout.
+func detachedContext(c *Context) (*Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Context), detachedPersistTimeout)
+	return c.withContext(ctx), cancel
 }
 
 func (r *run) persistRuntimeProgress() error {
@@ -974,7 +994,9 @@ func (r *run) commitToolResults(messages []Message, outcomes []toolOutcome) erro
 	if len(completed) == 0 {
 		return nil
 	}
-	if err := r.saveConversation(messages, r.c.rt.totalUsage()); err != nil {
+	// Results of handlers that already finished are committed even when the
+	// invocation was cancelled meanwhile; dropping them would strand the batch.
+	if err := r.saveConversationWith(r.c, true, messages, r.c.rt.totalUsage()); err != nil {
 		return err
 	}
 	return r.removeToolCalls(completed)
@@ -1017,7 +1039,7 @@ func (r *run) removeToolCalls(completed map[string]struct{}) error {
 // without replaying the model. It returns the
 // updated execution. An unsafe call found InFlight without a canonical result
 // returns ToolExecutionUncertainError before any handler runs.
-func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution, error) {
+func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (_ Execution, retErr error) {
 	if ctx == nil {
 		return Execution{}, ErrNilContext
 	}
@@ -1060,7 +1082,12 @@ func (a *Runtime) RecoverExecution(ctx *Context, executionID string) (Execution,
 	base := ctx.Clone()
 	base.WithConversationID(execution.ConversationID).WithExecutionID(execution.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
-	r := &run{a: a, c: base, h: a.dispatcher(base), execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
+	// Recovery runs tool hooks, so it gets the same Invoke Start/End framing
+	// as any other invocation.
+	hs := a.dispatcher(base)
+	base, invoke := hs.onInvokeStart(base, a.invokeRecord(execution.ConversationID, "", base))
+	defer func() { invoke.finish(Result{ExecutionID: execution.ID}, retErr) }()
+	r := &run{a: a, c: base, h: hs, execution: &execution, executionDurable: true, convID: execution.ConversationID, iteration: execution.ToolBatch.Iteration, recovering: true}
 
 	after := execution.LastSequence
 	if execution.ToolBatch.ToolUseLastSequence > 0 {
@@ -1431,7 +1458,7 @@ func (r *run) pauseRecoveredExecution(in *Interrupt) error {
 // Experimental: this manual path and the ToolResolution* API may change in a
 // minor release; prefer RecoverExecution and use this only for a non-replay-safe
 // call whose outcome a human has confirmed against the external system.
-func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (Execution, error) {
+func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, executionVersion uint64, callID string, resolution ToolResolution) (_ Execution, retErr error) {
 	if a.executionStore == nil || a.conversation == nil {
 		return Execution{}, ErrNoExecutionStore
 	}
@@ -1477,7 +1504,10 @@ func (a *Runtime) ReconcileToolExecution(ctx *Context, executionID string, execu
 	}
 	base := ctx.Clone().WithConversationID(claimed.ConversationID).WithExecutionID(claimed.ID)
 	base = base.forInvocation(base.Context, &invocationRuntime{})
-	r := &run{a: a, c: base, h: a.dispatcher(base), execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
+	hs := a.dispatcher(base)
+	base, invoke := hs.onInvokeStart(base, a.invokeRecord(claimed.ConversationID, "", base))
+	defer func() { invoke.finish(Result{ExecutionID: claimed.ID}, retErr) }()
+	r := &run{a: a, c: base, h: hs, execution: &claimed, executionDurable: true, convID: claimed.ConversationID, iteration: claimed.ToolBatch.Iteration, recovering: true}
 	if claimed.ToolBatch.ToolUseLastSequence == 0 {
 		return cloneExecution(claimed), recoveryUnsupported("reconcile has no persisted ToolUse cursor to load results after")
 	}
@@ -1990,7 +2020,18 @@ func stripToolBlocks(msgs []Message) []Message {
 // log. Append is committed when it returns, so a nil error means the delta is
 // visible to subsequent reads of the same store.
 func (r *run) saveConversation(messages []Message, cumulative TokenUsage) error {
-	a, c, h := r.a, r.c, &r.h
+	return r.saveConversationWith(r.c, false, messages, cumulative)
+}
+
+// saveConversationWith is saveConversation with an explicit parent context;
+// detached runs the append on a bounded context that ignores cancellation.
+func (r *run) saveConversationWith(c *Context, detached bool, messages []Message, cumulative TokenUsage) error {
+	a, h := r.a, &r.h
+	if detached {
+		var cancel context.CancelFunc
+		c, cancel = detachedContext(c)
+		defer cancel()
+	}
 	if !r.hasConversation() {
 		return nil
 	}

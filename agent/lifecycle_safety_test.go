@@ -87,3 +87,66 @@ func TestConversationLockWaitHonorsContext(t *testing.T) {
 		t.Fatalf("entry leaked: %d", locks.locksLen())
 	}
 }
+
+func TestToolResultsCommittedAfterCancel(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	slow := tool.NewRaw("slow", "slow", nil, func(context.Context, json.RawMessage) (string, error) {
+		cancel() // the caller gives up while the handler finishes
+		return "finished", nil
+	})
+	provider := &approvalBatchProvider{responses: []*ModelResponse{
+		{ToolCalls: batchOf("slow")}, {Text: "done"},
+	}}
+	conversations, executions := newTestMemoryStore(), newTestExecutionStore()
+	a, err := New(provider, "sys", WithTools(slow),
+		WithConversationStore(ctxStrictConversation{conversations}),
+		WithExecutionStore(ctxStrictExecution{executions}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Invoke(NewContext(parent).WithConversationID("cancel-commit"), "go")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	snap, err := conversations.Load(context.Background(), "cancel-commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range snap.Messages {
+		for _, b := range m.Content {
+			if r, ok := b.(ToolResultBlock); ok && r.Content == "finished" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("finished tool result was not committed: %+v", snap.Messages)
+	}
+	for _, e := range executions.items {
+		if e.ToolBatch != nil {
+			t.Fatalf("tool batch still active after commit: %+v", e.ToolBatch)
+		}
+	}
+}
+
+// ctxStrictConversation and ctxStrictExecution reject writes on a cancelled
+// context, like a real network-backed store would.
+type ctxStrictConversation struct{ *testMemoryStore }
+
+func (s ctxStrictConversation) Append(ctx context.Context, id string, m []Message, rev uint64) (ConversationCursor, error) {
+	if err := ctx.Err(); err != nil {
+		return ConversationCursor{}, err
+	}
+	return s.testMemoryStore.Append(ctx, id, m, rev)
+}
+
+type ctxStrictExecution struct{ *testExecutionStore }
+
+func (s ctxStrictExecution) Save(ctx context.Context, e Execution, v uint64) (Execution, error) {
+	if err := ctx.Err(); err != nil {
+		return Execution{}, err
+	}
+	return s.testExecutionStore.Save(ctx, e, v)
+}
