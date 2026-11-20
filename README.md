@@ -58,7 +58,6 @@ only on what it uses. All modules are released together at one version.
 | Providers | `.../agent/provider/{anthropic,bedrock,openai,ollama,vllm,fallback}` | Model backends; `fallback` chains them |
 | Conversation stores | `.../agent/conversation/{postgres,redis,sqlite}` | Durable conversation history (`conversation.NewInMemory` is in the core module) |
 | Execution stores | `.../agent/execution`, `.../agent/execution/{postgres,redis,dynamodb}` | Paused-run storage for interrupts |
-| Long-term memory | `.../agent/memory/{postgres,redis}` | Identity-scoped typed memory |
 | RAG | `.../agent/rag/{bedrock,openai,postgres,redis}`, `.../agent/rag/document/pdf` | Retrieval and document ingestion |
 | Rate limiting | `.../agent/ratelimit/redis` | Distributed rate limiting |
 | MCP | `.../agent/mcp` | Model Context Protocol tool discovery |
@@ -72,7 +71,7 @@ Full documentation lives in [`docs/`](docs/README.md):
 - [Getting started](docs/getting-started.md) — construct, invoke, stream, and resume an agent.
 - [Agent API](docs/agent-api.md), [Invocation context](docs/invocation-context.md), [Decision guide](docs/decision-guide.md).
 - [Tools](docs/tools.md), [Middleware](docs/middleware.md), [Interrupts](docs/interrupts.md), [Interception](docs/interception.md).
-- [Conversation persistence](docs/conversation.md), [RAG](docs/rag.md), [Memory](docs/memory.md).
+- [Conversation persistence](docs/conversation.md), [RAG](docs/rag.md).
 - [Guardrails](docs/guardrails.md), [RBAC](docs/rbac.md), [Structured output](docs/structured-output.md), [Multi-agent](docs/multi-agent.md).
 - [Providers](docs/providers.md), [HTTP services](docs/http.md), [MCP](docs/mcp.md), [Observability](docs/observability.md).
 - [Support matrix](docs/support-matrix.md).

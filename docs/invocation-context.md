@@ -43,7 +43,7 @@ Cancellation, deadlines, tracing values, and ordinary parent-context values rema
 
 These fields are intentionally distinct:
 
-- **Identity** is the stable subject used to partition long-term memory.
+- **Identity** is the stable subject of the invocation, for application-owned per-user data.
 - **Principal** is authorization data such as subject, roles, and attributes.
 - **Scope** is a named, strict partition key. `Scope` and `ScopeFrom` return `(string, bool)` and never substitute identity when a scope is absent.
 - **ConversationID** selects persisted conversational history. It is supplied only by the invocation context, never by the store or agent option. When the Agent has a ConversationStore, every invocation requires a non-empty ConversationID (`agent.ErrConversationIDRequired` otherwise). Stateless Agents should be constructed without a ConversationStore.
