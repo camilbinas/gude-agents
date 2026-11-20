@@ -622,8 +622,13 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 					endIteration(0, false, err)
 					return Result{}, err
 				}
+				// Signed thinking must lead the assistant turn, so it rides with
+				// the text turn when there is one, otherwise with the tool use.
+				thinking := resp.Thinking
 				if resp.Text != "" {
-					messages.appendCanonical(Message{Role: RoleAssistant, Content: []ContentBlock{TextBlock{Text: resp.Text}}})
+					content := append(resp.ThinkingContent(), TextBlock{Text: resp.Text})
+					thinking = nil
+					messages.appendCanonical(Message{Role: RoleAssistant, Content: content})
 					if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 						endIteration(0, false, err)
 						return Result{}, err
@@ -633,7 +638,7 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 					endIteration(0, false, err)
 					return Result{}, err
 				}
-				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls})
+				assistant = toolUseMessage(&ModelResponse{ToolCalls: resp.ToolCalls, Thinking: thinking})
 				messages.appendCanonical(assistant)
 				if err := r.saveConversation(messages.canonical, c.rt.totalUsage()); err != nil {
 					endIteration(0, false, err)
@@ -707,7 +712,9 @@ func (r *run) loopTurn(messages turnMessages, inferenceConfig *InferenceConfig) 
 }
 
 func toolUseMessage(resp *ModelResponse) Message {
-	content := make([]ContentBlock, 0, len(resp.ToolCalls)+1)
+	thinking := resp.ThinkingContent()
+	content := make([]ContentBlock, 0, len(thinking)+len(resp.ToolCalls)+1)
+	content = append(content, thinking...)
 	if resp.Text != "" {
 		content = append(content, TextBlock{Text: resp.Text})
 	}
@@ -718,11 +725,10 @@ func toolUseMessage(resp *ModelResponse) Message {
 }
 
 func toolUseMessageWithWidgets(resp *ModelResponse, outcomes []toolOutcome) Message {
-	message := toolUseMessage(resp)
-	content := make([]ContentBlock, 0, len(message.Content))
+	content := append(make([]ContentBlock, 0, len(resp.ToolCalls)*2+1), resp.ThinkingContent()...)
 	for i, tc := range resp.ToolCalls {
 		if i == 0 && resp.Text != "" {
-			content = append(content, message.Content[0])
+			content = append(content, TextBlock{Text: resp.Text})
 		}
 		content = append(content, ToolUseBlock{ToolUseID: tc.ToolUseID, Name: tc.Name, Input: cloneRaw(tc.Input)})
 		for _, widget := range outcomes[i].widgets {
