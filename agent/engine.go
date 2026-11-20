@@ -155,6 +155,9 @@ type run struct {
 	recovering       bool
 	iteration        int
 	persistedCount   int // canonical messages present when this run loaded history
+	// unclaimedResume is true while a resumed execution is still Paused in the
+	// store: claimResume has not yet moved it to Running.
+	unclaimedResume bool
 }
 
 func (r *run) detailed() bool { return r.c.cfg.detailedEvents }
@@ -211,15 +214,12 @@ func (a *Runtime) execute(c *Context, spec invocationSpec) (Result, error) {
 		if err := validateResume(in, spec.response); err != nil {
 			return Result{}, err
 		}
-		execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
-		claimed, err := a.executionStore.Save(c, execution, execution.Version)
-		if err != nil {
-			return Result{}, fmt.Errorf("claim execution for resume: %w", err)
-		}
-		in.ExecutionVersion = claimed.Version
+		// The Paused -> Running claim is deferred until the pre-work checks of
+		// resumeTurn pass (see run.claimResume), so a transient failure before
+		// any work leaves the pause and the human answer intact.
 		canonical = in
 		c.cfg.executionResume = true
-		c.cfg.executionVersion = claimed.Version
+		c.cfg.executionVersion = execution.Version
 		spec.resume = canonical
 		// Resume always uses the canonical paused conversation identity before
 		// lifecycle hooks, tools, guardrails, rate limiting, and provider work.
@@ -247,32 +247,40 @@ func (a *Runtime) lifecycle(c *Context, convID, userMessage string, body func(r 
 	h := a.dispatcher(c)
 	c, invoke := h.onInvokeStart(c, a.invokeRecord(convID, userMessage, c))
 
-	if c.cfg.executionID == "" {
-		if c.cfg.executionIDSet {
-			return Result{}, fmt.Errorf("execution ID must not be empty")
-		}
-		id, err := newExecutionID(a.random)
-		if err != nil {
-			return Result{}, err
-		}
-		c.cfg.executionID = id
-	}
 	r := &run{a: a, c: c, h: h, convID: convID}
 	res, err := func() (Result, error) {
+		// Everything after Invoke Start runs inside this closure so that
+		// Invoke End always fires, including for early failures.
+		if c.cfg.executionID == "" {
+			if c.cfg.executionIDSet {
+				return Result{}, fmt.Errorf("execution ID must not be empty")
+			}
+			id, err := newExecutionID(a.random)
+			if err != nil {
+				return Result{}, err
+			}
+			c.cfg.executionID = id
+		}
 		if err := a.requireConversationID(convID); err != nil {
 			return Result{}, err
 		}
 		if a.conversation != nil && convID != "" {
-			h := a.conversationLocks.acquire(convID)
+			h, err := a.conversationLocks.acquireCtx(c, convID)
+			if err != nil {
+				return Result{}, err
+			}
 			defer h.release()
 		}
 		if a.executionStore != nil {
 			if c.cfg.executionResume {
 				execution, err := a.executionStore.Load(c, c.cfg.executionID)
 				if err != nil {
-					return Result{}, fmt.Errorf("load running execution: %w", err)
+					return Result{}, fmt.Errorf("load paused execution: %w", err)
 				}
-				r.execution, r.executionDurable = &execution, true
+				if execution.Status != ExecutionPaused || execution.Pause == nil || execution.Version != c.cfg.executionVersion {
+					return Result{}, fmt.Errorf("resume execution %q: %w", execution.ID, ErrExecutionConflict)
+				}
+				r.execution, r.executionDurable, r.unclaimedResume = &execution, true, true
 				r.iteration = execution.Iteration
 				c.rt.seedUsage(execution.Usage)
 			} else {
@@ -310,6 +318,11 @@ func (r *run) finalizeExecution(res Result, runErr error) error {
 	// it after an interrupted persistence path or an uncertain side effect:
 	// RecoverExecution/ReconcileToolExecution must retain ownership of it.
 	if !r.executionDurable || r.execution == nil || res.StopReason == StopInterrupt || r.execution.ToolBatch != nil {
+		return nil
+	}
+	if r.unclaimedResume {
+		// The resume failed before it claimed the pause. The execution is still
+		// Paused with its payload, so the caller can retry the same Resume.
 		return nil
 	}
 	execution := *r.execution
@@ -1694,6 +1707,26 @@ func (r *run) resolveTypedAnswer(c *Context, in *Interrupt, resp ResumeResponse)
 	return t.ResumeHandler()(c, resp.typed)
 }
 
+// claimResume atomically moves a paused execution to Running. It runs after
+// every check that can fail without side effects, so a transient error does
+// not consume the pause. It is a no-op when the run is not a resume or the
+// claim already happened.
+func (r *run) claimResume(in *Interrupt) error {
+	if !r.unclaimedResume {
+		return nil
+	}
+	execution := cloneExecution(*r.execution)
+	execution.Status, execution.Phase, execution.Pause = ExecutionRunning, ExecutionPhaseTools, nil
+	claimed, err := r.a.executionStore.Save(r.c, execution, execution.Version)
+	if err != nil {
+		return fmt.Errorf("claim execution for resume: %w", err)
+	}
+	r.execution, r.unclaimedResume = &claimed, false
+	in.ExecutionVersion = claimed.Version
+	r.c.cfg.executionVersion = claimed.Version
+	return nil
+}
+
 // resumeTurn continues an interrupted invocation (response already validated).
 func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 	a, c := r.a, r.c
@@ -1749,6 +1782,9 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 				return Result{}, &GuardrailError{Direction: "input", Cause: err}
 			}
 		}
+		if err := r.claimResume(in); err != nil {
+			return Result{}, err
+		}
 		messages.appendCanonical(Message{Role: RoleUser, Content: []ContentBlock{TextBlock{Text: msg}}})
 
 	case InterruptNested:
@@ -1758,13 +1794,16 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		if in.Nested.CallID == "" {
 			return Result{}, fmt.Errorf("resume nested interrupt has no call ID")
 		}
+		calls, err := nestedResumeBatch(messages.canonical, in.Nested.CallID)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := r.claimResume(in); err != nil {
+			return Result{}, err
+		}
 		// Reset the paused AgentAsTool call from InFlight back to Ready so the
 		// durable boundary can be re-claimed cleanly on this resume.
 		if err := r.readyNestedCall(in.Nested.CallID); err != nil {
-			return Result{}, err
-		}
-		calls, err := nestedResumeBatch(messages.canonical, in.Nested.CallID)
-		if err != nil {
 			return Result{}, err
 		}
 		// Route this resume into the one AgentAsTool call so its handler resumes
@@ -1784,11 +1823,14 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		}
 
 	case InterruptApproval:
-		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
-			return Result{}, err
-		}
 		calls, fallbackDecisions, err := approvalResumeBatch(messages.canonical, in.Approval, resp)
 		if err != nil {
+			return Result{}, err
+		}
+		if err := r.claimResume(in); err != nil {
+			return Result{}, err
+		}
+		if err := r.persistApprovalDecisions(in.Approval, resp); err != nil {
 			return Result{}, err
 		}
 		decisions := r.persistedApprovalDecisions(calls)
@@ -1808,6 +1850,9 @@ func (r *run) resumeTurn(in *Interrupt, resp ResumeResponse) (Result, error) {
 		}
 	}
 
+	if err := r.claimResume(in); err != nil {
+		return Result{}, err
+	}
 	return r.loopTurn(messages, cfg)
 }
 
