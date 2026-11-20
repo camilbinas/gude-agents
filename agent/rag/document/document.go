@@ -79,6 +79,32 @@ type loadConfig struct {
 	extensions []string // if set, only load files with these extensions
 	parsers    map[string]Parser
 	maxDepth   int // 0 = unlimited (default); 1 = flat (no subdirectories); n = n levels deep
+	maxBytes   int64
+}
+
+// DefaultMaxFileBytes is the default cap on the size of a loaded file and on
+// the decompressed size of a DOCX body.
+const DefaultMaxFileBytes int64 = 50 << 20
+
+type limitKey struct{}
+
+// fileLimit returns the byte cap carried by ctx, or the default.
+func fileLimit(ctx context.Context) int64 {
+	if n, ok := ctx.Value(limitKey{}).(int64); ok && n > 0 {
+		return n
+	}
+	return DefaultMaxFileBytes
+}
+
+// WithMaxFileBytes caps the size of each loaded file (and the decompressed
+// size of DOCX content). Larger files make LoadFiles fail and are skipped by
+// LoadDir. n <= 0 keeps the default of DefaultMaxFileBytes (50MiB).
+func WithMaxFileBytes(n int64) LoadOption {
+	return func(c *loadConfig) {
+		if n > 0 {
+			c.maxBytes = n
+		}
+	}
 }
 
 // WithExtensions filters files to only those with the given extensions.
@@ -109,7 +135,7 @@ func WithMaxDepth(depth int) LoadOption {
 }
 
 func newLoadConfig(opts []LoadOption) *loadConfig {
-	cfg := &loadConfig{parsers: make(map[string]Parser)}
+	cfg := &loadConfig{parsers: make(map[string]Parser), maxBytes: DefaultMaxFileBytes}
 	for _, opt := range opts {
 		opt(cfg)
 	}
@@ -154,7 +180,15 @@ func LoadFiles(ctx context.Context, paths []string, opts ...LoadOption) (texts [
 			return nil, nil, fmt.Errorf("document: unsupported file type %q for %s (register a parser with RegisterParser)", ext, path)
 		}
 
-		text, err := parser.Parse(ctx, path)
+		fi, err := os.Stat(path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("document: stat %s: %w", path, err)
+		}
+		if fi.Size() > cfg.maxBytes {
+			return nil, nil, fmt.Errorf("document: %s is %d bytes, exceeds limit of %d (see WithMaxFileBytes)", path, fi.Size(), cfg.maxBytes)
+		}
+
+		text, err := parser.Parse(context.WithValue(ctx, limitKey{}, cfg.maxBytes), path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("document: parse %s: %w", path, err)
 		}
@@ -173,6 +207,9 @@ func LoadFiles(ctx context.Context, paths []string, opts ...LoadOption) (texts [
 }
 
 // LoadDir walks a directory and extracts text from all supported files.
+// Symbolic links (to files or directories) are not followed and non-regular
+// files are skipped, so a link inside the tree cannot pull in content from
+// outside it. Files larger than the WithMaxFileBytes limit are skipped.
 // Use WithExtensions to filter by file type and WithMaxDepth to limit recursion.
 func LoadDir(ctx context.Context, dir string, opts ...LoadOption) (texts []string, metadata []map[string]string, err error) {
 	cfg := newLoadConfig(opts)
@@ -194,6 +231,10 @@ func LoadDir(ctx context.Context, dir string, opts ...LoadOption) (texts []strin
 					return filepath.SkipDir
 				}
 			}
+			return nil
+		}
+		// Only regular files: skips symlinks (Walk uses Lstat), devices, FIFOs.
+		if !info.Mode().IsRegular() || info.Size() > cfg.maxBytes {
 			return nil
 		}
 		// Check file depth (file's parent depth must be within limit).
@@ -221,10 +262,19 @@ func LoadDir(ctx context.Context, dir string, opts ...LoadOption) (texts []strin
 }
 
 // parseText reads a file as plain text.
-func parseText(_ context.Context, path string) (string, error) {
-	data, err := os.ReadFile(path)
+func parseText(ctx context.Context, path string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
+	}
+	defer f.Close()
+	limit := fileLimit(ctx)
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > limit {
+		return "", fmt.Errorf("file exceeds limit of %d bytes", limit)
 	}
 	return string(data), nil
 }
@@ -263,7 +313,7 @@ func normalizeWhitespace(s string) string {
 }
 
 // parseDocx extracts text from a .docx file by reading the XML content.
-func parseDocx(_ context.Context, path string) (string, error) {
+func parseDocx(ctx context.Context, path string) (string, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return "", fmt.Errorf("open docx: %w", err)
@@ -272,12 +322,22 @@ func parseDocx(_ context.Context, path string) (string, error) {
 
 	for _, f := range r.File {
 		if f.Name == "word/document.xml" {
+			limit := fileLimit(ctx)
+			if f.UncompressedSize64 > uint64(limit) {
+				return "", fmt.Errorf("document.xml decompresses to %d bytes, exceeds limit of %d", f.UncompressedSize64, limit)
+			}
 			rc, err := f.Open()
 			if err != nil {
 				return "", fmt.Errorf("open document.xml: %w", err)
 			}
 			defer rc.Close()
-			return extractDocxText(rc)
+			// The declared size can lie; enforce the cap while reading.
+			lr := &io.LimitedReader{R: rc, N: limit + 1}
+			text, err := extractDocxText(lr)
+			if lr.N <= 0 {
+				return "", fmt.Errorf("document.xml exceeds limit of %d bytes", limit)
+			}
+			return text, err
 		}
 	}
 
