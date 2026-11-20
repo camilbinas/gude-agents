@@ -484,3 +484,40 @@ func TestParseRESP2_DecodesValidMetadata(t *testing.T) {
 		t.Fatalf("expected score 0.75 (1-0.25), got %v", got)
 	}
 }
+
+func TestMetadataMatchesIsExact(t *testing.T) {
+	filter := map[string]string{"source": "a b", "lang": "go"}
+	cases := []struct {
+		meta string
+		want bool
+	}{
+		{`{"source":"a b","lang":"go"}`, true},
+		{`{"source":"a b","lang":"go","x":"y"}`, true},
+		{`{"source":"a","lang":"go"}`, false},
+		{`{"source":"a b c","lang":"go"}`, false},
+		{`{"source":"a b"}`, false},
+		{`{"note":"\"source\":\"a b\" lang go"}`, false},
+		{``, false},
+		{`not json`, false},
+	}
+	for _, c := range cases {
+		if got := metadataMatches(c.meta, filter); got != c.want {
+			t.Errorf("metadataMatches(%q) = %v, want %v", c.meta, got, c.want)
+		}
+	}
+}
+
+func TestParseSearchMetadata(t *testing.T) {
+	resp2 := []interface{}{int64(2), "i:1", []interface{}{"metadata", `{"a":"b"}`}, "i:2", []interface{}{"metadata", `{}`}}
+	hits := parseSearchMetadata(resp2)
+	if len(hits) != 2 || hits[0].key != "i:1" || hits[0].metadata != `{"a":"b"}` || hits[1].key != "i:2" {
+		t.Fatalf("resp2 hits = %+v", hits)
+	}
+	resp3 := map[interface{}]interface{}{"results": []interface{}{
+		map[interface{}]interface{}{"id": "i:1", "extra_attributes": map[interface{}]interface{}{"metadata": `{"a":"b"}`}},
+	}}
+	hits = parseSearchMetadata(resp3)
+	if len(hits) != 1 || hits[0].key != "i:1" || hits[0].metadata != `{"a":"b"}` {
+		t.Fatalf("resp3 hits = %+v", hits)
+	}
+}
