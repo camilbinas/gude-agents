@@ -35,6 +35,9 @@ type jsonContentBlock struct {
 	// Widget fields (populated when Type == "widget").
 	WidgetType    string          `json:"widget_type,omitempty"`
 	WidgetPayload json.RawMessage `json:"widget_payload,omitempty"`
+	// Thinking fields (populated when Type == "thinking"; the text is in Text).
+	ThinkingSignature string `json:"thinking_signature,omitempty"`
+	ThinkingRedacted  string `json:"thinking_redacted,omitempty"`
 }
 
 // jsonToolResultImage is the JSON envelope for an image in a tool result.
@@ -132,6 +135,13 @@ func contentBlockToJSON(cb agent.ContentBlock) jsonContentBlock {
 			WidgetType:    b.Type,
 			WidgetPayload: b.Payload,
 		}
+	case agent.ThinkingBlock:
+		return jsonContentBlock{
+			Type:              "thinking",
+			Text:              b.Text,
+			ThinkingSignature: b.Signature,
+			ThinkingRedacted:  b.RedactedData,
+		}
 	default:
 		return jsonContentBlock{Type: "unknown"}
 	}
@@ -184,6 +194,8 @@ func jsonToContentBlock(jcb jsonContentBlock) agent.ContentBlock {
 			Type:    jcb.WidgetType,
 			Payload: jcb.WidgetPayload,
 		}
+	case "thinking":
+		return agent.ThinkingBlock{Text: jcb.Text, Signature: jcb.ThinkingSignature, RedactedData: jcb.ThinkingRedacted}
 	default:
 		return agent.TextBlock{}
 	}

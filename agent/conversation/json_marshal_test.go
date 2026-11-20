@@ -324,3 +324,32 @@ func TestMarshalUnmarshal_DocumentBlock_ProviderReferences(t *testing.T) {
 		t.Errorf("S3 source metadata = %#v, want preserved MIME type and name", s3Doc.Source)
 	}
 }
+
+// TestMarshal_ThinkingBlockRoundTrip checks signed and redacted thinking blocks
+// survive serialisation unchanged.
+func TestMarshal_ThinkingBlockRoundTrip(t *testing.T) {
+	in := []agent.Message{{
+		Role: agent.RoleAssistant,
+		Content: []agent.ContentBlock{
+			agent.ThinkingBlock{Text: "reasoning", Signature: "sig=="},
+			agent.ThinkingBlock{RedactedData: "opaque"},
+			agent.ToolUseBlock{ToolUseID: "t1", Name: "x", Input: json.RawMessage(`{}`)},
+		},
+	}}
+	data, err := MarshalMessages(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := UnmarshalMessages(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || len(out[0].Content) != 3 {
+		t.Fatalf("unexpected shape: %#v", out)
+	}
+	for i := 0; i < 2; i++ {
+		if out[0].Content[i] != in[0].Content[i] {
+			t.Errorf("block %d: got %#v want %#v", i, out[0].Content[i], in[0].Content[i])
+		}
+	}
+}
