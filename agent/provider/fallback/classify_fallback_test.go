@@ -12,7 +12,7 @@ import (
 )
 
 func TestStream_StopsOnClassifiedNonRetryableError(t *testing.T) {
-	for _, status := range []int{400, 401, 403, 404} {
+	for _, status := range []int{400, 422} {
 		primary := failProvider(&agent.ProviderError{
 			Cause:      errAny,
 			StatusCode: status,
@@ -27,6 +27,18 @@ func TestStream_StopsOnClassifiedNonRetryableError(t *testing.T) {
 		assert.Nil(t, resp)
 		assert.Equal(t, 1, primary.calls)
 		assert.Zero(t, backup.calls, "status %d must not advance to backup", status)
+	}
+}
+
+func TestStream_AdvancesOnAuthAndNotFoundErrors(t *testing.T) {
+	for _, status := range []int{401, 403, 404} {
+		primary := failProvider(&agent.ProviderError{Cause: errAny, StatusCode: status})
+		backup := okProvider("from backup")
+		resp, err := fallback.New(primary, backup).Stream(context.Background(), agent.ModelRequest{}, nil)
+
+		require.NoError(t, err, "status %d should fall back", status)
+		assert.Equal(t, "from backup", resp.Text)
+		assert.Equal(t, 1, backup.calls)
 	}
 }
 

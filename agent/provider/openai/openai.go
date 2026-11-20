@@ -183,8 +183,14 @@ func newProvider(model string, useCatalog bool, opts []Option) (*OpenAIProvider,
 	}
 
 	var clientOpts []option.RequestOption
-	if o.apiKey != "" {
+	switch {
+	case o.apiKey != "":
 		clientOpts = append(clientOpts, option.WithAPIKey(o.apiKey))
+	case o.baseURL != "" || !useCatalog:
+		// The SDK falls back to OPENAI_API_KEY from the environment. Never send
+		// that key to a custom or OpenAI-compatible host; servers that need no
+		// auth ignore the placeholder, others require WithAPIKey.
+		clientOpts = append(clientOpts, option.WithAPIKey(compatPlaceholderAPIKey))
 	}
 	if o.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(o.baseURL))
@@ -199,6 +205,10 @@ func newProvider(model string, useCatalog bool, opts []Option) (*OpenAIProvider,
 		capabilities:   o.capabilities,
 	}, nil
 }
+
+// compatPlaceholderAPIKey is sent to custom base URLs when no key was configured
+// explicitly, so the ambient OPENAI_API_KEY is never forwarded to them.
+const compatPlaceholderAPIKey = "not-needed"
 
 // ModelID returns the model ID this provider is configured to use.
 func (p *OpenAIProvider) ModelID() string { return p.model }
@@ -227,21 +237,34 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 	}
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, input)
+	defer stream.Close()
 
 	resp := &agent.ModelResponse{}
 
-	// Track in-flight tool calls being assembled from deltas.
-	// OpenAI streams tool calls by index.
+	// Track in-flight tool calls being assembled from deltas. Accumulators are
+	// keyed by arrival order; current maps the server's delta index to the
+	// accumulator being filled. OpenAI streams one call per index, but some
+	// compatible servers send parallel calls all at index 0 with distinct ids,
+	// so a new non-empty id starts a new accumulator.
 	toolCalls := map[int64]*toolCallAccum{}
+	current := map[int64]int64{}
+	var nextSeq int64
 
 	for stream.Next() {
 		chunk := stream.Current()
 
 		// Extract usage from the final chunk.
 		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-			resp.Usage.InputTokens = int(chunk.Usage.PromptTokens)
+			// OpenAI's prompt_tokens includes cached tokens; TokenUsage keeps
+			// the fields disjoint, so subtract the cached part.
+			cached := int(chunk.Usage.PromptTokensDetails.CachedTokens)
+			input := int(chunk.Usage.PromptTokens) - cached
+			if input < 0 {
+				input = 0
+			}
+			resp.Usage.InputTokens = input
 			resp.Usage.OutputTokens = int(chunk.Usage.CompletionTokens)
-			resp.Usage.CacheReadTokens = int(chunk.Usage.PromptTokensDetails.CachedTokens)
+			resp.Usage.CacheReadTokens = cached
 		}
 
 		for _, choice := range chunk.Choices {
@@ -261,10 +284,14 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req agent.ModelRequest, emi
 
 			// Tool call deltas.
 			for _, tc := range delta.ToolCalls {
-				acc, ok := toolCalls[tc.Index]
-				if !ok {
+				seq, ok := current[tc.Index]
+				acc := toolCalls[seq]
+				if !ok || (tc.ID != "" && acc.id != "" && acc.id != tc.ID) {
+					seq = nextSeq
+					nextSeq++
 					acc = &toolCallAccum{}
-					toolCalls[tc.Index] = acc
+					toolCalls[seq] = acc
+					current[tc.Index] = seq
 				}
 				if tc.ID != "" {
 					acc.id = tc.ID
@@ -318,8 +345,13 @@ func collectToolCalls(toolCalls map[int64]*toolCallAccum) []tool.Call {
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)
 		}
+		id := acc.id
+		if id == "" {
+			// Some compatible servers omit ids; the engine pairs results by id.
+			id = fmt.Sprintf("call_%d", idx)
+		}
 		out = append(out, tool.Call{
-			ToolUseID: acc.id,
+			ToolUseID: id,
 			Name:      acc.name,
 			Input:     input,
 		})
